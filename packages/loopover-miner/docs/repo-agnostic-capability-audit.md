@@ -9,10 +9,10 @@ surviving only as the default). Audit-and-document only — no code changes here
 ## Summary
 
 The miner's discovery/claim/scoring code is **already largely repo-agnostic**. Discovery queries are
-caller-supplied, label preferences are generic per-tenant config (`.gittensory-miner.yml` uses plain
+caller-supplied, label preferences are generic per-tenant config (`.loopover-miner.yml` uses plain
 `bug`/`enhancement`, not `gittensor:*`), ranking/feasibility are delegated to
 `@loopover/engine` with config-overridable inputs, and runtime knobs live in
-`.gittensory-ams.yml`. The remaining assumptions fall into three buckets:
+`.loopover-ams.yml`. The remaining assumptions fall into three buckets:
 
 1. **GitHub as the only forge** — the fan-out hardcodes GitHub's REST paths, headers, API version, and
    search-qualifier syntax. This is the single largest gap for a non-GitHub tenant.
@@ -45,7 +45,7 @@ whatever label strings the forge returns, with no `gittensor:*` filter. No chang
 
 | Line | Assumption | Category | Should become |
 | --- | --- | --- | --- |
-| 289–290 (fanout) vs `runDiscover` | `opportunity-fanout` accepts `options.apiBaseUrl`, but `runDiscover`'s arg parser only handles `--search` / targets / `--json` — it never parses or passes `apiBaseUrl`, so the existing GitHub-Enterprise override is **unreachable from the CLI**. | (6) endpoint | Thread a forge base URL from `.gittensory-miner.yml` / a `--api-base-url` flag into the fan-out call. |
+| 289–290 (fanout) vs `runDiscover` | `opportunity-fanout` accepts `options.apiBaseUrl`, but `runDiscover`'s arg parser only handles `--search` / targets / `--json` — it never parses or passes `apiBaseUrl`, so the existing GitHub-Enterprise override is **unreachable from the CLI**. | (6) endpoint | Thread a forge base URL from `.loopover-miner.yml` / a `--api-base-url` flag into the fan-out call. |
 | 102 | `process.env.GITHUB_TOKEN` | (6) auth | Per-forge credential env var (default `GITHUB_TOKEN`). |
 
 ### `lib/opportunity-ranker.js` — candidate ranking (delegated)
@@ -73,12 +73,12 @@ redo them:
 
 - **Discovery query** — caller-supplied via `discover --search <query>` or explicit `owner/repo`
   targets; no hardcoded gittensory label query (`discover-cli.js`).
-- **Label preferences** — `.gittensory-miner.yml` `preferredLabels` / `blockedLabels` are generic
+- **Label preferences** — `.loopover-miner.yml` `preferredLabels` / `blockedLabels` are generic
   (`bug`, `enhancement`, `wontfix`, `duplicate`), not `gittensor:*`.
 - **Path scope, feasibility gate, self-plagiarism threshold, concurrency** — all per-tenant in
-  `.gittensory-miner.yml` (`wantedPaths`, `blockedPaths`, `feasibilityGate`, `selfPlagiarism`,
+  `.loopover-miner.yml` (`wantedPaths`, `blockedPaths`, `feasibilityGate`, `selfPlagiarism`,
   `maxConcurrentClaims`).
-- **Runtime caps** — `.gittensory-ams.yml` (`submissionMode`, `capLimits`, `convergenceThresholds`,
+- **Runtime caps** — `.loopover-ams.yml` (`submissionMode`, `capLimits`, `convergenceThresholds`,
   `maxIterations`) are generic runtime knobs.
 - **Local stores** — `portfolio-queue`, `claim-ledger`, `event-ledger`, etc. are generic SQLite
   bookkeeping with env-configurable DB paths; no gittensory-specific schema.

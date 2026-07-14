@@ -706,7 +706,7 @@ groups:
 
   # ── Governor rate-limit/budget threshold pressure (#5187) ─────────────────
   # Same DORMANT-until-a-scrape-target-exists posture as the two miner groups above: an operator runs
-  # `gittensory-miner governor metrics` (packages/loopover-miner/lib/governor-metrics-cli.js's
+  # `loopover-miner governor metrics` (packages/loopover-miner/lib/governor-metrics-cli.js's
   # renderGovernorMetrics) to a file/pushgateway their Prometheus scrapes. Absent loopover_miner_governor_*
   # series simply yield no result. Read-only: these rules alert on the governor's already-persisted rate-limit
   # (#5134/write-rate-limit.ts) and cap-usage (#5134/budget-cap.ts) state; they do not gate, retry, or modify
@@ -724,20 +724,20 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory miner governor write-rate-limit bucket is nearly exhausted"
+          summary: "loopover miner governor write-rate-limit bucket is nearly exhausted"
           description: "{{ $labels.scope }}/{{ $labels.action_class }}{{ with $labels.repo }} ({{ . }}){{ end }} has had under 10% of its write-rate-limit headroom remaining for 10m."
-          runbook: "Check `gittensory-miner governor metrics` for the affected scope/action_class and slow down that write class (fewer concurrent attempts, longer loop --cycle-delay-ms), or raise the relevant DEFAULT_WRITE_RATE_LIMIT_POLICIES ceiling if the current limit is genuinely too conservative for this install."
+          runbook: "Check `loopover-miner governor metrics` for the affected scope/action_class and slow down that write class (fewer concurrent attempts, longer loop --cycle-delay-ms), or raise the relevant DEFAULT_WRITE_RATE_LIMIT_POLICIES ceiling if the current limit is genuinely too conservative for this install."
 
       - alert: LoopOverMinerGovernorCapUsageHigh
         # cap_usage_ratio compares governor-state's persisted cumulative capUsage (budget spent / turns taken /
         # elapsed session ms) against DEFAULT_AMS_POLICY_SPEC.capLimits, the same fleet-wide default loop-cli.js
-        # itself falls back to when a repo has no `.gittensory-ams.yml` override. 0.9 gives an operator a
+        # itself falls back to when a repo has no `.loopover-ams.yml` override. 0.9 gives an operator a
         # heads-up before evaluateGovernorCaps' own exceeded/kill_switch verdict actually halts the run.
         expr: loopover_miner_governor_cap_usage_ratio > 0.9
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "gittensory miner governor is approaching a run cap ceiling"
+          summary: "loopover miner governor is approaching a run cap ceiling"
           description: "The governor's {{ $labels.dimension }} cap usage has been over 90% of its configured limit for 10m."
-          runbook: "Run `gittensory-miner governor metrics` to see which dimension (budget/turns/elapsed_ms) is under pressure, and either let the current run finish (evaluateGovernorCaps will kill_switch/deny once the ceiling is actually reached) or raise the corresponding capLimits in `.gittensory-ams.yml` if the ceiling is too tight for this repo's normal attempts."
+          runbook: "Run `loopover-miner governor metrics` to see which dimension (budget/turns/elapsed_ms) is under pressure, and either let the current run finish (evaluateGovernorCaps will kill_switch/deny once the ceiling is actually reached) or raise the corresponding capLimits in `.loopover-ams.yml` if the ceiling is too tight for this repo's normal attempts."

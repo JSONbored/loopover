@@ -73,7 +73,7 @@ For provider selection and the CLI-specific model/timeout overrides, see
    `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` — to relocate an individual file. `doctor`'s `store-integrity:*` checks
    report the persistent stores, so it is the quickest way to confirm what exists and is readable on disk.
 
-4. Optional per-repo miner goals: copy [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) to a target repo as `.gittensory-miner.yml`. See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md).
+4. Optional per-repo miner goals: copy [`.loopover-miner.yml.example`](../../.loopover-miner.yml.example) to a target repo as `.loopover-miner.yml`. See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md).
 
 ## Fleet mode walkthrough
 
@@ -129,7 +129,7 @@ The repo-root [`docker-compose.yml`](../../docker-compose.yml) documents the **s
 Instead of a hand-assembled `docker run`, [`docker-compose.miner.yml`](docker-compose.miner.yml) defines a long-lived `miner` service (built from this package's Dockerfile, `restart: unless-stopped`, state on a named `miner-data` volume). Credentials come from an env file, never inlined:
 
 ```sh
-cp .gittensory-miner.env.example .gittensory-miner.env   # fill in GITHUB_TOKEN (+ optional provider keys)
+cp .loopover-miner.env.example .loopover-miner.env   # fill in GITHUB_TOKEN (+ optional provider keys)
 docker compose -f docker-compose.miner.yml up -d --build
 ```
 

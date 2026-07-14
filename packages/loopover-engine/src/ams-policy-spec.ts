@@ -2,9 +2,9 @@ import { parse as parseYaml } from "yaml";
 
 import { DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS, type PortfolioConvergenceThresholds } from "./portfolio/non-convergence.js";
 
-// AmsPolicySpec (#5132, Wave 3.5 follow-up). The type surface for `.gittensory-ams.yml` -- the OPERATOR's own
+// AmsPolicySpec (#5132, Wave 3.5 follow-up). The type surface for `.loopover-ams.yml` -- the OPERATOR's own
 // execution-risk policy for their miner (AMS: the autonomous mining system this file's fields configure), as
-// opposed to `.gittensory-miner.yml` / MinerGoalSpec (this file's direct structural sibling), which is the
+// opposed to `.loopover-miner.yml` / MinerGoalSpec (this file's direct structural sibling), which is the
 // TARGET REPO's own preferences about being mined at all. That distinction is deliberate and load-bearing: a
 // target repo's own checked-in file legitimately gets to say "don't mine me" or "focus on these paths" --
 // but it must NEVER get to say "let the operator's agent spend more budget" or "submit live instead of
@@ -13,7 +13,7 @@ import { DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS, type PortfolioConvergenceThre
 // repo could use to loosen what an operator's agent is willing to do.
 //
 // Resolution deliberately stays operator-local: packages/loopover-miner/lib/ams-policy.js reads only the
-// operator's own local `.gittensory-ams.yml` (in their `gittensory-miner` config dir) and otherwise uses safe
+// operator's own local `.loopover-ams.yml` (in their `loopover-miner` config dir) and otherwise uses safe
 // defaults. It does not fetch a target repo's checked-in file, because that would let untrusted repo content
 // loosen operator-side budget, turn, slop, or submission controls.
 
@@ -36,7 +36,7 @@ export type AmsCapLimits = {
   elapsedMs: number;
 };
 
-/** Per-operator AMS execution policy parsed from `.gittensory-ams.yml`. See {@link DEFAULT_AMS_POLICY_SPEC}. */
+/** Per-operator AMS execution policy parsed from `.loopover-ams.yml`. See {@link DEFAULT_AMS_POLICY_SPEC}. */
 export type AmsPolicySpec = {
   /** Whether a real attempt may actually submit. Default: "observe" (deny-by-default). */
   submissionMode: AmsSubmissionMode;
@@ -53,7 +53,7 @@ export type AmsPolicySpec = {
   maxTurnsPerIteration: number;
 };
 
-/** The tolerant parser result for `.gittensory-ams.yml`. Mirrors `ParsedMinerGoalSpec`'s present/warnings shape. */
+/** The tolerant parser result for `.loopover-ams.yml`. Mirrors `ParsedMinerGoalSpec`'s present/warnings shape. */
 export type ParsedAmsPolicySpec = {
   present: boolean;
   spec: AmsPolicySpec;
@@ -61,7 +61,7 @@ export type ParsedAmsPolicySpec = {
 };
 
 /**
- * The safe defaults applied when a field is absent from `.gittensory-ams.yml` (or the file itself is
+ * The safe defaults applied when a field is absent from `.loopover-ams.yml` (or the file itself is
  * missing). Deep-frozen: a shared singleton, clone before layering overrides on top.
  */
 export const DEFAULT_AMS_POLICY_SPEC: Readonly<AmsPolicySpec> = Object.freeze({
@@ -183,7 +183,7 @@ function utf8ByteLength(value: string): number {
 }
 
 /**
- * Tolerantly normalize an already-parsed `.gittensory-ams.yml` object into a {@link ParsedAmsPolicySpec}.
+ * Tolerantly normalize an already-parsed `.loopover-ams.yml` object into a {@link ParsedAmsPolicySpec}.
  * Never throws: malformed shapes degrade to safe defaults and accumulate warnings.
  */
 export function parseAmsPolicySpec(raw: unknown): ParsedAmsPolicySpec {
@@ -218,7 +218,7 @@ export function parseAmsPolicySpec(raw: unknown): ParsedAmsPolicySpec {
 }
 
 /**
- * Parse raw `.gittensory-ams.yml` file content (JSON or YAML). Malformed content degrades to an absent
+ * Parse raw `.loopover-ams.yml` file content (JSON or YAML). Malformed content degrades to an absent
  * policy spec with a warning rather than throwing, mirroring `parseMinerGoalSpecContent`.
  */
 export function parseAmsPolicySpecContent(content: string | null | undefined): ParsedAmsPolicySpec {
@@ -241,5 +241,5 @@ export function parseAmsPolicySpecContent(content: string | null | undefined): P
   return parseAmsPolicySpec(parsed);
 }
 
-/** The documented `.gittensory-ams` file-discovery order (first match wins), mirroring `MINER_GOAL_SPEC_FILENAMES`. */
-export const AMS_POLICY_SPEC_FILENAMES = [".gittensory-ams.yml", ".github/gittensory-ams.yml", ".gittensory-ams.json", ".github/gittensory-ams.json"] as const;
+/** The documented `.loopover-ams` file-discovery order (first match wins), mirroring `MINER_GOAL_SPEC_FILENAMES`. */
+export const AMS_POLICY_SPEC_FILENAMES = [".loopover-ams.yml", ".github/loopover-ams.yml", ".loopover-ams.json", ".github/loopover-ams.json"] as const;

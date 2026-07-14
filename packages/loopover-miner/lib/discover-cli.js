@@ -128,7 +128,7 @@ export function renderDiscoverSummary(result) {
   // spec is supplied, lane fit reflects gittensory's defaults, not the target repo's own conventions.
   if (result.usedDefaultGoalSpec) {
     lines.push(
-      "note: ranked with the built-in default goal spec (no per-tenant .gittensory-miner.yml supplied)",
+      "note: ranked with the built-in default goal spec (no per-tenant .loopover-miner.yml supplied)",
     );
   }
   if (result.ranked.length === 0) {

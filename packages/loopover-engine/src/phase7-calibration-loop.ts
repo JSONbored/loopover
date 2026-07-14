@@ -195,7 +195,7 @@ function markdownList(values: readonly string[]): string {
 }
 
 /**
- * Resolve the explicit Phase 7 loop config from a parsed `.gittensory-miner.yml`-style object. Default is disabled
+ * Resolve the explicit Phase 7 loop config from a parsed `.loopover-miner.yml`-style object. Default is disabled
  * and fail-closed when enabled but inputs are missing or degraded.
  */
 export function resolvePhase7CalibrationConfig(

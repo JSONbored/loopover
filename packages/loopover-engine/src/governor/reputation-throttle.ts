@@ -19,7 +19,7 @@ export type SelfReputationThresholds = {
   minCadenceFactor: number;
 };
 
-/** Conservative built-in defaults; a `.gittensory-miner.yml` override is merged over these. */
+/** Conservative built-in defaults; a `.loopover-miner.yml` override is merged over these. */
 export const DEFAULT_SELF_REPUTATION_THRESHOLDS: SelfReputationThresholds =
   Object.freeze({
     minSampleSize: 5,
@@ -64,7 +64,7 @@ function round3(value: number): number {
 }
 
 /**
- * Merge a partial (e.g. `.gittensory-miner.yml`-sourced) threshold config over the conservative defaults,
+ * Merge a partial (e.g. `.loopover-miner.yml`-sourced) threshold config over the conservative defaults,
  * normalizing every field so a malformed value can never produce a NaN/negative/out-of-range decision. The
  * throttle band is kept well-formed: `floorAtRatio` is pulled to at least `throttleAtRatio` so the interpolation
  * span is never negative.

@@ -11,10 +11,10 @@ describe("AmsPolicySpec parser (#5132)", () => {
     expect(typeof parseAmsPolicySpec).toBe("function");
     expect(typeof parseAmsPolicySpecContent).toBe("function");
     expect(AMS_POLICY_SPEC_FILENAMES).toEqual([
-      ".gittensory-ams.yml",
-      ".github/gittensory-ams.yml",
-      ".gittensory-ams.json",
-      ".github/gittensory-ams.json",
+      ".loopover-ams.yml",
+      ".github/loopover-ams.yml",
+      ".loopover-ams.json",
+      ".github/loopover-ams.json",
     ]);
   });
 

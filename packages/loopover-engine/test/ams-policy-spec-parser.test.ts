@@ -11,10 +11,10 @@ test("barrel: the public entrypoint re-exports the AmsPolicySpec parser API", ()
   assert.equal(typeof parseAmsPolicySpec, "function");
   assert.equal(typeof parseAmsPolicySpecContent, "function");
   assert.deepEqual(AMS_POLICY_SPEC_FILENAMES, [
-    ".gittensory-ams.yml",
-    ".github/gittensory-ams.yml",
-    ".gittensory-ams.json",
-    ".github/gittensory-ams.json",
+    ".loopover-ams.yml",
+    ".github/loopover-ams.yml",
+    ".loopover-ams.json",
+    ".github/loopover-ams.json",
   ]);
 });
 

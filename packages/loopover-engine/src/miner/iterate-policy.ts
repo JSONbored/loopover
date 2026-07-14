@@ -17,7 +17,7 @@
 //
 // AUTONOMY DIAL (not yet wired): `src/settings/autonomy.ts`'s `resolveAutonomy`/`isActingAutonomyLevel` is the
 // existing reusable deny-by-default pattern this policy's eventual live autonomy-level check should consult
-// once `.gittensory-miner.yml` defines autonomy fields -- that wiring is explicitly left to a later phase; this
+// once `.loopover-miner.yml` defines autonomy fields -- that wiring is explicitly left to a later phase; this
 // module's `decideNextAction` is autonomy-level-agnostic today.
 
 import type { SelfReviewVerdict } from "./self-review-adapter.js";

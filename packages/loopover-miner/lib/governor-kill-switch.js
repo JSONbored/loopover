@@ -1,5 +1,5 @@
 // Governor kill-switch gate (#2341). Resolves whether miner write activity is currently halted (globally, via
-// env, or for one repo, via its .gittensory-miner.yml MinerGoalSpec) and records STATE TRANSITIONS to the
+// env, or for one repo, via its .loopover-miner.yml MinerGoalSpec) and records STATE TRANSITIONS to the
 // append-only governor ledger. Every-check allow/deny recording for a real write action is the fail-closed
 // Governor chokepoint's job (#2340), which consults this module first in its "safest wins" precedence.
 
@@ -13,7 +13,7 @@ import { appendGovernorEvent } from "./governor-ledger.js";
 
 /**
  * Resolve the current kill-switch scope for a repo from process env plus a per-repo paused flag (typically
- * `MinerGoalSpec.killSwitch.paused` from the repo's parsed `.gittensory-miner.yml`).
+ * `MinerGoalSpec.killSwitch.paused` from the repo's parsed `.loopover-miner.yml`).
  *
  * @param {object} [input]
  * @param {boolean} [input.repoPaused]

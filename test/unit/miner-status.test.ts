@@ -51,13 +51,13 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("collectStatus reports the installed versions, state dir, and config-file discovery", () => {
     const root = tempRoot();
-    writeFileSync(join(root, ".gittensory-miner.yml"), "minerEnabled: true\n");
+    writeFileSync(join(root, ".loopover-miner.yml"), "minerEnabled: true\n");
     const status = collectStatus({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") }, root);
     expect(status.package.name).toBe("@loopover/miner");
     expect(typeof status.package.version).toBe("string");
     expect(status.engine.name).toBe("@loopover/engine");
     expect(status.stateDir).toBe(join(root, "state"));
-    expect(status.configFile).toBe(join(root, ".gittensory-miner.yml")); // discovered
+    expect(status.configFile).toBe(join(root, ".loopover-miner.yml")); // discovered
   });
 
   it("REGRESSION: collectStatus reports the REAL installed engine version, not the declared dependency range", () => {
@@ -149,7 +149,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("passes a well-formed config", () => {
       const cwd = tempRoot();
-      writeFileSync(join(cwd, ".gittensory-miner.yml"), "wantedPaths:\n  - src\n");
+      writeFileSync(join(cwd, ".loopover-miner.yml"), "wantedPaths:\n  - src\n");
       const result = checkConfigContent(cwd);
       expect(result.ok).toBe(true);
       expect(result.detail).toContain("valid");
@@ -158,7 +158,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     it("flags a malformed config with the parser's specific warnings", () => {
       const cwd = tempRoot();
       // wantedPaths must be a list; a scalar triggers a parser warning rather than a silent default.
-      writeFileSync(join(cwd, ".gittensory-miner.yml"), "wantedPaths: not-a-list\n");
+      writeFileSync(join(cwd, ".loopover-miner.yml"), "wantedPaths: not-a-list\n");
       const result = checkConfigContent(cwd);
       expect(result.ok).toBe(false);
       expect(result.detail).toMatch(/wantedPaths/);
@@ -166,7 +166,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("reports a read failure (config discovered but unreadable)", () => {
       const cwd = tempRoot();
-      writeFileSync(join(cwd, ".gittensory-miner.yml"), "wantedPaths:\n  - src\n");
+      writeFileSync(join(cwd, ".loopover-miner.yml"), "wantedPaths:\n  - src\n");
       const throwingRead = () => {
         throw new Error("EACCES: permission denied");
       };
@@ -179,7 +179,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   it("doctor flags a malformed config file (#4873)", () => {
     const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
     const cwd = tempRoot();
-    writeFileSync(join(cwd, ".gittensory-miner.yml"), "wantedPaths: not-a-list\n");
+    writeFileSync(join(cwd, ".loopover-miner.yml"), "wantedPaths: not-a-list\n");
     expect(runDoctorChecks(env, cwd).find((check) => check.name === "config-content")?.ok).toBe(false);
     expect(runDoctor([], env, cwd)).toBe(1);
   });

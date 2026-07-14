@@ -14,7 +14,7 @@ import { appendGovernorEvent } from "./governor-ledger.js";
  * @param {object} input
  * @param {import("@loopover/engine").SelfPlagiarismCandidate} input.candidate
  * @param {readonly import("@loopover/engine").OwnSubmissionRecord[]} input.recentOwnSubmissions
- * @param {unknown} [input.selfPlagiarismConfig] parsed `.gittensory-miner.yml` selfPlagiarism block
+ * @param {unknown} [input.selfPlagiarismConfig] parsed `.loopover-miner.yml` selfPlagiarism block
  * @param {{ append?: typeof appendGovernorEvent }} [options]
  */
 export function evaluateOpenPrSelfPlagiarism(input, options = {}) {

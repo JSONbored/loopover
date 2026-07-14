@@ -1,9 +1,9 @@
 # ============================================================================
-# .gittensory-miner.yml - per-repo miner configuration (EXAMPLE)
+# .loopover-miner.yml - per-repo miner configuration (EXAMPLE)
 # ============================================================================
 # A repo owner drops this file in to tell an autonomous Gittensory miner what to
 # look for and how to behave when targeting their repo. It is the MINER-side
-# analogue of `.gittensory.yml` (the review-side focus manifest).
+# analogue of `.loopover.yml` (the review-side focus manifest).
 #
 # Every field is OPTIONAL and has a safe default (shown as "Default: X" below).
 # The file is parsed tolerantly: an unknown key is ignored, and a single
@@ -11,10 +11,10 @@
 # hard-fails the miner, it just falls back to the defaults.
 #
 # Discovery order (first match wins):
-#   .gittensory-miner.yml -> .github/gittensory-miner.yml
-#   -> .gittensory-miner.json -> .github/gittensory-miner.json
+#   .loopover-miner.yml -> .github/loopover-miner.yml
+#   -> .loopover-miner.json -> .github/loopover-miner.json
 #
-# Copy to `.gittensory-miner.yml` and edit. YAML or JSON are both accepted.
+# Copy to `.loopover-miner.yml` and edit. YAML or JSON are both accepted.
 
 # Whether this repo permits autonomous miners at all. Explicit OPT-OUT: a public
 # repo with no file is still minable. Set false to halt all miner targeting.

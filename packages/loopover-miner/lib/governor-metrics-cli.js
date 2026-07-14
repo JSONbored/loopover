@@ -13,14 +13,14 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 // (#5186) and event-ledger-cli.js's `ledger metrics` (#4841): opens the local governor-state store, composes
 // its EXISTING loadRateLimitState()/loadCapUsage() with the engine's already-exported PURE calculators
 // (evaluateLocalRateLimit, evaluateGovernorCaps) against the SAME defaults the production loop (loop-cli.js)
-// already falls back to when no `.gittensory-ams.yml` override is configured (DEFAULT_WRITE_RATE_LIMIT_POLICIES,
+// already falls back to when no `.loopover-ams.yml` override is configured (DEFAULT_WRITE_RATE_LIMIT_POLICIES,
 // DEFAULT_AMS_POLICY_SPEC.capLimits) -- it never invents a threshold of its own, and it does not gate, retry,
 // mutate, or otherwise touch governor decision logic (governor-chokepoint.js/governor-chokepoint-persisted.js
 // are completely untouched by this file).
 //
 // capLimits is intentionally NOT read per-repo: governor-state.js's capUsage row is a single global scalar (a
 // run-scoped cumulative counter, not indexed by repo -- see governor-state.js's own header comment), so a
-// per-repo capLimits override from a resolved `.gittensory-miner.yml` has no matching per-repo usage row to
+// per-repo capLimits override from a resolved `.loopover-miner.yml` has no matching per-repo usage row to
 // pair it with here. Using the fleet-wide DEFAULT_AMS_POLICY_SPEC.capLimits is the same approximation
 // loop-cli.js itself already makes for any repo without its own override.
 

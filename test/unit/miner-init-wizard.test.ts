@@ -131,7 +131,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
   describe("runInteractiveInit", () => {
     it("writes a starter .env (mode 0600), initializes laptop state, and passes a clean doctor run when the provider is skipped", async () => {
       const stateDir = join(tempRoot(), "state");
-      const cwd = tempRoot(); // no .gittensory-miner.yml here => config-content check passes
+      const cwd = tempRoot(); // no .loopover-miner.yml here => config-content check passes
       const env = { LOOPOVER_MINER_CONFIG_DIR: stateDir };
       const io = createFakeIo({ maskedAnswers: ["ghp_test_token_123"], textAnswers: [""] });
 

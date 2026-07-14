@@ -25,7 +25,7 @@ function tempRoot() {
 describe("resolveAmsPolicyConfigPath (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
     expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
-    expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".gittensory-ams.yml"));
+    expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".loopover-ams.yml"));
   });
 });
 
@@ -36,7 +36,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
   });
 
-  it("REGRESSION: ignores target-repo .gittensory-ams.yml so repos cannot loosen operator risk policy", async () => {
+  it("REGRESSION: ignores target-repo .loopover-ams.yml so repos cannot loosen operator risk policy", async () => {
     const root = tempRoot();
     const fetchImpl = vi.fn(async () => {
       throw new Error("target repo policy must not be fetched");
@@ -48,7 +48,7 @@ describe("resolveAmsPolicy (#5132)", () => {
 
   it("the operator's own local file supplies the effective policy", async () => {
     const root = tempRoot();
-    writeFileSync(join(root, ".gittensory-ams.yml"), "submissionMode: observe\nslopThreshold: clean\n");
+    writeFileSync(join(root, ".loopover-ams.yml"), "submissionMode: observe\nslopThreshold: clean\n");
     const fetchImpl = vi.fn(async () => {
       throw new Error("target repo policy must not be fetched");
     });
@@ -61,7 +61,7 @@ describe("resolveAmsPolicy (#5132)", () => {
 
   it("never calls fetch at all once a local file is found", async () => {
     const root = tempRoot();
-    writeFileSync(join(root, ".gittensory-ams.yml"), "submissionMode: enforce\n");
+    writeFileSync(join(root, ".loopover-ams.yml"), "submissionMode: enforce\n");
     let fetchCalls = 0;
     const fetchImpl = async () => {
       fetchCalls += 1;
@@ -74,7 +74,7 @@ describe("resolveAmsPolicy (#5132)", () => {
 
   it("falls through to defaults on a malformed local file (invalid YAML), still never touching the repo file", async () => {
     const root = tempRoot();
-    writeFileSync(join(root, ".gittensory-ams.yml"), "submissionMode: [unterminated");
+    writeFileSync(join(root, ".loopover-ams.yml"), "submissionMode: [unterminated");
     let fetchCalls = 0;
     const fetchImpl = async () => {
       fetchCalls += 1;

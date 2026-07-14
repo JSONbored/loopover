@@ -5,12 +5,12 @@ at once: it declares which repos are in scope for a fleet run and how a finite w
 split between them. It is parsed by `parseFleetRunManifestContent` / `parseFleetRunManifest` in
 `@loopover/engine` (`packages/loopover-engine/src/fleet-run-manifest.ts`).
 
-It is **not** the same file as `.gittensory-miner.yml` (see [`miner-goal-spec.md`](./miner-goal-spec.md)) — the
+It is **not** the same file as `.loopover-miner.yml` (see [`miner-goal-spec.md`](./miner-goal-spec.md)) — the
 naming is easy to conflate. Same tolerant-parser convention (every field optional, unknown keys ignored, a
 malformed field degrades to a documented default with a warning rather than throwing), but the opposite author
 and the opposite direction of intent:
 
-| | `.gittensory-miner.yml` (goal spec) | fleet run-manifest |
+| | `.loopover-miner.yml` (goal spec) | fleet run-manifest |
 |---|---|---|
 | **Author** | a target repo's maintainer | the miner (fleet) operator |
 | **Lives in** | the target repo | the operator's fleet-run config |

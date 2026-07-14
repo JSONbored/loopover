@@ -30,7 +30,7 @@ Hosted and stdio MCP surfaces expose the composed shortlist: `loopover_find_oppo
 | Issue | Title |
 |-------|-------|
 | [#2299](https://github.com/JSONbored/gittensory/issues/2299) | Scope correction note (this document) |
-| [#2300](https://github.com/JSONbored/gittensory/issues/2300) | `.gittensory-miner.yml` MinerGoalSpec schema doc |
+| [#2300](https://github.com/JSONbored/gittensory/issues/2300) | `.loopover-miner.yml` MinerGoalSpec schema doc |
 | [#2301](https://github.com/JSONbored/gittensory/issues/2301) | MinerGoalSpec parser with safe-default fallback |
 | [#2302](https://github.com/JSONbored/gittensory/issues/2302) | Pure ranker — `potential × feasibility × laneFit × freshness × (1 − dupRisk)` |
 | [#2303](https://github.com/JSONbored/gittensory/issues/2303) | Ranker invariant test suite |

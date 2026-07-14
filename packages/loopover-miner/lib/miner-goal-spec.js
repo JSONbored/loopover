@@ -4,7 +4,7 @@ import { discoverMinerGoalSpecPath, parseMinerGoalSpecContent } from "@loopover/
 
 const MAX_MINER_GOAL_SPEC_BYTES = 32_768;
 
-// Real local .gittensory-miner.yml resolver (#5132, Wave 3.5 follow-up). MinerGoalSpec's own discovery
+// Real local .loopover-miner.yml resolver (#5132, Wave 3.5 follow-up). MinerGoalSpec's own discovery
 // helper (discoverMinerGoalSpecPath, packages/loopover-engine) is deliberately IO-free -- the caller
 // injects the existence check. Unlike self-review-context.js/rejection-signal.js/ams-policy.js, which fetch
 // their target repo's files live over raw.githubusercontent.com BEFORE any clone exists, this resolver reads

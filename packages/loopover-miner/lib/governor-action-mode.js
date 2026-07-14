@@ -12,7 +12,7 @@ import { appendGovernorEvent } from "./governor-ledger.js";
 
 /**
  * Resolve the miner's overall action mode from the kill-switch scope (see `checkMinerKillSwitch` in
- * `./governor-kill-switch.js`), the repo's own `.gittensory-miner.yml` opt-in, and the operator's global env
+ * `./governor-kill-switch.js`), the repo's own `.loopover-miner.yml` opt-in, and the operator's global env
  * opt-in. Both sides must opt in before real writes execute; repo config alone only preserves dry-run.
  *
  * @param {object} input

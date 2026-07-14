@@ -6,7 +6,7 @@ import {
   resolveSelfPlagiarismConfig,
 } from "./governor/self-plagiarism.js";
 
-// MinerGoalSpec (#2293 / #2301). The type surface for `.gittensory-miner.yml` — the per-repo config a
+// MinerGoalSpec (#2293 / #2301). The type surface for `.loopover-miner.yml` — the per-repo config a
 // maintainer/repo-owner drops in to tell an autonomous miner what to look for and how to behave when targeting
 // their repo. This is the MINER-side analogue of the review-side `.loopover.yml` focus manifest (see
 // `src/signals/focus-manifest.ts`'s `FocusManifest`): a small typed config object paired with explicit
@@ -57,11 +57,11 @@ export type MinerExecutionPolicy = {
   liveModeOptIn: typeof MINER_LIVE_MODE_OPT_IN | null;
 };
 
-/** Per-repo miner configuration parsed from `.gittensory-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */
+/** Per-repo miner configuration parsed from `.loopover-miner.yml`. See {@link DEFAULT_MINER_GOAL_SPEC}. */
 export type MinerGoalSpec = {
   /**
    * Whether this repo permits autonomous miners at all. Explicit OPT-OUT, not opt-in: a public repo with no
-   * `.gittensory-miner.yml` is still minable, mirroring `.loopover.yml`'s "safe by default" stance. Set `false`
+   * `.loopover-miner.yml` is still minable, mirroring `.loopover.yml`'s "safe by default" stance. Set `false`
    * to halt all miner targeting of this repo. Default: true.
    */
   minerEnabled: boolean;
@@ -117,7 +117,7 @@ export type MinerGoalSpec = {
   execution: MinerExecutionPolicy;
 };
 
-/** The tolerant parser result for `.gittensory-miner.yml`: the normalized spec plus parse warnings and whether the
+/** The tolerant parser result for `.loopover-miner.yml`: the normalized spec plus parse warnings and whether the
  *  file actually expressed any non-default goal fields. Mirrors `parseFocusManifest`'s present/warnings pattern
  *  without forcing metadata onto downstream consumers that only need the config itself. */
 export type ParsedMinerGoalSpec = {
@@ -127,7 +127,7 @@ export type ParsedMinerGoalSpec = {
 };
 
 /**
- * The safe defaults applied when a field is absent from `.gittensory-miner.yml` (or the file itself is missing).
+ * The safe defaults applied when a field is absent from `.loopover-miner.yml` (or the file itself is missing).
  * Every value here matches the "Default: X" documented on its field above. Analogous to the defaults constant that
  * accompanies `FocusManifest` in `src/signals/focus-manifest.ts` — a repo with no file behaves as if it declared
  * this: minable, with no path/label preferences, one concurrent claim, and neutral discovery.
@@ -352,7 +352,7 @@ function hasConfiguredGoalFields(spec: MinerGoalSpec): boolean {
 }
 
 /**
- * Tolerantly normalize an already-parsed `.gittensory-miner.yml` object into a {@link ParsedMinerGoalSpec}.
+ * Tolerantly normalize an already-parsed `.loopover-miner.yml` object into a {@link ParsedMinerGoalSpec}.
  * Never throws: malformed shapes degrade to safe defaults and accumulate warnings so callers can surface
  * "your miner goal spec had problems" without hard-failing a run.
  */
@@ -411,7 +411,7 @@ export function parseMinerGoalSpec(raw: unknown): ParsedMinerGoalSpec {
 }
 
 /**
- * Parse raw `.gittensory-miner.yml` file content (JSON or YAML). Malformed content degrades to an absent
+ * Parse raw `.loopover-miner.yml` file content (JSON or YAML). Malformed content degrades to an absent
  * goal spec with a warning rather than throwing, mirroring `parseFocusManifestContent`.
  */
 export function parseMinerGoalSpecContent(content: string | null | undefined): ParsedMinerGoalSpec {
@@ -437,14 +437,14 @@ export function parseMinerGoalSpecContent(content: string | null | undefined): P
 }
 
 /**
- * The documented `.gittensory-miner` file-discovery order (first match wins), mirroring how `.loopover.yml` is
+ * The documented `.loopover-miner` file-discovery order (first match wins), mirroring how `.loopover.yml` is
  * discovered: repo-root YAML, then `.github/` YAML, then the JSON variants.
  */
 export const MINER_GOAL_SPEC_FILENAMES = [
-  ".gittensory-miner.yml",
-  ".github/gittensory-miner.yml",
-  ".gittensory-miner.json",
-  ".github/gittensory-miner.json",
+  ".loopover-miner.yml",
+  ".github/loopover-miner.yml",
+  ".loopover-miner.json",
+  ".github/loopover-miner.json",
 ] as const;
 
 /**

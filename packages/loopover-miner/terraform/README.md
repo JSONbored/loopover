@@ -45,8 +45,8 @@ Useful variables (see [`variables.tf`](variables.tf) for all): `server_type`, `l
 The module provisions the **host**; you finish the miner setup over SSH (secrets never live in Terraform state):
 
 1. `terraform output ssh_command` → SSH in.
-2. Create a `.gittensory-miner.env` with your `GITHUB_TOKEN` and coding-agent provider credentials — see
-   [`../.gittensory-miner.env.example`](../.gittensory-miner.env.example).
+2. Create a `.loopover-miner.env` with your `GITHUB_TOKEN` and coding-agent provider credentials — see
+   [`../.loopover-miner.env.example`](../.loopover-miner.env.example).
 3. Run the miner container against the mounted volume using the existing
    [`../docker-compose.miner.yml`](../docker-compose.miner.yml) (its state mount is already pinned to
    `/data/miner`, which `terraform output data_mount` confirms). Full run/upgrade guidance lives in

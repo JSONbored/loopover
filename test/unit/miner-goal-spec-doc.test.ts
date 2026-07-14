@@ -7,7 +7,7 @@ import { parseMinerGoalSpecContent } from "../../packages/loopover-engine/src/mi
 const repoRoot = process.cwd();
 const schemaPath = join(repoRoot, "packages/loopover-miner/schema/miner-goal-spec.schema.json");
 const docPath = join(repoRoot, "packages/loopover-miner/docs/miner-goal-spec.md");
-const examplePath = join(repoRoot, ".gittensory-miner.yml.example");
+const examplePath = join(repoRoot, ".loopover-miner.yml.example");
 
 const SPEC_FIELDS = [
   "minerEnabled",

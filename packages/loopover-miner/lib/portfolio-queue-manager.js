@@ -1,7 +1,7 @@
 // Stateful PortfolioQueueManager (#4285): compose the persisted SQLite portfolio/queue store
 // (portfolio-queue.js, #2292) with the pure engine selector (nextEligibleItems, queue.ts, #2326) so batch
 // claiming respects global/per-repo WIP caps and cross-repo diversification instead of a naive priority-only
-// single-row dequeue. Caps are plain constructor arguments — not wired to .gittensory-miner.yml here.
+// single-row dequeue. Caps are plain constructor arguments — not wired to .loopover-miner.yml here.
 import { nextEligibleItems } from "@loopover/engine";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";

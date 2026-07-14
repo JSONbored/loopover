@@ -16,7 +16,7 @@ Current scope is intentionally small:
 Environment variables read by the miner are documented in [`docs/env-reference.md`](docs/env-reference.md).
 Regenerate that file with `npm run miner:env-reference` from the repo root after adding or removing env reads.
 
-Config precedence (`.gittensory-miner.yml` vs operator env vs CLI flags) is documented in
+Config precedence (`.loopover-miner.yml` vs operator env vs CLI flags) is documented in
 [`docs/config-precedence.md`](docs/config-precedence.md).
 
 A committed micro-benchmark for the discovery-ranking and local-store read/write paths lives at
@@ -153,7 +153,7 @@ enough (e.g. a live-polling dashboard) that the per-read linear event-ledger sca
 
 ## Install
 
-See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.gittensory-miner.yml` field reference and [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) at the repo root.
+See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.loopover-miner.yml` field reference and [`.loopover-miner.yml.example`](../../.loopover-miner.yml.example) at the repo root.
 
 See [`docs/cross-repo-discovery-phase1.md`](docs/cross-repo-discovery-phase1.md) for the Phase 1 cross-repo discovery scope (re-scoped from [#1060](https://github.com/JSONbored/gittensory/issues/1060), paper trail for [#2299](https://github.com/JSONbored/gittensory/issues/2299)).
 

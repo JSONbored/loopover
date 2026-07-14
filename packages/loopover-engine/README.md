@@ -630,7 +630,7 @@ module defines the storage contract only — it does not wire into live governor
 
 ## MinerGoalSpec
 
-`MinerGoalSpec` is the type surface for a repo's `.gittensory-miner.yml` (miner-side analogue of `.loopover.yml`).
+`MinerGoalSpec` is the type surface for a repo's `.loopover-miner.yml` (miner-side analogue of `.loopover.yml`).
 `DEFAULT_MINER_GOAL_SPEC` is the safe default a repo with no file behaves as — minable (`minerEnabled: true`, an
 explicit opt-out), no path/label preferences, one concurrent claim, `neutral` discovery.
 
@@ -639,13 +639,13 @@ never throw on malformed JSON/YAML; instead they return `{ present, spec, warnin
 safe defaults and `warnings` explains any dropped or invalid fields.
 
 `discoverMinerGoalSpecPath(exists)` returns the first present file in the documented order (`MINER_GOAL_SPEC_FILENAMES`:
-`.gittensory-miner.yml` → `.github/gittensory-miner.yml` → the `.json` variants). It is IO-free — the caller injects
+`.loopover-miner.yml` → `.github/loopover-miner.yml` → the `.json` variants). It is IO-free — the caller injects
 the existence check — so a caller reads the returned path and feeds its content to `parseMinerGoalSpecContent`. See
-`.gittensory-miner.yml.example` for the documented fields.
+`.loopover-miner.yml.example` for the documented fields.
 
 ## AmsPolicySpec
 
-`AmsPolicySpec` is the type surface for `.gittensory-ams.yml` — the OPERATOR's own execution-risk policy for
+`AmsPolicySpec` is the type surface for `.loopover-ams.yml` — the OPERATOR's own execution-risk policy for
 their miner (`submissionMode`, `slopThreshold`, `capLimits`, `convergenceThresholds`, `maxIterations`,
 `maxTurnsPerIteration`), a deliberate structural sibling to `MinerGoalSpec` but answering a different question: `MinerGoalSpec` is what the target repo wants
 from being mined; `AmsPolicySpec` is how aggressive the operator wants their own agent to be. No field on this
@@ -656,11 +656,11 @@ submission mode (computes real decisions but never actually submits) and a `"low
 `parseAmsPolicySpec(raw)` / `parseAmsPolicySpecContent(content)` are the same tolerant-parser pair shape as
 `MinerGoalSpec`'s — never throw, return `{ present, spec, warnings }`.
 
-Unlike `MinerGoalSpec`, this package does not resolve `.gittensory-ams.yml` from the filesystem itself (this
+Unlike `MinerGoalSpec`, this package does not resolve `.loopover-ams.yml` from the filesystem itself (this
 package is IO-free) — `packages/loopover-miner/lib/ams-policy.js`'s `resolveAmsPolicy` is the real caller.
 That resolver reads only the operator's local policy and otherwise uses safe defaults; it intentionally does not
 fetch a target repo's checked-in AMS policy, because untrusted repo content must not loosen operator-side budget,
-turn, slop, or submission controls. See `.gittensory-ams.yml.example`.
+turn, slop, or submission controls. See `.loopover-ams.yml.example`.
 
 ## Repo map builder
 

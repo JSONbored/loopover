@@ -1,6 +1,6 @@
 // Governor kill-switch (#2341): the emergency-halt primitive every write-adjacent governor decision consults
 // FIRST, before any other calculator. Two independent triggers compose into one scope: a GLOBAL env-level
-// switch that halts every repo at once, and a PER-REPO switch (from `.gittensory-miner.yml`'s MinerGoalSpec
+// switch that halts every repo at once, and a PER-REPO switch (from `.loopover-miner.yml`'s MinerGoalSpec
 // `killSwitch.paused` field) that halts only its own repo's queue while leaving the rest of the fleet running.
 // Mirrors `src/settings/agent-execution.ts`'s `isGlobalAgentPause` truthy-string idiom for the review-stack's
 // own kill-switch (#776) — a parallel mechanism for the miner's own local runtime, not the same one.

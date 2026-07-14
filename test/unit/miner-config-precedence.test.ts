@@ -15,7 +15,7 @@ import { parseAttemptArgs } from "../../packages/loopover-miner/lib/attempt-cli.
 import { resolveCodingAgentModeFromConfig } from "../../packages/loopover-engine/src/index";
 
 describe("miner config precedence (#5198)", () => {
-  describe("kill switch: env global > .gittensory-miner.yml repo pause", () => {
+  describe("kill switch: env global > .loopover-miner.yml repo pause", () => {
     it("global env wins when both global env and repo yml pause are set", () => {
       expect(resolveDocumentedKillSwitchScope({ LOOPOVER_MINER_KILL_SWITCH: "true" }, true)).toBe("global");
     });

@@ -5,7 +5,7 @@
 # comments in packages/loopover-miner/Dockerfile.
 #
 # Usage:
-#   1. Create the env file (never commit real values): cp .gittensory-miner.env.example .gittensory-miner.env
+#   1. Create the env file (never commit real values): cp .loopover-miner.env.example .loopover-miner.env
 #   2. Start one worker:  docker compose -f docker-compose.miner.yml up -d --build
 #
 # Scaling to N parallel workers:
@@ -31,7 +31,7 @@ services:
     # Operator-supplied secrets/config (GITHUB_TOKEN, optional provider keys). Copy the .example, fill it in,
     # and NEVER commit the real file — env vars stay out of the compose file and out of `docker inspect` args.
     env_file:
-      - .gittensory-miner.env
+      - .loopover-miner.env
     # The state dir is fixed at /data/miner — it is the Dockerfile's built-in LOOPOVER_MINER_CONFIG_DIR default
     # AND the volume mount below. It is deliberately NOT set here (and NOT offered as an env-file override):
     # Compose's `environment` would silently override an env-file value, and the mount is pinned to /data/miner,

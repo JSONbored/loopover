@@ -378,7 +378,7 @@ export async function runAttempt(args, options = {}) {
 
     const amsPolicy = await (options.resolveAmsPolicy ?? resolveAmsPolicy)(parsed.repoFullName, { env });
 
-    // Real per-repo pause (#5392): read straight from the already-cloned worktree's own .gittensory-miner.yml
+    // Real per-repo pause (#5392): read straight from the already-cloned worktree's own .loopover-miner.yml
     // (resolveMinerGoalSpec never throws -- a missing/malformed file degrades to killSwitch.paused: false, so
     // this can't fail this attempt on its own). Threaded into BOTH checkMinerKillSwitch (killSwitchScope, used
     // by the freshness/submission gate) and the governor context (killSwitchRepoPaused, used by the Governor

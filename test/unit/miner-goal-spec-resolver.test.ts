@@ -29,18 +29,18 @@ describe("resolveMinerGoalSpec (#5132)", () => {
     expect(parsed.spec.killSwitch).toEqual({ paused: false });
   });
 
-  it("REGRESSION: reads a real .gittensory-miner.yml from the cloned repo's root", () => {
+  it("REGRESSION: reads a real .loopover-miner.yml from the cloned repo's root", () => {
     const repoPath = tempRepo();
-    writeFileSync(join(repoPath, ".gittensory-miner.yml"), "killSwitch:\n  paused: true\n");
+    writeFileSync(join(repoPath, ".loopover-miner.yml"), "killSwitch:\n  paused: true\n");
     const parsed = resolveMinerGoalSpec(repoPath);
     expect(parsed.present).toBe(true);
     expect(parsed.spec.killSwitch).toEqual({ paused: true });
   });
 
-  it("tries .github/gittensory-miner.yml when the root .yml is absent", () => {
+  it("tries .github/loopover-miner.yml when the root .yml is absent", () => {
     const repoPath = tempRepo();
     mkdirSync(join(repoPath, ".github"), { recursive: true });
-    writeFileSync(join(repoPath, ".github", "gittensory-miner.yml"), "killSwitch:\n  paused: true\n");
+    writeFileSync(join(repoPath, ".github", "loopover-miner.yml"), "killSwitch:\n  paused: true\n");
     const parsed = resolveMinerGoalSpec(repoPath);
     expect(parsed.present).toBe(true);
     expect(parsed.spec.killSwitch.paused).toBe(true);
@@ -48,7 +48,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
 
   it("tries the .json variants after both .yml candidates are absent", () => {
     const repoPath = tempRepo();
-    writeFileSync(join(repoPath, ".gittensory-miner.json"), JSON.stringify({ killSwitch: { paused: true } }));
+    writeFileSync(join(repoPath, ".loopover-miner.json"), JSON.stringify({ killSwitch: { paused: true } }));
     const parsed = resolveMinerGoalSpec(repoPath);
     expect(parsed.present).toBe(true);
     expect(parsed.spec.killSwitch.paused).toBe(true);
@@ -58,7 +58,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
     const repoPath = tempRepo();
     const outsidePath = join(tempRepo(), "outside.yml");
     writeFileSync(outsidePath, "killSwitch:\n  paused: true\n");
-    symlinkSync(outsidePath, join(repoPath, ".gittensory-miner.yml"));
+    symlinkSync(outsidePath, join(repoPath, ".loopover-miner.yml"));
 
     const parsed = resolveMinerGoalSpec(repoPath);
 
@@ -68,7 +68,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
 
   it("REGRESSION: ignores oversized miner goal specs before reading them into memory", () => {
     const repoPath = tempRepo();
-    writeFileSync(join(repoPath, ".gittensory-miner.yml"), `${"#".repeat(32_769)}\nkillSwitch:\n  paused: true\n`);
+    writeFileSync(join(repoPath, ".loopover-miner.yml"), `${"#".repeat(32_769)}\nkillSwitch:\n  paused: true\n`);
 
     const parsed = resolveMinerGoalSpec(repoPath);
 
@@ -82,7 +82,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
     // cap anyway -- simulating a file that grows after fstatSync ran but before the read loop finishes (the
     // TOCTOU window a size check alone, without also bounding the read, cannot close.
     const parsed = resolveMinerGoalSpec(repoPath, {
-      existsSync: (path) => path.endsWith(".gittensory-miner.yml") && !path.includes(".github"),
+      existsSync: (path) => path.endsWith(".loopover-miner.yml") && !path.includes(".github"),
       openSync: () => 999,
       fstatSync: () => ({ isFile: () => true, size: 10 }) as unknown as import("node:fs").Stats,
       readSync: (_fd, buffer, offset, length) => {
@@ -99,7 +99,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
 
   it("degrades to safe defaults on malformed content instead of throwing", () => {
     const repoPath = tempRepo();
-    writeFileSync(join(repoPath, ".gittensory-miner.yml"), "killSwitch: [unterminated");
+    writeFileSync(join(repoPath, ".loopover-miner.yml"), "killSwitch: [unterminated");
     const parsed = resolveMinerGoalSpec(repoPath);
     expect(parsed.present).toBe(false);
     expect(parsed.spec.killSwitch).toEqual({ paused: false });
@@ -109,7 +109,7 @@ describe("resolveMinerGoalSpec (#5132)", () => {
   it("degrades to safe defaults when the discovered file can't actually be read", () => {
     const repoPath = tempRepo();
     const parsed = resolveMinerGoalSpec(repoPath, {
-      existsSync: (path) => path.endsWith(".gittensory-miner.yml") && !path.includes(".github"),
+      existsSync: (path) => path.endsWith(".loopover-miner.yml") && !path.includes(".github"),
       openSync: () => {
         throw new Error("EACCES: permission denied");
       },

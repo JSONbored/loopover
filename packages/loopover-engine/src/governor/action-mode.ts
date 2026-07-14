@@ -40,7 +40,7 @@ export function isGlobalMinerLiveModeOptIn(env: Record<string, string | undefine
 /**
  * Resolve the miner's overall action mode. Precedence (safest wins, mirroring `resolveAgentActionMode`):
  * 1. Kill-switch active (either scope, #2341) -> `"paused"` -- always wins, regardless of any live-mode opt-in.
- * 2. BOTH the operator's global env config AND the target repo's own `.gittensory-miner.yml`
+ * 2. BOTH the operator's global env config AND the target repo's own `.loopover-miner.yml`
  *    (`MinerGoalSpec.execution.liveModeOptIn`) explicitly opt in -> `"live"`. The repo field is a repo-side
  *    allowance, not an operator-authored authorization to execute writes under the miner's credentials.
  * 3. Otherwise -> `"dry_run"`. No config anywhere, either side omitted, or a malformed/partial config that fails

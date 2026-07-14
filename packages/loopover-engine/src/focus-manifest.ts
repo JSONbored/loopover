@@ -1,7 +1,7 @@
 /**
  * Focus-manifest parse/compile core (#2280). Extracted to `@loopover/engine` so the maintainer
  * review stack and the miner's goal-spec parser share identical, versioned manifest logic instead of drifting
- * apart. This is the MINER-side parse-pattern template for {@link MinerGoalSpec} (`.gittensory-miner.yml`) —
+ * apart. This is the MINER-side parse-pattern template for {@link MinerGoalSpec} (`.loopover-miner.yml`) —
  * same tolerant-parser shape: typed config + safe defaults + warnings, never throws.
  *
  * App-local resolver/guidance functions (`resolveEffectiveSettings`, `buildFocusManifestGuidance`, etc.) remain

@@ -2,7 +2,7 @@ import { parse as parseYaml } from "yaml";
 
 // FleetRunManifest (#4299). The top-level config a *fleet operator* authors to run the miner across many repos:
 // which repos are in scope for a fleet run, and how a finite worktree/concurrency budget is split between them.
-// This is the OPERATOR-side analogue of, and deliberately NOT the same file as, `.gittensory-miner.yml` (see
+// This is the OPERATOR-side analogue of, and deliberately NOT the same file as, `.loopover-miner.yml` (see
 // miner-goal-spec.ts): that one is authored by a *target repo's maintainer* to say how their one repo wants to be
 // approached. Same tolerant-parser convention (every field optional, unknown keys ignored, malformed input
 // degrades to a documented default with a warning rather than throwing); opposite author and direction of intent.

@@ -12,7 +12,7 @@ const compose = parse(
   readFileSync(join(MINER_DIR, "docker-compose.miner.yml"), "utf8"),
 ) as Record<string, any>;
 const envExample = readFileSync(
-  join(MINER_DIR, ".gittensory-miner.env.example"),
+  join(MINER_DIR, ".loopover-miner.env.example"),
   "utf8",
 );
 
@@ -34,7 +34,7 @@ describe("docker-compose.miner.yml (#5177)", () => {
 
   it("sources credentials from an env file and pins nothing overridable in `environment`", () => {
     const miner = compose.services.miner;
-    expect(miner.env_file).toContain(".gittensory-miner.env");
+    expect(miner.env_file).toContain(".loopover-miner.env");
     const envBlock = JSON.stringify(miner.environment ?? {});
     // no secret-named key is assigned a value directly in the compose `environment` block
     expect(envBlock).not.toMatch(/TOKEN|API_KEY|SECRET|PASSWORD/i);
@@ -45,8 +45,8 @@ describe("docker-compose.miner.yml (#5177)", () => {
 
   it("gitignores the operator's real env file while keeping the committed example", () => {
     const gitignore = readFileSync(join(process.cwd(), ".gitignore"), "utf8");
-    expect(gitignore).toMatch(/^\.gittensory-miner\.env$/m);
-    expect(gitignore).toMatch(/^!\.gittensory-miner\.env\.example$/m);
+    expect(gitignore).toMatch(/^\.loopover-miner\.env$/m);
+    expect(gitignore).toMatch(/^!\.loopover-miner\.env\.example$/m);
   });
 
   it("ships an env example with empty (scanner-safe) placeholder values for every credential", () => {

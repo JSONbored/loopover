@@ -1,8 +1,8 @@
 # ============================================================================
-# .gittensory-ams.yml - operator execution policy (EXAMPLE)
+# .loopover-ams.yml - operator execution policy (EXAMPLE)
 # ============================================================================
 # This is the OPERATOR's own execution-risk policy for their autonomous miner
-# (AMS) -- a deliberate structural sibling to `.gittensory-miner.yml`
+# (AMS) -- a deliberate structural sibling to `.loopover-miner.yml`
 # (MinerGoalSpec), but answering a different question. MinerGoalSpec is what a
 # TARGET REPO wants from being mined (paths, labels, whether it's minable at
 # all). This file is how aggressive the OPERATOR wants their own agent to be
@@ -11,7 +11,7 @@
 # willing to do -- see below for why.
 #
 # OPERATOR-LOCAL ONLY: the miner reads this file from the operator's local
-# gittensory-miner config dir. It intentionally does not fetch a target repo's
+# loopover-miner config dir. It intentionally does not fetch a target repo's
 # checked-in AMS policy, because untrusted repo content must not loosen
 # operator-side budget, turn, slop, or submission controls.
 #
@@ -20,7 +20,7 @@
 # ignored, and a single malformed field falls back to its default with a
 # warning.
 #
-# Copy to `.gittensory-ams.yml` and edit. YAML or JSON are both accepted.
+# Copy to `.loopover-ams.yml` and edit. YAML or JSON are both accepted.
 
 # Whether a real attempt is allowed to actually submit (open a PR), or only
 # compute + log its decision. "observe" still runs every real signal/decision

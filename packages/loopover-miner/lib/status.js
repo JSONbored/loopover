@@ -40,12 +40,12 @@ function moduleDir() {
 
 const PACKAGE_NAME = "@loopover/miner";
 const ENGINE_PACKAGE = "@loopover/engine";
-// Config-file discovery order (mirrors the `.gittensory-miner.yml` precedence the goal-spec parser documents).
+// Config-file discovery order (mirrors the `.loopover-miner.yml` precedence the goal-spec parser documents).
 const CONFIG_FILE_CANDIDATES = Object.freeze([
-  ".gittensory-miner.yml",
-  ".github/gittensory-miner.yml",
-  ".gittensory-miner.json",
-  ".github/gittensory-miner.json",
+  ".loopover-miner.yml",
+  ".github/loopover-miner.yml",
+  ".loopover-miner.json",
+  ".github/loopover-miner.json",
 ]);
 
 /** The miner's local-state directory (holds the run-state / queue / ledger SQLite files). */

@@ -1276,12 +1276,12 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
     expect(input.governor.killSwitchRepoPaused).toBe(true);
   });
 
-  it("REGRESSION: reads a real .gittensory-miner.yml killSwitch.paused:true from the worktree's real repoPath, end to end", async () => {
+  it("REGRESSION: reads a real .loopover-miner.yml killSwitch.paused:true from the worktree's real repoPath, end to end", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const repoRoot = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-repo-"));
     roots.push(repoRoot);
-    writeFileSync(join(repoRoot, ".gittensory-miner.yml"), "killSwitch:\n  paused: true\n");
+    writeFileSync(join(repoRoot, ".loopover-miner.yml"), "killSwitch:\n  paused: true\n");
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: fakeLoopResult() });
 
     await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
@@ -1304,7 +1304,7 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
     expect(input.governor.killSwitchRepoPaused).toBe(true);
   });
 
-  it("does not gate on a repo pause when no .gittensory-miner.yml exists (real resolver, real empty dir)", async () => {
+  it("does not gate on a repo pause when no .loopover-miner.yml exists (real resolver, real empty dir)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const repoRoot = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-repo-"));

@@ -97,5 +97,5 @@ The server operating doc (maintainer-only) will restate the same boundary: **nev
 
 - [`cross-repo-discovery-phase1.md`](cross-repo-discovery-phase1.md) — local, metadata-only Phase 1 discovery (no hosted plane).
 - [`operations-runbook.md`](operations-runbook.md) — SQLite concurrency, corruption recovery, multi-process collisions, post-upgrade migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
-- [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.gittensory-miner.yml` targeting policy.
+- [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.loopover-miner.yml` targeting policy.
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet deployment and core miner invariants.

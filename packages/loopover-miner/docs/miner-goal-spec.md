@@ -1,13 +1,13 @@
-# MinerGoalSpec (`.gittensory-miner.yml`)
+# MinerGoalSpec (`.loopover-miner.yml`)
 
-Per-repo configuration telling an autonomous LoopOver miner what to look for and how to behave when targeting a repo. Parsed by `@loopover/engine` (`parseMinerGoalSpec` / `parseMinerGoalSpecContent`); this document is the field reference. Machine-readable shape: [`../schema/miner-goal-spec.schema.json`](../schema/miner-goal-spec.schema.json). Copy [`.gittensory-miner.yml.example`](../../../.gittensory-miner.yml.example) to `.gittensory-miner.yml` and edit.
+Per-repo configuration telling an autonomous LoopOver miner what to look for and how to behave when targeting a repo. Parsed by `@loopover/engine` (`parseMinerGoalSpec` / `parseMinerGoalSpecContent`); this document is the field reference. Machine-readable shape: [`../schema/miner-goal-spec.schema.json`](../schema/miner-goal-spec.schema.json). Copy [`.loopover-miner.yml.example`](../../../.loopover-miner.yml.example) to `.loopover-miner.yml` and edit.
 
 Discovery order (first match wins):
 
-- `.gittensory-miner.yml`
-- `.github/gittensory-miner.yml`
-- `.gittensory-miner.json`
-- `.github/gittensory-miner.json`
+- `.loopover-miner.yml`
+- `.github/loopover-miner.yml`
+- `.loopover-miner.json`
+- `.github/loopover-miner.json`
 
 Every field is optional. Unknown keys are ignored; a malformed field falls back to its documented default with a warning — a broken file never hard-fails the miner.
 
@@ -16,7 +16,7 @@ Every field is optional. Unknown keys are ignored; a malformed field falls back 
 | File | Actor | Purpose |
 |------|-------|---------|
 | `.loopover.yml` | Review stack | How a maintainer's repo **reviews** incoming PRs (focus manifest, gate, scoring knobs). |
-| `.gittensory-miner.yml` | Miner runtime | How a miner **searches for and prioritizes** work in a target repo. Unrelated naming concern — not affected by the review-config rebrand above. |
+| `.loopover-miner.yml` | Miner runtime | How a miner **searches for and prioritizes** work in a target repo. Unrelated naming concern — not affected by the review-config rebrand above. |
 
 They are read by different components and do not conflict. A miner should still treat a target repo's public `.loopover.yml` `wantedPaths` / `blockedPaths` as a hard floor when both files exist.
 

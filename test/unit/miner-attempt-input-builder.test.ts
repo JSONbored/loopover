@@ -5,7 +5,7 @@ vi.mock("@loopover/engine", async () => {
 });
 
 import { buildAttemptGovernorContext, buildAttemptLoopInput } from "../../packages/gittensory-miner/lib/attempt-input-builder.js";
-import { DEFAULT_AMS_POLICY_SPEC, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
+import { DEFAULT_AMS_POLICY_SPEC, evaluateGovernorChokepoint, parseFocusManifest } from "../../packages/gittensory-engine/src/index";
 
 function codingTaskSpec(overrides: Record<string, unknown> = {}) {
   return {
@@ -67,6 +67,38 @@ describe("buildAttemptGovernorContext (#5132)", () => {
     const realHistory = { attempts: 4, consecutiveFailures: 3, reenqueues: 3, reachedDone: false };
     const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC, undefined, realHistory);
     expect(ctx.convergenceInput).toEqual(realHistory);
+  });
+
+  it("REGRESSION (#5675): a real reputationHistory the caller passes threads through unchanged", () => {
+    const ctx = buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC, false, undefined, { decided: 8, unfavorable: 5 });
+    expect(ctx.reputationHistory).toEqual({ decided: 8, unfavorable: 5 });
+  });
+
+  it("omits reputationHistory entirely when the caller passes none, so chokepoint.ts skips the throttle (honest absence)", () => {
+    expect(buildAttemptGovernorContext({}, DEFAULT_AMS_POLICY_SPEC)).not.toHaveProperty("reputationHistory");
+  });
+
+  it("REGRESSION (#5675): a repo's real unfavorable-outcome streak, threaded through the governor context, throttles the chokepoint", () => {
+    const ctx = buildAttemptGovernorContext(
+      { GITTENSORY_MINER_LIVE_MODE: "live" },
+      DEFAULT_AMS_POLICY_SPEC,
+      false,
+      undefined,
+      { decided: 10, unfavorable: 8 },
+    );
+    const decision = evaluateGovernorChokepoint({
+      actionClass: "open_pr",
+      repoFullName: "acme/widgets",
+      nowMs: 10_000,
+      wouldBeAction: { action: "open_pr", title: "Fix bug" },
+      liveModeRepoOptIn: "live",
+      rateLimitBuckets: { global: {}, perRepo: {} },
+      rateLimitBackoffAttempts: {},
+      capUsage: { budgetSpent: 0, turnsTaken: 0, elapsedMs: 0 },
+      ...ctx,
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.stage).toBe("reputation_throttle");
   });
 
   it("omits rateLimitBuckets/rateLimitBackoffAttempts/capUsage so the persisted governor-state store auto-supplies them", () => {

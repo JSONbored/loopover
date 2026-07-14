@@ -36,6 +36,7 @@ import { resolveAmsPolicy } from "./ams-policy.js";
 import { pollPrDisposition, classifyPrDisposition } from "./pr-disposition-poller.js";
 import { pollCheckRuns } from "./ci-poller.js";
 import { recordPrOutcomeSnapshot } from "./pr-outcome.js";
+import { isRejectedPr } from "./rejection-state-machine.js";
 import { buildLoopClosureSummary } from "./loop-closure.js";
 import { attemptLoopReentry } from "./loop-reentry.js";
 import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
@@ -458,6 +459,20 @@ export async function runLoop(args, options = {}) {
                 closedAt: prDisposition.closedAt,
               },
               { eventLedger },
+            );
+            // Real per-repo reputation history (#5675): a resolved terminal outcome updates the decided/unfavorable
+            // counts the Governor's self-reputation throttle reads on this repo's next attempt. `decided` always;
+            // `unfavorable` only on a closed-without-merge (rejection-state-machine.js's isRejectedPr, matching
+            // #5655's own-rejection classification). Forge-scoped by claimed.apiBaseUrl (#5563), like every other
+            // governor-state write here.
+            const priorReputation = governorState.loadReputationHistory(claimed.repoFullName, claimed.apiBaseUrl);
+            governorState.saveReputationHistory(
+              claimed.repoFullName,
+              {
+                decided: priorReputation.decided + 1,
+                unfavorable: priorReputation.unfavorable + (isRejectedPr(prDisposition) ? 1 : 0),
+              },
+              claimed.apiBaseUrl,
             );
             reentryOutcome = classifyPrDisposition(prDisposition);
           }

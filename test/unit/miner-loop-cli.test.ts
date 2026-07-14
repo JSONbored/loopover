@@ -407,6 +407,48 @@ describe("runLoop (#5135)", () => {
     expect(after.portfolioQueue.listQueue()[0]).toMatchObject({ status: "queued" });
   });
 
+  it("REGRESSION (#5675): a resolved closed-without-merge outcome records an unfavorable reputation-history entry for the repo", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const item = { repoFullName: "acme/widgets", identifier: "issue:7" };
+    const runDiscoverSpy = primeOnceDiscover(portfolioQueue, item);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-rep",
+        execResult: { action: "open_pr", stdout: "https://github.com/acme/widgets/pull/9\n", stderr: "", code: 0, timedOut: false },
+      });
+      return 0;
+    });
+    const pollPrDispositionSpy = vi.fn().mockResolvedValue({ state: "closed", merged: false, closedAt: "2026-07-12T00:00:00Z", attempts: 1 });
+    const pollCheckRunsSpy = vi.fn().mockResolvedValue({ conclusion: "failure", checks: [], headSha: "abc", attempts: 1 });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      env: { GITHUB_TOKEN: "ghp_loop_test" },
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      pollPrDisposition: pollPrDispositionSpy,
+      pollCheckRuns: pollCheckRunsSpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    // A closed-without-merge terminal outcome increments BOTH `decided` and `unfavorable` (isRejectedPr), so the
+    // Governor's self-reputation throttle reads a real degraded track record on this repo's next attempt.
+    const after = reopenAfterRun(paths);
+    expect(after.governorState.loadReputationHistory("acme/widgets")).toEqual({ decided: 1, unfavorable: 1 });
+  });
+
   it("REGRESSION: runs a full cycle end to end -- claims, attempts, polls real PR disposition, records the outcome, and re-enters", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

@@ -9,9 +9,9 @@
 // checkSubmissionFreshness cannot see (two miners submitting almost simultaneously).
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- see attempt-input-builder.js's own header for the full list):
-// governor.reputationHistory/selfPlagiarismCandidate/selfPlagiarismRecentSubmissions are omitted (chokepoint.ts's
-// own design treats that as "skip that stage entirely"). governor.convergenceInput is now a real per-issue
-// portfolio-queue.js read (#5654), not a placeholder.
+// governor.selfPlagiarismCandidate/selfPlagiarismRecentSubmissions are omitted (chokepoint.ts's own design treats
+// that as "skip that stage entirely"). governor.convergenceInput is now a real per-issue portfolio-queue.js read
+// (#5654) and governor.reputationHistory a real per-repo governor-state.js read (#5675), not placeholders.
 
 import { fingerprintFromChangedFiles, resolveCodingAgentModeFromConfig, resolveFirstConfiguredCodingAgentDriverName } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
@@ -35,7 +35,7 @@ import { resolveAmsPolicy } from "./ams-policy.js";
 import { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import { buildAttemptGovernorContext, buildAttemptLoopInput } from "./attempt-input-builder.js";
 import { getAttemptHistory } from "./portfolio-queue.js";
-import { recordOwnSubmission } from "./governor-state.js";
+import { loadReputationHistory, recordOwnSubmission } from "./governor-state.js";
 import { runMinerAttempt } from "./attempt-runner.js";
 
 const ATTEMPT_USAGE =
@@ -409,7 +409,11 @@ export async function runAttempt(args, options = {}) {
     // pre-#5563 single-forge caller already reads) the github.com default.
     const readAttemptHistory = options.getAttemptHistory ?? getAttemptHistory;
     const convergenceInput = readAttemptHistory(parsed.repoFullName, `issue:${parsed.issueNumber}`);
-    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput);
+    // Real per-repo reputation history (#5675): the miner's own decided/unfavorable outcome streak for this repo,
+    // read from governor-state.js so the chokepoint's self-reputation throttle sees real data instead of nothing.
+    const readReputationHistory = options.loadReputationHistory ?? loadReputationHistory;
+    const reputationHistory = readReputationHistory(parsed.repoFullName);
+    const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput, reputationHistory);
 
     // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
     // sibling miner process on this machine sees it via claimLedger.listClaims/listActiveClaims while this

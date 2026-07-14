@@ -6,14 +6,14 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@loopover/e
 // same discipline as coding-task-spec.js's own composers.
 //
 // KNOWN, DOCUMENTED GAPS (not fabricated -- explicitly left as real, narrow follow-ups):
-//   - governor.reputationHistory/selfPlagiarismCandidate/selfPlagiarismRecentSubmissions are omitted, which
-//     chokepoint.ts's own design treats as "skip that stage entirely" -- an honest absence, not a fabricated
-//     "clean" verdict.
+//   - governor.selfPlagiarismCandidate/selfPlagiarismRecentSubmissions are omitted, which chokepoint.ts's own
+//     design treats as "skip that stage entirely" -- an honest absence, not a fabricated "clean" verdict.
 //
-// governor.convergenceInput is now a REAL per-issue attempt-history query (#5654): the caller (attempt-cli.js)
-// reads it from portfolio-queue.js's own getAttemptHistory and passes it in here, this composer staying pure
-// over it same as every other already-computed dependency below. The zero-state fallback only fires when a
-// caller genuinely omits the argument -- an honest first-attempt shape, not the old hardcoded literal.
+// governor.convergenceInput is now a REAL per-issue attempt-history query (#5654) and governor.reputationHistory
+// a REAL per-repo governor-state query (#5675): the caller (attempt-cli.js) reads them from portfolio-queue.js's
+// getAttemptHistory and governor-state.js's loadReputationHistory and passes them in here, this composer staying
+// pure over them same as every other already-computed dependency below. An omitted argument stays an honest
+// absence (zero-state convergence / skipped reputation throttle), never a fabricated clean history.
 
 /**
  * Assemble the real Governor chokepoint context for one attempt. rateLimitBuckets/rateLimitBackoffAttempts/
@@ -29,19 +29,26 @@ import { isGlobalMinerKillSwitch, isGlobalMinerLiveModeOptIn } from "@loopover/e
  * back to the honest first-attempt-shaped zero-state, so a caller that hasn't wired a real read yet (or an
  * item genuinely absent from the queue) still produces a well-formed `PortfolioConvergenceInput`.
  *
+ * `reputationHistory` (#5675) is the caller's own real governor-state.js `loadReputationHistory` read for the
+ * target repo. Optional and threaded through unchanged: when omitted the field is left off entirely, which
+ * chokepoint.ts treats as "skip the self-reputation throttle" -- an honest absence, never a fabricated clean
+ * history.
+ *
  * @param {Record<string, string | undefined>} env
  * @param {import("@loopover/engine").AmsPolicySpec} amsPolicySpec
  * @param {boolean} [repoPaused]
  * @param {import("@loopover/engine").PortfolioConvergenceInput} [convergenceInput]
+ * @param {import("@loopover/engine").RepoOutcomeHistory} [reputationHistory]
  * @returns {import("./attempt-runner.js").AttemptGovernorContext}
  */
-export function buildAttemptGovernorContext(env, amsPolicySpec, repoPaused, convergenceInput) {
+export function buildAttemptGovernorContext(env, amsPolicySpec, repoPaused, convergenceInput, reputationHistory) {
   return {
     killSwitchGlobal: isGlobalMinerKillSwitch(env),
     killSwitchRepoPaused: repoPaused,
     liveModeGlobalOptIn: isGlobalMinerLiveModeOptIn(env),
     capLimits: amsPolicySpec.capLimits,
     convergenceInput: convergenceInput ?? { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false },
+    ...(reputationHistory === undefined ? {} : { reputationHistory }),
   };
 }
 

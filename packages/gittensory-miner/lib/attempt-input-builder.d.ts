@@ -3,6 +3,7 @@ import type {
   CodingAgentExecutionMode,
   IterateLoopInput,
   PortfolioConvergenceInput,
+  RepoOutcomeHistory,
   SelfReviewContext,
 } from "@loopover/engine";
 import type { AttemptGovernorContext } from "./attempt-runner.js";
@@ -13,6 +14,7 @@ export function buildAttemptGovernorContext(
   amsPolicySpec: AmsPolicySpec,
   repoPaused?: boolean,
   convergenceInput?: PortfolioConvergenceInput,
+  reputationHistory?: RepoOutcomeHistory,
 ): AttemptGovernorContext;
 
 export type BuildAttemptLoopInputInput = {

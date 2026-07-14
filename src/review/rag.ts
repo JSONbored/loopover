@@ -323,6 +323,23 @@ export async function getStoredChunkMeta(storage: StorageAdapter, project: strin
 }
 
 // ── Embedding (fail-safe: null on any failure) ────────────────────────────────────────────────────
+// bge-m3's actual limit is a TOKEN budget (8192), but CHUNK_CHARS is a coarse character-count proxy for it —
+// dense/minified content (few spaces to "waste" per token) can exceed the real token budget despite staying
+// under the character budget, which is the observed cause of production ai_embed_http_400s (GITTENSORY-D,
+// #4996/#5046 history above). 4000 chars stays safely under 8192 tokens even at a pessimistic ~1 char/token
+// ratio, so a single retry at this length either succeeds (a truncated-but-present vector beats losing the
+// chunk's RAG signal entirely) or definitively confirms the text just isn't embeddable at any size we'd try.
+const CONTEXT_OVERFLOW_RETRY_CHARS = 4000;
+
+/** True when an embed failure is specifically a provider-reported context/input-length overflow (as opposed
+ *  to a network error, an auth failure, or any other 4xx) — see src/selfhost/ai.ts's `ai_embed_http_<status>:
+ *  <body>` error shape. Deliberately narrow (matches the literal phrase self-host Ollama/OpenAI-compatible
+ *  embedding endpoints use) so a truncate-and-retry is only attempted for the one failure mode it can
+ *  actually fix; any other error still fails fast via the existing single-attempt path below. */
+function isEmbedContextLengthError(error: unknown): boolean {
+  return /context length|context_length|maximum context|too long/i.test(String(error));
+}
+
 /** Embed one text in isolation — the fallback when a batch call throws or comes back structurally invalid, so
  *  the caller can isolate exactly which item(s) are the problem instead of losing every chunk in the batch.
  *  WARN, not error: a per-item failure here is expected diagnostic detail, already summarized once per
@@ -337,6 +354,12 @@ async function embedSingleText(inference: InferenceAdapter, text: string, expect
     console.warn(JSON.stringify({ level: "warn", event: "rag_embed_item_invalid", chars: text.length }));
     return null;
   } catch (error) {
+    // GITTENSORY-D: a context-length overflow on an oversized/dense chunk gets exactly one retry at a
+    // conservatively truncated length instead of being dropped outright — see CONTEXT_OVERFLOW_RETRY_CHARS.
+    if (isEmbedContextLengthError(error) && text.length > CONTEXT_OVERFLOW_RETRY_CHARS) {
+      console.warn(JSON.stringify({ level: "warn", event: "rag_embed_item_truncate_retry", chars: text.length, retryChars: CONTEXT_OVERFLOW_RETRY_CHARS }));
+      return embedSingleText(inference, text.slice(0, CONTEXT_OVERFLOW_RETRY_CHARS), expectedDimensions);
+    }
     console.warn(JSON.stringify({ level: "warn", event: "rag_embed_item_error", chars: text.length, message: String(error).slice(0, 200) }));
     return null;
   }

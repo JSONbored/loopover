@@ -951,6 +951,90 @@ describe("rag: embedTexts validation branches", () => {
     errorSpy.mockRestore();
   });
 
+  it("REGRESSION (GITTENSORY-D): a context-length overflow on an OVERSIZED item retries once at a truncated length and succeeds", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const bigText = "x".repeat(5000); // > CONTEXT_OVERFLOW_RETRY_CHARS(4000), so the truncate-retry guard fires
+    const inference: InferenceAdapter = {
+      run: async (_model, options) => {
+        const batch = (options as { text: string[] }).text;
+        const [text] = batch;
+        if (batch.length === 1 && text && text.length > 4000) {
+          throw new Error("ai_embed_http_400: the input length exceeds the context length");
+        }
+        return { data: batch.map(() => Array(1024).fill(0.1)) };
+      },
+    };
+    // A single-item embedTexts call goes straight to the batch path (batchSize defaults to 96, so one text
+    // never needs the per-item retry split) -- it throws on the oversized text, then embedTexts' own
+    // per-item-retry loop calls embedSingleText, which is where the NEW truncate-and-retry logic lives.
+    const out = await embedTexts(inference, [bigText]);
+    expect(out).toEqual([Array(1024).fill(0.1)]);
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_truncate_retry"))).toBe(true);
+    // Truncated success still means the batch was "degraded" (the initial full-length attempt failed), but
+    // the item itself is NOT counted as failed since it ultimately got a real vector.
+    expect(errorSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_batch_degraded"))).toBe(false);
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("REGRESSION (GITTENSORY-D): a context-length overflow that ALSO fails truncated still gives up after exactly one retry (no infinite loop)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bigText = "x".repeat(5000);
+    let calls = 0;
+    const inference: InferenceAdapter = {
+      run: async () => {
+        calls += 1;
+        throw new Error("ai_embed_http_400: the input length exceeds the context length");
+      },
+    };
+    const out = await embedTexts(inference, [bigText]);
+    expect(out).toEqual([null]);
+    // batch attempt (1) + per-item retry at full length (1) + truncated retry (1) = 3, never more (the
+    // truncated length is exactly CONTEXT_OVERFLOW_RETRY_CHARS, so the `text.length > ...` guard stops it
+    // from truncating again).
+    expect(calls).toBe(3);
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_truncate_retry"))).toBe(true);
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_error"))).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it("does NOT truncate-retry a non-context-length error, even on an oversized text (only the specific failure mode this can fix gets a retry)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const bigText = "x".repeat(5000);
+    let calls = 0;
+    const inference: InferenceAdapter = {
+      run: async () => {
+        calls += 1;
+        throw new Error("ai_embed_http_503: upstream unavailable");
+      },
+    };
+    const out = await embedTexts(inference, [bigText]);
+    expect(out).toEqual([null]);
+    expect(calls).toBe(2); // batch attempt + one per-item retry at FULL length, no truncate-retry
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_truncate_retry"))).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it("does NOT truncate-retry a context-length error on a SHORT text (already at/under the retry length, nothing smaller to try)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let calls = 0;
+    const inference: InferenceAdapter = {
+      run: async () => {
+        calls += 1;
+        throw new Error("ai_embed_http_400: the input length exceeds the context length");
+      },
+    };
+    const out = await embedTexts(inference, ["short"]);
+    expect(out).toEqual([null]);
+    expect(calls).toBe(2); // batch attempt + one per-item retry at full length; "short".length(5) is not > 4000
+    expect(warnSpy.mock.calls.some((c) => typeof c[0] === "string" && c[0].includes("rag_embed_item_truncate_retry"))).toBe(false);
+    vi.restoreAllMocks();
+  });
+
   it("logs nothing when a batch-level glitch self-heals — every item succeeds once retried individually (failedCount === 0)", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     let batchCalls = 0;

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/JSONbored/gittensory/compare/mcp-v0.8.1...mcp-v0.9.0) (2026-07-14)
+
+
+### Features
+
+* **mcp:** wire gittensory_feasibility_gate's claimStatus to the local claim ledger ([#5157](https://github.com/JSONbored/gittensory/issues/5157)) ([#5389](https://github.com/JSONbored/gittensory/issues/5389)) ([91b235d](https://github.com/JSONbored/gittensory/commit/91b235dbc4c9e3c818ff0a76e98f087c1f3ec8c2))
+
 ## [0.8.0](https://github.com/JSONbored/gittensory/compare/mcp-v0.7.1...mcp-v0.8.0) (2026-07-14)
 
 

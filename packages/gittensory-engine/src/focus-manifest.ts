@@ -953,7 +953,7 @@ export type FocusManifestGuidance = {
 const MAX_LIST_ITEMS = 200;
 const MAX_ITEM_LENGTH = 300;
 const MAX_GLOBSTAR_SLASH_ALTERNATIVES = 128;
-// 128 KiB, not 64 KiB: gittensory.full.yml (our own reference doc, parsed by config-templates.test.ts as a
+// 128 KiB, not 64 KiB: loopover.full.yml (our own reference doc, parsed by config-templates.test.ts as a
 // round-trip check) organically grows every time a new review.* knob ships and had already reached 65522/65536
 // bytes on main before this comment was written -- one doc line from any PR would trip the old ceiling. A real
 // per-repo .gittensory.yml never needs anywhere near this size, so the DoS-guard intent is unaffected (#2006).

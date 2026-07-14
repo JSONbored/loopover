@@ -23,7 +23,7 @@ export const Route = createFileRoute("/app/workbench")({
 const LABELS: Record<Tab, string> = {
   miner: "Miner",
   playground: "Playground",
-  commands: "@gittensory",
+  commands: "@loopover",
   digest: "Digest",
 };
 
@@ -50,7 +50,7 @@ function Workbench() {
       <PageHeader
         eyebrow="Workbench"
         title="Plan, preflight, and explain"
-        description="Drive ranked next actions, run agent tools, preview maintainer commands, and inspect digests from the live Gittensory API."
+        description="Drive ranked next actions, run agent tools, preview maintainer commands, and inspect digests from the live LoopOver API."
       />
       <Tabs
         value={value}

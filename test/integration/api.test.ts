@@ -132,7 +132,7 @@ describe("api routes", () => {
 
     const unauthenticatedSpec = await app.request("/openapi.json", {}, env);
     expect(unauthenticatedSpec.status).toBe(200);
-    await expect(unauthenticatedSpec.json()).resolves.toMatchObject({ info: { title: "Gittensory API" } });
+    await expect(unauthenticatedSpec.json()).resolves.toMatchObject({ info: { title: "LoopOver API" } });
   });
 
   it("serves public GitHub repo stats without relying on browser GitHub quota", async () => {
@@ -2612,7 +2612,7 @@ describe("api routes", () => {
     expect(ownerWeeklyReportMarkdown.status).toBe(200);
     expect(ownerWeeklyReportMarkdown.headers.get("content-type")).toContain("text/markdown");
     const ownerWeeklyReportMarkdownText = await ownerWeeklyReportMarkdown.text();
-    expect(ownerWeeklyReportMarkdownText).toContain("# Weekly Gittensory value report");
+    expect(ownerWeeklyReportMarkdownText).toContain("# Weekly LoopOver value report");
     expect(ownerWeeklyReportMarkdownText).toContain("## Maintainer trust");
     expect(ownerWeeklyReportMarkdownText).not.toContain("## Operator detail");
     expect(ownerWeeklyReportMarkdownText).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
@@ -3190,7 +3190,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: apiHeaders(env),
-        body: JSON.stringify({ command: "@gittensory public-summary", repoFullName: "entrius/allways-ui", pullNumber: 12 }),
+        body: JSON.stringify({ command: "@loopover public-summary", repoFullName: "entrius/allways-ui", pullNumber: 12 }),
       },
       env,
     );
@@ -3217,7 +3217,7 @@ describe("api routes", () => {
         endpoint: "GitHub issue comment",
         decision: { status: "ready", willComment: true, willLabel: false, willCheckRun: false },
         sanitizer: { passed: true, forbiddenTerms: [] },
-        body: expect.stringContaining("**Gittensory preflight**"),
+        body: expect.stringContaining("**LoopOver preflight**"),
       },
     });
     expect(commandResponsePreviewBody.preview.body).toContain("| Scope | entrius/allways-ui#12 |");
@@ -3323,7 +3323,7 @@ describe("api routes", () => {
     );
     expect(helpPreview.status).toBe(200);
     await expect(helpPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**Gittensory command help**") },
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**LoopOver command help**") },
     });
 
     const maintainerCommandPreview = await app.request(
@@ -3342,7 +3342,7 @@ describe("api routes", () => {
     );
     expect(maintainerCommandPreview.status).toBe(200);
     await expect(maintainerCommandPreview.json()).resolves.toMatchObject({
-      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**Gittensory maintainer queue summary**") },
+      preview: { decision: { status: "ready", willComment: true }, body: expect.stringContaining("**LoopOver maintainer queue summary**") },
     });
 
     const maintainerMinerContextPreview = await app.request(
@@ -5987,7 +5987,7 @@ describe("api routes", () => {
     await expect(unknownReadiness.json()).resolves.toMatchObject({
       ready: false,
       recommendedRegistrationMode: "direct_pr",
-      blockers: expect.arrayContaining(["Repository is not registered in the latest Gittensory registry snapshot."]),
+      blockers: expect.arrayContaining(["Repository is not registered in the latest LoopOver registry snapshot."]),
     });
 
     await upsertRepositorySettings(env, {

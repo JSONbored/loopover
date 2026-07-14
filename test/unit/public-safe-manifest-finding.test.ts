@@ -34,7 +34,7 @@ describe("publicSafeManifestPolicyFinding", () => {
     expect(safe.action).toBe(finding.action);
   });
 
-  // #4583: surfaces `@gittensory generate-tests` inline in the SAME comment as the missing-coverage finding
+  // #4583: surfaces `@loopover generate-tests` inline in the SAME comment as the missing-coverage finding
   // (mirrors CodeRabbit's inline walkthrough checkbox), gated on the caller-resolved e2eTests feature state.
   it("appends the generate-tests CTA to the missing-tests finding when e2e test generation is available", () => {
     const finding: FocusManifestFinding = {
@@ -46,7 +46,7 @@ describe("publicSafeManifestPolicyFinding", () => {
     };
     const safe = publicSafeManifestPolicyFinding(finding, { e2eTestGenAvailable: true });
     expect(safe.action).toBe(
-      "Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations. Maintainers can also comment `@gittensory generate-tests` for an AI-generated Playwright test.",
+      "Add regression/invariant coverage, update relevant tests, or attach passing validation output that satisfies the repo's configured expectations. Maintainers can also comment `@loopover generate-tests` for an AI-generated Playwright test.",
     );
   });
 

@@ -3,116 +3,116 @@
 export const PUBLIC_COMMAND_ENTRIES = [
   {
     id: "help",
-    title: "Gittensory command help",
-    description: "Show public-safe @gittensory command help.",
+    title: "LoopOver command help",
+    description: "Show public-safe @loopover command help.",
   },
   {
     id: "ask",
-    title: "Gittensory contribution context Q&A",
+    title: "LoopOver contribution context Q&A",
     description:
       "Answer contribution-quality questions from connected cached sources with citations.",
   },
   {
     id: "chat",
-    title: "Gittensory grounded chat Q&A",
+    title: "LoopOver grounded chat Q&A",
     description:
       "Answer a question in natural prose from cached decision-pack facts via local Ollama (maintainer/collaborator; read-only).",
   },
   {
     id: "preflight",
-    title: "Gittensory preflight",
+    title: "LoopOver preflight",
     description: "Summarize public PR hygiene and validation readiness.",
   },
   {
     id: "blockers",
-    title: "Gittensory readiness blockers",
+    title: "LoopOver readiness blockers",
     description: "Explain public-safe readiness blockers.",
   },
   {
     id: "duplicate-check",
-    title: "Gittensory duplicate & WIP check",
+    title: "LoopOver duplicate & WIP check",
     description: "Summarize duplicate and in-progress overlap caution.",
   },
   {
     id: "miner-context",
-    title: "Gittensory miner context",
+    title: "LoopOver miner context",
     description: "Confirm public Gittensor miner context when available.",
   },
   {
     id: "next-action",
-    title: "Gittensory next step",
+    title: "LoopOver next step",
     description: "Suggest the next public-safe action.",
   },
   {
     id: "reviewability",
-    title: "Gittensory PR readiness",
+    title: "LoopOver PR readiness",
     description: "Summarize maintainer-friendly PR readiness without private review internals.",
   },
   {
     id: "repo-fit",
-    title: "Gittensory repository fit",
+    title: "LoopOver repository fit",
     description: "Summarize public-safe repository fit signals.",
   },
   {
     id: "packet",
-    title: "Gittensory public packet",
+    title: "LoopOver public packet",
     description: "Prepare public-safe PR packet guidance.",
   },
 ] as const;
 
 export const PUBLIC_COMMAND_LIST =
-  "@gittensory help\n@gittensory ask\n@gittensory chat\n@gittensory preflight\n@gittensory blockers\n@gittensory duplicate-check\n@gittensory miner-context\n@gittensory next-action\n@gittensory reviewability\n@gittensory repo-fit\n@gittensory packet";
+  "@loopover help\n@loopover ask\n@loopover chat\n@loopover preflight\n@loopover blockers\n@loopover duplicate-check\n@loopover miner-context\n@loopover next-action\n@loopover reviewability\n@loopover repo-fit\n@loopover packet";
 
 export const MAINTAINER_COMMAND_ENTRIES = [
   {
     id: "queue-summary",
-    title: "Gittensory maintainer queue summary",
+    title: "LoopOver maintainer queue summary",
     description: "Post a maintainer-only queue digest from cached GitHub metadata.",
   },
   {
     id: "confirmed-miners",
-    title: "Gittensory confirmed-miner PRs",
+    title: "LoopOver confirmed-miner PRs",
     description: "List open PRs whose authors are confirmed in the official-miner cache.",
   },
   {
     id: "review-now",
-    title: "Gittensory review-now queue",
+    title: "LoopOver review-now queue",
     description: "List cached PRs that look ready for maintainer review.",
   },
   {
     id: "needs-author",
-    title: "Gittensory needs-author queue",
+    title: "LoopOver needs-author queue",
     description: "List cached PRs that need author cleanup before detailed review.",
   },
   {
     id: "duplicate-clusters",
-    title: "Gittensory duplicate clusters",
+    title: "LoopOver duplicate clusters",
     description: "List duplicate or WIP clusters visible from cached GitHub metadata.",
   },
   {
     id: "burden-forecast",
-    title: "Gittensory burden forecast",
+    title: "LoopOver burden forecast",
     description: "Project maintainer review load and queue-growth risk from cached metadata.",
   },
   {
     id: "intake-health",
-    title: "Gittensory intake health",
+    title: "LoopOver intake health",
     description: "Summarize contributor-intake health from cached queue and config signals.",
   },
   {
     id: "outcome-patterns",
-    title: "Gittensory outcome patterns",
+    title: "LoopOver outcome patterns",
     description: "Summarize what this repo actually merges vs closes from cached PR outcomes.",
   },
   {
     id: "noise-report",
-    title: "Gittensory noise report",
+    title: "LoopOver noise report",
     description: "Highlight queue noise sources maintainers should triage first.",
   },
 ] as const;
 
 export const MAINTAINER_COMMAND_LIST =
-  "@gittensory queue-summary\n@gittensory confirmed-miners\n@gittensory review-now\n@gittensory needs-author\n@gittensory duplicate-clusters\n@gittensory burden-forecast\n@gittensory intake-health\n@gittensory outcome-patterns\n@gittensory noise-report";
+  "@loopover queue-summary\n@loopover confirmed-miners\n@loopover review-now\n@loopover needs-author\n@loopover duplicate-clusters\n@loopover burden-forecast\n@loopover intake-health\n@loopover outcome-patterns\n@loopover noise-report";
 
 export const ACTION_COMMAND_ENTRIES = [
   {
@@ -125,7 +125,7 @@ export const ACTION_COMMAND_ENTRIES = [
     id: "review",
     title: "Request review",
     description:
-      "Request an auto-review run on the current PR head (`@gittensory re-review` is an alias).",
+      "Request an auto-review run on the current PR head (`@loopover re-review` is an alias).",
   },
   {
     id: "pause",
@@ -165,4 +165,4 @@ export const ACTION_COMMAND_ENTRIES = [
 ] as const;
 
 export const ACTION_COMMAND_LIST =
-  "@gittensory gate-override\n@gittensory review\n@gittensory pause\n@gittensory resume\n@gittensory resolve\n@gittensory configuration\n@gittensory explain\n@gittensory generate-tests";
+  "@loopover gate-override\n@loopover review\n@loopover pause\n@loopover resume\n@loopover resolve\n@loopover configuration\n@loopover explain\n@loopover generate-tests";

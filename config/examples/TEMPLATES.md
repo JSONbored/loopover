@@ -5,7 +5,7 @@ Copy-paste templates for the per-repo review manifest. Every file in this direct
 (`GITTENSORY_REPO_CONFIG_DIR`).
 
 > **Filename note:** the canonical manifest filename is **`.loopover.yml`**. The *template*
-> filenames catalogued below (e.g. `gittensory.minimal.yml`) are a separate, unrelated naming
+> filenames catalogued below (e.g. `loopover.minimal.yml`) are a separate, unrelated naming
 > concern and are left as-is — see the "Quick start" section for the destination filename you
 > actually create.
 
@@ -13,14 +13,14 @@ Copy-paste templates for the per-repo review manifest. Every file in this direct
 
 | File | Purpose |
 |------|---------|
-| [`gittensory.minimal.yml`](./gittensory.minimal.yml) | Smallest safe starter — gate off, observe-only autonomy, no accidental writes |
-| [`gittensory.full.yml`](./gittensory.full.yml) | Exhaustive commented reference — every `gate:`, `settings:`, `review:`, and `features:` field |
-| [`global.gittensory.yml`](./global.gittensory.yml) | **Private only** — illustrative fleet-wide default for a self-host mount |
-| [`repo-override.gittensory.yml`](./repo-override.gittensory.yml) | **Private only** — per-repo overlay deep-merged over `global.gittensory.yml` |
-| [`shared.gittensory.yml`](./shared.gittensory.yml) | **Private only** — lowest-priority cross-repo house policy for multi-repo operators (#1959) |
+| [`loopover.minimal.yml`](./loopover.minimal.yml) | Smallest safe starter — gate off, observe-only autonomy, no accidental writes |
+| [`loopover.full.yml`](./loopover.full.yml) | Exhaustive commented reference — every `gate:`, `settings:`, `review:`, and `features:` field |
+| [`global.loopover.yml`](./global.loopover.yml) | **Private only** — illustrative fleet-wide default for a self-host mount |
+| [`repo-override.loopover.yml`](./repo-override.loopover.yml) | **Private only** — per-repo overlay deep-merged over `global.loopover.yml` |
+| [`shared.loopover.yml`](./shared.loopover.yml) | **Private only** — lowest-priority cross-repo house policy for multi-repo operators (#1959) |
 
 Canonical copies of the minimal and full templates also live at the repo root as
-[`.gittensory.minimal.yml`](../../.gittensory.minimal.yml) and
+[`.loopover.minimal.yml`](../../.loopover.minimal.yml) and
 [`.loopover.yml.example`](../../.loopover.yml.example). CI keeps the `config/examples/` copies
 in sync with those files.
 
@@ -38,7 +38,7 @@ public repo file for that review — mount private policy deliberately. See [REA
 for precedence and deep-merge rules.
 
 **Never commit real private policy** (maintainer logins, thresholds, autonomy dials you do not want
-contributors to read) into a public repository. Copy `global.gittensory.yml` into your gitignored
+contributors to read) into a public repository. Copy `global.loopover.yml` into your gitignored
 `gittensory-config/` mount and edit there.
 
 ## Quick start
@@ -46,7 +46,7 @@ contributors to read) into a public repository. Copy `global.gittensory.yml` int
 ### Public repo (contributor-visible config)
 
 ```bash
-cp config/examples/gittensory.minimal.yml .loopover.yml
+cp config/examples/loopover.minimal.yml .loopover.yml
 # edit wantedPaths / gate when ready
 ```
 
@@ -54,11 +54,11 @@ cp config/examples/gittensory.minimal.yml .loopover.yml
 
 ```bash
 mkdir -p gittensory-config
-cp config/examples/global.gittensory.yml gittensory-config/.loopover.yml
+cp config/examples/global.loopover.yml gittensory-config/.loopover.yml
 # edit your-admin-login placeholders before going live
 # optional per-repo overlay:
 mkdir -p gittensory-config/myorg__myrepo
-cp config/examples/repo-override.gittensory.yml gittensory-config/myorg__myrepo/.loopover.yml
+cp config/examples/repo-override.loopover.yml gittensory-config/myorg__myrepo/.loopover.yml
 ```
 
 Point `GITTENSORY_REPO_CONFIG_DIR` at that directory (default `/config` in `docker-compose.yml` maps
@@ -75,13 +75,13 @@ into public git** — use the private mount for anything marked *private* below.
   contributors should understand.
 - **Private** `gittensory-config/` (gitignored locally, operator mount in production): fleet
   autonomy, anti-abuse caps, maintainer exemption lists — the same split described in
-  [`global.gittensory.yml`](./global.gittensory.yml).
-- Start from `gittensory.minimal.yml` in the public repo until gate semantics are tuned, then promote
+  [`global.loopover.yml`](./global.loopover.yml).
+- Start from `loopover.minimal.yml` in the public repo until gate semantics are tuned, then promote
   fields into the private global default as you enable autonomous review.
 
 ### `JSONbored/awesome-claude` (public template repo)
 
-- Prefer **`gittensory.minimal.yml`** or a trimmed public manifest: `wantedPaths`, linked-issue
+- Prefer **`loopover.minimal.yml`** or a trimmed public manifest: `wantedPaths`, linked-issue
   policy, and advisory gate modes only.
 - Keep contributor caps, `autoCloseExemptLogins`, and `autonomy.close: auto` in **private config
   only** — this repo is meant to be copied; do not bake operator-specific enforcement into its
@@ -91,8 +91,8 @@ into public git** — use the private mount for anything marked *private* below.
 
 - Same split as `gittensory`: public manifest for transparent contributor guidance; private mount
   for thresholds and maintainer-only rules.
-- Use `repo-override.gittensory.yml` when one repo needs different `expectedCiContexts` or
-  `gate.checkMode: disabled` while sharing a fleet-wide `global.gittensory.yml` baseline.
+- Use `repo-override.loopover.yml` when one repo needs different `expectedCiContexts` or
+  `gate.checkMode: disabled` while sharing a fleet-wide `global.loopover.yml` baseline.
 
 ## Validation
 

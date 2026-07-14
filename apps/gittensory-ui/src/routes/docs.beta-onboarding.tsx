@@ -126,8 +126,8 @@ gittensory-mcp preflight --login your-login --json`}
         </li>
         <li>
           <strong>Preview the public surface.</strong> Dry-run what would be written to GitHub
-          without mutating state. Keep <strong>Gittensory Context</strong> advisory; require{" "}
-          <strong>Gittensory Orb Review Agent</strong> only after blocking rules are explicitly
+          without mutating state. Keep <strong>LoopOver Context</strong> advisory; require{" "}
+          <strong>LoopOver Orb Review Agent</strong> only after blocking rules are explicitly
           configured.
           <CodeBlock
             lang="http"
@@ -144,13 +144,13 @@ gittensory-mcp preflight --login your-login --json`}
           <strong>Use maintainer commands.</strong> On-demand context in the PR thread — output
           stays maintainer-scoped when appropriate.
           <CodeBlock
-            code={`@gittensory help
-@gittensory preflight
-@gittensory blockers
-@gittensory duplicate-check
-@gittensory miner-context
-@gittensory next-action
-@gittensory reviewability`}
+            code={`@loopover help
+@loopover preflight
+@loopover blockers
+@loopover duplicate-check
+@loopover miner-context
+@loopover next-action
+@loopover reviewability`}
           />
         </li>
       </ol>

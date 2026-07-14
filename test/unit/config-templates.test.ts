@@ -32,20 +32,20 @@ function bodyFromMarker(content: string, marker: string): string {
 }
 
 describe("config/examples review templates (#1682)", () => {
-  it("gittensory.full.yml body matches .loopover.yml.example from WHERE IT LIVES onward", () => {
-    const full = readConfigExample("gittensory.full.yml");
+  it("loopover.full.yml body matches .loopover.yml.example from WHERE IT LIVES onward", () => {
+    const full = readConfigExample("loopover.full.yml");
     const example = readRoot(".loopover.yml.example");
     expect(bodyFromMarker(full, CANONICAL_BODY_MARKER)).toBe(bodyFromMarker(example, CANONICAL_BODY_MARKER));
   });
 
-  it("gittensory.minimal.yml body matches .gittensory.minimal.yml from Safe by default onward", () => {
-    const minimal = readConfigExample("gittensory.minimal.yml");
-    const root = readRoot(".gittensory.minimal.yml");
+  it("loopover.minimal.yml body matches .loopover.minimal.yml from Safe by default onward", () => {
+    const minimal = readConfigExample("loopover.minimal.yml");
+    const root = readRoot(".loopover.minimal.yml");
     expect(bodyFromMarker(minimal, MINIMAL_BODY_MARKER)).toBe(bodyFromMarker(root, MINIMAL_BODY_MARKER));
   });
 
-  it("parses gittensory.full.yml with zero warnings", () => {
-    const manifest = parseFocusManifestContent(readConfigExample("gittensory.full.yml"), "repo_file");
+  it("parses loopover.full.yml with zero warnings", () => {
+    const manifest = parseFocusManifestContent(readConfigExample("loopover.full.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);
     expect(manifest.present).toBe(true);
     expect(manifest.gate.sizeMode).toBe("off");
@@ -58,37 +58,37 @@ describe("config/examples review templates (#1682)", () => {
   // lintManifestText is the ONLY function with the retired-field check (config-lint.ts's
   // RETIRED_FIELD_MIGRATION_WARNINGS); assert it separately so a retired field reintroduced here fails
   // CI instead of only being caught by eye.
-  it("lints gittensory.full.yml with zero warnings, including no retired top-level fields", () => {
-    const result = lintManifestText(readConfigExample("gittensory.full.yml"));
+  it("lints loopover.full.yml with zero warnings, including no retired top-level fields", () => {
+    const result = lintManifestText(readConfigExample("loopover.full.yml"));
     expect(result.warnings).toEqual([]);
     expect(result.ok).toBe(true);
   });
 
-  it("documents every shipped review.auto_review eligibility knob in gittensory.full.yml (#2055)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+  it("documents every shipped review.auto_review eligibility knob in loopover.full.yml (#2055)", () => {
+    const full = readConfigExample("loopover.full.yml");
     for (const field of ["skip_labels", "skip_docs_only", "max_added_lines", "max_files"]) {
       expect(full, `missing auto_review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
     expect(full).not.toMatch(/not parsed yet/);
   });
 
-  it("documents shipped unified-comment display toggles in gittensory.full.yml (#2069)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+  it("documents shipped unified-comment display toggles in loopover.full.yml (#2069)", () => {
+    const full = readConfigExample("loopover.full.yml");
     for (const field of ["changed_files_summary", "effort_score", "min_finding_severity"]) {
       expect(full, `missing review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
     expect(full).not.toMatch(/Planned display toggle/);
   });
 
-  it("documents shipped inline-comment review toggles in gittensory.full.yml (#2156)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+  it("documents shipped inline-comment review toggles in loopover.full.yml (#2156)", () => {
+    const full = readConfigExample("loopover.full.yml");
     for (const field of ["inline_comments", "suggestions", "finding_categories", "inline_comments_per_category"]) {
       expect(full, `missing review field ${field}`).toMatch(new RegExp(`# ${field}:`));
     }
   });
 
   it("resolves review.changed_files_summary via manifest parse + boolean helper (#2146)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# changed_files_summary:/);
     expect(parseFocusManifest({}).review.changedFilesSummary).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).changedFilesSummary).toBe(false);
@@ -102,7 +102,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.effort_score via manifest parse + boolean helper (#2152)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# effort_score:/);
     expect(parseFocusManifest({}).review.effortScore).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).effortScore).toBe(false);
@@ -116,7 +116,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.inline_comments_per_category via manifest parse + helper (#2159)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# inline_comments_per_category:/);
     expect(parseFocusManifest({}).review.inlineCommentsPerCategory).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).inlineCommentsPerCategory).toBeNull();
@@ -127,7 +127,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.impact_map via manifest parse + boolean helper (#2184)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# impact_map:/);
     expect(parseFocusManifest({}).review.impactMap).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).impactMap).toBe(false);
@@ -141,7 +141,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.culture_profile via manifest parse + boolean helper (#1683)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# culture_profile:/);
     expect(parseFocusManifest({}).review.cultureProfile).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).cultureProfile).toBe(false);
@@ -155,7 +155,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.max_findings via manifest parse + helper (#2211)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# max_findings:/);
     const empty = { blockers: null, nits: null };
     expect(parseFocusManifest({}).review.maxFindings).toEqual(empty);
@@ -167,7 +167,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves review.inline_comments via manifest parse + boolean helper (#2206)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/# inline_comments:/);
     expect(parseFocusManifest({}).review.inlineComments).toBeNull();
     expect(resolveReviewPromptOverrides(parseFocusManifest({})).inlineComments).toBe(false);
@@ -180,8 +180,8 @@ describe("config/examples review templates (#1682)", () => {
     expect(resolveReviewPromptOverrides(off).inlineComments).toBe(false);
   });
 
-  it("parses gittensory.minimal.yml with zero warnings and enables no agent actions", () => {
-    const manifest = parseFocusManifestContent(readConfigExample("gittensory.minimal.yml"), "repo_file");
+  it("parses loopover.minimal.yml with zero warnings and enables no agent actions", () => {
+    const manifest = parseFocusManifestContent(readConfigExample("loopover.minimal.yml"), "repo_file");
     expect(manifest.warnings).toEqual([]);
     expect(manifest.present).toBe(true);
     // #5355: the minimal starter uses checkMode: disabled (not the ambiguous legacy enabled: false) so it
@@ -196,7 +196,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves the gate-policy field group (enabled + advisory/block modes) via parse + gateConfigToJson round-trip (#2205)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/^gate:/m);
     expect(full).toMatch(/linkedIssue:/);
     // No gate block ⇒ no per-repo gate override (null), so an operator's absent gate policy stays inherited.
@@ -211,7 +211,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves the path-instructions + exclude-paths field group via parse + round-trip + glob application (#2209)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/exclude_paths:/);
     expect(full).toMatch(/path_instructions:/);
     // Defaults: both are empty lists — no per-path review instructions, nothing excluded.
@@ -235,7 +235,7 @@ describe("config/examples review templates (#1682)", () => {
   });
 
   it("resolves the autonomy-level field group (per-action dial) via parse + resolveAutonomy (#2213)", () => {
-    const full = readConfigExample("gittensory.full.yml");
+    const full = readConfigExample("loopover.full.yml");
     expect(full).toMatch(/autonomy:/);
     // Default: no autonomy config ⇒ not configured, and every action class resolves to the safe "observe" default.
     const def = parseFocusManifest({});

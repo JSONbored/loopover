@@ -1,4 +1,4 @@
-// #1960 PR control-surface — shared classifier for every @gittensory action-command handler (review, pause,
+// #1960 PR control-surface — shared classifier for every @loopover action-command handler (review, pause,
 // resume, resolve, configuration, explain; alongside the existing gate-override). maybeProcessGateOverrideCommand
 // and maybeProcessPlanCommand (src/queue/processors.ts) each hand-roll the SAME guard preamble: reject a comment
 // event that isn't `created`, reject a Bot/`[bot]` author, and reject a payload missing the repo/PR/installation/
@@ -9,7 +9,7 @@
 
 import type { GitHubWebhookPayload } from "../types";
 
-/** The validated request for an @gittensory PR-comment action command, or a skip reason. PURE so every guard
+/** The validated request for an @loopover PR-comment action command, or a skip reason. PURE so every guard
  *  (unsupported comment action, bot author, missing repo/PR/installation/actor) is exhaustively unit-tested
  *  without the webhook harness; the processor then carries a single `ok` branch. */
 export type PrCommandRequest =

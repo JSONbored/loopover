@@ -574,7 +574,7 @@ function formatOutputForClipboard(tool: Tool, result: unknown): string {
       "Thanks for the PR.",
       "",
       "This branch links to issue #1204 and passes basic preflight.",
-      "Maintainers can run `@gittensory blockers` for non-public context.",
+      "Maintainers can run `@loopover blockers` for non-public context.",
     ].join("\n");
   }
   const header = `// gittensory · ${tool} · preview`;

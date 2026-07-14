@@ -206,7 +206,7 @@ export function buildWeeklyValueReport(args: WeeklyValueReportInputs): WeeklyVal
 
 export function formatWeeklyValueReportMarkdown(report: WeeklyValueReport): string {
   const lines = [
-    "# Weekly Gittensory value report",
+    "# Weekly LoopOver value report",
     "",
     `- Generated: ${markdownText(report.generatedAt)}`,
     `- Variant: ${markdownText(report.variant)}`,

@@ -1,7 +1,7 @@
 import { parseGittensoryMentionCommand } from "./commands";
 import type { GitHubWebhookPayload } from "../types";
 
-/** The validated request for a `@gittensory configuration` command, `null` when the comment is not that command,
+/** The validated request for a `@loopover configuration` command, `null` when the comment is not that command,
  *  or a skip reason. PURE so every guard (wrong action, bot author, missing repo/issue/installation/actor) is
  *  exhaustively unit-tested without the webhook harness; the processor then carries a single `ok` branch. Unlike
  *  the issue-only planner, configuration is repo-level and answers on either a PR or an issue thread. (#2168) */

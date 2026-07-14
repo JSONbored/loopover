@@ -161,7 +161,7 @@ declare global {
      *  under this same name still works without code changes. */
     GITHUB_WEBHOOK_SECRET?: string;
     GITHUB_WEBHOOK_MAX_BODY_BYTES?: string;
-    /** Webhook secret for the central Gittensory Orb GitHub App (#1255) — distinct from the review app's
+    /** Webhook secret for the central LoopOver Orb GitHub App (#1255) — distinct from the review app's
      *  GITHUB_WEBHOOK_SECRET. Verifies inbound POST /v1/orb/webhook deliveries. Inject as a wrangler secret. */
     ORB_GITHUB_WEBHOOK_SECRET?: string;
     /** The central Orb GitHub App's OWN credentials (separate from the gittensory review App above). Inject as
@@ -461,7 +461,7 @@ declare global {
      *  GraphQL path reuses the REST-resolved required contexts and falls back to REST on any error, unexpected
      *  shape, or >100 rollup contexts. See fetchLiveCiAggregateViaGraphQl. */
     GITHUB_STATUS_ROLLUP_GRAPHQL?: string;
-    /** Convergence (#issue-coding-plan): the `@gittensory plan` command. Default OFF — `@gittensory plan` falls
+    /** Convergence (#issue-coding-plan): the `@loopover plan` command. Default OFF — `@loopover plan` falls
      *  through to the existing mention path, so the worker is byte-identical to today. Hosted planning is retired
      *  with the Cloudflare AI binding; self-host can run planning through the configured AI provider. */
     LOOPOVER_REVIEW_PLANNER?: string;

@@ -727,8 +727,8 @@ const PUBLIC_MANIFEST_POLICY_FINDING_OVERRIDES: Partial<
 
 // #4583: surfaces the AI test-generation command right where a maintainer already sees the missing-coverage
 // finding, mirroring CodeRabbit's inline "Generate unit tests" walkthrough checkbox instead of requiring the
-// maintainer to already know the `@gittensory generate-tests` command exists from documentation alone.
-const E2E_TEST_GEN_CTA = "Maintainers can also comment `@gittensory generate-tests` for an AI-generated Playwright test.";
+// maintainer to already know the `@loopover generate-tests` command exists from documentation alone.
+const E2E_TEST_GEN_CTA = "Maintainers can also comment `@loopover generate-tests` for an AI-generated Playwright test.";
 
 export function publicSafeManifestPolicyFinding(
   finding: FocusManifestFinding,
@@ -1961,7 +1961,7 @@ async function resolveLiveMigrationCollisionHold(
   const detail = collisions.map((c) => `${c.paddedNumber}: ${c.files.join(", ")}`).join("; ");
   return {
     reason: `live migrations/** collision on ${args.baseRef} (${detail})`,
-    comment: `Gittensory: a live check of \`migrations/**\` on \`${args.baseRef}\` found a migration-number collision that isn't visible from this PR's own diff — another PR merged a same-numbered migration file since this PR's CI last ran (**${detail}**). This PR is held for manual review — please rebase onto the latest \`${args.baseRef}\` and renumber your migration to the next free number before this can merge.`,
+    comment: `LoopOver: a live check of \`migrations/**\` on \`${args.baseRef}\` found a migration-number collision that isn't visible from this PR's own diff — another PR merged a same-numbered migration file since this PR's CI last ran (**${detail}**). This PR is held for manual review — please rebase onto the latest \`${args.baseRef}\` and renumber your migration to the next free number before this can merge.`,
   };
 }
 
@@ -5247,7 +5247,7 @@ async function maybeHandleReactionWebhookEvent(
  * Handles the `issue_comment` webhook event's command/mention dispatch chain — panel retrigger, panel
  * generate-tests, gate-override, resolve/explain/generate-tests/review/pause/resume/configuration/plan
  * mention commands, review-nag cooldown throttling, monitored-mention throttling, and the general
- * @gittensory mention command — in the SAME priority order as before, stopping at the first handler that
+ * @loopover mention command — in the SAME priority order as before, stopping at the first handler that
  * claims the comment. Returns `true` when any handler claimed it (the caller must return immediately),
  * `false` otherwise. Extracted from processGitHubWebhook (#4607) — pure code motion, no behavior change;
  * every branch, condition, and comment is preserved verbatim and in the same order.
@@ -5362,9 +5362,9 @@ async function maybeHandleIssueCommentCommandWebhookEvent(
     return true;
   }
 
-  // Maintainer-mention nag moderation (#label-scoping): independent of the @gittensory ping above — a
+  // Maintainer-mention nag moderation (#label-scoping): independent of the @loopover ping above — a
   // mention of a configured maintainer login is never a bot command, so this must run regardless of whether
-  // the comment also contains an @gittensory mention/command.
+  // the comment also contains an @loopover mention/command.
   if (
     eventName === "issue_comment" &&
     (await maybeThrottleMonitoredMentions(env, deliveryId, payload))
@@ -7405,7 +7405,7 @@ async function maybeApplyManifestPolicyGate(
     // suppress review/public output only, never maintainer-configured gate blockers or their downstream triggers.
     const policyFindings = guidance.findings;
     // Computed once and reused below for the #4196 auto-trigger check -- same feature gate, one call. Also
-    // feeds #4583's inline CTA so the missing-tests finding surfaces `@gittensory generate-tests` right in
+    // feeds #4583's inline CTA so the missing-tests finding surfaces `@loopover generate-tests` right in
     // ORB's own comment (mirrors CodeRabbit's inline walkthrough checkbox) only when the command would
     // actually work for this repo, never as noise on a repo that hasn't opted in.
     const e2eTestGenAvailable = resolveConvergedFeature(env, manifest, "e2eTests", args.repoFullName);
@@ -7415,7 +7415,7 @@ async function maybeApplyManifestPolicyGate(
     }
     // E2E test-generation auto-trigger (#4196, part of the #4189 epic): promotes the deterministic
     // manifest_missing_tests finding above from advisory-only text into an actual trigger for #4192/#4194's
-    // generation-and-render path -- additive to, never a replacement for, the explicit `@gittensory
+    // generation-and-render path -- additive to, never a replacement for, the explicit `@loopover
     // generate-tests` command (#4195), which stays available regardless of whether this signal fired.
     // Filters the SAME policyFindings just computed above rather than re-deriving "PR probably needs
     // tests" from scratch, per the issue's own requirement -- this is why the auto-trigger lives inside this
@@ -7617,7 +7617,7 @@ async function maybePublishPrPublicSurface(
   const autoReviewConfig = resolveReviewAutoReviewConfig(reviewManifest);
   // #one-shot-review-cadence: resolved once, up front, so all three AI dispatch sites below (slop,
   // linked-issue satisfaction, main review) see the same answer. An explicit maintainer retrigger
-  // (forceAiReview, set by the PR-panel checkbox or a maintainer's `@gittensory review`) always bypasses
+  // (forceAiReview, set by the PR-panel checkbox or a maintainer's `@loopover review`) always bypasses
   // one-shot mode regardless of cadence -- that is the whole point of "one-shot until you ask again."
   const oneShotCadenceActive =
     resolveAiReviewCadence(env, autoReviewConfig.cadence) === "one_shot" &&
@@ -10392,7 +10392,7 @@ export async function resolveOverrideHeadSha(
 }
 
 /**
- * Handle `@gittensory gate-override <reason>` on a PR thread. SECURITY-SENSITIVE: this finalizes the Gate
+ * Handle `@loopover gate-override <reason>` on a PR thread. SECURITY-SENSITIVE: this finalizes the Gate
  * check to neutral for the current commit, so authorization MUST come from real repo permission
  * (resolveRealRepoPermissionAssociation → getRepositoryCollaboratorPermission), never the spoofable
  * payload.comment.author_association. The override is intentionally NOT persisted: a follow-up push
@@ -10511,7 +10511,7 @@ async function maybeProcessGateOverrideCommand(
   }
 
   // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2256). Without this,
-  // an operator's pause or the DB kill-switch does not stop a maintainer's @gittensory gate-override from
+  // an operator's pause or the DB kill-switch does not stop a maintainer's @loopover gate-override from
   // flipping the live Gate check-run to neutral and posting a real confirmation comment.
   const mode = resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
@@ -10693,7 +10693,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   await recordGithubProductUsage(env, "finding_resolved", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); return true; }
 
 /**
- * `@gittensory review` (#2163, part of #1960, alias `re-review`): a maintainer/collaborator/confirmed-miner
+ * `@loopover review` (#2163, part of #1960, alias `re-review`): a maintainer/collaborator/confirmed-miner
  * asks for an AUTO-REVIEW pass on this PR. AUTO-REVIEW SCOPE ONLY, same hard constraint as pause/resolve/
  * explain (#1960): this dispatches to the EXISTING reReviewStoredPullRequest path. Maintainers and
  * collaborators keep the explicit fresh-review behavior; author/miner self-reruns intentionally reuse the
@@ -10752,7 +10752,7 @@ async function recordReviewCommandSkip(env: Env, deliveryId: string, repoFullNam
 }
 
 /**
- * `@gittensory pause` (#2164, part of #1960): a maintainer pauses AUTO-REVIEW for THIS PR only by recording a
+ * `@loopover pause` (#2164, part of #1960): a maintainer pauses AUTO-REVIEW for THIS PR only by recording a
  * per-PR `github_app.autoreview_paused` marker (an audit event keyed to repo#pr) that the sweep/webhook re-review
  * path can honor. AUTO-REVIEW SCOPE ONLY — it deliberately touches neither the Gate check-run, the AgentActionMode,
  * nor any advisory, so the one-shot gate disposition and its enforcement are left intact (#1960's hard constraint:
@@ -10787,7 +10787,7 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     return true;
   }
   const safeReason = sanitizePublicComment((command.reason ?? "").trim() || "No reason provided.");
-  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review paused by @${req.actor}**`, "> Auto-review is paused for this PR only. Gate enforcement and the one-shot disposition are unchanged; use `@gittensory resume` to re-enable auto-review.", "", `- Reason: ${safeReason}`, "", "---", gittensoryFooter(env)].join("\n"));
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review paused by @${req.actor}**`, "> Auto-review is paused for this PR only. Gate enforcement and the one-shot disposition are unchanged; use `@loopover resume` to re-enable auto-review.", "", `- Reason: ${safeReason}`, "", "---", gittensoryFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   await recordAuditEvent(env, { eventType: "github_app.autoreview_paused", actor: req.actor, targetKey, outcome: "completed", detail: safeReason, metadata: { deliveryId, repoFullName: req.repoFullName } });
   await recordGithubProductUsage(env, "autoreview_paused", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { actorKind: authorization.actorKind } });
@@ -10800,7 +10800,7 @@ async function recordAutoreviewPausedSkip(env: Env, deliveryId: string, repoFull
 }
 
 /**
- * `@gittensory resume` (#2165, part of #1960): the inverse of pause — clears the per-PR auto-review-paused
+ * `@loopover resume` (#2165, part of #1960): the inverse of pause — clears the per-PR auto-review-paused
  * marker by recording a `github_app.autoreview_resumed` event that SUPERSEDES an earlier pause (see
  * hasAutoreviewPausedMarker below, which now reads the MOST RECENT of {paused, resumed} rather than merely
  * checking pause existence — see that function's own doc comment for why the old existence-only check made
@@ -10866,7 +10866,7 @@ async function hasAutoreviewPausedMarker(env: Env, repoFullName: string, prNumbe
 }
 
 /**
- * `@gittensory explain <finding>` (#2169, part of #1960): a contributor/maintainer asks for more detail on a
+ * `@loopover explain <finding>` (#2169, part of #1960): a contributor/maintainer asks for more detail on a
  * specific posted review finding. Read-only — it looks the finding up in THIS PR's current advisory (the same
  * source `resolve` acts on) and echoes its ALREADY-generated, public-safe rationale; it deliberately runs NO
  * model (new generation is a separate maintainer-owned budget concern) and mutates nothing, so — like the
@@ -10911,7 +10911,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") {
-    const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@gittensory explain <finding-id>` with an id from the review summary.", "", "---", gittensoryFooter(env)].join("\n"));
+    const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", gittensoryFooter(env)].join("\n"));
     await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, notFound);
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "finding_not_found");
     return true;
@@ -10946,7 +10946,7 @@ async function recordFindingExplainedSkip(env: Env, deliveryId: string, repoFull
 }
 
 /**
- * `@gittensory generate-tests` (#4195, part of the #4189 epic): on-demand, MAINTAINER-ONLY AI-generated E2E
+ * `@loopover generate-tests` (#4195, part of the #4189 epic): on-demand, MAINTAINER-ONLY AI-generated E2E
  * test coverage for this PR's changed behavior, posted as its own reply comment — mirroring
  * `maybeProcessExplainCommand`'s classify → authorize → act → audit shape exactly, but posting fresh
  * generated content rather than explaining already-published findings.
@@ -11009,7 +11009,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
 }
 
 /**
- * The shared generation-and-delivery core behind `@gittensory generate-tests` (#4195, the explicit command),
+ * The shared generation-and-delivery core behind `@loopover generate-tests` (#4195, the explicit command),
  * the `manifest_missing_tests` auto-trigger (#4196), and the panel checkbox (#4589) — one code path, so the
  * three triggers can never silently drift apart. Everything the caller must have already resolved BEFORE this
  * runs: the feature is enabled (#4192's `resolveConvergedFeature` gate), the repo is not paused/dry-run
@@ -11164,7 +11164,7 @@ async function appendPublishedAiReviewFindingsForResolve(
 }
 
 /**
- * `@gittensory configuration` (#2168): post the EFFECTIVE resolved review config (yml>DB>defaults) as a
+ * `@loopover configuration` (#2168): post the EFFECTIVE resolved review config (yml>DB>defaults) as a
  * public-safe comment so a maintainer can see what's actually in force without the dashboard. Read-only — it never
  * mutates the PR, so unlike gate-override it always answers a maintainer's direct query (the displayed execution
  * mode still reflects a pause). Honors the repo's per-repo `commandAuthorization` for `configuration` over the REAL
@@ -11234,10 +11234,10 @@ async function recordConfigurationSkip(
 }
 
 /**
- * `@gittensory plan` (#issue-coding-plan, flag-gated by LOOPOVER_REVIEW_PLANNER). On a MAINTAINER's comment on
+ * `@loopover plan` (#issue-coding-plan, flag-gated by LOOPOVER_REVIEW_PLANNER). On a MAINTAINER's comment on
  * an ISSUE (not a PR), generate a concise implementation plan from the issue text via Workers AI and post it as an
  * issue comment so a contributor has a concrete starting point. Flag-OFF (default) returns false immediately
- * (BEFORE any parse), so `@gittensory plan` falls through to the existing mention path → byte-identical. Returns
+ * (BEFORE any parse), so `@loopover plan` falls through to the existing mention path → byte-identical. Returns
  * true once it owns the event (so the caller records it processed and stops). Fail-safe: a model/post error is
  * recorded as a skip and never throws into the webhook loop. A per-actor/per-repo cooldown prevents repeated
  * maintainer comments from spending shared AI quota in a burst.
@@ -11249,7 +11249,7 @@ async function maybeProcessPlanCommand(
 ): Promise<boolean> {
   if (!isPlannerEnabled(env)) return false; // flag-OFF → not handled here; the worker is byte-identical to today
   if (!isPlanCommand(payload.comment?.body)) return false;
-  // #22: planning is ISSUE-only. A `@gittensory plan` on a PR is not a plan request, so DON'T consume it — fall
+  // #22: planning is ISSUE-only. A `@loopover plan` on a PR is not a plan request, so DON'T consume it — fall
   // through to the generic mention handler so it posts the help card, exactly as the flag-OFF path does. Without
   // this the flag-ON worker swallowed a PR-thread `plan` mention and the contributor saw nothing.
   if (payload.issue?.pull_request) return false;
@@ -11612,7 +11612,7 @@ async function maybeProcessPrPanelRetrigger(
  * presence, bot's-own-comment confirmation, bot-sender guard, `payload.sender` as the real actor — a GitHub
  * task-list checkbox can be toggled by anyone who can comment on the PR, so the checkbox itself proves
  * nothing; only this server-side re-authorization does), but dispatches through the SAME shared
- * `runE2eTestGenerationAndDeliver` core `@gittensory generate-tests` (#4195) and the `manifest_missing_tests`
+ * `runE2eTestGenerationAndDeliver` core `@loopover generate-tests` (#4195) and the `manifest_missing_tests`
  * auto-trigger (#4196) already use, rather than a full panel re-render.
  *
  * Authorization uses the repo's OWN `settings.commandAuthorization` — same as the text-command version of
@@ -11777,7 +11777,7 @@ async function filterTrustedReviewNotificationEvents(
   return trustedEvents;
 }
 
-// #824 the SINGLE real-permission authorization gate for @gittensory action commands (gate-override, the
+// #824 the SINGLE real-permission authorization gate for @loopover action commands (gate-override, the
 // PR-panel retrigger, and the agent-layer write actions to come in #778/#769). It resolves the actor's REAL
 // repo permission via resolveRealRepoPermissionAssociation — never the spoofable author_association (the #788
 // hazard) — then runs isAuthorizedCommandActor. Every action command authorizes through here, so no future
@@ -11949,13 +11949,13 @@ async function recordPrPanelRetriggerSkip(
 }
 
 
-// Audit eventType for one recorded @gittensory ping (#2463). Shared between the recorder below and the
+// Audit eventType for one recorded @loopover ping (#2463). Shared between the recorder below and the
 // cooldown-window count query so a naming drift can't silently under/over-count.
 const REVIEW_NAG_PING_EVENT_TYPE = "github_app.review_nag_ping";
 
 /**
  * Review-request nagging cooldown (#2463, anti-abuse): throttle a thread's OWN author repeatedly pinging
- * @gittensory for review. Runs BEFORE maybeProcessGittensoryMentionCommand below so a throttled ping
+ * @loopover for review. Runs BEFORE maybeProcessGittensoryMentionCommand below so a throttled ping
  * short-circuits ahead of the normal answer-card dispatch — under the threshold this just records the ping
  * (still tagged with the THIS thread's own targetKey, so a per-thread audit trail is preserved) and falls
  * through unchanged; only crossing the threshold applies the repo's configured policy.
@@ -11983,7 +11983,7 @@ async function maybeThrottleReviewNagPing(
   // or deleted comment must not re-count or double-count.
   if (payload.action !== "created") return false;
   const command = parseGittensoryMentionCommand(payload.comment?.body);
-  if (!command) return false; // not an @gittensory mention at all
+  if (!command) return false; // not an @loopover mention at all
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);
@@ -12016,7 +12016,7 @@ async function maybeThrottleReviewNagPing(
   /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer (NOT NULL DEFAULT 5); the undefined side is defensive against the field's optional TS type. */
   const cooldownDays = Math.min(settings.reviewNagCooldownDays ?? 5, MAX_REVIEW_NAG_COOLDOWN_DAYS);
   const sinceIso = new Date(Date.now() - cooldownDays * 24 * 60 * 60 * 1000).toISOString();
-  // Repo-wide, not per-target (#review-nag-cross-pr-carryover): counts every @gittensory ping this actor has
+  // Repo-wide, not per-target (#review-nag-cross-pr-carryover): counts every @loopover ping this actor has
   // sent anywhere in this repo within the window, so exhausting the budget on PR A already shows up on PR B's
   // very first ping instead of restarting at 0/maxPings just because the targetKey (issue.number) is new.
   const priorPings = await countRecentAuditEventsForActorInRepo(env, commenter, REVIEW_NAG_PING_EVENT_TYPE, repoFullName, sinceIso);
@@ -12053,7 +12053,7 @@ async function maybeThrottleReviewNagPing(
         installationId,
         repoFullName,
         issue.number,
-        `@${commenter} this thread has reached the review-request cooldown limit (${maxPings} pings within ${cooldownDays} days). Please wait for the cooldown window to pass before pinging @gittensory again. This is an automated maintenance action.`,
+        `@${commenter} this thread has reached the review-request cooldown limit (${maxPings} pings within ${cooldownDays} days). Please wait for the cooldown window to pass before pinging @loopover again. This is an automated maintenance action.`,
       ).catch(
         /* v8 ignore next -- fail-safe: a comment-post failure must not crash the throttle decision itself */
         () => undefined,
@@ -12070,7 +12070,7 @@ async function maybeThrottleReviewNagPing(
       /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
       () => undefined,
     );
-    return true; // short-circuit — skip the normal @gittensory command dispatch
+    return true; // short-circuit — skip the normal @loopover command dispatch
   }
 
   // policy === "close" on a PR thread: build the deterministic label+close plan through the SAME planner/
@@ -12136,7 +12136,7 @@ async function maybeThrottleReviewNagPing(
 const MONITORED_MENTION_PING_EVENT_TYPE = "github_app.monitored_mention_ping";
 
 /** Word-boundary, case-insensitive check for `@login` in a comment body — the SAME precision level as
- *  `parseGittensoryMentionCommand`'s own `@gittensory` detection (a literal match, not an intent classifier):
+ *  `parseGittensoryMentionCommand`'s own `@loopover` detection (a literal match, not an intent classifier):
  *  conservative and testable, per the feature's design goal. `login` already survived
  *  `normalizeAutoCloseExemptLogins`'s GitHub-login-format validation, but bot-shaped logins contain `[bot]`;
  *  escape before embedding so every configured login is matched literally. */
@@ -12148,11 +12148,11 @@ function bodyMentionsLogin(body: string, login: string): boolean {
  * Maintainer-mention nag moderation (#label-scoping): extends the review-nag cooldown above to ALSO throttle a
  * thread's OWN author repeatedly @-mentioning a CONFIGURED maintainer login (`settings.reviewNagMonitoredMentions`)
  * — e.g. a contributor who keeps tagging a specific maintainer for review/status instead of (or in addition to)
- * pinging `@gittensory`. Reuses the exact same policy/threshold/cooldown/label settings as
+ * pinging `@loopover`. Reuses the exact same policy/threshold/cooldown/label settings as
  * {@link maybeThrottleReviewNagPing} (one cooldown policy, multiple watched mention targets) and the same
  * thread-author-only scoping + owner/admin/bot/autoCloseExemptLogins exemptions, but counts EACH mentioned login
- * independently (and independently of the `@gittensory` counter) so pinging the bot and pinging a maintainer
- * don't share one budget. Runs regardless of whether the comment also contains an `@gittensory` mention/command
+ * independently (and independently of the `@loopover` counter) so pinging the bot and pinging a maintainer
+ * don't share one budget. Runs regardless of whether the comment also contains an `@loopover` mention/command
  * — mentioning a maintainer is never a bot command, so this must not gate or interact with command dispatch.
  * Off (`reviewNagMonitoredMentions` empty/absent, the default) is a complete no-op — no extra reads at all.
  *
@@ -12317,7 +12317,7 @@ async function maybeThrottleMonitoredMentions(
   return true;
 }
 
-// Audit eventType for one recorded @gittensory command invocation (#2560). Shared between the recorder below
+// Audit eventType for one recorded @loopover command invocation (#2560). Shared between the recorder below
 // and the cooldown-window count query so a naming drift can't silently under/over-count.
 const COMMAND_RATE_LIMIT_EVENT_TYPE = "github_app.command_invocation";
 // How far back to look for a redelivered webhook's OWN prior invocation record. Deliberately much shorter
@@ -12325,8 +12325,8 @@ const COMMAND_RATE_LIMIT_EVENT_TYPE = "github_app.command_invocation";
 const COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS = 10 * 60_000;
 
 /**
- * Per-command @gittensory rate limit (#2560, anti-abuse): generalizes review-nag's audit-ledger counting
- * pattern (`countRecentAuditEventsForActorAndTarget`) to EVERY `@gittensory` Q&A command, not just
+ * Per-command @loopover rate limit (#2560, anti-abuse): generalizes review-nag's audit-ledger counting
+ * pattern (`countRecentAuditEventsForActorAndTarget`) to EVERY `@loopover` Q&A command, not just
  * review-request pings. Keyed by `(actor, command, targetKey)` — the command name is folded into targetKey so
  * repeatedly invoking ONE command never counts against a DIFFERENT command's own limit. Independent of, and
  * complementary to, `maybeThrottleReviewNagPing` above: that one stays scoped to the thread's OWN author and
@@ -12592,7 +12592,7 @@ async function maybeProcessGittensoryMentionCommand(
     return true;
   }
 
-  // #788 write-safety: authorize @gittensory Q&A maintainer commands by the commenter's REAL repo permission
+  // #788 write-safety: authorize @loopover Q&A maintainer commands by the commenter's REAL repo permission
   // (getRepositoryCollaboratorPermission via resolveRealRepoPermissionAssociation), NOT the spoofable
   // payload.comment.author_association — an org `MEMBER` is not a maintainer of THIS repo. This matches the
   // action-command path (#538) and closes the privilege-escalation hole before write-capable commands (#778).
@@ -12989,8 +12989,8 @@ async function buildMentionCommandBundle(
     surface: "github_comment",
     objective:
       (commandName === "ask" || commandName === "chat") && question && question.trim().length > 0
-        ? `Respond to @gittensory ${commandName} for ${context.repoFullName}#${context.issue.number}. Question: ${question.trim().slice(0, 280)}`
-        : `Respond to @gittensory ${commandName} for ${context.repoFullName}#${context.issue.number}.`,
+        ? `Respond to @loopover ${commandName} for ${context.repoFullName}#${context.issue.number}. Question: ${question.trim().slice(0, 280)}`
+        : `Respond to @loopover ${commandName} for ${context.repoFullName}#${context.issue.number}.`,
   });
 }
 

@@ -118,7 +118,7 @@ describe("buildRegistrationReadiness", () => {
 
     expect(report.ready).toBe(false);
     expect(report.recommendedRegistrationMode).toBe("direct_pr");
-    expect(report.blockers).toContain("Repository is not registered in the latest Gittensory registry snapshot.");
+    expect(report.blockers).toContain("Repository is not registered in the latest LoopOver registry snapshot.");
     expect(report.directPrReadiness.ready).toBe(false);
     expect(report.issueDiscoveryReadiness.recommendation).toBe("not_recommended");
     expect(report.warnings).toContain("GitHub App public surface is disabled; maintainers will not get comment/label assistance.");
@@ -133,7 +133,7 @@ describe("buildRegistrationReadiness", () => {
     expect(report.testCoverageHealth.status).toBe("gate_unknown");
     expect(report.testCoverageHealth.warnings).toEqual(["No trusted label pipeline is verified; trusted-label scoring should stay off until labels are validated."]);
     // Disabled check runs are intentional repo policy and must not produce a readiness warning.
-    expect(report.warnings).not.toContain("Check runs are disabled, so Gittensory cannot surface a per-PR quality gate to maintainers.");
+    expect(report.warnings).not.toContain("Check runs are disabled, so LoopOver cannot surface a per-PR quality gate to maintainers.");
     expect(report.warnings).toContain('Configured registry label "feature" is missing from live GitHub labels.');
   });
 
@@ -167,7 +167,7 @@ describe("buildRegistrationReadiness", () => {
     expect(report.testCoverageHealth.status).toBe("gate_ready");
     expect(report.testCoverageHealth.checkRunMode).toBe("off");
     expect(report.testCoverageHealth.warnings).toEqual([]);
-    expect(report.warnings).not.toContain("Check runs are disabled, so Gittensory cannot surface a per-PR quality gate to maintainers.");
+    expect(report.warnings).not.toContain("Check runs are disabled, so LoopOver cannot surface a per-PR quality gate to maintainers.");
     expect(report.githubApp.quietByDefault).toBe(false);
     expect(report.githubApp.behavior).toContain("for all PRs");
   });
@@ -192,7 +192,7 @@ describe("buildRegistrationReadiness", () => {
     const report = buildRegistrationReadiness({ repoFullName: repo.fullName, repo, settings: settingsFor(repo.fullName), installation: null, ...signalsFor(repo, [], [], [label("bug")]) });
 
     expect(report.githubApp.installed).toBe(false);
-    expect(report.githubApp.behavior).toBe("Gittensory would stay silent because the GitHub App is not installed.");
+    expect(report.githubApp.behavior).toBe("LoopOver would stay silent because the GitHub App is not installed.");
     expect(report.githubApp.warnings).toContain("GitHub App is not installed on this repo; maintainers will not get any automated assistance.");
   });
 

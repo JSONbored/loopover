@@ -763,17 +763,17 @@ export const RepositorySettingsSchema = z
         chatQa: z
           .boolean()
           .describe(
-            "Opt the `@gittensory chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-first: unlike the four capabilities above, it declines instead of falling back to the frontier env.AI when env.AI_ADVISORY is unconfigured, unless `chatQaFrontierFallback` is also enabled. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command.",
+            "Opt the `@loopover chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-first: unlike the four capabilities above, it declines instead of falling back to the frontier env.AI when env.AI_ADVISORY is unconfigured, unless `chatQaFrontierFallback` is also enabled. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command.",
           ),
         chatQaFrontierFallback: z
           .boolean()
           .describe(
-            "Opt-in only (#4595 follow-up): when true, `@gittensory chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead.",
+            "Opt-in only (#4595 follow-up): when true, `@loopover chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead.",
           ),
         intentRouting: z
           .boolean()
           .describe(
-            "Opt a closed-set intent-classification router (#4596) into unrecognized `@gittensory` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`.",
+            "Opt a closed-set intent-classification router (#4596) into unrecognized `@loopover` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`.",
           ),
       })
       .optional(),

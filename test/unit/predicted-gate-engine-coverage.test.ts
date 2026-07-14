@@ -162,7 +162,7 @@ describe("predicted-gate engine module coverage (#2283)", () => {
   it("exercises sanitizePublicComment redaction paths", () => {
     expect(sanitizePublicComment("score estimate 12.5 -> 41.2")).toContain("private context");
     expect(sanitizePublicComment("reviewability internals")).toContain("private context");
-    expect(sanitizePublicComment("@gittensory reviewability score")).toContain("reviewability");
+    expect(sanitizePublicComment("@loopover reviewability score")).toContain("reviewability");
     expect(sanitizePublicComment("likely_duplicate overlap")).toContain("possible overlap");
     expect(sanitizePublicComment("open pr count 12 exceeds threshold 10")).toContain("private context");
   });

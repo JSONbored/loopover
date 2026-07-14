@@ -249,7 +249,7 @@ describe("agent orchestrator", () => {
       login: "oktofeesh1",
       repoFullName: "public-org/installed-repo",
       surface: "github_comment",
-      objective: "Respond to @gittensory next-action for public-org/installed-repo#101.",
+      objective: "Respond to @loopover next-action for public-org/installed-repo#101.",
     });
     const publicBlockers = await explainBlockersWithAgent(env, {
       login: "oktofeesh1",
@@ -257,7 +257,7 @@ describe("agent orchestrator", () => {
       surface: "github_comment",
     });
     const comment = buildPublicAgentCommandComment({
-      command: parseGittensoryMentionCommand("@gittensory next-action")!,
+      command: parseGittensoryMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 101, title: "Public PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -504,7 +504,7 @@ describe("agent orchestrator", () => {
         expect.objectContaining({ category: "queue", items: expect.arrayContaining(["open_pr_pressure"]) }),
       ]),
     );
-    expect(emptyNextAction.publicSafeSummary).toMatch(/Use Gittensory preflight/);
+    expect(emptyNextAction.publicSafeSummary).toMatch(/Use LoopOver preflight/);
     expect(repoFit.recommendation).toMatch(/repo fit/);
     expect(noDecisionActions[0]).toMatchObject({ actionType: "explain_repo_fit", status: "recommended" });
     expect(blockerFallback[0]).toMatchObject({ actionType: "explain_score_blockers", status: "blocked" });
@@ -519,7 +519,7 @@ describe("agent orchestrator", () => {
     });
     expect(defaultEvidenceAction.payload.recommendationEvidence).toMatchObject({
       confidence: "medium",
-      sourceSummary: "Generated from Gittensory agent metadata.",
+      sourceSummary: "Generated from LoopOver agent metadata.",
       warnings: expect.arrayContaining(["Source-specific evidence was not attached; treat this recommendation as medium confidence."]),
     });
     expect(staleEvidenceActions[0]?.payload.recommendationEvidence).toMatchObject({
@@ -1475,7 +1475,7 @@ function repoDecision(overrides: Partial<ContributorDecisionPack["repoDecisions"
     labelFit: [],
     whyThisHelps: [`${overrides.repoFullName ?? "owner/repo"}: private reward estimate should stay private.`],
     nextActions: ["Pick one narrow change and run branch preflight."],
-    publicNextActions: [`${overrides.repoFullName ?? "owner/repo"}: Use Gittensory preflight before posting public PR context.`],
+    publicNextActions: [`${overrides.repoFullName ?? "owner/repo"}: Use LoopOver preflight before posting public PR context.`],
     ...overrides,
   } as ContributorDecisionPack["repoDecisions"][number];
 }
@@ -1501,7 +1501,7 @@ function action(
     recommendation,
     whyThisHelps: [`${repoFullName}: action improves private scoreability.`],
     nextActions: [nextAction],
-    publicNextActions: [`${repoFullName}: Use Gittensory preflight before posting public PR context.`],
+    publicNextActions: [`${repoFullName}: Use LoopOver preflight before posting public PR context.`],
   };
 }
 

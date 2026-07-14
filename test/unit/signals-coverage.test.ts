@@ -131,7 +131,7 @@ describe("signal coverage edge cases", () => {
     expect(opportunities.find((opportunity) => opportunity.repoFullName === issueRepo.fullName)?.warnings).toEqual(
       expect.arrayContaining(["This repo has a busy open PR queue.", "This repo is not a direct-PR-first lane."]),
     );
-    expect(opportunities.find((opportunity) => opportunity.repoFullName === inactiveRepo.fullName)?.warnings).toContain("Gittensory cannot recommend this as a strong contribution target right now.");
+    expect(opportunities.find((opportunity) => opportunity.repoFullName === inactiveRepo.fullName)?.warnings).toContain("LoopOver cannot recommend this as a strong contribution target right now.");
     expect(fit.findings.map((finding) => finding.code)).toContain("no_language_fit");
     expect(strategy.nextActions).toEqual(expect.arrayContaining(["Clean up linked issue/context patterns before adding more open PRs.", "Prefer repos where the changed files match prior language evidence, or keep first submissions small."]));
   });
@@ -268,7 +268,7 @@ describe("signal coverage edge cases", () => {
     );
 
     expect(cleanPacket.pullRequestPackets[0]).toMatchObject({ reviewPriority: "review", reasons: ["No obvious queue hygiene issue detected in cached metadata."] });
-    expect(cleanPacket.suggestedActions).toEqual(["Queue looks manageable from cached Gittensory signals."]);
+    expect(cleanPacket.suggestedActions).toEqual(["Queue looks manageable from cached LoopOver signals."]);
     expect(local.status).toBe("ready");
     expect(local.localDiff).toMatchObject({ codeFileCount: 1, testFileCount: 1, inferredLinkedIssues: [1] });
     // "No issue: typo fix" is a clear no-issue rationale (#no-issue-rationale-exemption) -- no
@@ -1393,7 +1393,7 @@ describe("signal coverage edge cases", () => {
     expect(customizedComment).toContain("| Gate result |"); // non-hidden rows still rendered
     expect(customizedComment).toContain("**Review summary**"); // AI summary is prominent, not buried
     expect(customizedComment).toContain("<summary>Nits (2)</summary>"); // nits are directly below summary
-    expect(customizedComment).not.toContain("Gittensory AI review (advisory)"); // old bottom dropdown removed
+    expect(customizedComment).not.toContain("LoopOver AI review (advisory)"); // old bottom dropdown removed
     expect(customizedComment).toContain("&lt;/details&gt;"); // stray tags escaped, panel structure preserved
     const summaryIndex = customizedComment.indexOf("**Review summary**");
     const nitsIndex = customizedComment.indexOf("<summary>Nits (2)</summary>");
@@ -1472,10 +1472,10 @@ describe("signal coverage edge cases", () => {
         [currentPr],
       ),
       settings: gateSettings,
-      gate: { conclusion: "action_required", summary: "Gittensory cannot evaluate this PR until installation state is repaired." },
+      gate: { conclusion: "action_required", summary: "LoopOver cannot evaluate this PR until installation state is repaired." },
     });
     expect(actionRequiredComment).toContain("> [!WARNING]");
-    expect(actionRequiredComment).toContain("Gittensory cannot evaluate this PR until installation state is repaired.");
+    expect(actionRequiredComment).toContain("LoopOver cannot evaluate this PR until installation state is repaired.");
     expect(actionRequiredComment).toContain("> | Gate result | ⚠️ App action required | Install/config needs attention. | Fix app config. |");
 
     // REGRESSION: gateHeld's panelSummary falls back to a literal default when NO gate was passed at all --

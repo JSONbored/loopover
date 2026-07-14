@@ -3,7 +3,7 @@ import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signa
 
 // Maintainer triage signal: which queue-noise sources to clear FIRST (open PRs without linked-issue context,
 // broad/churn-style diffs, duplicate clusters, contributor-intake pressure). The deterministic builder already
-// exists and powers the `@gittensory noise-report` PR command; this load-or-compute wrapper makes the same
+// exists and powers the `@loopover noise-report` PR command; this load-or-compute wrapper makes the same
 // report available to the MCP tool surface (agent / CLI), mirroring the outcome-calibration serving (#1174).
 export async function loadMaintainerNoiseReport(env: Env, fullName: string): Promise<MaintainerNoiseReport> {
   const [repo, issues, pullRequests, recentMergedPullRequests] = await Promise.all([
@@ -16,5 +16,5 @@ export async function loadMaintainerNoiseReport(env: Env, fullName: string): Pro
 }
 
 export function maintainerNoiseSummary(report: MaintainerNoiseReport): string {
-  return `Gittensory maintainer noise report for ${report.repoFullName}: ${report.level} noise (score ${report.score}); ${report.noiseSources.length} source(s) to triage.`;
+  return `LoopOver maintainer noise report for ${report.repoFullName}: ${report.level} noise (score ${report.score}); ${report.noiseSources.length} source(s) to triage.`;
 }

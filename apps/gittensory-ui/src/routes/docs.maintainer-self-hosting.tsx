@@ -224,7 +224,7 @@ function MaintainerSelfHosting() {
         </li>
         <li>
           Mount <code>./gittensory-config</code> and copy{" "}
-          <code>config/examples/global.gittensory.yml</code> →{" "}
+          <code>config/examples/global.loopover.yml</code> →{" "}
           <code>gittensory-config/.loopover.yml</code> for a centralized private default (per-repo
           files deep-merge on top).
         </li>
@@ -245,7 +245,7 @@ function MaintainerSelfHosting() {
           {
             title: "Single-command repo onboarding",
             description:
-              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to LOOPOVER_REVIEW_REPOS, seeds gittensory-config/owner__repo/.loopover.yml from global.gittensory.yml, and POSTs activation — idempotent, dry-run aware.",
+              "Today: edit .env allowlist, copy YAML templates, sign into the panel, click activate. Proposed: one CLI/API command that adds owner/repo to LOOPOVER_REVIEW_REPOS, seeds gittensory-config/owner__repo/.loopover.yml from global.loopover.yml, and POSTs activation — idempotent, dry-run aware.",
           },
           {
             title: "Centralized private default only",

@@ -1,5 +1,5 @@
 # ============================================================================
-# gittensory.full.yml — exhaustive commented template (#1682)
+# loopover.full.yml — exhaustive commented template (#1682)
 # ============================================================================
 #
 # WHERE TO COPY (pick one):
@@ -12,11 +12,11 @@
 # Canonical copy also lives at the repo root as `.loopover.yml.example` (kept in sync by CI).
 #
 # STARTER TEMPLATES (this directory):
-#   gittensory.minimal.yml  — smallest safe copy-paste starter (gate off, observe-only autonomy)
-#   gittensory.full.yml     — this file — every gate:/settings:/review:/features: field documented
-#   global.gittensory.yml   — private fleet global default (illustrative placeholders only)
-#   repo-override.gittensory.yml — private per-repo overlay example
-#   shared.gittensory.yml   — private cross-repo house policy, lowest-priority layer (#1959)
+#   loopover.minimal.yml  — smallest safe copy-paste starter (gate off, observe-only autonomy)
+#   loopover.full.yml     — this file — every gate:/settings:/review:/features: field documented
+#   global.loopover.yml   — private fleet global default (illustrative placeholders only)
+#   repo-override.loopover.yml — private per-repo overlay example
+#   shared.loopover.yml   — private cross-repo house policy, lowest-priority layer (#1959)
 #
 # ============================================================================
 # .loopover.yml — per-repo configuration for gittensory CI & gittensory review
@@ -419,7 +419,7 @@ gate:
 #
 # SELF-HOST ONLY (`review.shared_config`, #2046): when `GITTENSORY_REPO_CONFIG_DIR` is mounted,
 # place a shared review base at `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml` (see
-# `config/examples/shared.gittensory.yml`). Per-repo `review:` keys overlay it field-by-field —
+# `config/examples/shared.loopover.yml`). Per-repo `review:` keys overlay it field-by-field —
 # repo value wins when set, shared fills gaps, defaults stay byte-identical. Absent shared base is
 # the common case and changes nothing. A malformed shared base warns and is ignored (never blocks a
 # review). The loader records provenance at runtime in `review.sharedConfigSource` (not a YAML key).
@@ -529,7 +529,7 @@ review:
   # quiet | normal | detailed. Default: null/normal (byte-identical).
   # comment_verbosity: normal
 
-  # How a `@gittensory generate-tests` result is delivered, once features.e2eTests is on (#4197, part of
+  # How a `@loopover generate-tests` result is delivered, once features.e2eTests is on (#4197, part of
   # the #4189 E2E-test-generation epic). `comment` (default, null/absent) posts the generated test as a
   # reply comment only. `commit` pushes it as a real commit onto the PR's own head branch instead -- a
   # bigger blast radius, so it stays opt-in even with e2eTests already enabled. `commit` mode is ALSO
@@ -541,7 +541,7 @@ review:
 
   # Opts THIS repo into the manifest_missing_tests AUTO-TRIGGER (#4196, part of the #4189 epic) -- an
   # unprompted generation run whenever a PR looks like it needs tests. Separate from features.e2eTests, which
-  # only unlocks the maintainer-initiated paths (the `@gittensory generate-tests` command and the PR-panel
+  # only unlocks the maintainer-initiated paths (the `@loopover generate-tests` command and the PR-panel
   # checkbox). Bool | null. Default: null/false -- the auto-trigger never fires, even with e2eTests already
   # on; a maintainer who wants unprompted generation opts in here explicitly, per repo.
   # e2e_test_auto_trigger: false
@@ -811,7 +811,7 @@ settings:
   # contributorCapCancelCi: true
 
   # Review-request nagging cooldown (#2463, anti-abuse): throttle a non-owner/non-admin/non-bot
-  # contributor who repeatedly pings @gittensory for review on the same PR/issue. "hold" replies with a
+  # contributor who repeatedly pings @loopover for review on the same PR/issue. "hold" replies with a
   # cooldown notice and takes no further action; "close" closes the PR (issues degrade to "hold" until
   # a dedicated closeIssue primitive lands) with a clear reason. Off by default.
   # reviewNagPolicy: off      # off | hold | close. Default: off.
@@ -823,9 +823,9 @@ settings:
 
   # Maintainer-mention nag moderation (#label-scoping): GitHub logins ALSO throttled under the SAME
   # reviewNagPolicy/reviewNagMaxPings/reviewNagCooldownDays/reviewNagLabel cooldown above, on top of the
-  # bot's own @gittensory handle — e.g. a contributor who keeps tagging a specific maintainer for review
-  # instead of (or in addition to) pinging @gittensory. Counted independently per mentioned login and
-  # independently of the @gittensory counter. Only fires for the thread's OWN author, never a third party
+  # bot's own @loopover handle — e.g. a contributor who keeps tagging a specific maintainer for review
+  # instead of (or in addition to) pinging @loopover. Counted independently per mentioned login and
+  # independently of the @loopover counter. Only fires for the thread's OWN author, never a third party
   # commenting on someone else's thread; owner/admin/automation-bot/autoCloseExemptLogins are always exempt.
   # List of GitHub logins. Default: [] (no logins watched).
   # reviewNagMonitoredMentions: [your-maintainer-login]
@@ -842,8 +842,8 @@ settings:
   # accountAgeThresholdDays: null  # Positive integer, or null/omitted to disable. Default: null (off).
   # newAccountLabel: new-account  # Label applied to a below-threshold-age account's PR. Default: new-account.
 
-  # Per-command @gittensory rate limit (#2560, anti-abuse): generalizes review-nag's cooldown pattern to
-  # EVERY @gittensory command (help/ask/preflight/blockers/... and the maintainer queue-digest commands),
+  # Per-command @loopover rate limit (#2560, anti-abuse): generalizes review-nag's cooldown pattern to
+  # EVERY @loopover command (help/ask/preflight/blockers/... and the maintainer queue-digest commands),
   # not just review-request pings — independent of review-nag's own thread-author-only scope. "hold"
   # replies with a cooldown notice and skips the command's own dispatch. Off by default.
   # commandRateLimitPolicy: off             # off | hold. Default: off.
@@ -931,11 +931,11 @@ settings:
   # advisoryAiRouting:
   #   slop: false          # gate.slop.aiAdvisory's second opinion. Default: false.
   #   e2eTestGen: false    # Auto-generated E2E test scaffolding. Default: false.
-  #   planner: false       # The @gittensory plan / issue-planner completion. Default: false.
+  #   planner: false       # The @loopover plan / issue-planner completion. Default: false.
   #   summaries: false     # AI summaries/rewrite text. Default: false.
-  #   chatQa: false        # @gittensory chat <question> grounded LLM Q&A. Ollama-first (never the frontier env.AI unless chatQaFrontierFallback below is also true); needs env.AI_ADVISORY set. Co-requisite: commandRateLimitPolicy: hold (defaults off). Default: false.
+  #   chatQa: false        # @loopover chat <question> grounded LLM Q&A. Ollama-first (never the frontier env.AI unless chatQaFrontierFallback below is also true); needs env.AI_ADVISORY set. Co-requisite: commandRateLimitPolicy: hold (defaults off). Default: false.
   #   chatQaFrontierFallback: false  # Opt-in only: falls back to the frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless chatQa is also true. Default: false.
-  #   intentRouting: false # Closed-set intent classifier for unrecognized @gittensory mentions -> existing Q&A commands only. Ollama-ONLY, same as chatQa (never uses chatQaFrontierFallback). Co-requisite: commandRateLimitPolicy: hold. Default: false.
+  #   intentRouting: false # Closed-set intent classifier for unrecognized @loopover mentions -> existing Q&A commands only. Ollama-ONLY, same as chatQa (never uses chatQaFrontierFallback). Co-requisite: commandRateLimitPolicy: hold. Default: false.
 
 # Maintainer AI review tuning (`.loopover.yml` top-level `review:` block). These knobs shape the advisory AI
 # review prompt and file selection only — gate/slop/secret-scan are unaffected.

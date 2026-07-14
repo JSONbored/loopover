@@ -522,7 +522,7 @@ export type PullRequestRecord = {
   createdAt?: string | null | undefined;
   updatedAt?: string | null | undefined;
   closedAt?: string | null | undefined;
-  /** First time Gittensory observed this PR claiming one or more linked issues. Used to elect same-issue
+  /** First time LoopOver observed this PR claiming one or more linked issues. Used to elect same-issue
    * duplicate winners by claim order instead of PR number ONLY when {@link createdAt} is unavailable on either
    * side of a comparison. */
   linkedIssueClaimedAt?: string | null | undefined;
@@ -621,7 +621,7 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
  *                  (same API calls), the distinction is purely about how the operator should configure GitHub.
  *   • `disabled` — never create/update the check-run at all. Recommended for high-volume autonomous self-hosting
  *                  to avoid GitHub showing "Expected — Waiting for status to be reported" under queue pressure;
- *                  requires removing the check from branch-protection required-status-checks first (Gittensory
+ *                  requires removing the check from branch-protection required-status-checks first (LoopOver
  *                  cannot do this on the operator's behalf -- it is a GitHub branch-protection setting). */
 export type ReviewCheckMode = "required" | "visible" | "disabled";
 
@@ -1008,13 +1008,13 @@ export type RepositorySettings = {
    *  explicit `false` (opt back out) is distinguishable from "not configured" for that fallback. */
   contributorCapCancelCi?: boolean | null | undefined;
   /** Review-request nagging cooldown (#2463, anti-abuse): throttle a contributor repeatedly pinging
-   *  `@gittensory` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
+   *  `@loopover` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
    *  cooldown reply and takes no further action; `"close"` additionally closes the thread (PR threads only in
    *  v1 — a plain issue thread degrades to `"hold"` behavior until #2493's `closeIssue` primitive lands).
    *  Always populated by the DB layer (default `"off"`); optional so existing settings fixtures/callers need
    *  not be touched. */
   reviewNagPolicy?: "off" | "hold" | "close" | undefined;
-  /** Review-nag cooldown (#2463): how many `@gittensory` pings a contributor may make on this repo within
+  /** Review-nag cooldown (#2463): how many `@loopover` pings a contributor may make on this repo within
    *  {@link reviewNagCooldownDays} before the (N+1)th is throttled. Always populated by the DB layer (default
    *  `3`); optional so existing settings fixtures/callers need not be touched. Only meaningful when
    *  {@link reviewNagPolicy} is not `"off"`. */
@@ -1029,9 +1029,9 @@ export type RepositorySettings = {
    *  fixtures/callers need not be touched. */
   reviewNagLabel?: string | null | undefined;
   /** Maintainer-mention nag moderation: GitHub logins to ALSO throttle under the review-nag cooldown when the
-   *  thread author repeatedly @-mentions them (on top of the bot's own `@gittensory` handle) -- e.g. a
+   *  thread author repeatedly @-mentions them (on top of the bot's own `@loopover` handle) -- e.g. a
    *  maintainer login instead of the bot, for a contributor who keeps tagging a specific person for review.
-   *  Counted independently per mentioned login and independently of the `@gittensory` counter, but reuses the
+   *  Counted independently per mentioned login and independently of the `@loopover` counter, but reuses the
    *  SAME {@link reviewNagPolicy}/{@link reviewNagMaxPings}/{@link reviewNagCooldownDays}/{@link reviewNagLabel}
    *  thresholds/action/label -- one cooldown policy, multiple watched mention targets. `[]`/undefined (default)
    *  = no logins watched, zero behavior change. Never fires for the repo owner, admin logins, automation bots,
@@ -1082,8 +1082,8 @@ export type RepositorySettings = {
    *  configurable-with-fallback shape. Always populated by the DB layer (default `"new-account"`); optional so
    *  existing settings fixtures/callers need not be touched. */
   newAccountLabel?: string | undefined;
-  /** Per-command @gittensory rate limit (#2560, anti-abuse): generalizes the review-nag cooldown's counting
-   *  pattern (the audit-events ledger) to EVERY `@gittensory` command, keyed by `(actor, command, targetKey)` --
+  /** Per-command @loopover rate limit (#2560, anti-abuse): generalizes the review-nag cooldown's counting
+   *  pattern (the audit-events ledger) to EVERY `@loopover` command, keyed by `(actor, command, targetKey)` --
    *  independent of, and complementary to, review-nag's own narrower thread-author-only scope. `"off"` (default)
    *  is a no-op; `"hold"` posts a deterministic cooldown reply and skips the command's own dispatch. Always
    *  populated by the DB layer (default `"off"`); optional so existing settings fixtures/callers need not be
@@ -1326,7 +1326,7 @@ export type UnlinkedIssueGuardrailConfig = {
  *
  *  `chatQa` (#4595) is the ONE capability that does NOT share the others' silent-frontier fallback BY DEFAULT:
  *  the four cost-optimizing capabilities above quietly fall back to the shared frontier env.AI when their flag
- *  is off, but the `@gittensory chat` grounded Q&A surface declines/skips whenever `chatQa !== true` or
+ *  is off, but the `@loopover chat` grounded Q&A surface declines/skips whenever `chatQa !== true` or
  *  `env.AI_ADVISORY` is unconfigured, rather than ever spending a frontier token -- UNLESS `chatQaFrontierFallback`
  *  is also explicitly enabled (a self-hoster without a local GPU may prefer their own frontier subscription
  *  over an outright decline). */
@@ -1335,7 +1335,7 @@ export type AdvisoryAiRoutingConfig = {
   e2eTestGen: boolean;
   planner: boolean;
   summaries: boolean;
-  /** Grounded `@gittensory chat <question>` LLM Q&A (#4595). Ollama-first: declines when off or when
+  /** Grounded `@loopover chat <question>` LLM Q&A (#4595). Ollama-first: declines when off or when
    *  env.AI_ADVISORY is unconfigured and {@link chatQaFrontierFallback} is not also enabled. Default false. */
   chatQa: boolean;
   /** Opt-in ONLY (#4595 follow-up): when true, chat falls back to the shared frontier env.AI chain if
@@ -1343,7 +1343,7 @@ export type AdvisoryAiRoutingConfig = {
    *  Default false -- preserves the original Ollama-only behavior for every existing deployment; a self-hoster
    *  without a local GPU may enable this to use their own frontier subscription/tokens for chat instead. */
   chatQaFrontierFallback: boolean;
-  /** Closed-set intent-classification router for unrecognized `@gittensory` mentions (#4596): maps free-text
+  /** Closed-set intent-classification router for unrecognized `@loopover` mentions (#4596): maps free-text
    *  questions to the closest existing Q&A command (never an action command) rather than the plain
    *  did-you-mean hint. Ollama-only, same as chatQa -- never falls back to the frontier env.AI. Default false. */
   intentRouting: boolean;

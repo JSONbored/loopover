@@ -16,7 +16,7 @@ function payload(parts: PayloadParts = {}): GitHubWebhookPayload {
     action: parts.action ?? "created",
     repository: parts.repository === null ? undefined : (parts.repository ?? { full_name: "acme/widgets" }),
     issue: parts.issue === null ? undefined : (parts.issue ?? { number: 7 }),
-    comment: { body: parts.body === undefined ? "@gittensory configuration" : parts.body, user: parts.commentUser === null ? undefined : (parts.commentUser ?? { login: "maintainer", type: "User" }) },
+    comment: { body: parts.body === undefined ? "@loopover configuration" : parts.body, user: parts.commentUser === null ? undefined : (parts.commentUser ?? { login: "maintainer", type: "User" }) },
     sender: parts.sender === null ? undefined : (parts.sender ?? { login: "maintainer", type: "User" }),
   } as unknown as GitHubWebhookPayload;
 }
@@ -24,7 +24,7 @@ function payload(parts: PayloadParts = {}): GitHubWebhookPayload {
 describe("classifyConfigurationCommandRequest", () => {
   it("returns null for a non-configuration comment (no mention, or a different verb)", () => {
     expect(classifyConfigurationCommandRequest(payload({ body: "just a comment" }), 123)).toBeNull();
-    expect(classifyConfigurationCommandRequest(payload({ body: "@gittensory plan" }), 123)).toBeNull();
+    expect(classifyConfigurationCommandRequest(payload({ body: "@loopover plan" }), 123)).toBeNull();
     expect(classifyConfigurationCommandRequest(payload({ body: null }), 123)).toBeNull();
   });
 

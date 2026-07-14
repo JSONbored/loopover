@@ -304,7 +304,7 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
             Repository settings
           </h2>
           <p className="mt-1 text-token-xs text-muted-foreground">
-            Configure exactly what Gittensory enforces and surfaces on this repo — gate modes,
+            Configure exactly what LoopOver enforces and surfaces on this repo — gate modes,
             anti-slop, labels, public output, and who can run each command. Changes are audited.
           </p>
         </div>
@@ -389,7 +389,7 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
           <div>
             <h3 className={LABEL_CLASS}>Command authorization</h3>
             <p className="mt-1 text-token-2xs text-muted-foreground">
-              Default roles allowed to run any <code className="font-mono">@gittensory</code>{" "}
+              Default roles allowed to run any <code className="font-mono">@loopover</code>{" "}
               command. Per-command overrides (edited via the focus manifest) are shown below.
             </p>
             <div className="mt-2 flex flex-wrap gap-3">

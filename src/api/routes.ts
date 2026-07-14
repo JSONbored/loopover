@@ -951,7 +951,7 @@ export function createApp() {
   app.all("/mcp", handleMcpRequest);
 
   // Public SN74 contribution-interface descriptor (#695): metagraphed (and any agent) fetches this to route
-  // gittensor discovery → Gittensory. Unauthenticated product metadata; excluded from requiresApiToken below.
+  // gittensor discovery → LoopOver. Unauthenticated product metadata; excluded from requiresApiToken below.
   app.get("/v1/public/subnet-interface", (c) => {
     const origin = c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin;
     c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
@@ -1743,7 +1743,7 @@ export function createApp() {
     const body = await c.req.json().catch(() => null);
     const parsed = commandPreviewSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_command_preview_request", issues: parsed.error.issues }, 400);
-    const command = APP_COMMANDS.find((candidate) => candidate.command === parsed.data.command || candidate.id === parsed.data.command.replace(/^@gittensory\s+/, ""));
+    const command = APP_COMMANDS.find((candidate) => candidate.command === parsed.data.command || candidate.id === parsed.data.command.replace(/^@loopover\s+/, ""));
     if (!command) return c.json({ error: "command_not_found" }, 404);
     const identity = await authenticateRequestIdentity(c);
     const [repo, pullRequest] = await Promise.all([
@@ -2517,7 +2517,7 @@ export function createApp() {
     return c.json({ repoFullName: fullName, events: events.map((event) => ({ ...event, detail: event.detail === null ? null : sanitizePublicComment(event.detail) })) });
   });
 
-  // Maintainer activation demo (#701): a repo-specific "here's what Gittensory would have surfaced" preview
+  // Maintainer activation demo (#701): a repo-specific "here's what LoopOver would have surfaced" preview
   // over recent PRs, plus a one-click advisory ramp. Maintainer-scoped + per-repo. Deterministic (no AI run).
   app.get("/v1/repos/:owner/:repo/activation-preview", async (c) => {
     const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
@@ -3351,7 +3351,7 @@ export function createApp() {
   // like a GitHub webhook. Auth IS the relay signature (token-exempt); 404 when not a brokered self-host.
   app.post("/v1/orb/relay", handleOrbRelay);
 
-  // Gittensory Orb central GitHub App (#1255) — inbound webhook for the ONE shared Orb App maintainers install.
+  // LoopOver Orb central GitHub App (#1255) — inbound webhook for the ONE shared Orb App maintainers install.
   // Verifies the Orb App's OWN webhook secret, dedups, and records install + PR/review events (the homepage
   // fleet-metrics data spine). Separate App + secret from the review-app /v1/github/webhook above.
   app.post("/v1/orb/webhook", handleOrbWebhook);
@@ -3468,7 +3468,7 @@ export function createApp() {
     return c.json({ events }, 200);
   });
 
-  // Gittensory Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
+  // LoopOver Orb (#1255) — central fleet-calibration collector. Receives anonymized, reversal-aware outcome
   // batches from self-hosted instances. Sender-side HMAC anonymization is for privacy, not authentication.
   // OPTIONAL shared-token gate (#1285): unset ⇒ OPEN ingress (the live fleet keeps working, as before); set
   // ⇒ the collector REQUIRES it, so an operator can lock the write path down after distributing the matching
@@ -3483,7 +3483,7 @@ export function createApp() {
     return c.json(result, 200);
   });
 
-  // Gittensory AMS (#5681) — central telemetry collector for the miner product, mirroring the Orb ingest
+  // LoopOver AMS (#5681) — central telemetry collector for the miner product, mirroring the Orb ingest
   // route above (same optional bearer-token gate, same hard body ceiling — readOrbIngestBody is generic over
   // request bytes despite the name, so it's reused as-is rather than duplicated).
   app.post("/v1/ams/ingest", async (c) => {
@@ -4116,7 +4116,7 @@ export function createApp() {
 const APP_COMMANDS = [
   {
     id: "plan-next-work",
-    command: "@gittensory plan",
+    command: "@loopover plan",
     audience: "private",
     boundary: "private-api",
     description: "Rank the next contributor-safe work from the current decision pack.",
@@ -4124,7 +4124,7 @@ const APP_COMMANDS = [
   },
   {
     id: "blockers",
-    command: "@gittensory blockers",
+    command: "@loopover blockers",
     audience: "private",
     boundary: "private-api",
     description: "Explain scoreability blockers without leaking private scoring context.",
@@ -4132,7 +4132,7 @@ const APP_COMMANDS = [
   },
   {
     id: "preflight",
-    command: "@gittensory preflight",
+    command: "@loopover preflight",
     audience: "private",
     boundary: "private-api",
     description: "Run branch preflight against cached repo, PR, issue, and scorer context.",
@@ -4140,7 +4140,7 @@ const APP_COMMANDS = [
   },
   {
     id: "packet",
-    command: "@gittensory packet",
+    command: "@loopover packet",
     audience: "maintainer",
     boundary: "private-api",
     description: "Prepare a maintainer review packet from private and public evidence.",
@@ -4148,7 +4148,7 @@ const APP_COMMANDS = [
   },
   {
     id: "public-summary",
-    command: "@gittensory public-summary",
+    command: "@loopover public-summary",
     audience: "public-safe",
     boundary: "public",
     description: "Preview the public-safe summary that may be posted to a PR thread.",
@@ -4172,7 +4172,7 @@ const APP_COMMANDS = [
       ].includes(command.id),
   ).map((command) => ({
     id: command.id,
-    command: `@gittensory ${command.id}`,
+    command: `@loopover ${command.id}`,
     audience: "public-safe",
     boundary: "public",
     description: command.description,
@@ -4180,7 +4180,7 @@ const APP_COMMANDS = [
   })),
   {
     id: "queue-summary",
-    command: "@gittensory queue-summary",
+    command: "@loopover queue-summary",
     audience: "maintainer",
     boundary: "public-safe",
     description: "Post a maintainer-only queue digest from cached GitHub metadata.",
@@ -4188,7 +4188,7 @@ const APP_COMMANDS = [
   },
   {
     id: "review-now",
-    command: "@gittensory review-now",
+    command: "@loopover review-now",
     audience: "maintainer",
     boundary: "public-safe",
     description: "List cached PRs that look ready for maintainer review.",
@@ -4196,7 +4196,7 @@ const APP_COMMANDS = [
   },
   {
     id: "needs-author",
-    command: "@gittensory needs-author",
+    command: "@loopover needs-author",
     audience: "maintainer",
     boundary: "public-safe",
     description: "List cached PRs that need author cleanup before detailed review.",
@@ -4204,7 +4204,7 @@ const APP_COMMANDS = [
   },
   {
     id: "confirmed-miners",
-    command: "@gittensory confirmed-miners",
+    command: "@loopover confirmed-miners",
     audience: "maintainer",
     boundary: "public-safe",
     description: "List open PRs whose authors are confirmed in the official-miner cache.",
@@ -4212,7 +4212,7 @@ const APP_COMMANDS = [
   },
   {
     id: "duplicate-clusters",
-    command: "@gittensory duplicate-clusters",
+    command: "@loopover duplicate-clusters",
     audience: "maintainer",
     boundary: "public-safe",
     description: "List duplicate or WIP clusters visible from cached GitHub metadata.",
@@ -4220,7 +4220,7 @@ const APP_COMMANDS = [
   },
   {
     id: "burden-forecast",
-    command: "@gittensory burden-forecast",
+    command: "@loopover burden-forecast",
     audience: "maintainer",
     boundary: "public-safe",
     description: "Project maintainer review load and queue-growth risk from cached metadata.",
@@ -4228,7 +4228,7 @@ const APP_COMMANDS = [
   },
   {
     id: "intake-health",
-    command: "@gittensory intake-health",
+    command: "@loopover intake-health",
     audience: "maintainer",
     boundary: "public-safe",
     description: "Summarize contributor-intake health from cached queue and config signals.",
@@ -4236,7 +4236,7 @@ const APP_COMMANDS = [
   },
   {
     id: "outcome-patterns",
-    command: "@gittensory outcome-patterns",
+    command: "@loopover outcome-patterns",
     audience: "maintainer",
     boundary: "public-safe",
     description: "Summarize what this repo actually merges vs closes from cached PR outcomes.",
@@ -4244,7 +4244,7 @@ const APP_COMMANDS = [
   },
   {
     id: "noise-report",
-    command: "@gittensory noise-report",
+    command: "@loopover noise-report",
     audience: "maintainer",
     boundary: "public-safe",
     description: "Highlight queue noise sources maintainers should triage first.",
@@ -4387,7 +4387,7 @@ function buildCommandPreview(
 
   if (!request.repoFullName || !request.pullNumber) {
     const summary = commandPreviewSkipSummary("missing_target");
-    const body = sanitizePublicComment(`Gittensory would not post a public command response for ${target}: ${summary}`);
+    const body = sanitizePublicComment(`LoopOver would not post a public command response for ${target}: ${summary}`);
     return {
       ...base,
       body,
@@ -4402,7 +4402,7 @@ function buildCommandPreview(
   }
 
   if (!authorization.authorized) {
-    const body = sanitizePublicComment(`Gittensory would not post a public command response for ${target}: ${commandPreviewSkipSummary(authorization.reason)}.`);
+    const body = sanitizePublicComment(`LoopOver would not post a public command response for ${target}: ${commandPreviewSkipSummary(authorization.reason)}.`);
     return {
       ...base,
       body,
@@ -4418,7 +4418,7 @@ function buildCommandPreview(
 
   if (missingPermissions.includes("issues")) {
     const summary = "GitHub App permission Issues: write is required before a command response can be posted.";
-    const body = sanitizePublicComment(`Gittensory preview is ready for ${target}, but ${summary}`);
+    const body = sanitizePublicComment(`LoopOver preview is ready for ${target}, but ${summary}`);
     return {
       ...base,
       body,
@@ -4446,9 +4446,9 @@ function buildCommandPreview(
   const pullRequest = buildCommandPreviewPullRequest(request, sample, context.pullRequest);
   const body =
     command.id === "public-summary"
-      ? `Gittensory can summarize public-safe context for ${target}. Private scorer details stay out of the PR thread.`
+      ? `LoopOver can summarize public-safe context for ${target}. Private scorer details stay out of the PR thread.`
       : buildPublicAgentCommandComment({
-          command: { name: mentionCommandName, raw: `@gittensory ${mentionCommandName}` },
+          command: { name: mentionCommandName, raw: `@loopover ${mentionCommandName}` },
           repo: context.repo,
           issue,
           pullRequest,
@@ -4473,7 +4473,7 @@ function buildCommandPreview(
       status: "ready",
       willComment: true,
       skipReason: null,
-      summary: "Gittensory would post this sanitized command response and would not create labels or check runs.",
+      summary: "LoopOver would post this sanitized command response and would not create labels or check runs.",
     }),
   };
 }
@@ -4524,7 +4524,7 @@ function buildCommandPreviewSample(request: z.infer<typeof commandPreviewSchema>
   const sample = request.sample ?? {};
   const authorLogin = sample.authorLogin?.trim() || pullRequest?.authorLogin || request.login || "sample-contributor";
   const commenterAssociation =
-    sample.commenterAssociation ?? (isMaintainerOnlyCommand(previewableMentionCommandName(request.command.replace(/^@gittensory\s+/, "")) ?? "help") ? "OWNER" : "NONE");
+    sample.commenterAssociation ?? (isMaintainerOnlyCommand(previewableMentionCommandName(request.command.replace(/^@loopover\s+/, "")) ?? "help") ? "OWNER" : "NONE");
   return {
     pullNumber: request.pullNumber ?? pullRequest?.number ?? 1,
     authorLogin,
@@ -4613,7 +4613,7 @@ function commandPreviewSkipSummary(reason: string): string {
     missing_target: "public command previews require a repository and pull request number.",
     maintainer_command_requires_maintainer: "maintainer-only commands require an owner, member, or collaborator invocation.",
     not_maintainer_or_pr_author: "the commenter is neither a maintainer nor the pull request author.",
-    miner_detection_unavailable: "official Gittensor miner detection is unavailable, so Gittensory would skip rather than guess.",
+    miner_detection_unavailable: "official Gittensor miner detection is unavailable, so LoopOver would skip rather than guess.",
     pr_author_not_confirmed_miner: "the pull request author is not a confirmed Gittensor miner.",
   };
   return summaries[reason] ?? reason.replace(/_/g, " ");
@@ -4667,7 +4667,7 @@ function buildDigestItems(args: {
   items.push({
     kind: "summary",
     title: `${registered} registered repositories tracked`,
-    detail: `${args.repositories.length} repositories are present in the local Gittensory data cache.`,
+    detail: `${args.repositories.length} repositories are present in the local LoopOver data cache.`,
     meta: "registry",
   });
   const unhealthy = args.health.filter((record) => record.status !== "healthy");
@@ -5680,7 +5680,7 @@ async function skippedPrAuditRepoScope(
 function skippedPrAuditRemediation(reason: string): string {
   switch (reason) {
     case "surface_off":
-      return "Enable a PR public surface or check runs in repository settings if maintainers want Gittensory to post.";
+      return "Enable a PR public surface or check runs in repository settings if maintainers want LoopOver to post.";
     case "missing_author":
       return "Retry after GitHub provides a resolvable pull request author.";
     case "bot_author":
@@ -5690,7 +5690,7 @@ function skippedPrAuditRemediation(reason: string): string {
     case "maintainer_author":
       return "Enable maintainer-authored PRs in repository settings only if those PRs should receive public GitHub App output.";
     case "miner_detection_unavailable":
-      return "Retry after official Gittensor miner detection recovers; Gittensory skips instead of guessing.";
+      return "Retry after official Gittensor miner detection recovers; LoopOver skips instead of guessing.";
     case "not_official_gittensor_miner":
       return "No public action is needed unless the author should be recognized as an official Gittensor miner.";
     default:

@@ -5,7 +5,7 @@ import type { RepositorySettings } from "../types";
 
 /**
  * PURE, public-safe summary of a repo's EFFECTIVE review config (#2168) — the yml>DB>defaults result a maintainer
- * would otherwise only see in the dashboard, surfaced on demand via `@gittensory configuration`. Renders ONLY
+ * would otherwise only see in the dashboard, surfaced on demand via `@loopover configuration`. Renders ONLY
  * non-sensitive operational config: the agent execution mode, per-action-class autonomy, the slop-gate threshold,
  * the blacklist label, and the command-authorization overview (reusing {@link summarizeCommandAuthorizationPolicy}).
  *

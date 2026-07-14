@@ -328,7 +328,7 @@ export type AgentActionPlanInput = {
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit"); explicit `null` ⇒ close
   // WITHOUT any label (#label-scoping). Gated on `close` autonomy, NOT `label` — same shape as {@link blacklistLabel}.
   contributorCapLabel?: string | null | undefined;
-  // Review-nag cooldown (#2463, anti-abuse): when the PR author has pinged `@gittensory` past the repo's
+  // Review-nag cooldown (#2463, anti-abuse): when the PR author has pinged `@loopover` past the repo's
   // configured threshold within the cooldown window AND the repo's `reviewNagPolicy` is `"close"`, the
   // disposition SHORT-CIRCUITS to a deterministic label + close ahead of ALL merit/CI/AI analysis — same
   // zero-hallucination shape as blacklistMatch, so its close is tagged `closeKind: "review_nag"`. Fires for a
@@ -550,13 +550,13 @@ export function downgradeCloseToHold(planned: PlannedAgentAction[], closeHoldOnl
 }
 
 function closeMessage(reasons: string[]): string {
-  return `Gittensory is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs may be analyzed later to improve review accuracy, but they are not automatically reopened or re-reviewed.`;
+  return `LoopOver is closing this pull request on the maintainer's behalf (${reasons.join("; ")}). This is an automated maintenance action — to pursue this change, please open a new pull request with the issues resolved. Closed PRs may be analyzed later to improve review accuracy, but they are not automatically reopened or re-reviewed.`;
 }
 
 // The close comment for a blacklisted author (#1425). Do not interpolate maintainer-supplied blacklist metadata:
 // reasons/evidence may come from private configuration, and this string is posted to the public PR thread.
 function blacklistCloseMessage(): string {
-  return "Gittensory is closing this pull request on the maintainer's behalf. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.";
+  return "LoopOver is closing this pull request on the maintainer's behalf. This account is blocked from contributing to this repository, so the change was not reviewed on its merits. This is an automated maintenance action.";
 }
 
 // The close comment for exceeding the per-contributor open-item cap (#2270). Unlike blacklistCloseMessage, this
@@ -568,14 +568,14 @@ function blacklistCloseMessage(): string {
 // way, just an accurate noun phrase for where the count was aggregated.
 function contributorCapCloseMessage(authorLogin: string, openCount: number, cap: number, itemNoun: "pull requests" | "issues" | "pull requests and issues", scope?: "repository" | "install" | undefined): string {
   const scopeDescription = scope === "install" ? "this install's configured limit (across every repository it gates, combined)" : "this repository's configured limit";
-  return `Gittensory closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above ${scopeDescription} of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
+  return `LoopOver closed this because @${authorLogin} has ${openCount} open ${itemNoun}, above ${scopeDescription} of ${cap}. Close or merge an existing one to open a new one. This is an automated maintenance action.`;
 }
 
 // The close comment for review-nag cooldown (#2463). DOES interpolate authorLogin/pingCount/maxPings — none of
-// that is private (the author's own login and their own public @gittensory ping count are already public/
+// that is private (the author's own login and their own public @loopover ping count are already public/
 // derivable from the PR thread itself), mirroring the contributor-cap close message's same reasoning.
 function reviewNagCloseMessage(authorLogin: string, pingCount: number, maxPings: number): string {
-  return `Gittensory closed this because @${authorLogin} pinged @gittensory ${pingCount} times, above this repository's configured limit of ${maxPings}. Please wait for the cooldown window to pass before requesting review again. This is an automated maintenance action.`;
+  return `LoopOver closed this because @${authorLogin} pinged @loopover ${pingCount} times, above this repository's configured limit of ${maxPings}. Please wait for the cooldown window to pass before requesting review again. This is an automated maintenance action.`;
 }
 
 // The close comment for the screenshot-table gate (#2006). `reason` is the repo-configured (or built-in
@@ -1093,7 +1093,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // OWNER/automation PR is HELD via the needs-human label + the (non-blocking) unified review comment — never a
   // formal request-changes. (#no-request-changes) Either merge/approve, or close, with the rare manual hold left
   // open + commented, never blocked.
-  // Never APPROVE a base-conflicting PR: it is closed below (willClose on isConflict), so a "Gittensory approves —
+  // Never APPROVE a base-conflicting PR: it is closed below (willClose on isConflict), so a "LoopOver approves —
   // safe to merge" review on a PR we're about to close is incoherent (and a stale approval strands the PR if it
   // later goes green). A `behind`/`blocked` PR is fine to approve (it is rebased pre-review or the approval clears
   // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report) */
@@ -1102,7 +1102,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       actionClass: "approve",
       requiresApproval: approval("approve"),
       reason: "gate passed, CI green",
-      reviewBody: "Gittensory approves — the gate is satisfied and CI is green.",
+      reviewBody: "LoopOver approves — the gate is satisfied and CI is green.",
       // Pin the approve to the EXACT reviewed head (#2262), matching the merge action's existing pin. For an
       // auto_with_approval stage this travels into the pending row (actionParams persists expectedHeadSha), so
       // the accept-time supersede check — which only fires when expectedHeadSha is truthy — actually engages: a

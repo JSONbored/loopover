@@ -49,7 +49,7 @@ const CARDS = [
   {
     to: "/app/runs",
     title: "Agent runs",
-    desc: "Unified feed of MCP, API, and @gittensory runs with evidence and boundary tags.",
+    desc: "Unified feed of MCP, API, and @loopover runs with evidence and boundary tags.",
     icon: Activity,
     roles: ["miner", "maintainer", "owner", "operator"],
   },
@@ -154,7 +154,7 @@ function AppOverview() {
           </span>
         }
         title={<>Welcome back, {session.login}</>}
-        description="Live control-panel metrics from the Gittensory API. Missing backend data renders as empty states instead of demo records."
+        description="Live control-panel metrics from the LoopOver API. Missing backend data renders as empty states instead of demo records."
       />
 
       <RoleSummaryPanel session={session} />
@@ -338,7 +338,7 @@ function QuickActions({ lastRunId, roles }: { lastRunId?: string; roles: AppRole
     {
       to: "/app/workbench",
       search: { tab: "commands" },
-      label: "@gittensory commands",
+      label: "@loopover commands",
       icon: TerminalSquare,
       roles: ["maintainer", "owner", "operator"],
     },

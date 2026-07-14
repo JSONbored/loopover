@@ -151,7 +151,7 @@ function Tuning() {
           Off by default (one-shot): AI-generated content (main review, slop advisory, linked-issue
           satisfaction) is produced once per PR and never regenerated automatically afterward — only
           an explicit maintainer retrigger (the PR-panel checkbox, or{" "}
-          <code>@gittensory review</code> as a maintainer) spends a fresh call. Truthy switches the
+          <code>@loopover review</code> as a maintainer) spends a fresh call. Truthy switches the
           fleet default to continuous — every push/CI-completion/sweep re-runs AI content
           generation. A repo's own <code>review.auto_review.cadence</code> in{" "}
           <code>.loopover.yml</code> always overrides this default, in either direction. Never
@@ -184,8 +184,8 @@ function Tuning() {
           advisory (non-blocking) AI finding against this repo's stored suppression signals (a
           maintainer's own past false-positive dismissals) and demotes or drops it before the
           unified comment renders. A maintainer records a signal with{" "}
-          <code>@gittensory resolve [finding-code]</code> (or a whole-PR{" "}
-          <code>@gittensory resolve</code> ack). Advisory-only by construction — never applied to
+          <code>@loopover resolve [finding-code]</code> (or a whole-PR{" "}
+          <code>@loopover resolve</code> ack). Advisory-only by construction — never applied to
           gate blockers, so it can never change the merge/close disposition. Also requires the
           per-repo <code>review.memory: true</code> opt-in in <code>.loopover.yml</code>. Per-PR.
         </li>
@@ -215,7 +215,7 @@ function Tuning() {
           content only, no server-side write, no execution. Per-PR.
         </li>
         <li>
-          <code>LOOPOVER_REVIEW_PLANNER</code> — enables <code>@gittensory plan</code>, an on-demand
+          <code>LOOPOVER_REVIEW_PLANNER</code> — enables <code>@loopover plan</code>, an on-demand
           structured implementation plan posted to the PR thread. Per-PR.
         </li>
         <li>
@@ -284,7 +284,7 @@ function Tuning() {
         </li>
         <li>
           <code>block</code> — the finding can become a hard{" "}
-          <code>Gittensory Orb Review Agent</code> blocker. A block outcome fails the gate for any
+          <code>LoopOver Orb Review Agent</code> blocker. A block outcome fails the gate for any
           author identically — confirmed-Gittensor-contributor status doesn&apos;t change{" "}
           <em>who</em> can be blocked, only the mode chooses <em>which</em> deterministic checks are
           active. Confirmed status is carried through for on-chain scoring, a separate concern from
@@ -297,7 +297,7 @@ function Tuning() {
         dimension's default below). <code>gate.enabled</code> is a legacy, unrelated field: it is
         only a boolean shorthand for <code>gate.checkMode</code> (<code>required</code> /{" "}
         <code>visible</code> / <code>disabled</code>), which controls solely whether the{" "}
-        <code>Gittensory Orb Review Agent</code> check-run publishes on GitHub. Neither field turns
+        <code>LoopOver Orb Review Agent</code> check-run publishes on GitHub. Neither field turns
         gate evaluation, comments, labels, audit, or autonomous merge/close on or off — set the
         dimension modes below directly, and set <code>gate.checkMode</code> explicitly instead of
         the ambiguous <code>gate.enabled</code>. The main dimensions:
@@ -479,7 +479,7 @@ function Tuning() {
           <code>publicSignalLevel</code> — <code>minimal</code> / <code>standard</code> (default).
         </li>
         <li>
-          <code>checkRunMode</code> — publishes the <strong>Gittensory Context</strong> check (not
+          <code>checkRunMode</code> — publishes the <strong>LoopOver Context</strong> check (not
           the <strong>Orb Review Agent</strong> gate check, which is <code>reviewCheckMode</code>):{" "}
           <code>off</code> (default) / <code>enabled</code>. Pair with{" "}
           <code>checkRunDetailLevel</code> (<code>minimal</code> (default) / <code>standard</code>).

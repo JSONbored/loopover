@@ -107,7 +107,7 @@ function buildTestCoverageHealth(labelAudit: LabelAudit, settings: RepositorySet
     trustedLabelPipelineReady,
     checkRunMode: settings.checkRunMode,
     requiredGate: COVERAGE_GATE,
-    note: "Gittensory enforces its own coverage gate in CI; remote contributor repos must preserve an equivalent test gate before trusted-label or maintainer-cut promotion. Check runs intentionally default off; their state is informational here and is not a readiness warning.",
+    note: "LoopOver enforces its own coverage gate in CI; remote contributor repos must preserve an equivalent test gate before trusted-label or maintainer-cut promotion. Check runs intentionally default off; their state is informational here and is not a readiness warning.",
     warnings,
   };
 }
@@ -132,10 +132,10 @@ function buildGithubAppBehavior(repo: RepositoryRecord | null, settings: Reposit
     reviewCheckMode: settings.reviewCheckMode,
     quietByDefault,
     behavior: !installed
-      ? "Gittensory would stay silent because the GitHub App is not installed."
+      ? "LoopOver would stay silent because the GitHub App is not installed."
       : settings.publicSurface === "off"
-        ? `Gittensory stays quiet: no public comments or labels${shouldPublishReviewCheck(settings.reviewCheckMode) ? ", with the opt-in gate check still enabled" : ""}.`
-        : `Gittensory posts ${settings.publicSurface.replace(/_/g, " ")} in ${settings.publicAudienceMode.replace(/_/g, " ")} mode, ${quietByDefault ? "quiet by default" : "for all PRs"}.`,
+        ? `LoopOver stays quiet: no public comments or labels${shouldPublishReviewCheck(settings.reviewCheckMode) ? ", with the opt-in gate check still enabled" : ""}.`
+        : `LoopOver posts ${settings.publicSurface.replace(/_/g, " ")} in ${settings.publicAudienceMode.replace(/_/g, " ")} mode, ${quietByDefault ? "quiet by default" : "for all PRs"}.`,
     warnings,
   };
 }
@@ -175,7 +175,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
         );
 
   const blockers = [
-    ...(!isRegistered ? ["Repository is not registered in the latest Gittensory registry snapshot."] : []),
+    ...(!isRegistered ? ["Repository is not registered in the latest LoopOver registry snapshot."] : []),
     ...(configFragile ? ["Repository config quality is fragile."] : []),
     ...(intakeBlocked ? ["Contributor intake health is blocked."] : []),
   ];
@@ -184,7 +184,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
   const directPrReadiness = {
     ready: directPrReady,
     reasons: [
-      isRegistered ? "Repository is registered in the local Gittensory snapshot." : "Repository is not registered yet; direct-PR mining cannot be evaluated.",
+      isRegistered ? "Repository is registered in the local LoopOver snapshot." : "Repository is not registered yet; direct-PR mining cannot be evaluated.",
       directPrReady ? "Config quality and contributor intake are healthy enough for direct-PR-first intake." : `Direct-PR intake is gated by config quality (${configQuality.level}) and intake health (${contributorIntakeHealth.level}).`,
     ],
   };
@@ -239,7 +239,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
     docsCompleteness: {
       status: "repo_docs_not_crawled",
       requiredDocs: REQUIRED_DOCS,
-      note: "Gittensory validates public repo docs from the local project during CI; remote repo-doc crawling is not enabled in this signal yet.",
+      note: "LoopOver validates public repo docs from the local project during CI; remote repo-doc crawling is not enabled in this signal yet.",
     },
     githubApp,
     policyReadiness,

@@ -183,7 +183,7 @@ describe("review-memory suppression store (#2178)", () => {
         ).bind(`newer-${index}`, repoFullName, `newer-hash-${index}`, new Date(newerStartMs + index * 1000).toISOString()),
       ),
     );
-    // 5 suppressions from ONE `@gittensory resolve` whole-PR Promise.all batch -- identical (same-millisecond)
+    // 5 suppressions from ONE `@loopover resolve` whole-PR Promise.all batch -- identical (same-millisecond)
     // createdAt, inserted here in a SCRAMBLED (non-id-sorted) order to prove the eviction outcome doesn't
     // depend on it.
     const tiedCreatedAt = "2026-01-01T00:00:00.000Z";
@@ -235,7 +235,7 @@ describe("getCachedReviewSuppressions / invalidateReviewSuppressionCache (#4508)
     const before = await getCachedReviewSuppressions(env, "owner/live-repo", t0);
     expect(before).toHaveLength(0); // cold cache, nothing recorded yet — this populates the cache with an empty set
 
-    // A maintainer runs `@gittensory resolve` between the two renders, well within the cache's TTL.
+    // A maintainer runs `@loopover resolve` between the two renders, well within the cache's TTL.
     await recordReviewSuppression(env, { repoFullName: "owner/live-repo", category: "ai_review_split", patternHash: "hash-fresh" });
     invalidateReviewSuppressionCache("owner/live-repo");
 

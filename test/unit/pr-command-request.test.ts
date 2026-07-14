@@ -9,7 +9,7 @@ describe("classifyPrCommandRequest (#1960)", () => {
       action: "created",
       repository: { full_name: "acme/widgets" },
       issue: { number: 9, title: "T", state: "open", body: "B", pull_request: {} },
-      comment: { id: 1, body: "@gittensory review", user: { login: "maint", type: "User" } },
+      comment: { id: 1, body: "@loopover review", user: { login: "maint", type: "User" } },
       sender: { login: "maint", type: "User" },
       ...over,
     }) as unknown as GitHubWebhookPayload;
@@ -25,7 +25,7 @@ describe("classifyPrCommandRequest (#1960)", () => {
   });
 
   it("skips a Bot comment author, Bot sender, or a login ending in [bot] (bot_author)", () => {
-    expect(classifyPrCommandRequest(base({ comment: { id: 1, body: "@gittensory review", user: { login: "bot", type: "Bot" } } }), 123)).toMatchObject({ ok: false, reason: "bot_author" });
+    expect(classifyPrCommandRequest(base({ comment: { id: 1, body: "@loopover review", user: { login: "bot", type: "Bot" } } }), 123)).toMatchObject({ ok: false, reason: "bot_author" });
     expect(classifyPrCommandRequest(base({ sender: { login: "x", type: "Bot" } }), 123)).toMatchObject({ ok: false, reason: "bot_author" });
     expect(classifyPrCommandRequest(base({ sender: { login: "renovate[bot]", type: "User" } }), 123)).toMatchObject({ ok: false, reason: "bot_author" });
   });
@@ -36,7 +36,7 @@ describe("classifyPrCommandRequest (#1960)", () => {
     // No `pull_request` field on the issue → this is a plain issue comment, not a PR comment.
     expect(classifyPrCommandRequest(base({ issue: { number: 9, title: "T", state: "open" } }), 123)).toMatchObject({ ok: false, reason: "missing_repo_pr_installation_or_actor" });
     expect(classifyPrCommandRequest(base(), null)).toMatchObject({ ok: false, reason: "missing_repo_pr_installation_or_actor" });
-    expect(classifyPrCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@gittensory review", user: undefined } }), 123)).toMatchObject({
+    expect(classifyPrCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@loopover review", user: undefined } }), 123)).toMatchObject({
       ok: false,
       reason: "missing_repo_pr_installation_or_actor",
       actor: null,
@@ -44,12 +44,12 @@ describe("classifyPrCommandRequest (#1960)", () => {
   });
 
   it("prefers the sender login over the comment author login when both are present", () => {
-    const req = classifyPrCommandRequest(base({ sender: { login: "sender-login", type: "User" }, comment: { id: 1, body: "@gittensory review", user: { login: "comment-login", type: "User" } } }), 123);
+    const req = classifyPrCommandRequest(base({ sender: { login: "sender-login", type: "User" }, comment: { id: 1, body: "@loopover review", user: { login: "comment-login", type: "User" } } }), 123);
     expect(req).toMatchObject({ ok: true, actor: "sender-login" });
   });
 
   it("falls back to the comment author login when the sender is absent", () => {
-    const req = classifyPrCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@gittensory review", user: { login: "comment-login", type: "User" } } }), 123);
+    const req = classifyPrCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@loopover review", user: { login: "comment-login", type: "User" } } }), 123);
     expect(req).toMatchObject({ ok: true, actor: "comment-login" });
   });
 });

@@ -80,12 +80,12 @@ export function MinerWorkflow() {
       maintainer: (
         <>
           On confirmed-miner PRs you can later request the same view with
-          <code> @gittensory preflight</code> — the response is sanitized for the PR thread.
+          <code> @loopover preflight</code> — the response is sanitized for the PR thread.
         </>
       ),
       nextStep: {
         miner: { label: "Common preflight blockers", to: "/docs/troubleshooting" },
-        maintainer: { label: "All @gittensory commands", to: "/docs/maintainer-workflow" },
+        maintainer: { label: "All @loopover commands", to: "/docs/maintainer-workflow" },
       },
     },
     {

@@ -3,7 +3,7 @@ import { sanitizePublicComment } from "../queue-intelligence";
 import type { AdvisoryAiRoutingConfig } from "../types";
 import type { AgentRunBundle } from "./agent-orchestrator";
 
-// Grounded @gittensory chat <question> LLM Q&A (#4595), powered ENTIRELY by local Ollama (env.AI_ADVISORY).
+// Grounded @loopover chat <question> LLM Q&A (#4595), powered ENTIRELY by local Ollama (env.AI_ADVISORY).
 //
 // This is modeled on summarizeAgentBundleWithAi / rewriteSignalBundleWithAi (src/services/ai-summaries.ts): it
 // reuses their enable-flag-check → shared-neuron-budget-gate → provider-call → guaranteed-safe-fallback shape.
@@ -41,14 +41,14 @@ export type ChatQaRequest = {
 };
 
 /** The existing deterministic command a declined answer points the reader at, rather than guessing (#4595 req 3). */
-export const CHAT_QA_FALLBACK_COMMAND = "@gittensory preflight";
+export const CHAT_QA_FALLBACK_COMMAND = "@loopover preflight";
 
 const CHAT_QA_SYSTEM_PROMPT =
-  "You are answering a contributor's question about a GitHub pull request using ONLY the deterministic Gittensory " +
+  "You are answering a contributor's question about a GitHub pull request using ONLY the deterministic LoopOver " +
   "facts provided in the user message. Restate and explain those facts in clear, friendly prose (under 6 sentences). " +
   "Do not invent facts, do not claim a guaranteed outcome, and never mention rewards, rankings, payouts, wallets, " +
   "hotkeys, raw or estimated trust scores, scoreability, or reviewability. If the provided facts do not answer the " +
-  "question, say so plainly and suggest running `@gittensory preflight` or `@gittensory blockers`.";
+  "question, say so plainly and suggest running `@loopover preflight` or `@loopover blockers`.";
 
 // Private decision-pack blocker codes and boundary terms are redacted (not thrown on) before the grounding
 // bundle is ever put in a prompt. Chat grounding intentionally uses only public-safe summaries and omits raw
@@ -106,7 +106,7 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
     return {
       status: "declined",
       reason: "No question was supplied.",
-      suggestion: "Ask a specific question, for example `@gittensory chat why is this PR blocked?`.",
+      suggestion: "Ask a specific question, for example `@loopover chat why is this PR blocked?`.",
     };
   }
   if (!req.bundle || req.bundle.run.status === "needs_snapshot_refresh") {
@@ -121,7 +121,7 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
     return {
       status: "declined",
       reason: "No cached deterministic facts are available to ground an answer for this PR.",
-      suggestion: `Run \`${CHAT_QA_FALLBACK_COMMAND}\` or \`@gittensory blockers\` for the deterministic readiness facts.`,
+      suggestion: `Run \`${CHAT_QA_FALLBACK_COMMAND}\` or \`@loopover blockers\` for the deterministic readiness facts.`,
     };
   }
 
@@ -207,7 +207,7 @@ function redactGroundingText(value: string): string {
 function buildChatPrompt(question: string, grounding: ChatGroundingBundle): string {
   return [
     `Contributor question: ${question}`,
-    "Deterministic Gittensory facts for this pull request (answer using only these):",
+    "Deterministic LoopOver facts for this pull request (answer using only these):",
     JSON.stringify(grounding),
   ].join("\n");
 }

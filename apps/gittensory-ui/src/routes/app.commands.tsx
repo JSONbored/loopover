@@ -12,7 +12,7 @@ function CommandsRoute() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Commands"
-        title="@gittensory command catalog"
+        title="@loopover command catalog"
         description="Preview maintainer command behavior against live API contracts without rerouting through the workbench."
       />
       <CommandsPanel />

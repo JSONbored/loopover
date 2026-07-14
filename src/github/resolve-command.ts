@@ -1,4 +1,4 @@
-// #2166 `@gittensory resolve [<finding-id>]` — pure finding-reference normalization for the resolve dispatch
+// #2166 `@loopover resolve [<finding-id>]` — pure finding-reference normalization for the resolve dispatch
 // scaffold. A maintainer marks a posted review finding (or the whole PR's findings) as resolved; suppression
 // semantics that feed a future review pass are maintainer-owned (#1964). This module only validates the optional
 // trailing argument so the processor can record `github_app.finding_resolved` with a stable finding key.
@@ -10,7 +10,7 @@ export type ResolveFindingRef =
   | { ok: true; scope: "single"; findingCode: string }
   | { ok: false; reason: "malformed_finding_id" };
 
-/** Normalize the optional trailing text from `@gittensory resolve [<finding-id>]`. Empty/absent ⇒ whole-PR ack;
+/** Normalize the optional trailing text from `@loopover resolve [<finding-id>]`. Empty/absent ⇒ whole-PR ack;
  *  a present token must be a public-safe finding code (snake_case, optional `finding-` prefix). PURE. */
 export function normalizeResolveFindingRef(raw: string | null | undefined): ResolveFindingRef {
   const trimmed = (raw ?? "").trim();

@@ -19,7 +19,7 @@ function bundleFixture(runOverrides?: Partial<AgentRunBundle["run"]>, actionOver
   return {
     run: {
       id: "run-chat",
-      objective: "Respond to @gittensory chat for owner/repo#1",
+      objective: "Respond to @loopover chat for owner/repo#1",
       actorLogin: "octofeesh1",
       surface: "github_comment",
       mode: "copilot",
@@ -160,7 +160,7 @@ describe("generateChatQaAnswer", () => {
       repoFullName: "owner/repo",
       issueNumber: 1,
     });
-    expect(result).toMatchObject({ status: "declined", reason: "No question was supplied.", suggestion: expect.stringContaining("@gittensory chat") });
+    expect(result).toMatchObject({ status: "declined", reason: "No question was supplied.", suggestion: expect.stringContaining("@loopover chat") });
     expect(advisoryRun).not.toHaveBeenCalled();
   });
 

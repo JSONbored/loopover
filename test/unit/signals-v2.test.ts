@@ -713,7 +713,7 @@ describe("v2 signal builders", () => {
     const packet = buildMaintainerPacket(repo, [], [], repo.fullName);
     const busyPacket = buildMaintainerPacket(repo, issues, pullRequests, repo.fullName);
 
-    expect(packet.suggestedActions).toEqual(["Queue looks manageable from cached Gittensory signals."]);
+    expect(packet.suggestedActions).toEqual(["Queue looks manageable from cached LoopOver signals."]);
     expect(busyPacket.pullRequestPackets.map((item) => item.reviewPriority)).toContain("needs_author");
     expect(busyPacket.suggestedActions.length).toBeGreaterThan(1);
   });

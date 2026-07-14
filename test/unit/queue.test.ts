@@ -143,7 +143,7 @@ function commandAnswerBody(answerId: string, command: string): string {
   return [
     "<!-- gittensory-agent-command -->",
     `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@gittensory ${command}\``,
+    `Command: \`@loopover ${command}\``,
     "Feedback is aggregate-only.",
   ].join("\n");
 }

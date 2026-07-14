@@ -24,7 +24,7 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Repo owner workspace", to: "/app/owner", group: "App" },
   { label: "Agent runs", to: "/app/runs", group: "App" },
   { label: "Agent playground", to: "/app/playground", group: "App" },
-  { label: "@gittensory command simulator", to: "/app/commands", group: "App" },
+  { label: "@loopover command simulator", to: "/app/commands", group: "App" },
   { label: "Product analytics", to: "/app/analytics", group: "App" },
   { label: "Maintainer digest", to: "/app/digest", group: "App" },
   { label: "Skipped PR audit", to: "/app/audit", group: "App" },

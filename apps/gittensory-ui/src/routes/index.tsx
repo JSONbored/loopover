@@ -17,13 +17,13 @@ import { MCP_PACKAGE_NAME, getLatestMcpVersion, useMcpPackageMetadata } from "@/
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Gittensory — Plan the work. Skip the noise." },
+      { title: "LoopOver — Plan the work. Skip the noise." },
       {
         name: "description",
         content:
           "Deterministic base-agent layer for Gittensor OSS contribution mining. Plan better work, preflight branches, and keep maintainer review surfaces quiet.",
       },
-      { property: "og:title", content: "Gittensory — Plan the work. Skip the noise." },
+      { property: "og:title", content: "LoopOver — Plan the work. Skip the noise." },
       {
         property: "og:description",
         content:
@@ -73,7 +73,7 @@ function Hero() {
             <span className="block text-muted-foreground">Not like a bot.</span>
           </h1>
           <p className="mt-5 max-w-lg text-token-md leading-token-normal text-muted-foreground">
-            Gittensory is the deterministic base-agent layer for Gittensor OSS contribution mining.
+            LoopOver is the deterministic base-agent layer for Gittensor OSS contribution mining.
             Plan better work, preflight branches, and keep maintainer review surfaces quiet.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
@@ -194,7 +194,7 @@ function AudienceSection() {
     {
       who: "For maintainers",
       to: "/maintainers" as const,
-      tools: ["@gittensory help", "preflight", "miner-context", "duplicate-check"],
+      tools: ["@loopover help", "preflight", "miner-context", "duplicate-check"],
       blurb:
         "Confirmed-miner context without check noise. One sticky comment, one label, on demand.",
     },
@@ -331,7 +331,7 @@ function Capabilities() {
 function Boundary() {
   const lines = [
     "MCP transmits metadata only — never source code.",
-    "No PAT input. CLI uses GitHub Device Flow; session tokens are Gittensory-issued.",
+    "No PAT input. CLI uses GitHub Device Flow; session tokens are LoopOver-issued.",
     "No wallet, hotkey, or trust-score surfaces.",
     "Confirmed-miner PRs get at most one sanitized sticky comment and a configured label.",
     "Maintainer commands return packets to the maintainer, not to the public PR.",

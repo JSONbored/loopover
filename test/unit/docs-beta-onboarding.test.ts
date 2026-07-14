@@ -31,8 +31,8 @@ describe("docs beta onboarding page", () => {
   it("documents maintainer GitHub App setup, preview, and commands", () => {
     expect(source).toMatch(/GitHub App/);
     expect(source).toMatch(/settings-preview/);
-    expect(source).toMatch(/@gittensory help/);
-    expect(source).toMatch(/@gittensory preflight/);
+    expect(source).toMatch(/@loopover help/);
+    expect(source).toMatch(/@loopover preflight/);
   });
 
   it("documents repo owner readiness and config guidance", () => {
@@ -47,7 +47,7 @@ describe("docs beta onboarding page", () => {
     expect(source).toMatch(/upstream\/drift/);
   });
 
-  it("positions Gittensory as independent control-plane, not official Gittensor frontend", () => {
+  it("positions LoopOver as independent control-plane, not official Gittensor frontend", () => {
     expect(source).toMatch(/official Gittensor product surface/i);
     expect(source).toMatch(/official Gittensor frontend/i);
     expect(source).toMatch(/independent of/i);

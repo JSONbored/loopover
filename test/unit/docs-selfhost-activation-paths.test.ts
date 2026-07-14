@@ -20,7 +20,7 @@ const maintainer = readFileSync(MAINTAINER, "utf8");
 describe("self-host activation + onboarding docs (#1574)", () => {
   it("quickstart documents allowlist, private config seed, activation POST, and Checks: write", () => {
     expect(quickstart).toContain("LOOPOVER_REVIEW_REPOS");
-    expect(quickstart).toContain("config/examples/global.gittensory.yml");
+    expect(quickstart).toContain("config/examples/global.loopover.yml");
     expect(quickstart).toContain("gittensory-config/.loopover.yml");
     expect(quickstart).toContain("/v1/repos/owner/my-repo/activation");
     expect(quickstart).toContain("Checks: write");
@@ -49,6 +49,6 @@ describe("self-host activation + onboarding docs (#1574)", () => {
   it("maintainer index includes the onboarding simplification proposal", () => {
     expect(maintainer).toContain("Onboarding simplification proposal");
     expect(maintainer).toContain("POST /v1/repos/:owner/:repo/activation");
-    expect(maintainer).toContain("global.gittensory.yml");
+    expect(maintainer).toContain("global.loopover.yml");
   });
 });

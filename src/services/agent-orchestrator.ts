@@ -122,7 +122,7 @@ export async function startAgentRun(env: Env, input: AgentRunCreateRequest): Pro
     outcome: "queued",
     metadata: { runId: run.id, surface: run.surface, objective: input.objective },
   });
-  return { run, actions: [], contextSnapshots: [], summary: `Queued Gittensory agent run ${run.id}.` };
+  return { run, actions: [], contextSnapshots: [], summary: `Queued LoopOver agent run ${run.id}.` };
 }
 
 export async function getAgentRunBundle(env: Env, runId: string): Promise<AgentRunBundle | null> {
@@ -565,7 +565,7 @@ function actionFromDecisionAction(run: AgentRunRecord, action: DecisionAction, d
     maintainerImpact: maintainerImpactFor(decision),
     blockedBy: decision.scoreBlockers.map((blocker) => blocker.code),
     rerunWhen: rerunWhenForDecision(decision),
-    publicSafeSummary: sanitizePublicSummary(action.publicNextActions?.[0] ?? decision.publicNextActions?.[0] ?? `${decision.repoFullName}: Use Gittensory preflight before posting public PR context.`),
+    publicSafeSummary: sanitizePublicSummary(action.publicNextActions?.[0] ?? decision.publicNextActions?.[0] ?? `${decision.repoFullName}: Use LoopOver preflight before posting public PR context.`),
     payload: {
       action: action as unknown as JsonValue,
       decision: decision as unknown as JsonValue,
@@ -761,7 +761,7 @@ function localBranchEvidence(analysis: LocalBranchActionAnalysis, sourceSummary:
 function defaultRecommendationEvidence(actionType: AgentActionType): RecommendationEvidence {
   return {
     confidence: "medium",
-    sourceSummary: "Generated from Gittensory agent metadata.",
+    sourceSummary: "Generated from LoopOver agent metadata.",
     freshness: "unknown",
     sources: [evidenceSource("agent_action", null, null, "unknown", `${actionType} action generated without source-specific evidence.`)],
     assumptions: [],

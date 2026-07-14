@@ -1,10 +1,10 @@
-// Convergence (#issue-coding-plan) — the `@gittensory plan` command: on a maintainer's request, generate a
+// Convergence (#issue-coding-plan) — the `@loopover plan` command: on a maintainer's request, generate a
 // concise, actionable implementation plan from an ISSUE's text and post it as an issue comment so a contributor
 // (or their agent) has a concrete starting point.
 //
 // SAFETY CONTRACT:
 //   • flag-OFF (default) → isPlannerEnabled is false, the handler short-circuits BEFORE parsing, and the worker
-//     is byte-identical to today (`@gittensory plan` falls through to the existing mention path → help card).
+//     is byte-identical to today (`@loopover plan` falls through to the existing mention path → help card).
 //   • flag-ON → only a MAINTAINER can trigger it; the model sees only the (already-public) issue title + body;
 //     shared AI budget accounting runs before the configured reviewer (self-host Codex/Claude Code/etc, or the
 //     legacy Workers-AI pair); the output is public-safe-sanitized before posting; any model/error degrades to
@@ -25,14 +25,14 @@ export function isPlannerEnabled(env: {
   return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_PLANNER ?? "").trim());
 }
 
-/** Recognize a bare `@gittensory plan` mention (the rest of the line is ignored). Returns false for any other
+/** Recognize a bare `@loopover plan` mention (the rest of the line is ignored). Returns false for any other
  *  body so the handler never intercepts an unrelated comment. PURE. */
 export function isPlanCommand(body: string | null | undefined): boolean {
   if (!body) return false;
-  return /(?:^|\s)@gittensory\s+plan\b/i.test(body);
+  return /(?:^|\s)@loopover\s+plan\b/i.test(body);
 }
 
-/** The validated request for a `@gittensory plan` command, or a skip reason. PURE so every guard (wrong action,
+/** The validated request for a `@loopover plan` command, or a skip reason. PURE so every guard (wrong action,
  *  bot author, missing repo/issue/installation, a PR rather than an issue) is exhaustively unit-tested without the
  *  webhook harness; the processor then carries a single `ok` branch. (#issue-coding-plan) */
 export type PlanCommandRequest =
@@ -171,12 +171,12 @@ export function buildIssuePlanComment(
       AGENT_COMMAND_COMMENT_MARKER,
       "",
       "> [!NOTE]",
-      `> **Gittensory implementation plan** — requested by @${args.actor}`,
+      `> **LoopOver implementation plan** — requested by @${args.actor}`,
       "> AI-generated from the issue text. Treat it as a starting point and verify against the codebase before implementing.",
       "",
       "| Signal | State |",
       "| --- | --- |",
-      "| Command | `@gittensory plan` |",
+      "| Command | `@loopover plan` |",
       `| Scope | ${args.repoFullName}#${args.issueNumber} |`,
       "",
       plan,

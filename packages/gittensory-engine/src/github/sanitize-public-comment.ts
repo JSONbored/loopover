@@ -21,7 +21,7 @@ export function sanitizePublicComment(value: string): string {
 
 function sanitizeReviewabilityTerm(value: string): string {
   return value.replace(/\breviewability\b/gi, (match, offset, fullText: string) => {
-    const prefix = fullText.slice(Math.max(0, offset - "@gittensory ".length), offset).toLowerCase();
-    return prefix.endsWith("@gittensory ") ? match : "private context";
+    const prefix = fullText.slice(Math.max(0, offset - "@loopover ".length), offset).toLowerCase();
+    return prefix.endsWith("@loopover ") ? match : "private context";
   });
 }

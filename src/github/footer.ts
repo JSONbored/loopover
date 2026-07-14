@@ -33,8 +33,8 @@ export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | u
     return null;
   }
 }
-/** The public command-reference doc link for `@gittensory help` (#4670) and the "[BETA] Chat with
- *  Gittensory" public-safe collapsible (#5078). Lives here (not commands.ts/engine.ts) so both can import
+/** The public command-reference doc link for `@loopover help` (#4670) and the "[BETA] Chat with
+ *  LoopOver" public-safe collapsible (#5078). Lives here (not commands.ts/engine.ts) so both can import
  *  the SAME resolved URL without a circular module edge -- commands.ts already imports from signals/engine.ts,
  *  so engine.ts importing back from commands.ts would cycle. `new URL(path, origin)` -- same idiom as the
  *  sibling `maintainerControlPanelUrl` above -- so a `PUBLIC_SITE_ORIGIN` with or without a trailing slash

@@ -2690,7 +2690,7 @@ export async function countRecentAuditEventsForActor(env: Env, actor: string, ev
 
 /** Count-returning variant of {@link hasRecentAuditEvent}, additionally scoped to one `targetKey` (e.g. a single
  *  `owner/repo#123` PR/issue) rather than the actor's activity across the whole repo. Backs the review-request
- *  nagging cooldown (#2463): counting how many `@gittensory` pings a contributor has sent on ONE thread within
+ *  nagging cooldown (#2463): counting how many `@loopover` pings a contributor has sent on ONE thread within
  *  the configured cooldown window. */
 export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: string, eventType: string, targetKey: string, sinceIso: string): Promise<number> {
   const db = getDb(env.DB);
@@ -5575,7 +5575,7 @@ async function pruneReviewSuppressionsOverCap(env: Env, repoFullName: string): P
     .from(reviewSuppression)
     .where(eq(reviewSuppression.repoFullName, repoFullName))
     // #4501: an `id` tiebreak makes eviction deterministic under same-millisecond createdAt ties (e.g. a
-    // `@gittensory resolve` whole-PR command's Promise.all batch of suppression writes) -- without it, which
+    // `@loopover resolve` whole-PR command's Promise.all batch of suppression writes) -- without it, which
     // row is "the oldest" past the cap is query-plan-dependent and can vary run to run.
     .orderBy(desc(reviewSuppression.createdAt), desc(reviewSuppression.id));
   const overflow = rows.slice(MAX_REVIEW_SUPPRESSIONS_PER_REPO);

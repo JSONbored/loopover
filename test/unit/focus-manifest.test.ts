@@ -216,8 +216,8 @@ describe("parseFocusManifestContent", () => {
     expect(manifest.gate.lockfileIntegrityMode).toBe("off");
   });
 
-  it("parses .gittensory.minimal.yml with zero warnings and enables no agent actions (#2054)", () => {
-    const content = readFileSync(".gittensory.minimal.yml", "utf8");
+  it("parses .loopover.minimal.yml with zero warnings and enables no agent actions (#2054)", () => {
+    const content = readFileSync(".loopover.minimal.yml", "utf8");
     const manifest = parseFocusManifestContent(content, "repo_file");
     expect(manifest.warnings).toEqual([]);
     expect(manifest.present).toBe(true);

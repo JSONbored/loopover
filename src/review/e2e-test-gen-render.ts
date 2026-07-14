@@ -1,7 +1,7 @@
 // Public-safe rendering for AI-generated E2E test coverage (#4193, part of the #4189 epic).
 //
 // Unlike fix-handoff (which splices a block into the automated review's sticky unified comment), this
-// renders its OWN dedicated reply comment for the `@gittensory generate-tests` command (#4195) — a
+// renders its OWN dedicated reply comment for the `@loopover generate-tests` command (#4195) — a
 // maintainer-triggered, on-demand action, not something that runs on every automated review pass. This
 // mirrors how `explain`/`configuration` already post their own on-demand response comments rather than
 // editing the main review comment (see `maybeProcessExplainCommand` in `src/queue/processors.ts`).
@@ -40,7 +40,7 @@ function markdownFenceFor(source: string): string {
 }
 
 /**
- * Build the PR-comment body for a `@gittensory generate-tests` result. A null `testSource` renders a
+ * Build the PR-comment body for a `@loopover generate-tests` result. A null `testSource` renders a
  * clear "nothing usable" note rather than silently posting no comment at all — the maintainer who invoked
  * the command should always get a response, even a negative one. When `commit` delivery succeeded, the
  * comment links to the pushed commit instead of repeating its content (the commit IS the deliverable); when

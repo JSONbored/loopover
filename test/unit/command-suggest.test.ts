@@ -79,7 +79,7 @@ describe("suggestCommand", () => {
 describe("formatDidYouMeanLine", () => {
   it("renders a public-safe markdown hint", () => {
     expect(formatDidYouMeanLine("preflight")).toBe(
-      "- Did you mean `@gittensory preflight`?",
+      "- Did you mean `@loopover preflight`?",
     );
   });
 });
@@ -89,7 +89,7 @@ describe("buildDidYouMeanSections", () => {
 
   it("renders a hint for close typos and empty arrays otherwise", () => {
     expect(buildDidYouMeanSections("reveiw", suggest)).toEqual([
-      "- Did you mean `@gittensory review`?",
+      "- Did you mean `@loopover review`?",
       "",
     ]);
     expect(buildDidYouMeanSections(undefined, suggest)).toEqual([]);

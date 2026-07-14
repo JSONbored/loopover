@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { buildFocusManifestValidation } from "../../src/services/focus-manifest-validation";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../../src/signals/focus-manifest";
 
-const exampleManifest = readFileSync(join(process.cwd(), "config/examples/global.gittensory.yml"), "utf8");
+const exampleManifest = readFileSync(join(process.cwd(), "config/examples/global.loopover.yml"), "utf8");
 
 describe("buildFocusManifestValidation (#2057)", () => {
   it("returns ok for a valid manifest with recognized fields", () => {

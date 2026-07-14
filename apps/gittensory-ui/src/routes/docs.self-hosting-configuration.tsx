@@ -108,22 +108,22 @@ function SelfHostingConfiguration() {
       <FeatureRow
         items={[
           {
-            title: "gittensory.minimal.yml",
+            title: "loopover.minimal.yml",
             description:
               "Smallest safe starter — gate off, observe-only autonomy, no accidental merge/close/label writes. Copy to the repo root or a private mount.",
           },
           {
-            title: "gittensory.full.yml",
+            title: "loopover.full.yml",
             description:
               "Exhaustive commented reference — every gate:, settings:, review:, and features: field with defaults and allowed values. Body kept in sync with .loopover.yml.example.",
           },
           {
-            title: "global.gittensory.yml + repo-override.gittensory.yml",
+            title: "global.loopover.yml + repo-override.loopover.yml",
             description:
               "Private self-host only — illustrative fleet global default and per-repo overlay (deep-merge). Never commit real policy into these example paths.",
           },
           {
-            title: "shared.gittensory.yml",
+            title: "shared.loopover.yml",
             description:
               "Private self-host only — lowest-priority cross-repo house policy for an operator running many repos (#1959). Write a default once instead of copy-pasting it into every repo's file.",
           },
@@ -132,11 +132,11 @@ function SelfHostingConfiguration() {
       <CodeBlock
         lang="bash"
         code={`# Public repo (contributor-visible)
-cp config/examples/gittensory.minimal.yml .loopover.yml
+cp config/examples/loopover.minimal.yml .loopover.yml
 
 # Self-host private mount (operator-only policy)
 mkdir -p gittensory-config
-cp config/examples/global.gittensory.yml gittensory-config/.loopover.yml`}
+cp config/examples/global.loopover.yml gittensory-config/.loopover.yml`}
       />
       <Callout variant="note">
         Keep anti-abuse thresholds, maintainer allowlists, and autonomy dials in the{" "}
@@ -149,13 +149,13 @@ cp config/examples/global.gittensory.yml gittensory-config/.loopover.yml`}
       <p>Authoritative copies in git:</p>
       <ul>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/gittensory.minimal.yml">
-            <code>config/examples/gittensory.minimal.yml</code>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/loopover.minimal.yml">
+            <code>config/examples/loopover.minimal.yml</code>
           </a>
         </li>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/gittensory.full.yml">
-            <code>config/examples/gittensory.full.yml</code>
+          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/loopover.full.yml">
+            <code>config/examples/loopover.full.yml</code>
           </a>{" "}
           (same body as{" "}
           <a href="https://github.com/JSONbored/gittensory/blob/main/.loopover.yml.example">
@@ -506,7 +506,7 @@ features:
       </p>
       <h3>gate.checkMode</h3>
       <p>
-        Controls only whether/how the required <code>Gittensory Orb Review Agent</code> check-run is
+        Controls only whether/how the required <code>LoopOver Orb Review Agent</code> check-run is
         published — it never affects gate evaluation, comments, labels, audit records, or autonomous
         merge/close, all of which run identically in every mode. Takes precedence over the legacy{" "}
         <code>gate.enabled</code> boolean when both are set.
@@ -531,7 +531,7 @@ features:
         ]}
       />
       <Callout variant="warn" title="Remove the branch-protection requirement first">
-        Before switching to <code>disabled</code>, remove <code>Gittensory Orb Review Agent</code>{" "}
+        Before switching to <code>disabled</code>, remove <code>LoopOver Orb Review Agent</code>{" "}
         from this repo&apos;s branch-protection or ruleset required-status-checks list — LoopOver
         cannot do this on your behalf, and leaving it required with nothing to satisfy it means
         GitHub shows a pending status forever. Keep your real CI/Codecov/security checks required;
@@ -634,13 +634,13 @@ features:
         <li>
           <strong>Review-nag cooldown</strong> — <code>reviewNagPolicy</code> (<code>off</code>/
           <code>hold</code>/<code>close</code>, default <code>off</code>) throttles a contributor
-          who repeatedly pings <code>@gittensory</code> for review on the same PR/issue, once they
+          who repeatedly pings <code>@loopover</code> for review on the same PR/issue, once they
           exceed <code>reviewNagMaxPings</code> (default <code>3</code>) within{" "}
           <code>reviewNagCooldownDays</code> (default <code>5</code>). <code>reviewNagLabel</code>{" "}
           (default <code>review-nag-cooldown</code>) is applied alongside the hold/close action.{" "}
           <code>reviewNagMonitoredMentions</code> extends the same cooldown to specific maintainer
           logins a contributor keeps tagging directly instead of (or in addition to){" "}
-          <code>@gittensory</code>.
+          <code>@loopover</code>.
         </li>
         <li>
           <strong>Exemptions and account age</strong> — <code>autoCloseExemptLogins</code> is a
@@ -654,7 +654,7 @@ features:
         <li>
           <strong>Command rate limit</strong> — <code>commandRateLimitPolicy</code> (
           <code>off</code>/<code>hold</code>, default <code>off</code>) generalizes the review-nag
-          pattern to every <code>@gittensory</code> command, not just review-request pings.{" "}
+          pattern to every <code>@loopover</code> command, not just review-request pings.{" "}
           <code>commandRateLimitMaxPerWindow</code> (default <code>20</code>) bounds cheap,
           cache-only commands; <code>commandRateLimitAiMaxPerWindow</code> (default <code>5</code>)
           is the tighter limit for AI-cost-bearing commands (ask/blockers/preflight/etc.);{" "}

@@ -92,7 +92,7 @@ describe("weekly value reports", () => {
     expect(JSON.stringify(report)).not.toMatch(/wallet|hotkey|raw trust|payout|reward estimate|farming|private reviewability|public score estimate|\/Users|github_pat/i);
 
     const markdown = formatWeeklyValueReportMarkdown(report);
-    expect(markdown).toContain("# Weekly Gittensory value report");
+    expect(markdown).toContain("# Weekly LoopOver value report");
     expect(markdown).toContain("## Adoption metrics");
     expect(markdown).toContain("## Miner utility");
     expect(markdown).toContain("## Maintainer trust");

@@ -242,7 +242,7 @@ describe("check-docs-drift script", () => {
     const baseFocusManifestReviewFields = Array.from({ length: 18 }, (_, i) => `reviewField${i}`);
 
     function buildDocsPageText(commandIds: string[]) {
-      return commandIds.map((id) => `@gittensory ${id}`).join("\n");
+      return commandIds.map((id) => `@loopover ${id}`).join("\n");
     }
 
     function buildFlagsPageText(flagNames: string[]) {
@@ -355,7 +355,7 @@ describe("check-docs-drift script", () => {
       expect(hit).toBeDefined();
     });
 
-    it("catches a docs page missing a known @gittensory command", () => {
+    it("catches a docs page missing a known @loopover command", () => {
       const files = baseFixtures();
       files["apps/gittensory-ui/src/routes/docs.maintainer-workflow.tsx"] = buildDocsPageText(
         allBaseCommandIds.filter((id) => id !== "public-5"),
@@ -368,7 +368,7 @@ describe("check-docs-drift script", () => {
 
     it("skips per-command checks for a page that delegates to the generated command-reference instead of listing commands itself", () => {
       const files = baseFixtures();
-      // Replace the page's literal @gittensory lines with an import marker only -- none of the individual
+      // Replace the page's literal @loopover lines with an import marker only -- none of the individual
       // command ids appear in the page's own source anymore, mirroring docs.maintainer-workflow.tsx after
       // it switched to `import { PUBLIC_COMMAND_LIST, MAINTAINER_COMMAND_LIST } from "@/lib/command-reference"`.
       files["apps/gittensory-ui/src/routes/docs.maintainer-workflow.tsx"] =

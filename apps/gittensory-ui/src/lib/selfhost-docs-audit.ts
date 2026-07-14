@@ -118,7 +118,7 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
   },
   {
     topic: "Activation and onboarding paths",
-    runtimeSources: ["src/server.ts", "config/examples/global.gittensory.yml"],
+    runtimeSources: ["src/server.ts", "config/examples/global.loopover.yml"],
     docsPath: "/docs/self-hosting-configuration",
     driftGuard: "docs-selfhost-activation-paths.test.ts",
   },

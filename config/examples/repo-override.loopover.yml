@@ -4,7 +4,7 @@
 #
 # Copy this file to `${GITTENSORY_REPO_CONFIG_DIR}/{owner}__{repo}/.loopover.yml` (or the bare
 # `{repo}/.loopover.yml` folder, or the flat `{owner}__{repo}.yml` file — see ../README.md) and
-# edit your copy for a SPECIFIC repo. It is deep-merged OVER global.gittensory.yml: any key it
+# edit your copy for a SPECIFIC repo. It is deep-merged OVER global.loopover.yml: any key it
 # doesn't mention is inherited from the global default unchanged.
 #
 # Replace `owner`/`repo` in the destination path with the real values before using this file.
@@ -15,7 +15,7 @@
 # untouched.
 gate:
   enabled: true
-  # This repo goes fully dark (#2852): no "Gittensory Orb Review Agent" check-run at all, overriding
+  # This repo goes fully dark (#2852): no "LoopOver Orb Review Agent" check-run at all, overriding
   # the global default above. Reviews/comments/labels/audit and autonomous merge/close all keep
   # working — only the check-run publish is affected. Remove the check from THIS repo's branch-
   # protection required-status-checks before relying on this, or GitHub will show it pending forever.

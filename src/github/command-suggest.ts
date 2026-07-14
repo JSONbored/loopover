@@ -1,4 +1,4 @@
-/** Pure did-you-mean suggester for unrecognized @gittensory verbs (#2170). */
+/** Pure did-you-mean suggester for unrecognized @loopover verbs (#2170). */
 
 export type CommandSuggestCatalog = {
   mentionCommands: readonly string[];
@@ -101,7 +101,7 @@ export function suggestCommand(
 }
 
 export function formatDidYouMeanLine(suggestion: string): string {
-  return `- Did you mean \`@gittensory ${suggestion}\`?`;
+  return `- Did you mean \`@loopover ${suggestion}\`?`;
 }
 
 /** Help-card prefix lines for an unrecognized verb, or empty when no close match exists. */

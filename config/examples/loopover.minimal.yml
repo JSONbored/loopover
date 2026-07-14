@@ -1,5 +1,5 @@
 # ============================================================================
-# gittensory.minimal.yml — smallest safe starter config (#1682)
+# loopover.minimal.yml — smallest safe starter config (#1682)
 # ============================================================================
 #
 # WHERE TO COPY (pick one):
@@ -10,8 +10,8 @@
 #     Never commit real policy here to a public repo — use the private mount for thresholds,
 #     allowlists, and autonomy.
 #
-# Canonical copy also lives at the repo root as `.gittensory.minimal.yml` (kept in sync by CI).
-# For every supported field, defaults, and allowed values see `gittensory.full.yml` or
+# Canonical copy also lives at the repo root as `.loopover.minimal.yml` (kept in sync by CI).
+# For every supported field, defaults, and allowed values see `loopover.full.yml` or
 # `.loopover.yml.example`. See `TEMPLATES.md` in this directory for fleet examples.
 #
 # Safe by default:

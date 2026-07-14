@@ -29,10 +29,10 @@ ${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml         # 5. shared base (#1
 ```
 
 `.yaml` and `.json` are accepted everywhere `.yml` is. Every one of these files uses the **exact
-same schema** as the public manifest — see [`gittensory.full.yml`](./gittensory.full.yml) (or
+same schema** as the public manifest — see [`loopover.full.yml`](./loopover.full.yml) (or
 [`.loopover.yml.example`](../../.loopover.yml.example) at the repo root) for the exhaustive,
 field-by-field reference. For the smallest safe starter, copy
-[`gittensory.minimal.yml`](./gittensory.minimal.yml) (or [`.gittensory.minimal.yml`](../../.gittensory.minimal.yml))
+[`loopover.minimal.yml`](./loopover.minimal.yml) (or [`.loopover.minimal.yml`](../../.loopover.minimal.yml))
 to your repo root as `.loopover.yml` or into your private mount and customize from there.
 
 ## Precedence chain
@@ -154,7 +154,7 @@ ${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml
 ```
 
 (`.yaml`/`.json` also accepted, same lookup order as every other candidate — see
-[`shared.gittensory.yml`](./shared.gittensory.yml) for a starter). It sits at the **lowest**
+[`shared.loopover.yml`](./shared.loopover.yml) for a starter). It sits at the **lowest**
 priority of the three private layers: a per-repo file overlays a
 global default, which overlays the shared base — the shared base fills in only the fields a higher
 layer is silent on. This is the exact same deep-merge helper and array-replace/explicit-null-clear

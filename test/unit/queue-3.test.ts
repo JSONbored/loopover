@@ -143,7 +143,7 @@ function commandAnswerBody(answerId: string, command: string): string {
   return [
     "<!-- gittensory-agent-command -->",
     `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@gittensory ${command}\``,
+    `Command: \`@loopover ${command}\``,
     "Feedback is aggregate-only.",
   ].join("\n");
 }
@@ -264,7 +264,7 @@ describe("queue processors", () => {
     } as unknown as Parameters<typeof processJob>[1];
   }
 
-  it("planner (#issue-coding-plan): a maintainer @gittensory plan on an issue posts an AI plan (flag ON)", async () => {
+  it("planner (#issue-coding-plan): a maintainer @loopover plan on an issue posts an AI plan (flag ON)", async () => {
     const run = vi.fn(async () => ({ response: "## Summary\nAdd retry-on-5xx to the fetch helper.\n\n## Steps\n1. Wrap the fetch in a retry loop." }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
@@ -280,9 +280,9 @@ describe("queue processors", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).toHaveBeenCalledTimes(1);
-    expect(postedBody).toContain("Gittensory implementation plan");
+    expect(postedBody).toContain("LoopOver implementation plan");
     expect(postedBody).toContain("Add retry-on-5xx");
     const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.issue_plan_generated").first<{ n: number }>();
     expect(audit?.n).toBe(1);
@@ -303,7 +303,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).not.toHaveBeenCalled();
     const usage = await env.DB.prepare("select status from ai_usage_events where feature = ?").bind("issue_plan").first<{ status: string }>();
     expect(usage?.status).toBe("quota_exceeded");
@@ -322,7 +322,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).not.toHaveBeenCalled(); // no speculative AI spend on a paused repo
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("agent_paused");
@@ -338,7 +338,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -353,7 +353,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "admin" });
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).not.toHaveBeenCalled();
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("dry_run");
@@ -370,14 +370,14 @@ describe("queue processors", () => {
       if (url.includes("/issues/77/comments")) return Response.json({ id: init?.body ? 5 : 6 }, { status: 201 });
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
-    await processJob(env, plannerWebhook("@gittensory plan again", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan again", "maintainer1"));
     expect(run).toHaveBeenCalledTimes(1);
     const cooldown = await env.DB.prepare("select detail from audit_events where event_type = ? and detail = ?").bind("github_app.issue_plan_skipped", "cooldown_active").first<{ detail: string }>();
     expect(cooldown?.detail).toBe("cooldown_active");
   });
 
-  it("planner: flag OFF is byte-identical — @gittensory plan posts no plan and the AI is never called", async () => {
+  it("planner: flag OFF is byte-identical — @loopover plan posts no plan and the AI is never called", async () => {
     const run = vi.fn(async () => ({ response: "should not run" }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "false", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
@@ -392,7 +392,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(run).not.toHaveBeenCalled();
     expect(postedPlan).toBe(false);
   });
@@ -407,7 +407,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "read" }); // not a maintainer
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "outsider"));
+    await processJob(env, plannerWebhook("@loopover plan", "outsider"));
     expect(run).not.toHaveBeenCalled();
     const denied = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     // Authorization now flows through the per-repo commandAuthorization policy (#21), so the skip reason is the
@@ -427,7 +427,7 @@ describe("queue processors", () => {
       if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "write" }); // collaborator, not maintainer
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "collab1"));
+    await processJob(env, plannerWebhook("@loopover plan", "collab1"));
     expect(run).not.toHaveBeenCalled();
     const denied = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     expect(denied?.detail).toBe("not_maintainer_or_pr_author");
@@ -443,12 +443,12 @@ describe("queue processors", () => {
     expect(run).not.toHaveBeenCalled(); // not a plan command → maybeProcessPlanCommand returns false, no AI spend
   });
 
-  it("planner (#22): @gittensory plan on a PR is NOT consumed — it falls through (no plan, no skip audit)", async () => {
+  it("planner (#22): @loopover plan on a PR is NOT consumed — it falls through (no plan, no skip audit)", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
     vi.stubGlobal("fetch", async () => Response.json({}));
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1", { number: 77, title: "PR not issue", state: "open", user: { login: "x" }, body: "b", pull_request: { url: "https://api.github.com/x" } }));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1", { number: 77, title: "PR not issue", state: "open", user: { login: "x" }, body: "b", pull_request: { url: "https://api.github.com/x" } }));
     expect(run).not.toHaveBeenCalled();
     // Planning is issue-only; a PR-thread `plan` falls through to the mention/help path (flag-ON now matches
     // flag-OFF) instead of being swallowed as a plan skip.
@@ -456,7 +456,7 @@ describe("queue processors", () => {
     expect(planAudits?.n).toBe(0);
   });
 
-  it("planner: a bot-authored @gittensory plan on an issue is recorded as a classifier skip", async () => {
+  it("planner: a bot-authored @loopover plan on an issue is recorded as a classifier skip", async () => {
     const run = vi.fn(async () => ({ response: "nope" }));
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_PLANNER: "true", AI: { run } as unknown as Ai });
     await setupPlannerRepo(env);
@@ -470,7 +470,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 77, title: "Issue", state: "open", user: { login: "reporter" }, body: "b" },
-        comment: { body: "@gittensory plan", user: { login: "some-bot[bot]", type: "Bot" } },
+        comment: { body: "@loopover plan", user: { login: "some-bot[bot]", type: "Bot" } },
         sender: { login: "some-bot[bot]", type: "Bot" },
       },
     } as unknown as Parameters<typeof processJob>[1]);
@@ -494,13 +494,13 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory plan", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover plan", "maintainer1"));
     expect(posted).toBe(false); // no plan → nothing posted
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.issue_plan_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("no_plan_generated");
   });
 
-  it("configuration (#2168): a maintainer @gittensory configuration posts the effective resolved config", async () => {
+  it("configuration (#2168): a maintainer @loopover configuration posts the effective resolved config", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await setupPlannerRepo(env);
     let postedBody: string | undefined;
@@ -516,7 +516,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory configuration", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover configuration", "maintainer1"));
     expect(postedBody).toContain("Effective review configuration");
     expect(postedBody).toContain("Agent execution mode: **live**");
     expect(postedBody).toContain("Autonomy by action class:");
@@ -549,7 +549,7 @@ describe("queue processors", () => {
       return new Response("not found", { status: 404 });
     });
 
-    await processJob(env, plannerWebhook("@gittensory configuration", "maintainer1"));
+    await processJob(env, plannerWebhook("@loopover configuration", "maintainer1"));
 
     expect(calls.commentPosts).toBe(0);
     const audit = await env.DB.prepare("select json_extract(metadata_json, '$.mode') as mode from audit_events where event_type = ?").bind("github_app.configuration_posted").first<{ mode: string }>();
@@ -570,7 +570,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory configuration", "outsider"));
+    await processJob(env, plannerWebhook("@loopover configuration", "outsider"));
     expect(posted).toBe(false);
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.configuration_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("not_maintainer_or_pr_author");
@@ -604,7 +604,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 77, title: "t", state: "open", user: { login: "reporter" }, body: "b" },
-        comment: { body: "@gittensory configuration", user: { login: "some-bot[bot]", type: "Bot" } },
+        comment: { body: "@loopover configuration", user: { login: "some-bot[bot]", type: "Bot" } },
         sender: { login: "some-bot[bot]", type: "Bot" },
       },
     } as unknown as Parameters<typeof processJob>[1]);
@@ -630,7 +630,7 @@ describe("queue processors", () => {
     return row?.event_type === "github_app.autoreview_paused";
   }
 
-  it("pause (#2164): a maintainer @gittensory pause records the autoreview-paused marker and posts a public-safe confirmation", async () => {
+  it("pause (#2164): a maintainer @loopover pause records the autoreview-paused marker and posts a public-safe confirmation", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedPausePr(env);
     let postedBody: string | undefined;
@@ -646,7 +646,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory pause flaky CI, will re-enable after the fix", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause flaky CI, will re-enable after the fix", "maintainer1", pauseIssue));
     expect(postedBody).toContain("Auto-review paused by @maintainer1");
     expect(postedBody).toContain("Gate enforcement and the one-shot disposition are unchanged");
     expect(postedBody).toContain("flaky CI, will re-enable after the fix");
@@ -676,7 +676,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause", "maintainer1", pauseIssue));
     expect(postedBody).toContain("No reason provided.");
     const audit = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.autoreview_paused").first<{ detail: string }>();
     expect(audit?.detail).toBe("No reason provided.");
@@ -696,7 +696,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory pause let me in", "outsider", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause let me in", "outsider", pauseIssue));
     expect(posted).toBe(false);
     const denied = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.autoreview_paused_denied").first<{ outcome: string }>();
     expect(denied?.outcome).toBe("denied");
@@ -715,13 +715,13 @@ describe("queue processors", () => {
       if (url.includes("/comments")) posted = true;
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause", "maintainer1", pauseIssue));
     expect(posted).toBe(false);
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.autoreview_paused_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("cached_pr_missing");
   });
 
-  it("pause: a bot-authored @gittensory pause is recorded as a classifier skip, never posted", async () => {
+  it("pause: a bot-authored @loopover pause is recorded as a classifier skip, never posted", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedPausePr(env);
     let posted = false;
@@ -738,7 +738,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: pauseIssue,
-        comment: { body: "@gittensory pause", user: { login: "some-bot[bot]", type: "Bot" } },
+        comment: { body: "@loopover pause", user: { login: "some-bot[bot]", type: "Bot" } },
         sender: { login: "some-bot[bot]", type: "Bot" },
       },
     } as unknown as Parameters<typeof processJob>[1]);
@@ -783,7 +783,7 @@ describe("queue processors", () => {
     };
   }
 
-  it("review (#2163): an authorized @gittensory review posts a confirmation, dispatches a REAL re-review (proven by a live PR resync fetch inside reReviewStoredPullRequest, not just the command's own comment post), and records review_command_completed", async () => {
+  it("review (#2163): an authorized @loopover review posts a confirmation, dispatches a REAL re-review (proven by a live PR resync fetch inside reReviewStoredPullRequest, not just the command's own comment post), and records review_command_completed", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedReviewPr(env);
     let postedCommentBody: string | undefined;
@@ -801,7 +801,7 @@ describe("queue processors", () => {
       if (url.endsWith("/pulls/78") && method === "GET") liveResyncFetched = true;
       return reviewCommandFetchStub()(input, init);
     });
-    await processJob(env, plannerWebhook("@gittensory review", "maintainer1", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "maintainer1", reviewIssue));
     expect(postedCommentBody).toContain("Re-review triggered by @maintainer1");
     expect(liveResyncFetched).toBe(true); // proves the real reReviewStoredPullRequest path ran, unlike pause
     const audit = await env.DB.prepare("select outcome, detail from audit_events where event_type = ?").bind("github_app.review_command_completed").first<{ outcome: string; detail: string }>();
@@ -827,7 +827,7 @@ describe("queue processors", () => {
       }
       return reviewCommandFetchStub()(input, init);
     });
-    await processJob(env, plannerWebhook("@gittensory re-review", "maintainer1", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover re-review", "maintainer1", reviewIssue));
     expect(postedCommentBody).toContain("Re-review triggered by @maintainer1");
   });
 
@@ -842,7 +842,7 @@ describe("queue processors", () => {
       if (url.includes("/comments")) posted = true;
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory review", "outsider", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "outsider", reviewIssue));
     expect(posted).toBe(false);
     const denied = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.review_command_denied").first<{ outcome: string }>();
     expect(denied?.outcome).toBe("denied");
@@ -875,7 +875,7 @@ describe("queue processors", () => {
       return reviewCommandFetchStub()(input, init);
     });
 
-    await processJob(env, plannerWebhook("@gittensory review", "reporter", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "reporter", reviewIssue));
 
     expect(postedBodies.some((body) => body.includes("Re-review triggered by @reporter"))).toBe(true);
     const completed = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.review_command_completed").first<{ outcome: string }>();
@@ -892,14 +892,14 @@ describe("queue processors", () => {
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
     vi.stubGlobal("fetch", reviewCommandFetchStub());
 
-    await processJob(env, plannerWebhook("@gittensory review", "maintainer1", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "maintainer1", reviewIssue));
     let skipped = await env.DB.prepare("select detail from audit_events where event_type = ? order by rowid desc limit 1").bind("github_app.review_command_skipped").first<{ detail: string }>();
     expect(skipped?.detail).toBe("agent_paused");
     let completed = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.review_command_completed").first();
     expect(completed).toBeFalsy();
 
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: false, agentDryRun: true });
-    await processJob(env, plannerWebhook("@gittensory review", "maintainer1", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "maintainer1", reviewIssue));
     skipped = await env.DB.prepare("select detail from audit_events where event_type = ? order by rowid desc limit 1").bind("github_app.review_command_skipped").first<{ detail: string }>();
     expect(skipped?.detail).toBe("dry_run");
     completed = await env.DB.prepare("select 1 from audit_events where event_type = ?").bind("github_app.review_command_completed").first();
@@ -917,13 +917,13 @@ describe("queue processors", () => {
       if (url.includes("/comments")) posted = true;
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory review", "maintainer1", reviewIssue));
+    await processJob(env, plannerWebhook("@loopover review", "maintainer1", reviewIssue));
     expect(posted).toBe(false);
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.review_command_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("cached_pr_missing");
   });
 
-  it("review: a bot-authored @gittensory review is recorded as a classifier skip, never posted", async () => {
+  it("review: a bot-authored @loopover review is recorded as a classifier skip, never posted", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedReviewPr(env);
     let posted = false;
@@ -940,7 +940,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: reviewIssue,
-        comment: { body: "@gittensory review", user: { login: "some-bot[bot]", type: "Bot" } },
+        comment: { body: "@loopover review", user: { login: "some-bot[bot]", type: "Bot" } },
         sender: { login: "some-bot[bot]", type: "Bot" },
       },
     } as unknown as Parameters<typeof processJob>[1]);
@@ -949,7 +949,7 @@ describe("queue processors", () => {
     expect(skip?.detail).toBe("bot_author");
   });
 
-  it("resume (#2165): an authorized @gittensory resume clears an earlier pause and posts a public-safe confirmation", async () => {
+  it("resume (#2165): an authorized @loopover resume clears an earlier pause and posts a public-safe confirmation", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedPausePr(env);
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -962,7 +962,7 @@ describe("queue processors", () => {
     });
     // Pause first, matching real usage: a resume without a prior pause is still valid (idempotent), but this
     // proves the SUPERSEDE behavior, not just that resume can run standalone.
-    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause", "maintainer1", pauseIssue));
     expect(await isCurrentlyPaused(env, "JSONbored/gittensory", 77)).toBe(true);
 
     let postedBody: string | undefined;
@@ -976,7 +976,7 @@ describe("queue processors", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory resume", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover resume", "maintainer1", pauseIssue));
     expect(postedBody).toContain("Auto-review resumed by @maintainer1");
     const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.autoreview_resumed").first<{ outcome: string }>();
     expect(audit?.outcome).toBe("completed");
@@ -997,13 +997,13 @@ describe("queue processors", () => {
       return new Response("not found", { status: 404 });
     };
     vi.stubGlobal("fetch", adminFetch());
-    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause", "maintainer1", pauseIssue));
     expect(await isCurrentlyPaused(env, "JSONbored/gittensory", 77)).toBe(true);
     vi.stubGlobal("fetch", adminFetch());
-    await processJob(env, plannerWebhook("@gittensory resume", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover resume", "maintainer1", pauseIssue));
     expect(await isCurrentlyPaused(env, "JSONbored/gittensory", 77)).toBe(false);
     vi.stubGlobal("fetch", adminFetch());
-    await processJob(env, plannerWebhook("@gittensory pause again", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause again", "maintainer1", pauseIssue));
     expect(await isCurrentlyPaused(env, "JSONbored/gittensory", 77)).toBe(true);
   });
 
@@ -1018,7 +1018,7 @@ describe("queue processors", () => {
       if (url.includes("/issues/77/comments")) return Response.json([]);
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory pause", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover pause", "maintainer1", pauseIssue));
     let posted = false;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -1027,7 +1027,7 @@ describe("queue processors", () => {
       if (url.includes("/comments")) posted = true;
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory resume", "outsider", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover resume", "outsider", pauseIssue));
     expect(posted).toBe(false);
     const denied = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.autoreview_resumed_denied").first<{ outcome: string }>();
     expect(denied?.outcome).toBe("denied");
@@ -1045,13 +1045,13 @@ describe("queue processors", () => {
       if (url.includes("/comments")) posted = true;
       return new Response("not found", { status: 404 });
     });
-    await processJob(env, plannerWebhook("@gittensory resume", "maintainer1", pauseIssue));
+    await processJob(env, plannerWebhook("@loopover resume", "maintainer1", pauseIssue));
     expect(posted).toBe(false);
     const skip = await env.DB.prepare("select detail from audit_events where event_type = ?").bind("github_app.autoreview_resumed_skipped").first<{ detail: string }>();
     expect(skip?.detail).toBe("cached_pr_missing");
   });
 
-  it("resume: a bot-authored @gittensory resume is recorded as a classifier skip, never posted", async () => {
+  it("resume: a bot-authored @loopover resume is recorded as a classifier skip, never posted", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedPausePr(env);
     let posted = false;
@@ -1068,7 +1068,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: pauseIssue,
-        comment: { body: "@gittensory resume", user: { login: "some-bot[bot]", type: "Bot" } },
+        comment: { body: "@loopover resume", user: { login: "some-bot[bot]", type: "Bot" } },
         sender: { login: "some-bot[bot]", type: "Bot" },
       },
     } as unknown as Parameters<typeof processJob>[1]);
@@ -1423,7 +1423,7 @@ describe("queue processors", () => {
       if (url.includes("/commits/vis58/check-suites")) return Response.json({ check_suites: [] });
       if (url.includes("/issues/58/labels") && method === "GET") return Response.json([]);
       if (url.includes("/issues/58/comments")) return Response.json([]);
-      // The unified-comment path also creates/patches the "Gittensory Orb Review Agent" check run and applies
+      // The unified-comment path also creates/patches the "LoopOver Orb Review Agent" check run and applies
       // the title-derived type label -- neither is under test here, but both must resolve so the review
       // completes normally instead of throwing on an unstubbed 404.
       if (url.endsWith("/labels") && method === "POST") return Response.json([]);

@@ -12,14 +12,14 @@ describe("isPlannerEnabled (#issue-coding-plan)", () => {
 });
 
 describe("isPlanCommand (#issue-coding-plan)", () => {
-  it("matches a bare @gittensory plan mention (case-insensitive, anywhere)", () => {
-    expect(isPlanCommand("@gittensory plan")).toBe(true);
-    expect(isPlanCommand("Hey @gittensory plan this please")).toBe(true);
-    expect(isPlanCommand("@GitTensory   plan")).toBe(true);
+  it("matches a bare @loopover plan mention (case-insensitive, anywhere)", () => {
+    expect(isPlanCommand("@loopover plan")).toBe(true);
+    expect(isPlanCommand("Hey @loopover plan this please")).toBe(true);
+    expect(isPlanCommand("@LoopOver   plan")).toBe(true);
   });
   it("does not match other commands or non-mentions", () => {
-    expect(isPlanCommand("@gittensory help")).toBe(false);
-    expect(isPlanCommand("@gittensoryplan")).toBe(false); // no handle boundary
+    expect(isPlanCommand("@loopover help")).toBe(false);
+    expect(isPlanCommand("@loopoverplan")).toBe(false); // no handle boundary
     expect(isPlanCommand("plan the work")).toBe(false);
     expect(isPlanCommand(null)).toBe(false);
     expect(isPlanCommand(undefined)).toBe(false);
@@ -95,7 +95,7 @@ describe("classifyPlanCommandRequest (#issue-coding-plan)", () => {
       action: "created",
       repository: { full_name: "acme/widgets" },
       issue: { number: 9, title: "T", state: "open", body: "B" },
-      comment: { id: 1, body: "@gittensory plan", user: { login: "maint", type: "User" } },
+      comment: { id: 1, body: "@loopover plan", user: { login: "maint", type: "User" } },
       sender: { login: "maint", type: "User" },
       ...over,
     }) as unknown as GitHubWebhookPayload;
@@ -107,7 +107,7 @@ describe("classifyPlanCommandRequest (#issue-coding-plan)", () => {
 
   it("skips a non-created action or a bot author", () => {
     expect(classifyPlanCommandRequest(base({ action: "edited" }), 123)).toMatchObject({ ok: false, reason: "unsupported_comment_action_or_bot", targetKey: "acme/widgets#9" });
-    expect(classifyPlanCommandRequest(base({ comment: { id: 1, body: "@gittensory plan", user: { login: "bot", type: "Bot" } } }), 123)).toMatchObject({ ok: false, reason: "unsupported_comment_action_or_bot" });
+    expect(classifyPlanCommandRequest(base({ comment: { id: 1, body: "@loopover plan", user: { login: "bot", type: "Bot" } } }), 123)).toMatchObject({ ok: false, reason: "unsupported_comment_action_or_bot" });
     expect(classifyPlanCommandRequest(base({ sender: { login: "x", type: "Bot" } }), 123)).toMatchObject({ ok: false, reason: "unsupported_comment_action_or_bot" });
     expect(classifyPlanCommandRequest(base({ sender: { login: "renovate[bot]", type: "User" } }), 123)).toMatchObject({ ok: false, reason: "unsupported_comment_action_or_bot" });
   });
@@ -117,17 +117,17 @@ describe("classifyPlanCommandRequest (#issue-coding-plan)", () => {
     expect(classifyPlanCommandRequest(base({ issue: undefined }), 123)).toMatchObject({ ok: false, reason: "missing_repo_issue_installation_or_actor", targetKey: "acme/widgets" });
     expect(classifyPlanCommandRequest(base({ issue: { number: 9, title: "T", state: "open", pull_request: {} } }), 123)).toMatchObject({ ok: false, reason: "missing_repo_issue_installation_or_actor" });
     expect(classifyPlanCommandRequest(base(), null)).toMatchObject({ ok: false, reason: "missing_repo_issue_installation_or_actor" });
-    expect(classifyPlanCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@gittensory plan", user: undefined } }), 123)).toMatchObject({ ok: false, reason: "missing_repo_issue_installation_or_actor", actor: null });
+    expect(classifyPlanCommandRequest(base({ sender: undefined, comment: { id: 1, body: "@loopover plan", user: undefined } }), 123)).toMatchObject({ ok: false, reason: "missing_repo_issue_installation_or_actor", actor: null });
   });
 });
 
 describe("buildIssuePlanComment (#issue-coding-plan)", () => {
   it("renders the plan with the marker, actor, scope, and footer", () => {
     const body = buildIssuePlanComment("## Summary\nShip it.", { actor: "maintainer1", repoFullName: "acme/widgets", issueNumber: 42, env: {} });
-    expect(body).toContain("Gittensory implementation plan");
+    expect(body).toContain("LoopOver implementation plan");
     expect(body).toContain("@maintainer1");
     expect(body).toContain("acme/widgets#42");
     expect(body).toContain("Ship it.");
-    expect(body).toContain("`@gittensory plan`");
+    expect(body).toContain("`@loopover plan`");
   });
 });

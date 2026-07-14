@@ -855,7 +855,7 @@ export async function createOrUpdateErroredGateCheckRun(
 
 /**
  * Finalize the current Gate check to a NEUTRAL (non-blocking) terminal state because a maintainer ran
- * `@gittensory gate-override`. This applies to THIS commit only: the override is not persisted anywhere,
+ * `@loopover gate-override`. This applies to THIS commit only: the override is not persisted anywhere,
  * so the next push re-evaluates the Gate from scratch (no permanent bypass). Called WITHOUT a checkRunId
  * so createOrUpdateNamedCheckRun resolves the current Gate run by advisory.headSha.
  */

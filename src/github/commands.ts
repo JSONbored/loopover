@@ -27,29 +27,29 @@ import { isFailingCheckSummary } from "../signals/check-summary";
 import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signals/reward-risk";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
-  { id: "help", title: "Gittensory command help", description: "Show public-safe @gittensory command help." },
-  { id: "ask", title: "Gittensory contribution context Q&A", description: "Answer contribution-quality questions from connected cached sources with citations." },
-  { id: "chat", title: "Gittensory grounded chat Q&A", description: "Answer a question in natural prose from cached decision-pack facts via local Ollama (maintainer/collaborator; read-only)." },
-  { id: "preflight", title: "Gittensory preflight", description: "Summarize public PR hygiene and validation readiness." },
-  { id: "blockers", title: "Gittensory readiness blockers", description: "Explain public-safe readiness blockers." },
-  { id: "duplicate-check", title: "Gittensory duplicate & WIP check", description: "Summarize duplicate and in-progress overlap caution." },
-  { id: "miner-context", title: "Gittensory miner context", description: "Confirm public Gittensor miner context when available." },
-  { id: "next-action", title: "Gittensory next step", description: "Suggest the next public-safe action." },
-  { id: "reviewability", title: "Gittensory PR readiness", description: "Summarize maintainer-friendly PR readiness without private review internals." },
-  { id: "repo-fit", title: "Gittensory repository fit", description: "Summarize public-safe repository fit signals." },
-  { id: "packet", title: "Gittensory public packet", description: "Prepare public-safe PR packet guidance." },
+  { id: "help", title: "LoopOver command help", description: "Show public-safe @loopover command help." },
+  { id: "ask", title: "LoopOver contribution context Q&A", description: "Answer contribution-quality questions from connected cached sources with citations." },
+  { id: "chat", title: "LoopOver grounded chat Q&A", description: "Answer a question in natural prose from cached decision-pack facts via local Ollama (maintainer/collaborator; read-only)." },
+  { id: "preflight", title: "LoopOver preflight", description: "Summarize public PR hygiene and validation readiness." },
+  { id: "blockers", title: "LoopOver readiness blockers", description: "Explain public-safe readiness blockers." },
+  { id: "duplicate-check", title: "LoopOver duplicate & WIP check", description: "Summarize duplicate and in-progress overlap caution." },
+  { id: "miner-context", title: "LoopOver miner context", description: "Confirm public Gittensor miner context when available." },
+  { id: "next-action", title: "LoopOver next step", description: "Suggest the next public-safe action." },
+  { id: "reviewability", title: "LoopOver PR readiness", description: "Summarize maintainer-friendly PR readiness without private review internals." },
+  { id: "repo-fit", title: "LoopOver repository fit", description: "Summarize public-safe repository fit signals." },
+  { id: "packet", title: "LoopOver public packet", description: "Prepare public-safe PR packet guidance." },
 ] as const;
 
 const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [
-  { id: "queue-summary", title: "Gittensory maintainer queue summary", description: "Post a maintainer-only queue digest from cached GitHub metadata." },
-  { id: "confirmed-miners", title: "Gittensory confirmed-miner PRs", description: "List open PRs whose authors are confirmed in the official-miner cache." },
-  { id: "review-now", title: "Gittensory review-now queue", description: "List cached PRs that look ready for maintainer review." },
-  { id: "needs-author", title: "Gittensory needs-author queue", description: "List cached PRs that need author cleanup before detailed review." },
-  { id: "duplicate-clusters", title: "Gittensory duplicate clusters", description: "List duplicate or WIP clusters visible from cached GitHub metadata." },
-  { id: "burden-forecast", title: "Gittensory burden forecast", description: "Project maintainer review load and queue-growth risk from cached metadata." },
-  { id: "intake-health", title: "Gittensory intake health", description: "Summarize contributor-intake health from cached queue and config signals." },
-  { id: "outcome-patterns", title: "Gittensory outcome patterns", description: "Summarize what this repo actually merges vs closes from cached PR outcomes." },
-  { id: "noise-report", title: "Gittensory noise report", description: "Highlight queue noise sources maintainers should triage first." },
+  { id: "queue-summary", title: "LoopOver maintainer queue summary", description: "Post a maintainer-only queue digest from cached GitHub metadata." },
+  { id: "confirmed-miners", title: "LoopOver confirmed-miner PRs", description: "List open PRs whose authors are confirmed in the official-miner cache." },
+  { id: "review-now", title: "LoopOver review-now queue", description: "List cached PRs that look ready for maintainer review." },
+  { id: "needs-author", title: "LoopOver needs-author queue", description: "List cached PRs that need author cleanup before detailed review." },
+  { id: "duplicate-clusters", title: "LoopOver duplicate clusters", description: "List duplicate or WIP clusters visible from cached GitHub metadata." },
+  { id: "burden-forecast", title: "LoopOver burden forecast", description: "Project maintainer review load and queue-growth risk from cached metadata." },
+  { id: "intake-health", title: "LoopOver intake health", description: "Summarize contributor-intake health from cached queue and config signals." },
+  { id: "outcome-patterns", title: "LoopOver outcome patterns", description: "Summarize what this repo actually merges vs closes from cached PR outcomes." },
+  { id: "noise-report", title: "LoopOver noise report", description: "Highlight queue noise sources maintainers should triage first." },
 ] as const;
 
 export const GITTENSORY_MENTION_COMMAND_CATALOG = [...PUBLIC_MENTION_COMMAND_CATALOG, ...MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG] as const;
@@ -81,7 +81,7 @@ export function isIntentRoutableCommand(value: unknown): value is IntentRoutable
 // Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
 // than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
 // exhaustive Q&A switches stay total, but parseGittensoryMentionCommand still recognizes them (so a bare
-// @gittensory gate-override is not silently downgraded to "help"). #1960 adds the PR control-surface verbs
+// @loopover gate-override is not silently downgraded to "help"). #1960 adds the PR control-surface verbs
 // (review, pause, resume, resolve, configuration, explain) as pure parse targets; per-command dispatch is
 // wired incrementally in follow-up bounties, each mirroring maybeProcessGateOverrideCommand.
 export const GITTENSORY_ACTION_COMMAND_CATALOG = [
@@ -93,7 +93,7 @@ export const GITTENSORY_ACTION_COMMAND_CATALOG = [
   {
     id: "review",
     title: "Request review",
-    description: "Request an auto-review run on the current PR head (`@gittensory re-review` is an alias).",
+    description: "Request an auto-review run on the current PR head (`@loopover re-review` is an alias).",
   },
   {
     id: "pause",
@@ -147,11 +147,11 @@ export type GittensoryMentionCommand = {
   argument?: string | undefined;
   /** Present when a non-empty verb was unrecognized and downgraded to `help` (#2170). */
   unknownVerb?: string | undefined;
-  /** The full free-form text after `@gittensory` (unrecognized verb token plus any trailing words, or the
+  /** The full free-form text after `@loopover` (unrecognized verb token plus any trailing words, or the
    *  whole trailing text when there was no verb-shaped token at all), present whenever the mention downgrades
-   *  to `help` with non-trivial trailing content -- e.g. "@gittensory why is this stuck?" yields
+   *  to `help` with non-trivial trailing content -- e.g. "@loopover why is this stuck?" yields
    *  "why is this stuck?". Feeds the intent-classification router (#4596); `undefined` for a bare
-   *  "@gittensory help" with nothing else to classify. */
+   *  "@loopover help" with nothing else to classify. */
   unrecognizedText?: string | undefined;
 };
 
@@ -163,7 +163,7 @@ type PublicAnswerCard = {
   nextActions: string[];
   sourceNotes: string[];
   safeDetails?: string[] | undefined;
-  /** Fixed, non-LLM footer stamped verbatim on the card (only `@gittensory chat` sets it, #4595 req 9). */
+  /** Fixed, non-LLM footer stamped verbatim on the card (only `@loopover chat` sets it, #4595 req 9). */
   disclaimer?: string | undefined;
 };
 
@@ -266,7 +266,7 @@ function commandSuggestCatalog(): CommandSuggestCatalog {
   };
 }
 
-/** Pure did-you-mean suggester for unrecognized @gittensory verbs (#2170). */
+/** Pure did-you-mean suggester for unrecognized @loopover verbs (#2170). */
 export function suggestCommand(rawVerb: string): string | null {
   return suggestCommandFromCatalog(rawVerb, commandSuggestCatalog());
 }
@@ -274,15 +274,15 @@ export function suggestCommand(rawVerb: string): string | null {
 export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
   if (!body) return null;
   // `(?![\w-])` requires the mention to end at a non-identifier char, so other usernames that merely
-  // start with "@gittensory" — `@gittensory-bot`, `@gittensorybot`, `@gittensory2` — are not misread as a
-  // bare `@gittensory help` command. A space, end-of-string, or punctuation still matches.
-  const match = body.match(/(?:^|\s)@gittensory(?![\w-])(?:\s+([a-z-]+))?([^\n\r]*)/i);
+  // start with "@loopover" — `@loopover-bot`, `@loopoverbot`, `@loopover2` — are not misread as a
+  // bare `@loopover help` command. A space, end-of-string, or punctuation still matches.
+  const match = body.match(/(?:^|\s)@loopover(?![\w-])(?:\s+([a-z-]+))?([^\n\r]*)/i);
   if (!match) return null;
   const rawVerbToken = match[1]?.toLowerCase();
   if (!rawVerbToken) {
     // match[2] is always defined for the same reason as the branches below (a `*`-quantified group outside
-    // any optional wrapper) -- it holds whatever followed "@gittensory" when nothing verb-shaped matched at
-    // all (e.g. "@gittensory 123 why is this stuck" or a bare "@gittensory" with only punctuation after it).
+    // any optional wrapper) -- it holds whatever followed "@loopover" when nothing verb-shaped matched at
+    // all (e.g. "@loopover 123 why is this stuck" or a bare "@loopover" with only punctuation after it).
     /* v8 ignore next */
     const bareTrailing = (match[2] ?? "").trim();
     return { name: "help", raw: match[0].trim(), unrecognizedText: bareTrailing.length > 0 ? bareTrailing : undefined };
@@ -331,7 +331,7 @@ export function parseAgentCommandFeedbackContext(body: string | null | undefined
   if (!body) return null;
   const answerMatch = body.match(/<!--\s*gittensory-agent-command-answer:([A-Za-z0-9_.:-]{8,120})\s*-->/);
   if (!answerMatch?.[1]) return null;
-  const commandMatch = body.match(/Command:\s*`@gittensory\s+([a-z-]+)`/i);
+  const commandMatch = body.match(/Command:\s*`@loopover\s+([a-z-]+)`/i);
   const requestedCommand = commandMatch?.[1]?.toLowerCase() as GittensoryMentionCommandName | undefined;
   const command = requestedCommand && COMMANDS.has(requestedCommand) ? requestedCommand : null;
   return { answerId: answerMatch[1], command };
@@ -402,11 +402,11 @@ export function isAuthorizedCommandActor(args: {
   return { authorized: decision.authorized, reason: decision.reason, actorKind: decision.actorKind };
 }
 
-/** Fixed, non-LLM disclaimer stamped on every `@gittensory chat` answer card (#4595 req 9). Deliberately NOT run
- *  through neutralizePublicMarkdownText so the `@gittensory review` code span renders; it carries no forbidden
+/** Fixed, non-LLM disclaimer stamped on every `@loopover chat` answer card (#4595 req 9). Deliberately NOT run
+ *  through neutralizePublicMarkdownText so the `@loopover review` code span renders; it carries no forbidden
  *  terms, so the whole-body sanitizePublicComment pass leaves it byte-for-byte intact. */
 export const CHAT_QA_DISCLAIMER =
-  "Read-only informational reply — cannot change review outcomes, gate state, or trigger a re-review. To retrigger a review, comment `@gittensory review`.";
+  "Read-only informational reply — cannot change review outcomes, gate state, or trigger a re-review. To retrigger a review, comment `@loopover review`.";
 
 export function buildPublicAgentCommandComment(args: {
   command: GittensoryMentionCommand;
@@ -418,7 +418,7 @@ export function buildPublicAgentCommandComment(args: {
   officialMiner?: GittensorContributorSnapshot | null | undefined;
   bundle?: AgentRunBundle | null | undefined;
   maintainerDigest?: MaintainerQueueDigest | null | undefined;
-  /** Grounded `@gittensory chat` answer (#4595). Only read when `command.name === "chat"`; the dispatcher
+  /** Grounded `@loopover chat` answer (#4595). Only read when `command.name === "chat"`; the dispatcher
    *  resolves it via generateChatQaAnswer before composing the card. */
   chatAnswer?: ChatQaResult | null | undefined;
   /** Set by the dispatcher when the intent-classification router (#4596) re-routed an unrecognized-verb
@@ -461,22 +461,22 @@ export function buildPublicAgentCommandComment(args: {
     "> [!NOTE]",
     `> **${COMMAND_TITLES[commandName]}**`,
     args.replyingToUrl
-      ? "> Gittensory posted this as a fresh reply -- it never updates or replaces the PR review panel."
-      : "> Gittensory updated this command response in place from cached public-safe context.",
+      ? "> LoopOver posted this as a fresh reply -- it never updates or replaces the PR review panel."
+      : "> LoopOver updated this command response in place from cached public-safe context.",
     "",
     "| Signal | State |",
     "| --- | --- |",
-    `| Command | \`@gittensory ${commandName}\` |`,
+    `| Command | \`@loopover ${commandName}\` |`,
     `| Scope | ${repoFullName}#${args.issue.number} |`,
     `| Actor | ${args.actorKind} |`,
     "",
-    `Command: \`@gittensory ${commandName}\``,
+    `Command: \`@loopover ${commandName}\``,
     "",
     ...(args.replyingToUrl ? [`> 💬 Replying to [this comment](${args.replyingToUrl}).`, ""] : []),
     // (#4596 req 6) Free-form contributor text, same neutralization as the chat question line (#2457) --
     // this is the first place a re-routed mention's own text is echoed back into a trusted bot comment.
     ...(args.interpretedFrom
-      ? [`> 🎯 Interpreted "${neutralizePublicMarkdownText(sanitizePublicComment(args.interpretedFrom.question))}" as \`@gittensory ${args.interpretedFrom.matchedCommand}\`. Use the exact command if this is wrong.`, ""]
+      ? [`> 🎯 Interpreted "${neutralizePublicMarkdownText(sanitizePublicComment(args.interpretedFrom.question))}" as \`@loopover ${args.interpretedFrom.matchedCommand}\`. Use the exact command if this is wrong.`, ""]
       : []),
     "<details>",
     "<summary>Command result</summary>",
@@ -534,7 +534,7 @@ function buildAskPublicAnswerCard(args: {
       summary: commandSummary("ask"),
       findings: [
         stripEmphasis(REFRESH_SECTION_TITLES.ask),
-        "Gittensory is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @gittensory ask again shortly.",
+        "LoopOver is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @loopover ask again shortly.",
       ],
       evidence: commandEvidence("ask", args.bundle, args.officialMiner, args.actorKind),
       nextActions: commandNextActions("ask", args.bundle),
@@ -552,7 +552,7 @@ function buildAskPublicAnswerCard(args: {
   // neutralizePublicMarkdownText (not just sanitizePublicComment) escapes markdown/HTML and zero-width-spaces
   // @mentions and bare URLs — the question is free-form contributor text, so without it an authorized-but-
   // untrusted actor (ask is not maintainer-gated; a confirmed-miner PR author qualifies) could post
-  // `@gittensory ask **APPROVED by @maintainer**` and have that bold, live-mentioning line render verbatim
+  // `@loopover ask **APPROVED by @maintainer**` and have that bold, live-mentioning line render verbatim
   // inside the bot's own trusted comment (#2457).
   const questionText = neutralizePublicMarkdownText(
     sanitizePublicComment(args.question?.trim() || "No specific question was provided; this response summarizes the closest cached contribution context."),
@@ -617,7 +617,7 @@ function chatAnswerContent(chatAnswer: ChatQaResult | null | undefined): { findi
   if (!chatAnswer) {
     return {
       findings: ["Chat Q&A could not produce a grounded answer for this request."],
-      nextActions: ["Run `@gittensory preflight` or `@gittensory blockers` for the deterministic readiness facts."],
+      nextActions: ["Run `@loopover preflight` or `@loopover blockers` for the deterministic readiness facts."],
     };
   }
   switch (chatAnswer.status) {
@@ -630,11 +630,11 @@ function chatAnswerContent(chatAnswer: ChatQaResult | null | undefined): { findi
     case "unavailable":
       return {
         findings: ["Chat Q&A is not enabled on this instance. It runs only on local advisory inference (Ollama) and never falls back to the frontier model."],
-        nextActions: ["A maintainer can enable it via `settings.advisoryAiRouting.chatQa` with `env.AI_ADVISORY` configured; use `@gittensory ask` in the meantime."],
+        nextActions: ["A maintainer can enable it via `settings.advisoryAiRouting.chatQa` with `env.AI_ADVISORY` configured; use `@loopover ask` in the meantime."],
       };
     case "declined":
       // `reason`/`suggestion` are fixed, trusted strings authored in ai-chat-qa.ts (no user/model interpolation),
-      // so they keep their `@gittensory ...` code spans -- redact-only, not markdown-escaped.
+      // so they keep their `@loopover ...` code spans -- redact-only, not markdown-escaped.
       return {
         findings: [sanitizePublicComment(chatAnswer.reason)],
         nextActions: [sanitizePublicComment(chatAnswer.suggestion)],
@@ -642,13 +642,13 @@ function chatAnswerContent(chatAnswer: ChatQaResult | null | undefined): { findi
     case "quota_exceeded":
       return {
         findings: ["The shared daily AI budget is exhausted, so chat Q&A declined this request rather than spending over budget."],
-        nextActions: ["Try again after the daily budget resets, or run `@gittensory preflight` for the deterministic readiness facts."],
+        nextActions: ["Try again after the daily budget resets, or run `@loopover preflight` for the deterministic readiness facts."],
       };
     case "unsafe":
     case "error":
       return {
         findings: ["Chat Q&A could not produce a grounded answer for this request."],
-        nextActions: ["Run `@gittensory preflight` or `@gittensory blockers` for the deterministic readiness facts."],
+        nextActions: ["Run `@loopover preflight` or `@loopover blockers` for the deterministic readiness facts."],
       };
   }
 }
@@ -660,7 +660,7 @@ function chatAnswerProseLines(text: string): string[] {
     .filter((line) => line.length > 0)
     .slice(0, 6)
     .map((line) => neutralizePublicMarkdownText(sanitizePublicComment(line)));
-  return lines.length > 0 ? lines : ["The grounded answer was empty after sanitization. Run `@gittensory preflight` for the deterministic readiness facts."];
+  return lines.length > 0 ? lines : ["The grounded answer was empty after sanitization. Run `@loopover preflight` for the deterministic readiness facts."];
 }
 
 function renderPublicAnswerCard(card: PublicAnswerCard): string[] {
@@ -771,7 +771,7 @@ function commandEvidence(
 function commandNextActions(command: GittensoryMentionCommandName, bundle: AgentRunBundle | null | undefined): string[] {
   if (bundle?.run.status === "needs_snapshot_refresh") {
     return command === "ask"
-      ? ["Retry @gittensory ask after the contribution context snapshot refresh completes."]
+      ? ["Retry @loopover ask after the contribution context snapshot refresh completes."]
       : ["Retry after the contributor decision snapshot refresh completes."];
   }
   switch (command) {
@@ -836,7 +836,7 @@ function commandSourceNotes(
           : "official miner check fallback"
         : isMaintainerQueueDigestCommand(command)
           ? "cached GitHub queue metadata and official-miner cache"
-        : "cached Gittensory agent context";
+        : "cached LoopOver agent context";
   return [
     `Source: ${source}.`,
     `Freshness: ${publicFreshness(bundle, command)}.`,
@@ -933,7 +933,7 @@ function actionCommandHelpSections(): string[] {
     "- `pause` and `resume` affect only auto-review scheduling — they never change the gate disposition or make review advisory.",
     "",
     ...GITTENSORY_ACTION_COMMAND_CATALOG.map(
-      (command) => `- \`@gittensory ${command.id}\` ${sanitizePublicComment(command.description)}`,
+      (command) => `- \`@loopover ${command.id}\` ${sanitizePublicComment(command.description)}`,
     ),
   ];
 }
@@ -943,26 +943,26 @@ function helpSections(env: GittensoryFooterEnv, unknownVerb?: string | undefined
     "**Commands**",
     "",
     ...buildDidYouMeanSections(unknownVerb, suggestCommand),
-    "- `@gittensory help` shows this command list.",
-    "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
-    "- `@gittensory chat <question>` answers in natural prose from cached decision-pack facts via local inference (maintainer/collaborator; read-only).",
-    "- `@gittensory preflight` summarizes public PR hygiene.",
-    "- `@gittensory blockers` explains public readiness blockers.",
-    "- `@gittensory duplicate-check` summarizes duplicate/WIP caution.",
-    "- `@gittensory miner-context` confirms public Gittensor miner context.",
-    "- `@gittensory next-action` gives a public-safe next step.",
-    "- `@gittensory reviewability` summarizes PR readiness without private review internals.",
-    "- `@gittensory repo-fit` summarizes repository fit from cached public-safe signals.",
-    "- `@gittensory packet` prepares public-safe PR packet guidance.",
-    "- `@gittensory queue-summary` gives maintainers cached queue-level context.",
-    "- `@gittensory review-now` lists maintainer-only review candidates.",
-    "- `@gittensory needs-author` lists PRs that need author cleanup.",
-    "- `@gittensory confirmed-miners` lists cached confirmed-miner PRs.",
-    "- `@gittensory duplicate-clusters` lists duplicate/WIP clusters.",
-    "- `@gittensory burden-forecast` projects maintainer review load and queue-growth risk.",
-    "- `@gittensory intake-health` summarizes contributor-intake health.",
-    "- `@gittensory outcome-patterns` summarizes what the repo merges vs closes.",
-    "- `@gittensory noise-report` highlights queue noise to triage first.",
+    "- `@loopover help` shows this command list.",
+    "- `@loopover ask <question>` answers contribution-quality Q&A with source citations and freshness.",
+    "- `@loopover chat <question>` answers in natural prose from cached decision-pack facts via local inference (maintainer/collaborator; read-only).",
+    "- `@loopover preflight` summarizes public PR hygiene.",
+    "- `@loopover blockers` explains public readiness blockers.",
+    "- `@loopover duplicate-check` summarizes duplicate/WIP caution.",
+    "- `@loopover miner-context` confirms public Gittensor miner context.",
+    "- `@loopover next-action` gives a public-safe next step.",
+    "- `@loopover reviewability` summarizes PR readiness without private review internals.",
+    "- `@loopover repo-fit` summarizes repository fit from cached public-safe signals.",
+    "- `@loopover packet` prepares public-safe PR packet guidance.",
+    "- `@loopover queue-summary` gives maintainers cached queue-level context.",
+    "- `@loopover review-now` lists maintainer-only review candidates.",
+    "- `@loopover needs-author` lists PRs that need author cleanup.",
+    "- `@loopover confirmed-miners` lists cached confirmed-miner PRs.",
+    "- `@loopover duplicate-clusters` lists duplicate/WIP clusters.",
+    "- `@loopover burden-forecast` projects maintainer review load and queue-growth risk.",
+    "- `@loopover intake-health` summarizes contributor-intake health.",
+    "- `@loopover outcome-patterns` summarizes what the repo merges vs closes.",
+    "- `@loopover noise-report` highlights queue noise to triage first.",
     "",
     ...actionCommandHelpSections(),
     "",
@@ -1059,7 +1059,7 @@ function collectAskContributingSources(bundle: AgentRunBundle | null | undefined
 
 function askCommandSourceSummary(bundle: AgentRunBundle | null | undefined): string {
   const sources = collectAskContributingSources(bundle);
-  if (sources.length === 0) return "cached Gittensory agent context (no connected-source metadata in this run)";
+  if (sources.length === 0) return "cached LoopOver agent context (no connected-source metadata in this run)";
   return sources
     .slice(0, 4)
     .map((source) => source.label)
@@ -1227,7 +1227,7 @@ function askSourceLabel(name: string): string {
     official_gittensor: "official Gittensor API/cache",
     mirror: "Gittensor mirror registry snapshot",
     github_cache: "cached GitHub issues, PRs, reviews, and checks",
-    computed: "derived Gittensory contribution signals",
+    computed: "derived LoopOver contribution signals",
     repo_focus_manifest: "repo focus manifest",
     issue_quality: "issue quality snapshot",
     upstream_ruleset: "upstream ruleset status",
@@ -1395,8 +1395,8 @@ function packetSections(bundle: AgentRunBundle | null | undefined): string[] {
 function refreshSections(command: SnapshotCommandName): string[] {
   const body =
     command === "ask"
-      ? "- Gittensory is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @gittensory ask again shortly."
-      : "- Gittensory is refreshing the contributor decision snapshot. Try the command again shortly.";
+      ? "- LoopOver is refreshing connected contribution-context snapshots (cached issues, PRs, signals, and decision packs). Try @loopover ask again shortly."
+      : "- LoopOver is refreshing the contributor decision snapshot. Try the command again shortly.";
   return [`**${REFRESH_SECTION_TITLES[command]}**`, "", body];
 }
 
@@ -1494,7 +1494,7 @@ function findingDigestLines(findings: Array<{ title: string; publicText?: string
   return findings.slice(0, 3).map((finding) => `- ${publicBlockerDetail(finding.publicText ?? finding.title)}`);
 }
 
-// `@gittensory burden-forecast` renderer: surfaces the maintainer review-load / queue-growth
+// `@loopover burden-forecast` renderer: surfaces the maintainer review-load / queue-growth
 // forecast (level, projected load, reviewable/stale counts) so maintainers can plan capacity.
 function burdenForecastSection(forecast: BurdenForecast): string[] {
   return [
@@ -1508,7 +1508,7 @@ function burdenForecastSection(forecast: BurdenForecast): string[] {
   ];
 }
 
-// `@gittensory intake-health` renderer: summarizes how healthy contributor intake is (level, config
+// `@loopover intake-health` renderer: summarizes how healthy contributor intake is (level, config
 // quality, duplicate clusters, reviewable PRs) so maintainers can see whether the repo is set up to
 // absorb more contributions before inviting them.
 function intakeHealthSection(intake: ContributorIntakeHealth): string[] {
@@ -1522,7 +1522,7 @@ function intakeHealthSection(intake: ContributorIntakeHealth): string[] {
   ];
 }
 
-// `@gittensory outcome-patterns` renderer: summarizes what the repo actually merges vs closes
+// `@loopover outcome-patterns` renderer: summarizes what the repo actually merges vs closes
 // (totals, merge rates, and the top success/risk pattern when present) so maintainers can steer
 // contributors toward the patterns that get merged. The success/risk lines are omitted when the
 // cached sample has no pattern of that kind.
@@ -1539,7 +1539,7 @@ function outcomePatternsSection(patterns: RepoOutcomePatterns): string[] {
   ];
 }
 
-// `@gittensory noise-report` renderer: highlights the queue-noise sources maintainers should triage
+// `@loopover noise-report` renderer: highlights the queue-noise sources maintainers should triage
 // first (level, up to five noise sources, and the suggested triage actions). Falls back to a
 // "no obvious noise" line when the cached metadata shows none, and omits the triage line when there
 // are no suggested actions.
@@ -1799,7 +1799,7 @@ function publicBlockerLabel(code: string): string {
     likely_duplicate: "Possible overlap with existing work",
   };
   if (privateDecisionBlockers.has(normalized)) {
-    return "Private readiness context available in authenticated Gittensory views";
+    return "Private readiness context available in authenticated LoopOver views";
   }
   return labels[normalized] ?? sanitizePublicComment(code.replace(/_/g, " "));
 }
@@ -1861,8 +1861,8 @@ export function sanitizePublicComment(value: string): string {
 
 function sanitizeReviewabilityTerm(value: string): string {
   return value.replace(/\breviewability\b/gi, (match, offset, fullText: string) => {
-    const prefix = fullText.slice(Math.max(0, offset - "@gittensory ".length), offset).toLowerCase();
-    return prefix.endsWith("@gittensory ") ? match : "private context";
+    const prefix = fullText.slice(Math.max(0, offset - "@loopover ".length), offset).toLowerCase();
+    return prefix.endsWith("@loopover ") ? match : "private context";
   });
 }
 

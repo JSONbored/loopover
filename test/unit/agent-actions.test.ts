@@ -201,7 +201,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
 
   it("NEVER approves a base-conflicting PR — it is closed, not approved (#4220)", () => {
     // A green+passing but `dirty` (base-conflict) contributor PR is closed for the conflict; it must NOT also
-    // get a spurious "Gittensory approves — safe to merge" review on its way out.
+    // get a spurious "LoopOver approves — safe to merge" review on its way out.
     const conflicting = classes(
       planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { approve: "auto", close: "auto" }, ciState: "passed", pr: { labels: [], mergeableState: "dirty" } })),
     );
@@ -518,7 +518,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
   });
 
   describe("live migration-collision hold: a live premerge recheck found a same-numbered sibling on the base branch (#2550)", () => {
-    const collided = { migrationCollisionHold: { reason: "live migrations/** collision on main (0090: 0090_a.sql, 0090_b.sql)", comment: "Gittensory: a live check found a migration-number collision. Please rebase." } };
+    const collided = { migrationCollisionHold: { reason: "live migrations/** collision on main (0090: 0090_a.sql, 0090_b.sql)", comment: "LoopOver: a live check found a migration-number collision. Please rebase." } };
 
     it("does NOT auto-merge a clean+approved+passing PR when a live migration collision is found", () => {
       const plan = classes(planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, ...collided, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } })));
@@ -707,7 +707,7 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(action?.reason).toContain("repeat");
       expect(action?.closeKind).toBe("heuristic");
       expect(action?.closeConcreteEvidence).not.toBe(true);
-      expect(action?.closeComment).toContain("Gittensory is closing this pull request");
+      expect(action?.closeComment).toContain("LoopOver is closing this pull request");
       expect(action?.closeComment).toContain("#42");
     });
 

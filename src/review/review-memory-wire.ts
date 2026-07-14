@@ -37,7 +37,7 @@ export function shouldApplyReviewMemory(
 // unified-comment renders for the same repo within a short window (the 3 independent maybePublishPrPublicSurface
 // call sites -- auto re-review, webhook-triggered review, manual panel retrigger -- can each fire this
 // independently) reuse the same suppression set instead of re-reading D1 each time. Unlike chunkCountCache's
-// "only cache the positive" (cold→hot is one-way), a suppression set can grow at any time via `@gittensory
+// "only cache the positive" (cold→hot is one-way), a suppression set can grow at any time via `@loopover
 // resolve`, so this is explicitly invalidated on every write (invalidateReviewSuppressionCache below) rather than
 // relying on TTL expiry alone -- a maintainer's fresh suppression must take effect on the very next render, not
 // be masked by a stale cached set.

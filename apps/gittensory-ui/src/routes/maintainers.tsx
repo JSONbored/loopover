@@ -21,13 +21,13 @@ import {
 export const Route = createFileRoute("/maintainers")({
   head: () => ({
     meta: [
-      { title: "Maintainers — Gittensory" },
+      { title: "Maintainers — LoopOver" },
       {
         name: "description",
         content:
           "A quiet GitHub App for repo maintainers: confirmed-miner context, reviewability packets, install diagnostics, repo settings preview. No noisy public checks.",
       },
-      { property: "og:title", content: "Maintainers — Gittensory" },
+      { property: "og:title", content: "Maintainers — LoopOver" },
       {
         property: "og:description",
         content:
@@ -50,7 +50,7 @@ function MaintainersPage() {
             Quiet by default. Loud only when you ask.
           </h1>
           <p className="mt-4 text-token-lg text-muted-foreground">
-            Self-host Gittensory on a repo and your review surface stays calm. No always-on check
+            Self-host LoopOver on a repo and your review surface stays calm. No always-on check
             runs. No public scoring. You opt into confirmed-miner context, packets, and diagnostics
             with explicit commands.
           </p>
@@ -94,7 +94,7 @@ function MaintainersPage() {
             },
             {
               icon: <Wrench className="size-4" />,
-              title: "@gittensory commands",
+              title: "@loopover commands",
               description:
                 "Trigger preflight, blockers, duplicate-check, miner-context, next-action on demand from a PR comment.",
             },
@@ -122,15 +122,15 @@ function MaintainersPage() {
         />
         <div className="mt-10 grid gap-5 md:grid-cols-2">
           {[
-            ["@gittensory help", "List available commands and their scopes."],
-            ["@gittensory preflight", "Run a metadata-only preflight on this PR."],
-            ["@gittensory blockers", "Why this PR isn't yet scoreable / mergeable cleanly."],
-            ["@gittensory duplicate-check", "Scan for related open work in the repo."],
+            ["@loopover help", "List available commands and their scopes."],
+            ["@loopover preflight", "Run a metadata-only preflight on this PR."],
+            ["@loopover blockers", "Why this PR isn't yet scoreable / mergeable cleanly."],
+            ["@loopover duplicate-check", "Scan for related open work in the repo."],
             [
-              "@gittensory miner-context",
+              "@loopover miner-context",
               "Confirmed-miner lane and outcome context (private to maintainers).",
             ],
-            ["@gittensory next-action", "Suggested next move for the contributor."],
+            ["@loopover next-action", "Suggested next move for the contributor."],
           ].map(([cmd, desc]) => (
             <Card key={cmd}>
               <div className="font-mono text-token-sm text-mint">{cmd}</div>
@@ -183,7 +183,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
         <SectionTitle
           eyebrow="How it fits your repo"
           title="Quiet by default. Useful when called."
-          description="A small set of moments where Gittensory pays for itself without adding review noise."
+          description="A small set of moments where LoopOver pays for itself without adding review noise."
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {[

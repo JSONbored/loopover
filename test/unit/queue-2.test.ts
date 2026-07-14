@@ -143,7 +143,7 @@ function commandAnswerBody(answerId: string, command: string): string {
   return [
     "<!-- gittensory-agent-command -->",
     `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@gittensory ${command}\``,
+    `Command: \`@loopover ${command}\``,
     "Feedback is aggregate-only.",
   ].join("\n");
 }
@@ -1744,7 +1744,7 @@ describe("queue processors", () => {
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9404);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, reviewCheckMode: "required", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
     // PR 1: missing its current Gate check for its current head -- surfaceRepairPriorityPullNumbers flags this as
-    // outage-repair priority (no completed Gittensory Gate check run at the live head SHA).
+    // outage-repair priority (no completed LoopOver Gate check run at the live head SHA).
     await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 1, title: "Repair 1", state: "open", user: { login: "c" }, head: { sha: "repair-1" }, labels: [], body: "" });
     await repositoriesModule.markPullRequestSurfacePublished(env, "owner/agent-repo", 1, "repair-1");
     // PR 2: ordinary PR with a completed current-head Gate check -- NOT priority.
@@ -1934,7 +1934,7 @@ describe("queue processors", () => {
   }, 60_000);
 
   it("REGRESSION (#5385-sentry, GITTENSORY-1E gate-finding): a retryable GitHub rate-limit error surfacing from real post-readiness review work STILL records the repair attempt before propagating for the queue's own retry", async () => {
-    // Gittensory review finding on PR #5482: the original fix recorded the attempt AFTER reReviewStoredPullRequest
+    // LoopOver review finding on PR #5482: the original fix recorded the attempt AFTER reReviewStoredPullRequest
     // returns, so a retryable error thrown from a genuinely-executed (post-readiness) pass never got charged --
     // it propagates straight out (correctly, for the queue's own retry), but the repair budget was never
     // decremented, letting a PR stuck behind repeated rate-limiting/lock-contention reselect indefinitely.
@@ -2012,7 +2012,7 @@ describe("queue processors", () => {
   });
 
   it("REGRESSION (#5385-sentry, GITTENSORY-1E nit): a swallowed non-retryable failure AFTER readiness still records the repair attempt (unchanged contract, now driven by the onReachedReadiness callback rather than inferred from any error reaching the catch)", async () => {
-    // Gittensory review nit on PR #5482: confirms the catch's non-retryable branch can't ALSO fire for an error
+    // LoopOver review nit on PR #5482: confirms the catch's non-retryable branch can't ALSO fire for an error
     // thrown BEFORE readiness was ever reached (which must NOT charge the budget) -- distinguishing the two no
     // longer relies on "any swallowed error here = post-readiness", but on the callback actually having fired.
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });

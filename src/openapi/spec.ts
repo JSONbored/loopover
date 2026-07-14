@@ -499,7 +499,7 @@ export function buildOpenApiSpec() {
     method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
     responses: {
-      200: { description: "Private self-dogfood registration pack for the Gittensory repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      200: { description: "Private self-dogfood registration pack for the LoopOver repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role for maintainer-only self-dogfood report" },
     },
   });
@@ -508,7 +508,7 @@ export function buildOpenApiSpec() {
     path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
-      200: { description: "Private self-dogfood registration pack when repo matches configured Gittensory target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
+      200: { description: "Private self-dogfood registration pack when repo matches configured LoopOver target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role or repo is not the configured self-dogfood target" },
     },
   });
@@ -537,7 +537,7 @@ export function buildOpenApiSpec() {
     path: "/v1/repos/{owner}/{repo}/settings",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
-      200: { description: "Gittensory repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },
+      200: { description: "LoopOver repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },
     },
   });
   registry.registerPath({
@@ -893,7 +893,7 @@ export function buildOpenApiSpec() {
           "application/json": { schema: z.record(z.string(), z.unknown()) },
           "text/markdown": {
             schema: z.string().openapi({
-              example: "# Weekly Gittensory value report\n\n## Adoption metrics\n- Active users: 4\n",
+              example: "# Weekly LoopOver value report\n\n## Adoption metrics\n- Active users: 4\n",
             }),
           },
         },
@@ -936,7 +936,7 @@ export function buildOpenApiSpec() {
     method: "post",
     path: "/v1/app/commands/preview",
     responses: {
-      200: { description: "Maintainer dry-run preview of a sanitized @gittensory command response (no GitHub mutation)", content: { "application/json": { schema: CommandPreviewResponseSchema } } },
+      200: { description: "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)", content: { "application/json": { schema: CommandPreviewResponseSchema } } },
       400: { description: "Invalid request" },
       401: { description: "Unauthorized" },
       403: { description: "Insufficient app role" },
@@ -1048,9 +1048,9 @@ export function buildOpenApiSpec() {
   const document = generator.generateDocument({
     openapi: "3.0.3",
     info: {
-      title: "Gittensory API",
+      title: "LoopOver API",
       version: "0.1.0",
-      description: "Backend API for Gittensory advisory checks and Gittensor repository context.",
+      description: "Backend API for LoopOver advisory checks and Gittensor repository context.",
     },
   });
   return applySecurityMetadata(document);
@@ -1069,7 +1069,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
       GittensoryBearer: {
         type: "http",
         scheme: "bearer",
-        description: "Static API/MCP token, GitHub device-flow Gittensory session token, or extension-scoped Gittensory session token where supported. GitHub personal access tokens are not accepted.",
+        description: "Static API/MCP token, GitHub device-flow LoopOver session token, or extension-scoped LoopOver session token where supported. GitHub personal access tokens are not accepted.",
       },
       GittensorySessionCookie: {
         type: "apiKey",

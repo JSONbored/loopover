@@ -230,7 +230,7 @@ function AgentRuns() {
             Agent runs
           </h1>
           <p className="mt-1 max-w-2xl text-token-sm text-muted-foreground">
-            Unified feed of MCP, API, and @gittensory runs. Each entry carries a ruleset snapshot
+            Unified feed of MCP, API, and @loopover runs. Each entry carries a ruleset snapshot
             and a public/private boundary.
           </p>
         </div>

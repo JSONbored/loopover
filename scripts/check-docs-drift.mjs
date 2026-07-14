@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Cross-checks five enumerable "surfaces" that each have a single code source of truth but are also meant to
 // be documented EXHAUSTIVELY somewhere: feature flags (src/env.d.ts's LOOPOVER_REVIEW_* family),
-// @gittensory commands (src/github/commands.ts's two command catalogs), gate-mode dimensions (src/types.ts's
+// @loopover commands (src/github/commands.ts's two command catalogs), gate-mode dimensions (src/types.ts's
 // *GateMode fields on RepositorySettings) against specific docs pages, and -- the widened part (#4617) -- the
 // FULL RepositorySettings field surface plus every parseable FocusManifest field (packages/gittensory-engine)
 // against .loopover.yml.example. Nothing else in CI catches a docs page/example silently falling behind when
@@ -256,7 +256,7 @@ function defaultReadFile(root, relativePath) {
 }
 
 /**
- * Cross-check feature flags, @gittensory commands, gate-mode dimensions, the full RepositorySettings surface,
+ * Cross-check feature flags, @loopover commands, gate-mode dimensions, the full RepositorySettings surface,
  * and every parseable FocusManifest field between their code source of truth and wherever they're meant to be
  * documented exhaustively (specific docs pages for the first three; `.loopover.yml.example` for the last
  * two, #4617). `readFile(root, relativePath)` is injectable so tests can simulate a broken/incomplete docs
@@ -284,26 +284,26 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
     }
   }
 
-  // 2. @gittensory commands: src/github/commands.ts vs docs.maintainer-workflow.tsx + docs.maintainer-install-trust.tsx.
-  // A page can satisfy this either by literally mentioning "@gittensory <id>" in its own source, or by
+  // 2. @loopover commands: src/github/commands.ts vs docs.maintainer-workflow.tsx + docs.maintainer-install-trust.tsx.
+  // A page can satisfy this either by literally mentioning "@loopover <id>" in its own source, or by
   // importing the generated command-reference constants (apps/gittensory-ui/src/lib/command-reference.ts,
   // regenerated from the same catalogs via `npm run command-reference:check`) -- once a page delegates to the
   // generator, per-id substring checks against its own source would always false-fail, since the literal
-  // "@gittensory <id>" text now lives in the generated file, not the page.
+  // "@loopover <id>" text now lives in the generated file, not the page.
   const commandsSourceText = read("src/github/commands.ts");
   const publicCommandIds = extractCatalogIds(commandsSourceText, "PUBLIC_MENTION_COMMAND_CATALOG");
   const maintainerCommandIds = extractCatalogIds(commandsSourceText, "MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG");
   const allCommandIds = [...new Set([...publicCommandIds, ...maintainerCommandIds])];
   if (allCommandIds.length < 15) {
-    failures.push(`src/github/commands.ts: extraction found only ${allCommandIds.length} unique @gittensory command ids -- expected 15+; the extraction regex may be broken`);
+    failures.push(`src/github/commands.ts: extraction found only ${allCommandIds.length} unique @loopover command ids -- expected 15+; the extraction regex may be broken`);
   } else {
     const commandDocsPages = ["docs.maintainer-workflow.tsx", "docs.maintainer-install-trust.tsx", "docs.gittensory-commands.tsx"];
     for (const page of commandDocsPages) {
       const pageText = read(`${DOCS_ROUTES_DIR}/${page}`);
       if (pageText.includes("@/lib/command-reference")) continue;
       for (const id of allCommandIds) {
-        if (!pageText.includes(`@gittensory ${id}`)) {
-          failures.push(`${page}: missing documentation for command @gittensory ${id}`);
+        if (!pageText.includes(`@loopover ${id}`)) {
+          failures.push(`${page}: missing documentation for command @loopover ${id}`);
         }
       }
     }

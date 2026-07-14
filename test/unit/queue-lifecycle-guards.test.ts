@@ -143,7 +143,7 @@ function commandAnswerBody(answerId: string, command: string): string {
   return [
     "<!-- gittensory-agent-command -->",
     `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@gittensory ${command}\``,
+    `Command: \`@loopover ${command}\``,
     "Feedback is aggregate-only.",
   ].join("\n");
 }
@@ -3458,7 +3458,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
   });
 
   it("swallows persistSignalSnapshot errors — catch body runs without crashing the handler", async () => {
-    // Bot-authored @gittensory comment hits the early bot_author bail-out path in
+    // Bot-authored @loopover comment hits the early bot_author bail-out path in
     // maybeProcessGittensoryMentionCommand, which calls recordAgentCommandUsage. Injecting a
     // persistSignalSnapshot failure exercises the catch at the bottom of that function.
     vi.spyOn(repositoriesModule, "persistSignalSnapshot").mockRejectedValueOnce(new Error("signal DB error"));
@@ -3472,7 +3472,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
       installation: { id: 123 },
       repository: { id: 1, name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } },
       sender: { login: "gittensory[bot]", type: "Bot" },
-      comment: { id: 999, body: "@gittensory help", user: { login: "gittensory[bot]", type: "Bot" } },
+      comment: { id: 999, body: "@loopover help", user: { login: "gittensory[bot]", type: "Bot" } },
       issue: { id: 1, number: 77, title: "some issue", pull_request: { url: "https://api.github.com/repos/JSONbored/gittensory/pulls/77" } },
     };
     await expect(
@@ -3480,7 +3480,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("ignores a @gittensory mention on an EDITED comment — only newly-created comments are answered (#review-audit)", async () => {
+  it("ignores a @loopover mention on an EDITED comment — only newly-created comments are answered (#review-audit)", async () => {
     const posts: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -3494,7 +3494,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
       installation: { id: 123 },
       repository: { id: 1, name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } },
       sender: { login: "maintainer", type: "User" },
-      comment: { id: 999, body: "@gittensory ask is this mergeable?", user: { login: "maintainer", type: "User" } },
+      comment: { id: 999, body: "@loopover ask is this mergeable?", user: { login: "maintainer", type: "User" } },
       issue: { id: 1, number: 77, title: "some issue", pull_request: { url: "https://api.github.com/repos/JSONbored/gittensory/pulls/77" } },
     };
     await processJob(env, { type: "github-webhook", deliveryId: "mention-edited", eventName: "issue_comment", payload });

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generates the @gittensory command reference from its single source of truth --
+// Generates the @loopover command reference from its single source of truth --
 // src/github/commands.ts's PUBLIC_MENTION_COMMAND_CATALOG and MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG
 // -- so docs pages render the real command list instead of hand-copying it (a hand-copy is exactly how
 // the 9-command maintainer-only queue-digest family went completely undocumented; see #3046). Mirrors
@@ -38,10 +38,10 @@ export function extractCatalogEntries(sourceText, catalogConstName) {
   }));
 }
 
-/** Renders a catalog's entries as the same `@gittensory <id>` line format the docs pages already
+/** Renders a catalog's entries as the same `@loopover <id>` line format the docs pages already
  *  hand-write, newline-joined, in catalog order. */
 export function renderCommandList(entries) {
-  return entries.map((entry) => `@gittensory ${entry.id}`).join("\n");
+  return entries.map((entry) => `@loopover ${entry.id}`).join("\n");
 }
 
 const PRETTIER_PRINT_WIDTH = 100;
@@ -70,7 +70,7 @@ export function collectCommandCatalogs({ rootDir = process.cwd(), sourcePath = D
   const total = publicCommands.length + maintainerCommands.length;
   if (total < MIN_TOTAL_COMMANDS) {
     throw new Error(
-      `gen-command-reference: extraction found only ${total} total @gittensory command(s) across both catalogs in ${sourcePath} -- expected ${MIN_TOTAL_COMMANDS}+; the extraction regex may be broken`,
+      `gen-command-reference: extraction found only ${total} total @loopover command(s) across both catalogs in ${sourcePath} -- expected ${MIN_TOTAL_COMMANDS}+; the extraction regex may be broken`,
     );
   }
   if (actionCommands.length < 7) {

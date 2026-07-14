@@ -764,9 +764,9 @@ export function buildLaneAdvice(repo: RepositoryRecord | null, fullName: string)
     return {
       lane: "unknown",
       repoFullName: fullName,
-      summary: "Repository registration is not available in the local Gittensory cache.",
+      summary: "Repository registration is not available in the local LoopOver cache.",
       contributorGuidance: "Do not assume this repo is ready for Gittensor-specific contribution guidance yet.",
-      maintainerGuidance: "Refresh the registry snapshot or install the GitHub App so Gittensory can evaluate the repo.",
+      maintainerGuidance: "Refresh the registry snapshot or install the GitHub App so LoopOver can evaluate the repo.",
     };
   }
   if (config.emissionShare <= 0) {
@@ -1085,7 +1085,7 @@ export function buildConfigQuality(
       code: "registry_unknown",
       severity: "warning",
       title: "Registry config is unavailable",
-      detail: "Gittensory cannot verify this repo's Gittensor participation lane from the local snapshot.",
+      detail: "LoopOver cannot verify this repo's Gittensor participation lane from the local snapshot.",
     });
   }
   if (lane.lane === "inactive") {
@@ -1387,7 +1387,7 @@ export function detectGittensorContributor(
   if (priorMergedPullRequestCount > 0) {
     return {
       detected: true,
-      reason: "Contributor has prior merged PR activity in registered repos cached by Gittensory.",
+      reason: "Contributor has prior merged PR activity in registered repos cached by LoopOver.",
       priorPullRequests: priorPullRequestCount,
       priorMergedPullRequests: priorMergedPullRequestCount,
       priorIssues: priorIssueCount,
@@ -1396,7 +1396,7 @@ export function detectGittensorContributor(
   if (priorPullRequestCount > 0 || priorIssueCount > 0) {
     return {
       detected: true,
-      reason: "Contributor has prior registered-repo activity cached by Gittensory.",
+      reason: "Contributor has prior registered-repo activity cached by LoopOver.",
       priorPullRequests: priorPullRequestCount,
       priorMergedPullRequests: priorMergedPullRequestCount,
       priorIssues: priorIssueCount,
@@ -1404,7 +1404,7 @@ export function detectGittensorContributor(
   }
   return {
     detected: false,
-    reason: "No prior registered-repo activity was found in the local Gittensory cache.",
+    reason: "No prior registered-repo activity was found in the local LoopOver cache.",
     priorPullRequests: 0,
     priorMergedPullRequests: 0,
     priorIssues: 0,
@@ -1515,7 +1515,7 @@ export function buildContributorOpportunities(
           ...(maintainerWip ? ["Maintainer-authored and labelled in-progress/internal; not a recommended outside-contributor target without confirmation."] : []),
           ...(repoPullRequests.length >= 8 ? ["This repo has a busy open PR queue."] : []),
           ...(lane.lane === "issue_discovery" ? ["This repo is not a direct-PR-first lane."] : []),
-          ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["Gittensory cannot recommend this as a strong contribution target right now."] : []),
+          ...(lane.lane === "unknown" || lane.lane === "inactive" ? ["LoopOver cannot recommend this as a strong contribution target right now."] : []),
           ...(bountyLifecycle === "stale" ? ["Attached bounty context looks stale; confirm it is still active before acting."] : []),
           ...(bountyLifecycle === "ambiguous" ? ["Attached bounty state is ambiguous; verify it before acting."] : []),
           ...(quality?.status === "needs_proof" ? ["Issue quality report flags this issue as needing more proof before acting."] : []),
@@ -1656,7 +1656,7 @@ export function buildRoleContext(args: {
     normalContributorEvidenceAllowed: !maintainerLane,
     source,
     association,
-    reasons: reasons.length > 0 ? reasons : ["No maintainer or contributor relationship is visible in current Gittensory data."],
+    reasons: reasons.length > 0 ? reasons : ["No maintainer or contributor relationship is visible in current LoopOver data."],
     guidance: maintainerLane
       ? "Use maintainer-lane guidance for repo health, queue quality, labels, contributor triage, and maintainer_cut readiness; do not count this repo as normal contributor evidence for this user."
       : role === "outside_contributor"
@@ -2756,7 +2756,7 @@ export function buildMaintainerPacket(
     configQuality,
     collisions,
     pullRequestPackets,
-    suggestedActions: suggestedActions.length > 0 ? suggestedActions : ["Queue looks manageable from cached Gittensory signals."],
+    suggestedActions: suggestedActions.length > 0 ? suggestedActions : ["Queue looks manageable from cached LoopOver signals."],
   };
 }
 
@@ -2790,7 +2790,7 @@ export function buildPullRequestMaintainerPacket(args: {
       code: "pr_not_cached",
       severity: "warning",
       title: "PR is not cached",
-      detail: "Gittensory does not have this pull request in the local cache.",
+      detail: "LoopOver does not have this pull request in the local cache.",
     });
   } else {
     if (pr.linkedIssues.length === 0 && !hasClearNoIssueRationale(pr)) {
@@ -3992,7 +3992,7 @@ export function buildBountyAdvisory(
       code: "bounty_issue_not_cached",
       severity: "info",
       title: "Linked issue is not cached",
-      detail: "Gittensory has not cached the GitHub issue associated with this bounty.",
+      detail: "LoopOver has not cached the GitHub issue associated with this bounty.",
     });
   }
   // Linked PRs carry different risk by state: open = active overlap, merged = possibly solved,
@@ -4178,7 +4178,7 @@ type PublicSafeCollapsibleArgs = {
    *  collapsible below points the reader at the checkbox, or just states the gap with no next step. */
   e2eTestGenAvailable?: boolean | undefined;
   /** #5078: resolved by the caller from `env.PUBLIC_SITE_ORIGIN`, same as `buildPublicPrIntelligenceComment`'s
-   *  own `env` param -- lets the "[BETA] Chat with Gittensory" collapsible link to a self-hoster's own
+   *  own `env` param -- lets the "[BETA] Chat with LoopOver" collapsible link to a self-hoster's own
    *  command-reference doc page instead of always the canonical loopover.ai. */
   env: GittensoryFooterEnv;
 };
@@ -4207,26 +4207,26 @@ function testCoverageBody(args: PublicSafeCollapsibleArgs): string[] {
   if (!args.missingTestsFinding || !args.e2eTestGenAvailable) return [];
   return [
     `- ${args.missingTestsFinding.detail}`,
-    "- Check the box below to generate an AI Playwright test for this PR, or comment `@gittensory generate-tests`.",
+    "- Check the box below to generate an AI Playwright test for this PR, or comment `@loopover generate-tests`.",
   ];
 }
 
-/** "[BETA] Chat with Gittensory" body (#5078) — empty (thus invisible, same convention as "Test coverage"
+/** "[BETA] Chat with LoopOver" body (#5078) — empty (thus invisible, same convention as "Test coverage"
  *  above) unless `chatQa` or `intentRouting` is enabled for this repo, so a repo that hasn't opted into
  *  either capability never advertises a command that would just decline. Descriptions are byte-identical
- *  to `@gittensory help`'s own listing (helpSections in github/commands.ts) so the two surfaces never
+ *  to `@loopover help`'s own listing (helpSections in github/commands.ts) so the two surfaces never
  *  describe the same commands differently. */
 function chatBetaBody(args: PublicSafeCollapsibleArgs): string[] {
   const chatQaEnabled = args.settings.advisoryAiRouting?.chatQa === true;
   const intentRoutingEnabled = args.settings.advisoryAiRouting?.intentRouting === true;
   if (!chatQaEnabled && !intentRoutingEnabled) return [];
   return [
-    "Ask Gittensory a question about this PR directly in a comment — grounded only in the same cached, public-safe facts shown above, never a new claim.",
+    "Ask LoopOver a question about this PR directly in a comment — grounded only in the same cached, public-safe facts shown above, never a new claim.",
     "",
-    "- `@gittensory ask <question>` answers contribution-quality Q&A with source citations and freshness.",
-    "- `@gittensory chat <question>` answers in natural prose from cached decision-pack facts via local inference (maintainer/collaborator; read-only).",
+    "- `@loopover ask <question>` answers contribution-quality Q&A with source citations and freshness.",
+    "- `@loopover chat <question>` answers in natural prose from cached decision-pack facts via local inference (maintainer/collaborator; read-only).",
     ...(intentRoutingEnabled
-      ? ["- A plain-language `@gittensory` mention with a real question is routed to the closest matching read-only command automatically -- no exact syntax required."]
+      ? ["- A plain-language `@loopover` mention with a real question is routed to the closest matching read-only command automatically -- no exact syntax required."]
       : []),
     "",
     `Full command reference: ${commandReferenceUrl(args.env)}`,
@@ -4280,7 +4280,7 @@ export function buildPublicSafeCollapsibles(args: PublicSafeCollapsibleArgs): Un
     // there's an actual coverage gap AND the generate-tests checkbox is available for this repo.
     { title: "Test coverage", body: testCoverageBody(args).join("\n") },
     // #5078: last -- empty (thus invisible) unless chatQa or intentRouting is enabled for this repo.
-    { title: "[BETA] Chat with Gittensory", body: chatBetaBody(args).join("\n") },
+    { title: "[BETA] Chat with LoopOver", body: chatBetaBody(args).join("\n") },
   ];
 }
 
@@ -4711,7 +4711,7 @@ export function buildPublicPrPanelSignalRows(args: {
 // It is deliberately threaded in as an EXTRA prefix on the SAME Improvement row's Evidence cell rather than a
 // new row/toggle key: the row (and therefore the quadrant prefix) already only renders when `improvementSignal`
 // resolves on for the repo, so reusing it keeps opted-out repos byte-identical for free, with no second
-// `fields:` key to hand-sync across `.gittensory.yml.example` / `config/examples/gittensory.full.yml` /
+// `fields:` key to hand-sync across `.gittensory.yml.example` / `config/examples/loopover.full.yml` /
 // `gittensory-repo-focus-manifest.ts` / `.gittensory.yml`. No dashboard visualization (`apps/gittensory-ui/`)
 // or queue-level "high risk / low value" worklist is built here -- explicitly out of scope for this issue (see
 // its own "Optional" deliverable and this PR's description for the fast-follow call).

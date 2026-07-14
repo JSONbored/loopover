@@ -142,7 +142,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   reviewNagCooldownDays: integer("review_nag_cooldown_days").notNull().default(5),
   reviewNagLabel: text("review_nag_label").notNull().default("review-nag-cooldown"),
   // Maintainer-mention nag moderation (#label-scoping): a JSON array of GitHub logins ALSO throttled under the
-  // review-nag cooldown above, on top of the bot's own `@gittensory` handle. Default '[]' (no logins watched).
+  // review-nag cooldown above, on top of the bot's own `@loopover` handle. Default '[]' (no logins watched).
   reviewNagMonitoredMentionsJson: text("review_nag_monitored_mentions_json").notNull().default("[]"),
   // Shared repo-scoped exemption list (#2463): a JSON array of GitHub logins.
   autoCloseExemptLoginsJson: text("auto_close_exempt_logins_json").notNull().default("[]"),
@@ -153,7 +153,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // runAgentMaintenancePlanAndExecute, not here.
   accountAgeThresholdDays: integer("account_age_threshold_days"),
   newAccountLabel: text("new_account_label").notNull().default("new-account"),
-  // Per-command @gittensory rate limit (#2560, anti-abuse): generalizes review-nag's cooldown pattern to every
+  // Per-command @loopover rate limit (#2560, anti-abuse): generalizes review-nag's cooldown pattern to every
   // command, keyed by (actor, command, targetKey) independent of review-nag's own thread-author-only scope.
   commandRateLimitPolicy: text("command_rate_limit_policy").notNull().default("off"),
   commandRateLimitMaxPerWindow: integer("command_rate_limit_max_per_window").notNull().default(20),

@@ -11,17 +11,17 @@ import {
 export const Route = createFileRoute("/docs/gittensory-commands")({
   head: () => ({
     meta: [
-      { title: "@gittensory command reference — LoopOver docs" },
+      { title: "@loopover command reference — LoopOver docs" },
       {
         name: "description",
         content:
-          "Every @gittensory PR and issue comment command: syntax, default authorization roles, and the hard boundary between auto-review and the one-shot gate.",
+          "Every @loopover PR and issue comment command: syntax, default authorization roles, and the hard boundary between auto-review and the one-shot gate.",
       },
-      { property: "og:title", content: "@gittensory command reference — LoopOver docs" },
+      { property: "og:title", content: "@loopover command reference — LoopOver docs" },
       {
         property: "og:description",
         content:
-          "Every @gittensory PR and issue comment command: syntax, default authorization roles, and the hard boundary between auto-review and the one-shot gate.",
+          "Every @loopover PR and issue comment command: syntax, default authorization roles, and the hard boundary between auto-review and the one-shot gate.",
       },
       { property: "og:url", content: "/docs/gittensory-commands" },
     ],
@@ -82,7 +82,7 @@ function CommandTable({
             {entries.map((entry) => (
               <tr key={entry.id} className="align-top">
                 <td className="py-2 pr-4 font-mono text-token-xs whitespace-nowrap">
-                  @gittensory {entry.id}
+                  @loopover {entry.id}
                 </td>
                 <td className="py-2 pr-4 text-muted-foreground">{entry.description}</td>
                 <td className="py-2 text-muted-foreground">
@@ -101,7 +101,7 @@ function GittensoryCommandsReference() {
   return (
     <DocsPage
       eyebrow="Commands"
-      title="@gittensory command reference"
+      title="@loopover command reference"
       description="The full PR and issue-comment control surface: Q&A verbs, maintainer digests, and PR action commands. Roles reflect the shipped default policy; maintainers can override per command in .loopover.yml."
     >
       <Callout variant="safety" title="Gate vs auto-review">
@@ -113,11 +113,11 @@ function GittensoryCommandsReference() {
 
       <h2>Syntax</h2>
       <p>
-        Post a comment on a pull request (or issue thread) mentioning <code>@gittensory</code>{" "}
+        Post a comment on a pull request (or issue thread) mentioning <code>@loopover</code>{" "}
         followed by a verb. Trailing free text becomes the command argument where noted (for example{" "}
-        <code>@gittensory ask what should I fix first?</code>).
+        <code>@loopover ask what should I fix first?</code>).
       </p>
-      <CodeBlock code={`@gittensory <verb> [argument or reason]`} />
+      <CodeBlock code={`@loopover <verb> [argument or reason]`} />
 
       <CommandTable title="Public Q&A commands" entries={PUBLIC_COMMAND_ENTRIES} />
       <CommandTable title="Maintainer queue digests" entries={MAINTAINER_COMMAND_ENTRIES} />

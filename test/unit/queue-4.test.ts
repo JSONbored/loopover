@@ -143,7 +143,7 @@ function commandAnswerBody(answerId: string, command: string): string {
   return [
     "<!-- gittensory-agent-command -->",
     `<!-- gittensory-agent-command-answer:${answerId} -->`,
-    `Command: \`@gittensory ${command}\``,
+    `Command: \`@loopover ${command}\``,
     "Feedback is aggregate-only.",
   ].join("\n");
 }
@@ -6440,7 +6440,7 @@ describe("queue processors", () => {
     expect(calls).toEqual({ labels: 0, comments: 0 });
   });
 
-  it("responds to authorized @gittensory mention commands with one public-safe comment", async () => {
+  it("responds to authorized @loopover mention commands with one public-safe comment", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
       number: 77,
@@ -6477,7 +6477,7 @@ describe("queue processors", () => {
         calls.commentsCreated += 1;
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
         expect(body.body).toContain("<!-- gittensory-pr-panel:v1 -->");
-        expect(body.body).toContain("@gittensory");
+        expect(body.body).toContain("@loopover");
         expect(body.body).not.toMatch(/wallet|hotkey|estimated score|reward estimate|payout|farming|raw trust score|private reviewability|reviewability internals|scoreability|public score estimate/i);
         return Response.json({ id: 1001 }, { status: 201 });
       }
@@ -6495,7 +6495,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 1,
-          body: "@gittensory miner-context",
+          body: "@loopover miner-context",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6512,7 +6512,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 2,
-          body: "@gittensory blockers",
+          body: "@loopover blockers",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6529,7 +6529,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 3,
-          body: "@gittensory help",
+          body: "@loopover help",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6546,7 +6546,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 4,
-          body: "@gittensory next-action",
+          body: "@loopover next-action",
           user: { login: "oktofeesh1", type: "User" },
           author_association: "NONE",
         },
@@ -6563,7 +6563,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 5,
-          body: "@gittensory reviewability",
+          body: "@loopover reviewability",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6580,7 +6580,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 6,
-          body: "@gittensory repo-fit",
+          body: "@loopover repo-fit",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6597,7 +6597,7 @@ describe("queue processors", () => {
         issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 7,
-          body: "@gittensory packet",
+          body: "@loopover packet",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6614,7 +6614,7 @@ describe("queue processors", () => {
         issue: { number: 78, title: "Uncached PR command", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
         comment: {
           id: 8,
-          body: "@gittensory packet",
+          body: "@loopover packet",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6649,7 +6649,7 @@ describe("queue processors", () => {
     );
     expect(usagePayloads.every((payload) => typeof payload.actorHash === "string" && /^[a-f0-9]{64}$/.test(payload.actorHash))).toBe(true);
     expect(JSON.stringify(usagePayloads)).not.toContain('"actor":');
-    expect(JSON.stringify(usagePayloads)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|@gittensory|oktofeesh1/i);
+    expect(JSON.stringify(usagePayloads)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate|@loopover|oktofeesh1/i);
     const usageEvents = await listProductUsageEvents(env, { limit: 10 });
     expect(usageEvents).toEqual(
       expect.arrayContaining([
@@ -6659,7 +6659,7 @@ describe("queue processors", () => {
     expect(JSON.stringify(usageEvents)).not.toMatch(/wallet|hotkey|raw trust|deliveryId|installation-token/i);
   });
 
-  it("a @gittensory Q&A mention command respects agentPaused — never posts the answer card live (#2258)", async () => {
+  it("a @loopover Q&A mention command respects agentPaused — never posts the answer card live (#2258)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentPaused: true });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
@@ -6694,7 +6694,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 77, title: "Paused Q&A context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
-        comment: { id: 1, body: "@gittensory help", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        comment: { id: 1, body: "@loopover help", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
       },
     });
 
@@ -6709,7 +6709,7 @@ describe("queue processors", () => {
     expect(usageEvents.some((event) => event.eventName === "agent_command_replied")).toBe(false);
   });
 
-  it("a @gittensory maintainer-digest command respects agentDryRun — records dry_run, not agent_paused (#2258)", async () => {
+  it("a @loopover maintainer-digest command respects agentDryRun — records dry_run, not agent_paused (#2258)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
@@ -6744,7 +6744,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 78, title: "Dry-run digest context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
-        comment: { id: 2, body: "@gittensory queue-summary", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
+        comment: { id: 2, body: "@loopover queue-summary", user: { login: "maintainer", type: "User" }, author_association: "OWNER" },
       },
     });
 
@@ -6803,7 +6803,7 @@ describe("queue processors", () => {
       if (url.includes("/issues/90/comments") && method === "POST") {
         calls.commentsCreated += 1;
         const body = JSON.parse(String(init?.body ?? "{}")) as { body?: string };
-        expect(body.body).toContain("**Gittensory maintainer queue summary**");
+        expect(body.body).toContain("**LoopOver maintainer queue summary**");
         expect(body.body).toContain("Open PRs: 4");
         expect(body.body).toContain("confirmed-miner PRs: 1");
         expect(body.body).toContain("Authenticated control panel: https://loopover.ai/app?view=maintainer&repo=JSONbored%2Fgittensory");
@@ -6824,7 +6824,7 @@ describe("queue processors", () => {
         issue: { number: 90, title: "Ready linked fix", state: "open", pull_request: {}, user: { login: "alice" }, author_association: "NONE" },
         comment: {
           id: 9001,
-          body: "@gittensory queue-summary",
+          body: "@loopover queue-summary",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
@@ -6894,14 +6894,14 @@ describe("queue processors", () => {
         issue: { number: 94, title: "Ready linked fix", state: "open", pull_request: {}, user: { login: "alice" }, author_association: "NONE" },
         comment: {
           id: 9002,
-          body: "@gittensory queue-summary",
+          body: "@loopover queue-summary",
           user: { login: "maintainer", type: "User" },
           author_association: "OWNER",
         },
       },
     });
 
-    expect(commentBody).toContain("**Gittensory maintainer queue summary**");
+    expect(commentBody).toContain("**LoopOver maintainer queue summary**");
     expect(commentBody).not.toContain("Authenticated control panel:");
   });
 
@@ -6957,7 +6957,7 @@ describe("queue processors", () => {
         issue: { number: 91, title: "Author policy command", state: "open", pull_request: {}, user: { login: "driveby" }, author_association: "NONE" },
         comment: {
           id: 191,
-          body: "@gittensory help",
+          body: "@loopover help",
           user: { login: "driveby", type: "User" },
           author_association: "NONE",
         },
@@ -6980,7 +6980,7 @@ describe("queue processors", () => {
     expect(JSON.parse(usage.results[0]?.payload_json ?? "{}")).toMatchObject({ command: "help", outcome: "replied", actorKind: "author" });
   });
 
-  it("records deduped @gittensory answer usefulness from authorized reactions only", async () => {
+  it("records deduped @loopover answer usefulness from authorized reactions only", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
     await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
       number: 77,
@@ -7074,7 +7074,7 @@ describe("queue processors", () => {
     expect(stored.results.every((row) => row.actor_hash.startsWith("sha256:"))).toBe(true);
   });
 
-  it("skips unsupported @gittensory feedback reactions without storing votes", async () => {
+  it("skips unsupported @loopover feedback reactions without storing votes", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "maintainer" });
     await upsertAgentCommandAnswer(env, commandAnswer("answer-skip", "preflight", { responseCommentId: 9001 }));
     const basePayload = {
@@ -7242,7 +7242,7 @@ describe("queue processors", () => {
           issue: { number: 77, title: "Broken command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
           comment: {
             id: 9,
-            body: "@gittensory help",
+            body: "@loopover help",
             user: { login: "oktofeesh1", type: "User" },
             author_association: "NONE",
           },
@@ -7256,7 +7256,7 @@ describe("queue processors", () => {
     expect(event).toMatchObject({ status: "error", error_summary: expect.stringContaining("Invalid repository full name") });
   });
 
-  it("skips unauthorized, bot, and non-PR @gittensory mention commands without public output", async () => {
+  it("skips unauthorized, bot, and non-PR @loopover mention commands without public output", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     let commentCalls = 0;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -7289,7 +7289,7 @@ describe("queue processors", () => {
       eventName: "issue_comment",
       payload: {
         action: "created",
-        comment: { id: 9, body: "@gittensory preflight", user: { login: "reporter", type: "User" }, author_association: "NONE" },
+        comment: { id: 9, body: "@loopover preflight", user: { login: "reporter", type: "User" }, author_association: "NONE" },
       },
     });
 
@@ -7300,7 +7300,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { number: 80, title: "Plain issue", state: "open", user: { login: "reporter" } },
-        comment: { id: 1, body: "@gittensory preflight", user: { login: "reporter", type: "User" }, author_association: "NONE" },
+        comment: { id: 1, body: "@loopover preflight", user: { login: "reporter", type: "User" }, author_association: "NONE" },
       },
     });
     await processJob(env, {
@@ -7310,7 +7310,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { number: 81, title: "Bot PR", state: "open", pull_request: {}, user: { login: "renovate[bot]" } },
-        comment: { id: 2, body: "@gittensory preflight", user: { login: "renovate[bot]", type: "Bot" }, author_association: "NONE" },
+        comment: { id: 2, body: "@loopover preflight", user: { login: "renovate[bot]", type: "Bot" }, author_association: "NONE" },
       },
     });
     await processJob(env, {
@@ -7320,7 +7320,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { number: 82, title: "Unauthorized PR", state: "open", pull_request: {}, user: { login: "not-a-miner" }, author_association: "NONE" },
-        comment: { id: 3, body: "@gittensory preflight", user: { login: "not-a-miner", type: "User" }, author_association: "NONE" },
+        comment: { id: 3, body: "@loopover preflight", user: { login: "not-a-miner", type: "User" }, author_association: "NONE" },
       },
     });
     await processJob(env, {
@@ -7330,7 +7330,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { number: 83, title: "Unknown author PR", state: "open", pull_request: {}, author_association: "NONE" },
-        comment: { id: 4, body: "@gittensory preflight", user: { login: "commenter", type: "User" } },
+        comment: { id: 4, body: "@loopover preflight", user: { login: "commenter", type: "User" } },
       },
     });
     await processJob(env, {
@@ -7340,7 +7340,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { number: 84, title: "Maintainer digest PR", state: "open", pull_request: {}, user: { login: "not-a-miner" }, author_association: "NONE" },
-        comment: { id: 5, body: "@gittensory queue-summary", user: { login: "not-a-miner", type: "User" }, author_association: "NONE" },
+        comment: { id: 5, body: "@loopover queue-summary", user: { login: "not-a-miner", type: "User" }, author_association: "NONE" },
       },
     });
 

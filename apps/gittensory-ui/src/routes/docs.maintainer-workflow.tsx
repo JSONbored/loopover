@@ -12,13 +12,13 @@ export const Route = createFileRoute("/docs/maintainer-workflow")({
       {
         name: "description",
         content:
-          "How to use LoopOver in a repo: confirmed-miner labels, sticky sanitized comments, on-demand @gittensory commands.",
+          "How to use LoopOver in a repo: confirmed-miner labels, sticky sanitized comments, on-demand @loopover commands.",
       },
       { property: "og:title", content: "Maintainer workflow — LoopOver docs" },
       {
         property: "og:description",
         content:
-          "How to use LoopOver in a repo: confirmed-miner labels, sticky sanitized comments, on-demand @gittensory commands.",
+          "How to use LoopOver in a repo: confirmed-miner labels, sticky sanitized comments, on-demand @loopover commands.",
       },
       { property: "og:url", content: "/docs/maintainer-workflow" },
     ],
@@ -83,9 +83,9 @@ function MaintainerWorkflow() {
         <>
           You can ask for the same reviewability view in the PR thread.
           <CodeBlock
-            code={`@gittensory preflight
-@gittensory blockers
-@gittensory duplicate-check`}
+            code={`@loopover preflight
+@loopover blockers
+@loopover duplicate-check`}
           />
         </>
       ),
@@ -136,7 +136,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
         <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>, then{" "}
         <Link to="/docs/github-app">GitHub App configuration</Link>: install on one repo, verify
         installation health, preview the public panel, then decide whether{" "}
-        <strong>Gittensory Orb Review Agent</strong> should become a required check.
+        <strong>LoopOver Orb Review Agent</strong> should become a required check.
       </p>
       <WorkflowMirror
         role="maintainer"
@@ -160,7 +160,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
       <CodeBlock code={MAINTAINER_COMMAND_LIST} />
       <p>
         For syntax, default roles, PR action verbs, and the gate vs auto-review boundary, see the{" "}
-        <Link to="/docs/gittensory-commands">@gittensory command reference</Link>.
+        <Link to="/docs/gittensory-commands">@loopover command reference</Link>.
       </p>
 
       <Callout variant="safety">

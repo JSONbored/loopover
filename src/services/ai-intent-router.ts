@@ -2,7 +2,7 @@ import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from
 import { INTENT_ROUTABLE_COMMANDS, isIntentRoutableCommand, type IntentRoutableCommandName } from "../github/commands";
 import type { AdvisoryAiRoutingConfig } from "../types";
 
-// Closed-set intent-classification router for unrecognized @gittensory mentions (#4596), powered ENTIRELY by
+// Closed-set intent-classification router for unrecognized @loopover mentions (#4596), powered ENTIRELY by
 // local Ollama (env.AI_ADVISORY) -- same Ollama-only shape as ai-chat-qa.ts (#4595), no frontier fallback.
 //
 // This NEVER generates new content: the classifier's only job is to pick the single closest match among the
@@ -23,7 +23,7 @@ export type IntentRoutingResult =
   | { status: "matched"; model: string; estimatedNeurons: number; command: IntentRoutableCommandName };
 
 export type IntentRoutingRequest = {
-  /** The free-form text after `@gittensory` (GittensoryMentionCommand.unrecognizedText). */
+  /** The free-form text after `@loopover` (GittensoryMentionCommand.unrecognizedText). */
   text: string;
   /** Resolved repository settings' `advisoryAiRouting` block; `intentRouting === true` is the enable gate. */
   advisoryAiRouting: AdvisoryAiRoutingConfig | undefined;

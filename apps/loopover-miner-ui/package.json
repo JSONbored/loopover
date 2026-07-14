@@ -15,7 +15,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@loopover/ui-kit": ">=0.1.0 <1.0.0",
+    "@loopover/ui-kit": ">=0.1.0 <2.0.0",
     "@tailwindcss/vite": "^4.3.2",
     "@tanstack/react-router": "^1.170.17",
     "react": "^19.2.7",

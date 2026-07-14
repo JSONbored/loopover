@@ -34,9 +34,9 @@ function Troubleshooting() {
     >
       <h2>Health checks</h2>
       <CodeBlock
-        code={`gittensory-mcp doctor
-gittensory-mcp status
-gittensory-mcp whoami`}
+        code={`loopover-mcp doctor
+loopover-mcp status
+loopover-mcp whoami`}
       />
       <p>Or hit the public API endpoint directly to confirm reachability:</p>
       <CodeBlock lang="http" code={`GET https://api.loopover.ai/health`} />
@@ -44,7 +44,7 @@ gittensory-mcp whoami`}
       <h2>Self-host Docker observability</h2>
       <p>
         The Docker stack exposes three different operator signals: structured logs from the{" "}
-        <code>gittensory</code> container, Prometheus metrics at <code>/metrics</code>, and optional
+        <code>loopover</code> container, Prometheus metrics at <code>/metrics</code>, and optional
         OpenTelemetry traces through the observability profile. Metrics answer <em>how much</em>{" "}
         work is happening; traces answer <em>where time went</em> inside a review job.
       </p>
@@ -75,7 +75,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`}
       <h3>Login hangs on device flow</h3>
       <p>
         Confirm you can reach <code>github.com/login/device</code> in your browser. Re-run{" "}
-        <code>gittensory-mcp login</code> and paste the new code.
+        <code>loopover-mcp login</code> and paste the new code.
       </p>
 
       <h3>“Stale fidelity” warning</h3>
@@ -92,7 +92,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`}
 
       <h3>401 Unauthorized from the API</h3>
       <p>
-        Your LoopOver session expired. Run <code>gittensory-mcp login</code> again. Static bearer
+        Your LoopOver session expired. Run <code>loopover-mcp login</code> again. Static bearer
         tokens are not user-facing.
       </p>
 

@@ -91,7 +91,7 @@ docker pull ghcr.io/jsonbored/loopover-selfhost:latest`}
         <li>
           Pull and restart with <code>scripts/deploy-selfhost-image.sh</code> (or rebuild the
           checkout with <code>scripts/deploy-selfhost-prebuilt.sh</code>) — both restart only the{" "}
-          <code>gittensory</code> service (<code>--no-deps</code>) and wait for it to report{" "}
+          <code>loopover</code> service (<code>--no-deps</code>) and wait for it to report{" "}
           <code>healthy</code> before returning, instead of a bare <code>docker compose up -d</code>{" "}
           that returns as soon as the container starts.
         </li>
@@ -114,7 +114,7 @@ curl http://localhost:8787/ready
         <code>LOOPOVER_VERSION</code> from the checked-out commit (
         <code>git rev-parse --short=8 HEAD</code>) unless you set <code>SENTRY_RELEASE</code>{" "}
         yourself. A plain{" "}
-        <code>docker compose pull gittensory &amp;&amp; docker compose up -d gittensory</code> still
+        <code>docker compose pull loopover &amp;&amp; docker compose up -d loopover</code> still
         works, but skips the health-check wait loop and input validation both scripts provide.
       </Callout>
 
@@ -128,8 +128,8 @@ curl http://localhost:8787/ready
       </p>
       <CodeBlock
         lang="bash"
-        code={`docker compose build --build-arg INSTALL_AI_CLIS=true gittensory
-docker compose up -d gittensory`}
+        code={`docker compose build --build-arg INSTALL_AI_CLIS=true loopover
+docker compose up -d loopover`}
       />
 
       <h2>Sentry source maps</h2>

@@ -40,7 +40,7 @@ function SelfHostingDocsAudit() {
     >
       <Callout variant="note" title="Scope (#1829)">
         This page is the in-repo paper trail for the self-host docs audit under roadmap{" "}
-        <a href="https://github.com/JSONbored/gittensory/issues/1819">#1819</a>. REES analyzer
+        <a href="https://github.com/JSONbored/loopover/issues/1819">#1819</a>. REES analyzer
         metadata generation is tracked separately on the REES roadmap — the analyzer reference page
         covers names and shapes; auto-generated metadata tables are out of scope here.
       </Callout>
@@ -110,7 +110,7 @@ function SelfHostingDocsAudit() {
       <h2>Defaults, optional services, and experimental surfaces</h2>
       <ul>
         <li>
-          <strong>Core stack (default):</strong> gittensory + Redis + SQLite on the mounted data
+          <strong>Core stack (default):</strong> loopover + Redis + SQLite on the mounted data
           volume; <code>SELFHOST_DEPLOYMENT_MODE=dry-run</code> in{" "}
           <code>.env.selfhost.example</code>.
         </li>

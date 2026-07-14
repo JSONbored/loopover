@@ -45,8 +45,8 @@ function UpstreamDrift() {
       <Callout>
         <strong>Upstream relationship.</strong> <code>entrius/gittensor</code> is the upstream
         project LoopOver analyzes. LoopOver is{" "}
-        <a href="https://github.com/jsonbored/gittensory" target="_blank" rel="noreferrer">
-          jsonbored/gittensory
+        <a href="https://github.com/jsonbored/loopover" target="_blank" rel="noreferrer">
+          jsonbored/loopover
         </a>{" "}
         — an independent base-agent layer for the Gittensor ecosystem, not affiliated with the
         official subnet.

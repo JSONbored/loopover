@@ -60,18 +60,18 @@ npx -y @loopover/mcp@latest --help
 npm i -g @loopover/mcp@latest
 
 # sign in, confirm identity, check the session
-gittensory-mcp login
-gittensory-mcp whoami --json
-gittensory-mcp status --json
+loopover-mcp login
+loopover-mcp whoami --json
+loopover-mcp status --json
 
 # verify API, auth, and the local scorer before any analysis
-gittensory-mcp doctor --json`}
+loopover-mcp doctor --json`}
       />
       <Callout variant="safety">
         Session tokens are <strong>LoopOver tokens backed by GitHub identity</strong>, not your
         GitHub PATs. Source upload stays disabled (<code>LOOPOVER_UPLOAD_SOURCE=false</code>) and
         local absolute paths are redacted from anything that leaves your machine. Log out anytime
-        with <code>gittensory-mcp logout</code>.
+        with <code>loopover-mcp logout</code>.
       </Callout>
 
       <h2>1. Choose your lane</h2>
@@ -83,8 +83,8 @@ gittensory-mcp doctor --json`}
       </p>
       <CodeBlock
         code={`# what should I work on next, and what lane does this repo support?
-gittensory-mcp agent plan --login your-login --repo owner/repo --json
-gittensory-mcp repo-decision --login your-login --repo owner/repo --json`}
+loopover-mcp agent plan --login your-login --repo owner/repo --json
+loopover-mcp repo-decision --login your-login --repo owner/repo --json`}
       />
       <p>
         The repo&apos;s configured lane comes back as one of these (it is set by the repo&apos;s
@@ -120,9 +120,9 @@ gittensory-mcp repo-decision --login your-login --repo owner/repo --json`}
         then generate the public-safe packet to paste into the PR body.
       </p>
       <CodeBlock
-        code={`gittensory-mcp agent plan --login your-login --repo owner/repo --json
-gittensory-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|npm test|summary" --json
-gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
+        code={`loopover-mcp agent plan --login your-login --repo owner/repo --json
+loopover-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|npm test|summary" --json
+loopover-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
       />
 
       <h2>3. Issue-solving PR lane</h2>
@@ -133,9 +133,9 @@ gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/m
       </p>
       <CodeBlock
         code={`# branch named/described so the linked issue is detected, e.g. "Fixes #123"
-gittensory-mcp agent plan --login your-login --repo owner/repo --json
-gittensory-mcp preflight --login your-login --repo owner/repo --base origin/main --branch-eligibility eligible --validation "passed|npm test|summary" --json
-gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
+loopover-mcp agent plan --login your-login --repo owner/repo --json
+loopover-mcp preflight --login your-login --repo owner/repo --base origin/main --branch-eligibility eligible --validation "passed|npm test|summary" --json
+loopover-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
       />
 
       <h2>4. Issue discovery lane</h2>
@@ -146,8 +146,8 @@ gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/m
         loops.
       </p>
       <CodeBlock
-        code={`gittensory-mcp agent plan --login your-login --repo owner/repo --objective "find a high-proof issue" --json
-gittensory-mcp decision-pack --login your-login --json`}
+        code={`loopover-mcp agent plan --login your-login --repo owner/repo --objective "find a high-proof issue" --json
+loopover-mcp decision-pack --login your-login --json`}
       />
 
       <h2>5. Docs and context work</h2>
@@ -157,9 +157,9 @@ gittensory-mcp decision-pack --login your-login --json`}
         public-safe artifact regardless of whether the change is code or docs.
       </p>
       <CodeBlock
-        code={`gittensory-mcp agent plan --login your-login --repo owner/repo --json
-gittensory-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|docs build|summary" --json
-gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
+        code={`loopover-mcp agent plan --login your-login --repo owner/repo --json
+loopover-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|docs build|summary" --json
+loopover-mcp agent packet --login your-login --repo owner/repo --base origin/main --json`}
       />
 
       <h2>6. Repo-specific lanes</h2>
@@ -170,8 +170,8 @@ gittensory-mcp agent packet --login your-login --repo owner/repo --base origin/m
         before you commit to a path.
       </p>
       <CodeBlock
-        code={`gittensory-mcp repo-decision --login your-login --repo owner/repo --json
-gittensory-mcp analyze-branch --login your-login --repo owner/repo --base origin/main --pending-merged-prs 3 --expected-open-prs 0 --scenario-note "after the queue clears" --json`}
+        code={`loopover-mcp repo-decision --login your-login --repo owner/repo --json
+loopover-mcp analyze-branch --login your-login --repo owner/repo --base origin/main --pending-merged-prs 3 --expected-open-prs 0 --scenario-note "after the queue clears" --json`}
       />
 
       <h2>Validation expectations (every lane)</h2>
@@ -183,8 +183,8 @@ gittensory-mcp analyze-branch --login your-login --repo owner/repo --base origin
         validation, not a guess.
       </p>
       <CodeBlock
-        code={`gittensory-mcp doctor --json
-gittensory-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|npm test|summary" --json`}
+        code={`loopover-mcp doctor --json
+loopover-mcp preflight --login your-login --repo owner/repo --base origin/main --validation "passed|npm test|summary" --json`}
       />
       <Callout variant="safety">
         The PR packet from <code>agent packet</code> is <strong>public-safe</strong>: it is scrubbed

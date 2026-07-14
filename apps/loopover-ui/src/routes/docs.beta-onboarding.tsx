@@ -35,8 +35,8 @@ function BetaOnboarding() {
       <Callout>
         <strong>Product positioning.</strong> LoopOver is a deterministic base-agent and
         control-plane layer for the Gittensor ecosystem. It is{" "}
-        <a href="https://github.com/jsonbored/gittensory" target="_blank" rel="noreferrer">
-          jsonbored/gittensory
+        <a href="https://github.com/jsonbored/loopover" target="_blank" rel="noreferrer">
+          jsonbored/loopover
         </a>
         , independent of{" "}
         <a href="https://github.com/entrius/gittensor" target="_blank" rel="noreferrer">
@@ -59,26 +59,26 @@ function BetaOnboarding() {
           <Link to="/docs/quickstart">Quickstart</Link>.
           <CodeBlock
             code={`npm i -g @loopover/mcp@latest
-gittensory-mcp --help`}
+loopover-mcp --help`}
           />
         </li>
         <li>
           <strong>Sign in.</strong> GitHub Device Flow — no PAT storage.
           <CodeBlock
-            code={`gittensory-mcp login
-gittensory-mcp whoami`}
+            code={`loopover-mcp login
+loopover-mcp whoami`}
           />
         </li>
         <li>
           <strong>Run diagnostics.</strong> Confirms API reachability, auth, source-upload posture,
           and optional local score-preview wiring.
-          <CodeBlock code="gittensory-mcp doctor" />
+          <CodeBlock code="loopover-mcp doctor" />
         </li>
         <li>
           <strong>Plan next work.</strong> Ranked actions, lane context, and blockers —
           copilot-only; does not open PRs or post comments.
           <CodeBlock
-            code={`gittensory-mcp agent plan --login your-login --json
+            code={`loopover-mcp agent plan --login your-login --json
 # optional: --repo owner/repo`}
           />
         </li>
@@ -86,15 +86,15 @@ gittensory-mcp whoami`}
           <strong>Preflight the branch.</strong> Branch blockers, queue pressure, and maintainer-fit
           notes before you push.
           <CodeBlock
-            code={`gittensory-mcp analyze-branch --login your-login --json
-gittensory-mcp preflight --login your-login --json`}
+            code={`loopover-mcp analyze-branch --login your-login --json
+loopover-mcp preflight --login your-login --json`}
           />
         </li>
         <li>
           <strong>Prepare a public-safe packet.</strong> Maintainer-readable PR description with no
           private scoring language.
           <CodeBlock
-            code={`gittensory-mcp agent packet --login your-login --repo owner/repo --json`}
+            code={`loopover-mcp agent packet --login your-login --repo owner/repo --json`}
           />
         </li>
       </ol>

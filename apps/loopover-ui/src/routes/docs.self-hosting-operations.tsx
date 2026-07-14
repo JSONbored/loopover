@@ -574,7 +574,7 @@ volumes:
         code={`# Your Sentry project DSN — never commit this to git
 SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
 SENTRY_ENVIRONMENT=production
-SENTRY_SERVER_NAME=gittensory-us-east
+SENTRY_SERVER_NAME=loopover-us-east
 SENTRY_RELEASE=gittensory-selfhost@2026.07.05
 # Optional: sample review tracing spans (0.05 = 5%)
 # SENTRY_TRACES_SAMPLE_RATE=0.05`}
@@ -605,7 +605,7 @@ SENTRY_RELEASE=gittensory-selfhost@2026.07.05
 VITE_SENTRY_ENVIRONMENT=production
 # Match the release id the ui-sentry-release workflow uploaded for this commit,
 # or symbolication won't find the matching source maps:
-VITE_SENTRY_RELEASE=gittensory-ui@<short-sha>`}
+VITE_SENTRY_RELEASE=loopover-ui@<short-sha>`}
       />
       <p>
         Every browser event is scrubbed before it leaves the box: request cookies, headers, and body
@@ -643,7 +643,7 @@ VITE_SENTRY_RELEASE=gittensory-ui@<short-sha>`}
           {
             title: "Contexts (full scrubbed detail)",
             description:
-              "gittensory (engine captures), review (failed reviews), log (structured console lines), sentry_monitor (cron failures), otel (active trace ids). Secrets, tokens, bodies, diffs, prompts, and review text are redacted before send.",
+              "loopover (engine captures), review (failed reviews), log (structured console lines), sentry_monitor (cron failures), otel (active trace ids). Secrets, tokens, bodies, diffs, prompts, and review text are redacted before send.",
           },
           {
             title: "Subsystems",
@@ -773,7 +773,7 @@ VITE_SENTRY_RELEASE=gittensory-ui@<short-sha>`}
       <h2>Sentry server name</h2>
       <p>
         <code>SENTRY_SERVER_NAME</code> sets a clean, human name for this instance in Sentry (for
-        example <code>gittensory-us-east</code>). Unset defaults to the OS hostname — never the
+        example <code>loopover-us-east</code>). Unset defaults to the OS hostname — never the
         public-origin URL. Set this explicitly if you run more than one instance and want to tell
         their Sentry events apart at a glance instead of matching container hostnames.
       </p>

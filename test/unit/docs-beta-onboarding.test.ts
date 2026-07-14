@@ -12,8 +12,8 @@ describe("docs beta onboarding page", () => {
   const normalizedSource = source.replace(/\s+/g, " ");
 
   it("documents miner MCP flow through packet", () => {
-    expect(source).toMatch(/gittensory-mcp login/);
-    expect(source).toMatch(/gittensory-mcp doctor/);
+    expect(source).toMatch(/loopover-mcp login/);
+    expect(source).toMatch(/loopover-mcp doctor/);
     expect(source).toMatch(/agent plan/);
     expect(source).toMatch(/preflight/);
     expect(source).toMatch(/agent packet/);

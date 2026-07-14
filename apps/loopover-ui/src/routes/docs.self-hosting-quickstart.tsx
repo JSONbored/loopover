@@ -125,8 +125,8 @@ LOOPOVER_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-s
       </p>
       <Callout variant="note" title="Building from source instead">
         Contributors and anyone customizing the Dockerfile can still build locally —{" "}
-        <code>docker compose up -d --build</code> builds the <code>gittensory</code> service from
-        the checkout instead of pulling a published image. Everything else in this quickstart (env,
+        <code>docker compose up -d --build</code> builds the <code>loopover</code> service from the
+        checkout instead of pulling a published image. Everything else in this quickstart (env,
         health checks, GitHub App) is identical either way. Two build-args trim the image:{" "}
         <code>--build-arg INSTALL_AI_CLIS=false</code> skips the Claude Code/Codex CLIs (default{" "}
         <code>true</code>), and <code>--build-arg INSTALL_VISUAL_REVIEW=true</code> adds{" "}
@@ -271,7 +271,7 @@ cp config/examples/global.loopover.yml loopover-config/owner__my-repo/.loopover.
       <CodeBlock
         lang="text"
         code={`ENABLED BY DEFAULT (no flags needed)
-  gittensory app + Redis        SQLite database, dry-run-friendly, Orb telemetry (see Callout below)
+  loopover app + Redis        SQLite database, dry-run-friendly, Orb telemetry (see Callout below)
 
 RECOMMENDED FOR PRODUCTION (opt-in)
   --profile postgres             shared/multi-instance database (pgvector-capable)

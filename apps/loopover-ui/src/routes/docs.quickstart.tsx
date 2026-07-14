@@ -51,21 +51,21 @@ npm i -g @loopover/mcp@latest`}
         Flow and exchanges the result for a LoopOver session token.
       </p>
       <CodeBlock
-        code={`gittensory-mcp login
-gittensory-mcp whoami
-gittensory-mcp status`}
+        code={`loopover-mcp login
+loopover-mcp whoami
+loopover-mcp status`}
       />
       <Callout variant="safety">
         Session tokens are <strong>LoopOver tokens backed by GitHub identity</strong>, not your
-        GitHub PATs. You can log out anytime with <code>gittensory-mcp logout</code>.
+        GitHub PATs. You can log out anytime with <code>loopover-mcp logout</code>.
       </Callout>
 
       <h2>3. Run your first analysis</h2>
       <p>Analyze the current branch with metadata only. No source ever leaves your machine.</p>
       <CodeBlock
-        code={`gittensory-mcp doctor
-gittensory-mcp analyze-branch --login your-login --json
-gittensory-mcp preflight --login your-login --json`}
+        code={`loopover-mcp doctor
+loopover-mcp analyze-branch --login your-login --json
+loopover-mcp preflight --login your-login --json`}
       />
 
       <h2>4. Wire it into your coding agent</h2>
@@ -76,9 +76,9 @@ gittensory-mcp preflight --login your-login --json`}
         <a href="/docs/beta-onboarding">Beta onboarding</a>.
       </p>
       <CodeBlock
-        code={`gittensory-mcp init-client --print codex
-gittensory-mcp init-client --print claude
-gittensory-mcp init-client --print cursor`}
+        code={`loopover-mcp init-client --print codex
+loopover-mcp init-client --print claude
+loopover-mcp init-client --print cursor`}
       />
     </DocsPage>
   );

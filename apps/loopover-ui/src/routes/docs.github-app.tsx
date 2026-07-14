@@ -10,7 +10,7 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "How the LoopOver GitHub App reviews pull requests once installed. Self-hosting is the only currently available path; a shared, centrally hosted App is planned as a future offering. The LoopOver Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
+          "How the LoopOver GitHub App reviews pull requests once installed. Self-hosting is the only currently available path; a shared, centrally hosted App is planned as a future offering. The LoopOver Orb Review Agent check plus a review comment posted as loopover[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:title", content: "GitHub App configuration — LoopOver docs" },
       {
@@ -39,7 +39,7 @@ function GithubApp() {
         available path. Each review produces two surfaces: the{" "}
         <strong>LoopOver Orb Review Agent</strong> check run (and the advisory{" "}
         <strong>LoopOver Context</strong> check), and a single review comment posted by{" "}
-        <code>gittensory[bot]</code> that updates in place as the PR evolves. The review behavior
+        <code>loopover[bot]</code> that updates in place as the PR evolves. The review behavior
         below this page's Install section (PR panel, checks, gate modes, config-as-code) is the same
         regardless of which connection mode your self-hosted App uses.
       </p>
@@ -101,8 +101,8 @@ GET /v1/installations/:id/repair`}
       <h2>PR panel</h2>
       <p>
         The PR panel is the review comment the LoopOver app posts on each pull request. It is one
-        sticky comment authored by <code>gittensory[bot]</code> that updates in place — the app
-        edits the same comment instead of adding new ones. It shows a public-safe readiness score,
+        sticky comment authored by <code>loopover[bot]</code> that updates in place — the app edits
+        the same comment instead of adding new ones. It shows a public-safe readiness score,
         concrete signal evidence, and short actions for linked issues, related work, review load,
         validation evidence, open PR queue, contributor context, and Gate result.
       </p>
@@ -341,12 +341,12 @@ review:
         code={`# Roll grounding + the unified comment onto one repo:
 LOOPOVER_REVIEW_GROUNDING="true"
 LOOPOVER_REVIEW_UNIFIED_COMMENT="true"
-LOOPOVER_REVIEW_REPOS="JSONbored/gittensory"`}
+LOOPOVER_REVIEW_REPOS="JSONbored/loopover"`}
       />
 
       <h2>Dogfood mode</h2>
       <p>
-        For repos like <code>JSONbored/gittensory</code> and <code>awesome-claude</code>, enable PR
+        For repos like <code>JSONbored/loopover</code> and <code>awesome-claude</code>, enable PR
         comments, labels, Context, and Gate together to test the full product surface. If another
         maintainer agent can merge quickly, configure that agent to wait for{" "}
         <code>LoopOver Orb Review Agent</code> before merge or close.

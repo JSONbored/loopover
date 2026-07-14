@@ -34,7 +34,7 @@ export function MinerWorkflow() {
         <>
           Pull a decision pack — lane context, repo targets to pursue or avoid, freshness, and
           ranked next actions.
-          <CodeBlock code={`gittensory-mcp agent plan --login your-login --json`} />
+          <CodeBlock code={`loopover-mcp agent plan --login your-login --json`} />
         </>
       ),
       maintainer: (
@@ -54,7 +54,7 @@ export function MinerWorkflow() {
         <>
           Metadata-only branch analysis on the current branch — refs, changed-file metadata, labels,
           linked issues, commit messages, validation summaries.
-          <CodeBlock code={`gittensory-mcp analyze-branch --login your-login --json`} />
+          <CodeBlock code={`loopover-mcp analyze-branch --login your-login --json`} />
         </>
       ),
       maintainer: (
@@ -74,7 +74,7 @@ export function MinerWorkflow() {
         <>
           Combine branch analysis with account/queue context to surface branch blockers, account
           blockers, and maintainer-fit notes.
-          <CodeBlock code={`gittensory-mcp preflight --login your-login --json`} />
+          <CodeBlock code={`loopover-mcp preflight --login your-login --json`} />
         </>
       ),
       maintainer: (
@@ -94,7 +94,7 @@ export function MinerWorkflow() {
         <>
           Produce a public-safe PR packet — a description that reads cleanly to maintainers, with no
           private scoring or risk language leaking out.
-          <CodeBlock code={`gittensory-mcp agent packet --json`} />
+          <CodeBlock code={`loopover-mcp agent packet --json`} />
         </>
       ),
       maintainer: (

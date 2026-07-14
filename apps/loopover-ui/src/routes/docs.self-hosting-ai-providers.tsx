@@ -201,7 +201,7 @@ CLAUDE_AI_EFFORT=medium`}
         the running container so the file lands on the volume the image expects (
         <code>/data/codex</code>, mounted at <code>~/.codex</code>):
       </p>
-      <CodeBlock code={`docker compose exec gittensory codex auth`} />
+      <CodeBlock code={`docker compose exec loopover codex auth`} />
       <p>
         This also needs the explicit opt-in shown in the fallback example above (
         <code>LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1</code>) — see the Subscription CLI safety note

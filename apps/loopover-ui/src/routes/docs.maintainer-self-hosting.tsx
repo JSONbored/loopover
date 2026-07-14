@@ -280,7 +280,7 @@ function MaintainerSelfHosting() {
 
       <h2>Moving a repo between hosted and self-host</h2>
       <Callout variant="note" title="Hosted is currently paused">
-        &quot;Hosted&quot; here means the private managed-beta shared <code>gittensory</code> App
+        &quot;Hosted&quot; here means the private managed-beta shared <code>loopover</code> App
         described in <Link to="/docs/github-app">GitHub App configuration</Link> — it previously
         accepted new installs and is currently paused while self-hosted Orb is the primary way to
         run LoopOver. A new centrally hosted offering is planned for the future. "Switching from
@@ -318,7 +318,7 @@ function MaintainerSelfHosting() {
         </li>
         <li>
           Uninstall the shared hosted App from that repo (repo Settings → Integrations → GitHub Apps
-          → gittensory → Uninstall, or the equivalent org-level App settings page) once you&apos;ve
+          → loopover → Uninstall, or the equivalent org-level App settings page) once you&apos;ve
           confirmed the self-host App is reviewing PRs correctly. Leaving both installed means two
           reviewers post competing checks and comments on the same PRs.
         </li>
@@ -354,8 +354,8 @@ function MaintainerSelfHosting() {
       </Callout>
       <p>
         What stays identical for contributors either way: the review still posts as a{" "}
-        <code>gittensory[bot]</code>-style comment (under your own App&apos;s slug once you migrate,
-        not literally <code>gittensory[bot]</code>) plus the same check-run shape, and the gate
+        <code>loopover[bot]</code>-style comment (under your own App&apos;s slug once you migrate,
+        not literally <code>loopover[bot]</code>) plus the same check-run shape, and the gate
         semantics in <Link to="/docs/tuning">Tuning your reviews</Link> and{" "}
         <Link to="/docs/how-reviews-work">How reviews work</Link> are unchanged — only the
         infrastructure and the settings storage location differ.

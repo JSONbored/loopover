@@ -206,21 +206,21 @@ sum by (class) (rate(loopover_github_graphql_cache_total[15m]))`}
           deployment&apos;s configuration.
         </li>
         <li>
-          A dimension-mismatch error means the existing <code>gittensory</code> collection (the
-          fixed collection name self-host always uses) was created with a different embedding model
-          than the one currently configured (<code>AI_EMBED_MODEL</code>). Recreating it — delete
-          the collection and let the next index run recreate it at the current width — is the fix,
-          but it temporarily removes ALL indexed RAG context for every repo until re-indexing
-          completes, so treat it as a deliberate, disruptive step, not a routine one.
+          A dimension-mismatch error means the existing <code>loopover</code> collection (the fixed
+          collection name self-host always uses) was created with a different embedding model than
+          the one currently configured (<code>AI_EMBED_MODEL</code>). Recreating it — delete the
+          collection and let the next index run recreate it at the current width — is the fix, but
+          it temporarily removes ALL indexed RAG context for every repo until re-indexing completes,
+          so treat it as a deliberate, disruptive step, not a routine one.
         </li>
       </ul>
       <CodeBlock
         lang="bash"
-        code={`curl "$QDRANT_URL/collections/gittensory"
+        code={`curl "$QDRANT_URL/collections/loopover"
 docker compose --profile qdrant ps qdrant
 
 # Only after confirming a dimension mismatch is the actual cause:
-curl -X DELETE "$QDRANT_URL/collections/gittensory"`}
+curl -X DELETE "$QDRANT_URL/collections/loopover"`}
       />
 
       <h2>Orb export or relay problems</h2>

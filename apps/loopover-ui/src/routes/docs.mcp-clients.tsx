@@ -36,18 +36,18 @@ function McpClients() {
       <p>These commands print config only. They do not mutate your local client files.</p>
       <CodeBlock
         lang="bash"
-        code={`gittensory-mcp init-client --print codex
-gittensory-mcp init-client --print claude
-gittensory-mcp init-client --print cursor
-gittensory-mcp init-client --print mcp
-gittensory-mcp init-client --print vscode`}
+        code={`loopover-mcp init-client --print codex
+loopover-mcp init-client --print claude
+loopover-mcp init-client --print cursor
+loopover-mcp init-client --print mcp
+loopover-mcp init-client --print vscode`}
       />
       <p>
         <code>--print mcp</code> uses the same JSON snippet as Claude Desktop and Cursor for other
         stdio MCP hosts that expect the <code>mcpServers</code> shape. Every generated snippet
-        assumes <code>gittensory-mcp</code> is on your <code>PATH</code> (install it globally first,
+        assumes <code>loopover-mcp</code> is on your <code>PATH</code> (install it globally first,
         per <a href="/docs/quickstart">Quickstart</a>) — pass{" "}
-        <code>--command /absolute/path/to/gittensory-mcp</code> if your client doesn't inherit your
+        <code>--command /absolute/path/to/loopover-mcp</code> if your client doesn't inherit your
         shell PATH.
       </p>
 
@@ -55,8 +55,8 @@ gittensory-mcp init-client --print vscode`}
       <CodeBlock
         filename="~/.codex/config.toml"
         lang="toml"
-        code={`[mcp_servers.gittensory]
-command = "gittensory-mcp"
+        code={`[mcp_servers.loopover]
+command = "loopover-mcp"
 args = ["--stdio"]`}
       />
 
@@ -66,8 +66,8 @@ args = ["--stdio"]`}
         lang="json"
         code={`{
   "mcpServers": {
-    "gittensory": {
-      "command": "gittensory-mcp",
+    "loopover": {
+      "command": "loopover-mcp",
       "args": ["--stdio"]
     }
   }
@@ -80,8 +80,8 @@ args = ["--stdio"]`}
         lang="json"
         code={`{
   "mcpServers": {
-    "gittensory": {
-      "command": "gittensory-mcp",
+    "loopover": {
+      "command": "loopover-mcp",
       "args": ["--stdio"]
     }
   }
@@ -98,9 +98,9 @@ args = ["--stdio"]`}
         lang="json"
         code={`{
   "servers": {
-    "gittensory": {
+    "loopover": {
       "type": "stdio",
-      "command": "gittensory-mcp",
+      "command": "loopover-mcp",
       "args": ["--stdio"]
     }
   }

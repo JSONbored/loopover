@@ -13,17 +13,17 @@ describe("docs miner quickstart page", () => {
 
   it("documents the full miner loop: install, auth, doctor, plan, preflight, packet", () => {
     expect(source).toMatch(/@loopover\/mcp/);
-    expect(source).toMatch(/gittensory-mcp login/);
-    expect(source).toMatch(/gittensory-mcp whoami/);
-    expect(source).toMatch(/gittensory-mcp status/);
-    expect(source).toMatch(/gittensory-mcp doctor/);
+    expect(source).toMatch(/loopover-mcp login/);
+    expect(source).toMatch(/loopover-mcp whoami/);
+    expect(source).toMatch(/loopover-mcp status/);
+    expect(source).toMatch(/loopover-mcp doctor/);
     expect(source).toMatch(/agent plan --login/);
-    expect(source).toMatch(/gittensory-mcp preflight --login/);
+    expect(source).toMatch(/loopover-mcp preflight --login/);
     expect(source).toMatch(/agent packet --login/);
   });
 
   it("uses CLI commands that match the current MCP package syntax", () => {
-    // Real flags from `gittensory-mcp --help` — guards against drift in documented syntax.
+    // Real flags from `loopover-mcp --help` — guards against drift in documented syntax.
     expect(source).toMatch(/--repo owner\/repo/);
     expect(source).toMatch(/--base origin\/main/);
     expect(source).toMatch(/--branch-eligibility eligible/);

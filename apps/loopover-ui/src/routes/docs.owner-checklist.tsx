@@ -51,7 +51,7 @@ function OwnerChecklist() {
 GET /v1/repos/:owner/:repo/gittensor-config-recommendation`}
       />
       <CodeBlock
-        code={`gittensory-mcp init-client --print claude --agent-profile repo-owner-intake`}
+        code={`loopover-mcp init-client --print claude --agent-profile repo-owner-intake`}
       />
 
       <h2>1. Repository registration</h2>

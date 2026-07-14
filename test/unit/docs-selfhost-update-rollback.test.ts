@@ -27,12 +27,12 @@ describe("self-host update + rollback docs (#1823)", () => {
     expect(operations).toContain("Migrations are forward-only");
   });
 
-  it("deploy scripts restart only gittensory with --no-deps", () => {
+  it("deploy scripts restart only loopover with --no-deps", () => {
     expect(imageScript).toContain('up -d --no-build --no-deps "$SERVICE"');
     expect(prebuiltScript).toContain('up -d --no-deps "$SERVICE"');
   });
 
-  it("prebuilt deploy builds the gittensory-engine workspace before bundling (#4530)", () => {
+  it("prebuilt deploy builds the loopover-engine workspace before bundling (#4530)", () => {
     // packages/loopover-engine/dist/ is gitignored and built via `tsc`; `npm ci --ignore-scripts`
     // never triggers that build on its own, so anything that imports the engine (e.g.
     // packages/loopover-miner) fails to resolve during the --all bundle unless this runs first.

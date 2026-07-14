@@ -162,7 +162,7 @@ SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a fresh
       <CodeBlock
         filename=".env"
         code={`GITHUB_APP_ID=123456
-GITHUB_APP_SLUG=my-gittensory-app
+GITHUB_APP_SLUG=my-loopover-app
 GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-private-key.pem
 GITHUB_WEBHOOK_SECRET=<same-secret-configured-on-the-app>`}
       />

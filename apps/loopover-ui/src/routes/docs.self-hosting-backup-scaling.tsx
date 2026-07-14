@@ -156,7 +156,7 @@ npm run selfhost:postgres:migrate -- --sqlite /data/loopover.sqlite --execute`}
       <CodeBlock
         lang="bash"
         code={`docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh
-docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/gittensory-<timestamp>.dump`}
+docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /backups/postgres/loopover-<timestamp>.dump`}
       />
       <p>
         A healthy run ends with <code>[verify] postgres archive OK: … (N TOC entries)</code> (or{" "}

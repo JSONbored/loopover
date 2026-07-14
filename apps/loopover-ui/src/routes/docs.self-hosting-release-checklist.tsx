@@ -81,7 +81,7 @@ git push origin orb-v0.1.0`}
           {
             title: "1. Smoke matrix green",
             description:
-              "Every applicable scenario in the matrix below passes against a locally built candidate image (docker buildx build --load -t gittensory:rc-candidate .).",
+              "Every applicable scenario in the matrix below passes against a locally built candidate image (docker buildx build --load -t loopover:rc-candidate .).",
           },
           {
             title: "2. Image-contents audit reviewed",
@@ -238,7 +238,7 @@ git push origin orb-v0.1.0`}
                 .
               </td>
               <td className="py-2 align-top text-muted-foreground">
-                Only the <code>gittensory</code> service restarts (<code>--no-deps</code>);{" "}
+                Only the <code>loopover</code> service restarts (<code>--no-deps</code>);{" "}
                 <code>.env</code>, data volumes, and <code>loopover-config/</code> are untouched;{" "}
                 <code>/ready</code> returns 200 after the health-check wait.
               </td>
@@ -262,7 +262,7 @@ git push origin orb-v0.1.0`}
                 (Postgres, Redis, Qdrant, Grafana) already up.
               </td>
               <td className="py-2 align-top text-muted-foreground">
-                Only the <code>gittensory</code> container recreates; profile-service containers and
+                Only the <code>loopover</code> container recreates; profile-service containers and
                 their volumes are never touched.
               </td>
             </tr>
@@ -298,8 +298,8 @@ git push origin orb-v0.1.0`}
       <CodeBlock
         lang="bash"
         code={`# Build (or use a published tag) once, then run each scenario against the same image:
-docker buildx build --load -t gittensory:rc-candidate .
-./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
+docker buildx build --load -t loopover:rc-candidate .
+./scripts/smoke-selfhost.sh loopover:rc-candidate`}
       />
 
       <h3>Direct GitHub App mode (default)</h3>
@@ -316,7 +316,7 @@ SELFHOST_SMOKE_EXTRA_VOLUMES="\${TEST_APP_PRIVATE_KEY_PATH}:/run/secrets/github-
 SELFHOST_SMOKE_EXTRA_ENV="GITHUB_APP_ID=123456
 GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-private-key.pem" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_export_error,selfhost_orb_relay_register" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
+./scripts/smoke-selfhost.sh loopover:rc-candidate`}
       />
       <p>
         <code>selfhost_orb_relay_register</code> must NOT appear here — relay registration is
@@ -344,7 +344,7 @@ SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
 PUBLIC_API_ORIGIN=https://selfhost-smoke.example" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_orb_relay_register" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Pull mode -- no PUBLIC_API_ORIGIN needed; the container polls the broker outbound instead of
 # exposing an inbound endpoint. The right fit for NAT/tailnet operators with no public ingress.
@@ -352,7 +352,7 @@ SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
 ORB_RELAY_MODE=pull" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_orb_relay_register" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
+./scripts/smoke-selfhost.sh loopover:rc-candidate`}
       />
 
       <h3>Air-gapped / no-telemetry mode</h3>
@@ -366,7 +366,7 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
         lang="bash"
         code={`SELFHOST_SMOKE_EXTRA_ENV="ORB_AIR_GAP=true" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_export_error,selfhost_orb_relay_register" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
+./scripts/smoke-selfhost.sh loopover:rc-candidate`}
       />
 
       <h3>AI provider: Claude Code / Codex / both</h3>
@@ -383,14 +383,14 @@ SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=claude-code
 CLAUDE_CODE_OAUTH_TOKEN=\${TEST_CLAUDE_TOKEN}" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Codex only (requires the fail-closed opt-in)
 SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex
 LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Codex primary, Claude Code fallback
 SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex,claude-code
@@ -400,7 +400,7 @@ CLAUDE_CODE_OAUTH_TOKEN=\${TEST_CLAUDE_TOKEN}
 LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
 SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate`}
+./scripts/smoke-selfhost.sh loopover:rc-candidate`}
       />
       <Callout variant="note">
         These need real credentials to reach a genuinely healthy <code>/ready</code> (it probes the
@@ -418,10 +418,10 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
       <CodeBlock
         lang="bash"
         code={`docker network create gt-pg-smoke
-docker run -d --name gt-pg --network gt-pg-smoke -e POSTGRES_PASSWORD=devpw -e POSTGRES_DB=gittensory postgres:16-alpine
+docker run -d --name gt-pg --network gt-pg-smoke -e POSTGRES_PASSWORD=devpw -e POSTGRES_DB=loopover postgres:16-alpine
 SELFHOST_SMOKE_NETWORK=gt-pg-smoke \\
-SELFHOST_SMOKE_EXTRA_ENV="DATABASE_URL=postgres://postgres:devpw@gt-pg:5432/gittensory" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+SELFHOST_SMOKE_EXTRA_ENV="DATABASE_URL=postgres://postgres:devpw@gt-pg:5432/loopover" \\
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 docker rm -f gt-pg && docker network rm gt-pg-smoke`}
       />
       <Callout variant="safety">
@@ -439,7 +439,7 @@ docker rm -f gt-pg && docker network rm gt-pg-smoke`}
       <CodeBlock
         lang="bash"
         code={`SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_redis_ready" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # With Qdrant RAG:
 docker network create gt-rag-smoke
@@ -447,7 +447,7 @@ docker run -d --name gt-qdrant --network gt-rag-smoke qdrant/qdrant:v1.18.2
 SELFHOST_SMOKE_NETWORK=gt-rag-smoke \\
 SELFHOST_SMOKE_EXTRA_ENV="QDRANT_URL=http://gt-qdrant:6333" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_vectorize" \\
-./scripts/smoke-selfhost.sh gittensory:rc-candidate
+./scripts/smoke-selfhost.sh loopover:rc-candidate
 docker rm -f gt-qdrant && docker network rm gt-rag-smoke`}
       />
 
@@ -551,7 +551,7 @@ docker rm -f gt-qdrant && docker network rm gt-rag-smoke`}
               "docker-compose.override.yml(.example) and any host-specific compose profile config live outside the image entirely; the image only ever contains the application bundle plus its declared runtime dependencies.",
           },
           {
-            title: "apps/ (gittensory-ui) and test/ — excluded from the build context",
+            title: "apps/ (loopover-ui) and test/ — excluded from the build context",
             description:
               "Already in .dockerignore alongside the existing exclusions (shipped ahead of this checklist, in the same #1819 hardening pass): the self-host bundle's only entry point is src/server.ts and npm ci only reads the root package*.json, so the UI workspace app and the test suite are never read during the image build (~11MB of this repo's ~22MB tracked-file footprint kept out).",
           },
@@ -608,7 +608,7 @@ docker images ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0 --format '{{.Size}}
           {
             title: "The escape hatch already exists",
             description:
-              "An operator who wants a smaller image without the AI CLIs can build it themselves today: docker compose build --build-arg INSTALL_AI_CLIS=false gittensory. Nothing about shipping one default image forecloses adding a published minimal tag later.",
+              "An operator who wants a smaller image without the AI CLIs can build it themselves today: docker compose build --build-arg INSTALL_AI_CLIS=false loopover. Nothing about shipping one default image forecloses adding a published minimal tag later.",
           },
         ]}
       />
@@ -640,7 +640,7 @@ docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
 
 Multi-arch (linux/amd64 + linux/arm64). See https://gittensory.aethereal.dev/docs/maintainer-self-hosting for setup.
 Includes the Claude Code / Codex subscription CLIs by default; credentials stay runtime-only.
-Sentry release id baked into the image: \`gittensory-orb@0.1.0\`.
+Sentry release id baked into the image: \`loopover-orb@0.1.0\`.
 
 ## First stable release
 
@@ -654,7 +654,7 @@ The \`latest\` tag now points here.
 - Redis cache (required in every mode).
 - Claude Code and Codex AI providers, including a provider chain with fallback.
 - Health/readiness endpoints (\`/health\`, \`/ready\`, \`/metrics\`) and the documented log-event contract.
-- Rollback to a prior image tag and one-service (\`gittensory\` only) restart, via
+- Rollback to a prior image tag and one-service (\`loopover\` only) restart, via
   \`scripts/deploy-selfhost-image.sh\` / \`scripts/deploy-selfhost-prebuilt.sh\`.
 
 ## Experimental

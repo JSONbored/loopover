@@ -81,7 +81,7 @@ function PrivacySecurity() {
       </p>
       <CodeBlock
         code={`# Per-PR features run only when the flag is ON and the repo is allowlisted.
-LOOPOVER_REVIEW_REPOS="JSONbored/gittensory"   # per-repo cutover allowlist (default: none)
+LOOPOVER_REVIEW_REPOS="JSONbored/loopover"   # per-repo cutover allowlist (default: none)
 LOOPOVER_REVIEW_SAFETY="true"                  # prompt-injection defang + secret-leak scan
 LOOPOVER_REVIEW_GROUNDING="true"               # CI status + full changed-file content
 LOOPOVER_REVIEW_RAG="true"                     # codebase vector-index context (needs index)

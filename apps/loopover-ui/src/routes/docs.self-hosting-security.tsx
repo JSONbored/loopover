@@ -258,14 +258,14 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
           {
             title: "Bring your own reverse proxy",
             description:
-              "Skip both profiles and put an existing nginx/Traefik/ALB in front of the gittensory service's own port instead.",
+              "Skip both profiles and put an existing nginx/Traefik/ALB in front of the loopover service's own port instead.",
           },
         ]}
       />
 
       <h3>Caddy: automatic HTTPS with Let's Encrypt</h3>
       <p>
-        The <code>caddy</code> profile runs Caddy 2 in front of the <code>gittensory</code> service,
+        The <code>caddy</code> profile runs Caddy 2 in front of the <code>loopover</code> service,
         terminating TLS on <code>80</code>/<code>443</code>/<code>443/udp</code> (the last for
         HTTP/3) and obtaining a Let's Encrypt certificate automatically for whatever domain you set.
         It needs a real DNS record: point <code>DOMAIN</code> at this host's public IP{" "}
@@ -279,7 +279,7 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
       </p>
       <CodeBlock filename=".env" code={`DOMAIN=reviews.yourcompany.com`} />
       <p>
-        The shipped <code>caddy/Caddyfile</code> reverse-proxies to <code>gittensory:8787</code> on
+        The shipped <code>caddy/Caddyfile</code> reverse-proxies to <code>loopover:8787</code> on
         the compose network, forwards the real client IP, enables compression, sets standard
         security headers (HSTS, <code>X-Content-Type-Options</code>, <code>X-Frame-Options</code>, a
         strict referrer policy), and logs as JSON to stderr:
@@ -287,7 +287,7 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
       <CodeBlock
         filename="caddy/Caddyfile"
         code={`{$DOMAIN} {
-	reverse_proxy gittensory:8787 {
+	reverse_proxy loopover:8787 {
 		header_up X-Forwarded-For {remote_host}
 		header_up X-Real-IP {remote_host}
 	}
@@ -315,7 +315,7 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
         about it, which is expected.
       </p>
       <Callout variant="warn" title="Remove the app's own port mapping">
-        The <code>gittensory</code> service's compose entry has a direct{" "}
+        The <code>loopover</code> service's compose entry has a direct{" "}
         <code>{`ports: ["\${PORT:-8787}:8787"]`}</code> mapping with a comment marking exactly this:
         remove it once Caddy is your public listener, or the app stays reachable on{" "}
         <code>:8787</code> with no TLS, bypassing the proxy entirely and defeating the whole point
@@ -340,7 +340,7 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
       <h3>Already run a reverse proxy or load balancer?</h3>
       <p>
         Skip the <code>caddy</code> profile entirely. Remove the same direct <code>ports:</code>{" "}
-        mapping from the <code>gittensory</code> service, keep it on the compose network (or publish{" "}
+        mapping from the <code>loopover</code> service, keep it on the compose network (or publish{" "}
         <code>8787</code> bound to a private interface your existing proxy can reach), and terminate
         TLS the way you already do for everything else — nginx, Traefik, an AWS ALB, a Cloudflare
         Tunnel. Whatever fronts it just needs to forward to port <code>8787</code> and preserve the
@@ -360,8 +360,8 @@ SELFHOST_USE_INFISICAL=1 ./scripts/deploy-selfhost-prebuilt.sh`}
 TS_EXTRA_ARGS=          # optional, e.g. --advertise-tags=tag:self-host`}
       />
       <Callout variant="warn" title="Unlike Caddy, keep the app's port mapping">
-        Tailscale doesn't replace the <code>gittensory</code> service's listener the way Caddy does
-        — it adds a new network interface to the <em>host</em>. Docker's default{" "}
+        Tailscale doesn't replace the <code>loopover</code> service's listener the way Caddy does —
+        it adds a new network interface to the <em>host</em>. Docker's default{" "}
         <code>{`ports: ["\${PORT:-8787}:8787"]`}</code> mapping publishes to all of the host's
         interfaces, so once Tailscale is up, that same mapping is what makes port <code>8787</code>{" "}
         reachable at the host's tailnet IP too —{" "}

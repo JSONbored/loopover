@@ -142,35 +142,35 @@ cp config/examples/global.loopover.yml loopover-config/.loopover.yml`}
         Keep anti-abuse thresholds, maintainer allowlists, and autonomy dials in the{" "}
         <strong>private</strong> mount — not in a public <code>.loopover.yml</code> contributors can
         read. <code>config/examples/TEMPLATES.md</code> documents the public-vs-private split and
-        how to apply the templates to <code>gittensory</code>, <code>awesome-claude</code>, and{" "}
+        how to apply the templates to <code>loopover</code>, <code>awesome-claude</code>, and{" "}
         <code>metagraphed</code> without committing private policy. Lint before deploy:{" "}
         <code>npx tsx scripts/loopover-config-lint.ts path/to/.loopover.yml</code>.
       </Callout>
       <p>Authoritative copies in git:</p>
       <ul>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/loopover.minimal.yml">
+          <a href="https://github.com/JSONbored/loopover/blob/main/config/examples/loopover.minimal.yml">
             <code>config/examples/loopover.minimal.yml</code>
           </a>
         </li>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/loopover.full.yml">
+          <a href="https://github.com/JSONbored/loopover/blob/main/config/examples/loopover.full.yml">
             <code>config/examples/loopover.full.yml</code>
           </a>{" "}
           (same body as{" "}
-          <a href="https://github.com/JSONbored/gittensory/blob/main/.loopover.yml.example">
+          <a href="https://github.com/JSONbored/loopover/blob/main/.loopover.yml.example">
             <code>.loopover.yml.example</code>
           </a>
           )
         </li>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/TEMPLATES.md">
+          <a href="https://github.com/JSONbored/loopover/blob/main/config/examples/TEMPLATES.md">
             <code>config/examples/TEMPLATES.md</code>
           </a>{" "}
           — catalog + fleet usage notes
         </li>
         <li>
-          <a href="https://github.com/JSONbored/gittensory/blob/main/config/examples/README.md">
+          <a href="https://github.com/JSONbored/loopover/blob/main/config/examples/README.md">
             <code>config/examples/README.md</code>
           </a>{" "}
           — the full private-config layout, precedence chain, and deep-merge semantics, including
@@ -187,7 +187,7 @@ cp config/examples/global.loopover.yml loopover-config/.loopover.yml`}
         filename=".env"
         code={`PUBLIC_API_ORIGIN=https://reviews.example.com
 GITHUB_APP_ID=123456
-GITHUB_APP_SLUG=my-gittensory-app
+GITHUB_APP_SLUG=my-loopover-app
 GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-private-key.pem
 GITHUB_WEBHOOK_SECRET=<random-webhook-secret>
 
@@ -207,7 +207,7 @@ INTERNAL_JOB_TOKEN=<random-32-byte-token>`}
       </p>
       <Callout variant="warn" title="MCP_ACTUATION_REPO_ALLOWLIST">
         <code>LOOPOVER_MCP_TOKEN</code> is a shared, end-user-obtainable CLI credential (the normal
-        alternative to <code>gittensory-mcp login</code>), so it must not implicitly stage actions
+        alternative to <code>loopover-mcp login</code>), so it must not implicitly stage actions
         (merges, closes, approvals) on every repo the App happens to be installed on.{" "}
         <code>MCP_ACTUATION_REPO_ALLOWLIST</code> scopes it to an explicit,
         comma/whitespace-separated <code>owner/repo</code> list —{" "}

@@ -12,7 +12,7 @@ describe("computeLocalScorerTokens (#782)", () => {
     });
     expect(scorer).toMatchObject({
       mode: "external_command",
-      activeModel: "gittensory-deterministic",
+      activeModel: "loopover-deterministic",
       sourceTokenScore: 12,
       testTokenScore: 8,
       nonCodeTokenScore: 6,

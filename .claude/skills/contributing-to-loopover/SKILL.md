@@ -97,9 +97,9 @@ approved, then confirm it's green.
 
 ```sh
 npm install -g @loopover/mcp@latest
-gittensory-mcp login                       # GitHub device flow (for the auth'd preflight tools)
-gittensory-mcp init-client --print codex   # prints TOML for ~/.codex/config.toml ([mcp_servers.gittensory])
-gittensory-mcp init-client --print claude  # or --print cursor — prints the correct config per tool
+loopover-mcp login                       # GitHub device flow (for the auth'd preflight tools)
+loopover-mcp init-client --print codex   # prints TOML for ~/.codex/config.toml ([mcp_servers.gittensory])
+loopover-mcp init-client --print claude  # or --print cursor — prints the correct config per tool
 ```
 
 Use that generator instead of hand-writing config (**Codex uses TOML, Claude/Cursor use JSON** — a
@@ -273,7 +273,7 @@ GitHub's web editor (which needs a human browser session an AI coding tool can't
    (the real `fetchBrowserSession()` call can race in afterward and silently overwrite it back to `null`);
    overriding `window.fetch` for `/v1/auth/session` to return the same authenticated shape closes that
    race either way.
-2. **Fixed viewport, never a full-page/`fullPage: true` capture.** gittensory-ui is a **dark-mode-only
+2. **Fixed viewport, never a full-page/`fullPage: true` capture.** loopover-ui is a **dark-mode-only
    build** (`apps/loopover-ui/src/components/site/theme-toggle.tsx` — the toggle was removed; there is
    no light theme left to force), so there's no theme dimension to multiply out. Capture at whichever
    viewport(s) your change actually affects — mobile (375×812) and desktop (1280×800) cover most cases;

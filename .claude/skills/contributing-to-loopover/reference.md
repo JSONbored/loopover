@@ -35,7 +35,7 @@ path filter matched; on push to `main`, everything runs.
 | workers | workers-pool vitest | `npm run test:workers` | any failing `test/workers/**` |
 | mcp → build | MCP pkg build | `npm run build:mcp` | MCP package build error |
 | mcp → pack | tarball hygiene | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
-| miner → build | miner engine/pkg build | `npm run build:miner` | `@jsonbored/gittensory-{engine,miner}` build error |
+| miner → build | miner engine/pkg build | `npm run build:miner` | `@loopover/{engine,miner}` build error |
 | miner → pack | tarball hygiene | `npm run test:miner-pack` | unexpected/forbidden file in the miner npm tarball |
 | rees → test | review-enrichment-service's own suite | `npm run rees:test` | any failing test under `review-enrichment/` |
 | ui → openapi drift | spec check | `npm run ui:openapi:check` | committed `openapi.json` is stale (run `npm run ui:openapi`) |
@@ -144,9 +144,9 @@ Install + configure (let the CLI print the right config for your tool — **Code
 
 ```sh
 npm install -g @loopover/mcp@latest
-gittensory-mcp login                        # GitHub device flow
-gittensory-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_servers.gittensory])
-gittensory-mcp init-client --print claude   # or --print cursor  (→ mcpServers JSON)
+loopover-mcp login                        # GitHub device flow
+loopover-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_servers.gittensory])
+loopover-mcp init-client --print claude   # or --print cursor  (→ mcpServers JSON)
 ```
 
 All tools are metadata-only (no source upload). Run in this order:

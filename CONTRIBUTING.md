@@ -248,19 +248,19 @@ Frontend:
 
 Cloudflare/deploy:
 
-- Production UI deploys through the `gittensory-ui` Cloudflare Worker on
+- Production UI deploys through the `loopover-ui` Cloudflare Worker on
   `https://gittensory.aethereal.dev/`.
-- Production API deploys through the `gittensory-api` Cloudflare Worker on
+- Production API deploys through the `loopover-api` Cloudflare Worker on
   `https://gittensory-api.aethereal.dev/`.
 - Cloudflare Workers Builds owns automatic deployments from GitHub for BOTH workers (one connection
   per worker, scoped by build-watch-paths). GitHub Actions are validation/fallback only — do not add
   deploy workflows.
-  - `gittensory-api` deploy command: `npm run deploy:api` (applies pending D1 migrations, then
+  - `loopover-api` deploy command: `npm run deploy:api` (applies pending D1 migrations, then
     `wrangler deploy`). `wrangler d1 migrations apply` is non-interactive in CI and only applies
     PENDING migrations, so schema + code stay in sync on every build. Recommended build-watch-paths —
     include: `src/**`, `wrangler.jsonc`, `migrations/**`, `package.json`, `package-lock.json`,
     `tsconfig*.json`, `drizzle.config.ts`; exclude: `apps/**`, `docs/**`, `**/*.md`.
-  - `gittensory-ui` build command: `npm run build:cloudflare`. Scope its watch-paths to
+  - `loopover-ui` build command: `npm run build:cloudflare`. Scope its watch-paths to
     `apps/loopover-ui/**` (note: the UI build runs `ui:openapi` off the API contract, so rebuild the
     UI after API OpenAPI changes).
 - Do not re-add GitHub Pages or static-site deployment workflows.
@@ -269,7 +269,7 @@ MCP:
 
 - Preserve backwards compatibility where practical.
 - Keep CLI output stable and JSON output parseable.
-- `gittensory-mcp init-client --print` supports `codex`, `claude`, `cursor`, and `mcp` (generic
+- `loopover-mcp init-client --print` supports `codex`, `claude`, `cursor`, and `mcp` (generic
   JSON hosts that use the `mcpServers` shape).
 - MCP package releases are prepared separately and published from protected `mcp-vX.Y.Z` tags.
 

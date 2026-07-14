@@ -209,7 +209,7 @@ contract and provider behavior.
 
 ### Recognizing a stale or missing coding-agent credential
 
-When an attempt fails on a `claude-cli` / `codex-cli` provider, the CLI-subprocess driver folds the CLI's own output into a machine-readable `error` string on the attempt result. The credential/auth failure modes below map that exact string to a symptom and a concrete remediation — mirroring ORB's hosted-side [Recognizing a stale or missing credential](../../apps/loopover-ui/src/routes/docs.self-hosting-ai-providers.tsx) table. Every string is emitted by [`cli-subprocess-driver.ts`](../gittensory-engine/src/miner/cli-subprocess-driver.ts); nothing here is speculative.
+When an attempt fails on a `claude-cli` / `codex-cli` provider, the CLI-subprocess driver folds the CLI's own output into a machine-readable `error` string on the attempt result. The credential/auth failure modes below map that exact string to a symptom and a concrete remediation — mirroring ORB's hosted-side [Recognizing a stale or missing credential](../../apps/loopover-ui/src/routes/docs.self-hosting-ai-providers.tsx) table. Every string is emitted by [`cli-subprocess-driver.ts`](../loopover-engine/src/miner/cli-subprocess-driver.ts); nothing here is speculative.
 
 | Error string / pattern | Symptom | Remediation |
 | --- | --- | --- |
@@ -259,7 +259,7 @@ This completes the read-only AMS MCP tool surface (status, portfolio, claims, ev
 
 ### Client config
 
-`loopover-mcp` (ORB's hosted contributor-workflow tools) and `loopover-miner-mcp` (AMS's own local state-visibility tools above) can run as two separate stdio servers in the same MCP client session — useful for a dual-role operator running both ORB and AMS on the same box. Generate ORB's half with `loopover-mcp init-client --print claude` (see the [`@loopover/mcp` README](../gittensory-mcp/README.md#client-config)); `loopover-miner-mcp` takes no flags, so its entry is just the bin name. Combined, a Claude Desktop / Claude Code style config looks like:
+`loopover-mcp` (ORB's hosted contributor-workflow tools) and `loopover-miner-mcp` (AMS's own local state-visibility tools above) can run as two separate stdio servers in the same MCP client session — useful for a dual-role operator running both ORB and AMS on the same box. Generate ORB's half with `loopover-mcp init-client --print claude` (see the [`@loopover/mcp` README](../loopover-mcp/README.md#client-config)); `loopover-miner-mcp` takes no flags, so its entry is just the bin name. Combined, a Claude Desktop / Claude Code style config looks like:
 
 ```json
 {

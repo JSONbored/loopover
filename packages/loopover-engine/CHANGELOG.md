@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/JSONbored/gittensory/compare/engine-v2.0.0...engine-v3.0.0) (2026-07-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **build:** every gittensory-prefixed directory under apps/ and packages/ is now loopover-prefixed, and the two extension packages' npm names changed from @jsonbored/gittensory-* to @loopover/*. No dual-path/alias, per the epic's full-cutover mandate.
+
+### Features
+
+* **build:** Phase 5 - full-cutover rename all gittensory-* directories to loopover-* ([#5743](https://github.com/JSONbored/gittensory/issues/5743)) ([81e4ac3](https://github.com/JSONbored/gittensory/commit/81e4ac34dfb4dee9c3cadefcc27a515617462da9))
+
 ## [2.0.0](https://github.com/JSONbored/gittensory/compare/engine-v1.0.0...engine-v2.0.0) (2026-07-14)
 
 

@@ -3,7 +3,17 @@ providers:
   - name: loopover
     folder: LoopOver
     type: file
-    disableDeletion: true
+    # false (2026-07-14, #orb-grafana-dashboard-uid-collision): `true` tells Grafana's file-provisioner
+    # to NEVER remove a dashboard from its own database even after its uid disappears from this
+    # directory's file set. That silently orphans an old-uid entry every time a dashboard is renamed
+    # here (e.g. the gittensory-* -> loopover-* rebrand) — Grafana's unified-storage backend then
+    # hard-fails re-provisioning the NEW uid with a "deprecatedInternalID already in use" collision
+    # against the orphan, which recurs on every subsequent deploy/restart until someone manually
+    # reconciles Grafana's DB. `false` lets the provisioner clean up an orphaned dashboard the moment
+    # its file/uid is gone, matching every other config-as-code source of truth in this stack (if it's
+    # not in the repo, it shouldn't exist in Grafana). Does not touch the underlying Prometheus/Postgres
+    # metrics data — only the dashboard JSON registration itself.
+    disableDeletion: false
     editable: false
     options:
       path: /var/lib/grafana/dashboards

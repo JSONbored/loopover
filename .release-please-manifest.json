@@ -2,5 +2,5 @@
   "packages/gittensory-mcp": "0.7.1",
   "packages/gittensory-engine": "1.0.0",
   "packages/gittensory-miner": "0.1.0",
-  "packages/gittensory-ui-kit": "0.1.0"
+  "packages/gittensory-ui-kit": "0.2.0"
 }

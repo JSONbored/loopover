@@ -1,4 +1,4 @@
-export function extractGittensoryReviewFlags(envDtsText: string): string[];
+export function extractLoopOverReviewFlags(envDtsText: string): string[];
 
 export function extractCatalogIds(sourceText: string, catalogConstName: string): string[];
 

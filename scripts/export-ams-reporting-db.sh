@@ -67,12 +67,41 @@ persist_fingerprint() {
   mv "${file}.tmp" "$file"
 }
 
+# Reconcile an EXISTING $out file's schema against columns the CURRENT DDL declares that a stale
+# prior export (built under an older script version, before the source went permanently missing)
+# might be missing -- e.g. #5637 added provider/cost_usd/tokens_used to attempt_log_events' DDL a
+# day after #5471 first shipped this script. An instance whose ledger source has been absent since
+# before that change would otherwise "preserve last-good" the OLDER schema forever: the fingerprint/
+# SCRIPT_VERSION fast-path a few lines down is unreachable while the source stays missing, so
+# bumping LOOPOVER_AMS_REPORTING_SCRIPT_VERSION alone can never fix this. Additive-only (ALTER TABLE
+# ADD COLUMN, never drop/rename), so existing rows and data are never touched or lost -- a genuinely
+# missing column's value is NULL for every pre-existing row, which is simply true (we never had it).
+#
+# $1 out db   $2 table   $3 newline-separated "column_name column_type" pairs (empty = nothing to add)
+reconcile_out_schema() {
+  out="$1"
+  tbl="$2"
+  add_columns="$3"
+  [ -n "$add_columns" ] || return 0
+  [ -s "$out" ] || return 0
+  existing_cols="$(sqlite3 "$out" "PRAGMA table_info($tbl);" | awk -F'|' '{print $2}')"
+  printf '%s\n' "$add_columns" | while IFS=' ' read -r col_name col_type; do
+    [ -n "$col_name" ] || continue
+    if ! printf '%s\n' "$existing_cols" | grep -qx "$col_name"; then
+      echo "[ams-reporting] upgrading $out: adding missing column $col_name $col_type to $tbl" >&2
+      sqlite3 "$out" "ALTER TABLE $tbl ADD COLUMN $col_name $col_type;"
+    fi
+  done
+}
+
 # One ledger's full fail-open/fingerprint/atomic-export pass. Never propagates a failure to the caller (this
 # script exports two independent ledgers per run and a bad one must not block the other) -- always returns 0,
 # logging to stderr on any skip/failure path.
 #
 # $1 label (for log lines)   $2 source db   $3 out db   $4 source table   $5 time column
 # $6 redacted CREATE TABLE DDL   $7 redacted SELECT column list (source-table column names, in DDL column order)
+# $8 newline-separated "column_name column_type" pairs to reconcile onto a preserved last-good $out
+#    (see reconcile_out_schema; empty = this ledger's DDL has never gained a column post-launch)
 export_ledger() {
   label="$1"
   src="$2"
@@ -81,6 +110,7 @@ export_ledger() {
   time_col="$5"
   ddl="$6"
   select_cols="$7"
+  add_columns="${8:-}"
 
   tmp="${out}.tmp"
   fp_file="${out}.fingerprint"
@@ -88,6 +118,7 @@ export_ledger() {
 
   if [ ! -s "$src" ]; then
     if [ -s "$out" ]; then
+      reconcile_out_schema "$out" "$tbl" "$add_columns"
       echo "[ams-reporting:$label] export skipped: source missing at $src; preserving last-good $out" >&2
     else
       sqlite3 "$tmp" "$ddl"
@@ -101,6 +132,7 @@ export_ledger() {
 
   if ! source_table_exists "$src" "$tbl"; then
     if [ -s "$out" ]; then
+      reconcile_out_schema "$out" "$tbl" "$add_columns"
       echo "[ams-reporting:$label] export skipped: table $tbl absent in $src; preserving last-good $out" >&2
     else
       sqlite3 "$tmp" "$ddl"
@@ -161,7 +193,10 @@ export_ledger \
   );
   CREATE INDEX attempt_log_events_attempt_idx ON attempt_log_events(attempt_id, seq);
   CREATE INDEX attempt_log_events_created_idx ON attempt_log_events(created_at);" \
-  "id, seq, attempt_id, event_type, action_class, mode, provider, cost_usd, tokens_used, created_at"
+  "id, seq, attempt_id, event_type, action_class, mode, provider, cost_usd, tokens_used, created_at" \
+  "provider TEXT
+cost_usd REAL
+tokens_used INTEGER"
 
 # predictions: kept as-is. Unlike attempt_log_events, every column here is already a bounded identifier, enum,
 # score, or a fixed-vocabulary code array (blocker_codes_json/warning_codes_json -- engine-defined codes, never

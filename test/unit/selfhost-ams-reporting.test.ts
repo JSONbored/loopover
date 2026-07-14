@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -319,5 +319,50 @@ describe("scripts/export-ams-reporting-db.sh", () => {
     expect(second).toContain("export complete");
     const outDb = join(root, "reporting", "ams-prediction-ledger.sqlite");
     expect(sqlite(outDb, "SELECT target_id || '|' || conclusion FROM predictions;")).toBe("2|close");
+  });
+
+  it("upgrades a stale pre-#5637 output's schema (missing provider/cost_usd/tokens_used) while preserving last-good when the source stays missing throughout (migration-drift regression)", () => {
+    // Reproduces a real drift window in this script's own history: PR #5471 first shipped this script
+    // with attempt_log_events' DDL missing provider/cost_usd/tokens_used; PR #5637 added those columns
+    // to the DDL one day later. An instance whose ledger source has NEVER existed (no miner co-located
+    // with this reporting exporter) creates its one-and-only output under whichever DDL was current at
+    // that moment, then the "source missing, output already exists -> preserve last-good" fail-open
+    // path (export_ledger's very first branch) returns before ever reaching the fingerprint/
+    // SCRIPT_VERSION rebuild check -- so a later DDL widening was previously invisible to this instance
+    // forever, and every panel in miner-usage.json that selects provider/cost_usd/tokens_used hard-fails
+    // with "no such column" rather than just showing empty.
+    const root = tmpRoot();
+    const reportingDir = join(root, "reporting");
+    const attemptOut = join(reportingDir, "ams-attempt-log.sqlite");
+    mkdirSync(reportingDir, { recursive: true });
+    // Seed the OUTPUT directly with the pre-#5637 schema and one real row -- simulating a stale export
+    // this script itself produced before it ever knew about provider/cost_usd/tokens_used.
+    sqlite(
+      attemptOut,
+      `
+      CREATE TABLE attempt_log_events (
+        id INTEGER PRIMARY KEY,
+        seq INTEGER NOT NULL,
+        attempt_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        action_class TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO attempt_log_events (id, seq, attempt_id, event_type, action_class, mode, created_at)
+        VALUES (1, 1, 'a1', 'started', 'write', 'live', '2026-07-11T00:00:00Z');
+    `,
+    );
+
+    // Source never existed -- exactly the "engine-only, no co-located miner" deployment shape.
+    runExporter(root, { attemptLogSource: join(root, "does-not-exist-attempt-log.sqlite3"), reportingDir });
+
+    expect(sqlite(attemptOut, "PRAGMA quick_check;")).toBe("ok");
+    const columns = sqlite(attemptOut, "SELECT group_concat(name) FROM pragma_table_info('attempt_log_events');").split(",");
+    expect(columns).toEqual(expect.arrayContaining(["provider", "cost_usd", "tokens_used"]));
+    // The pre-existing row survives untouched, with the newly-added columns correctly NULL (we never
+    // had that data for it) rather than the row being dropped or fabricated.
+    expect(sqlite(attemptOut, "SELECT count(*) FROM attempt_log_events;")).toBe("1");
+    expect(sqlite(attemptOut, "SELECT attempt_id || '|' || coalesce(provider, 'NULL') FROM attempt_log_events;")).toBe("a1|NULL");
   });
 });

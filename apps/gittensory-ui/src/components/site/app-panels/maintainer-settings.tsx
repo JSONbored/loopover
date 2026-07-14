@@ -389,8 +389,8 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
           <div>
             <h3 className={LABEL_CLASS}>Command authorization</h3>
             <p className="mt-1 text-token-2xs text-muted-foreground">
-              Default roles allowed to run any <code className="font-mono">@loopover</code>{" "}
-              command. Per-command overrides (edited via the focus manifest) are shown below.
+              Default roles allowed to run any <code className="font-mono">@loopover</code> command.
+              Per-command overrides (edited via the focus manifest) are shown below.
             </p>
             <div className="mt-2 flex flex-wrap gap-3">
               {COMMAND_ROLES.map(([role, roleLabel]) => (

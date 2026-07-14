@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Gittensory API",
+    "title": "LoopOver API",
     "version": "0.1.0",
-    "description": "Backend API for Gittensory advisory checks and Gittensor repository context."
+    "description": "Backend API for LoopOver advisory checks and Gittensor repository context."
   },
   "components": {
     "schemas": {
@@ -9160,15 +9160,15 @@
               },
               "chatQa": {
                 "type": "boolean",
-                "description": "Opt the `@gittensory chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-first: unlike the four capabilities above, it declines instead of falling back to the frontier env.AI when env.AI_ADVISORY is unconfigured, unless `chatQaFrontierFallback` is also enabled. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command."
+                "description": "Opt the `@loopover chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-first: unlike the four capabilities above, it declines instead of falling back to the frontier env.AI when env.AI_ADVISORY is unconfigured, unless `chatQaFrontierFallback` is also enabled. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command."
               },
               "chatQaFrontierFallback": {
                 "type": "boolean",
-                "description": "Opt-in only (#4595 follow-up): when true, `@gittensory chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead."
+                "description": "Opt-in only (#4595 follow-up): when true, `@loopover chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead."
               },
               "intentRouting": {
                 "type": "boolean",
-                "description": "Opt a closed-set intent-classification router (#4596) into unrecognized `@gittensory` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`."
+                "description": "Opt a closed-set intent-classification router (#4596) into unrecognized `@loopover` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`."
               }
             },
             "required": [
@@ -13889,7 +13889,7 @@
       "GittensoryBearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Static API/MCP token, GitHub device-flow Gittensory session token, or extension-scoped Gittensory session token where supported. GitHub personal access tokens are not accepted."
+        "description": "Static API/MCP token, GitHub device-flow LoopOver session token, or extension-scoped LoopOver session token where supported. GitHub personal access tokens are not accepted."
       },
       "GittensorySessionCookie": {
         "type": "apiKey",
@@ -15153,7 +15153,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Private self-dogfood registration pack for the Gittensory repo",
+            "description": "Private self-dogfood registration pack for the LoopOver repo",
             "content": {
               "application/json": {
                 "schema": {
@@ -15183,7 +15183,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Private self-dogfood registration pack when repo matches configured Gittensory target",
+            "description": "Private self-dogfood registration pack when repo matches configured LoopOver target",
             "content": {
               "application/json": {
                 "schema": {
@@ -15333,7 +15333,7 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Gittensory repository automation settings",
+            "description": "LoopOver repository automation settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -16900,7 +16900,7 @@
               "text/markdown": {
                 "schema": {
                   "type": "string",
-                  "example": "# Weekly Gittensory value report\n\n## Adoption metrics\n- Active users: 4\n"
+                  "example": "# Weekly LoopOver value report\n\n## Adoption metrics\n- Active users: 4\n"
                 }
               }
             }
@@ -17010,7 +17010,7 @@
       "post": {
         "responses": {
           "200": {
-            "description": "Maintainer dry-run preview of a sanitized @gittensory command response (no GitHub mutation)",
+            "description": "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)",
             "content": {
               "application/json": {
                 "schema": {

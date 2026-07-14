@@ -342,7 +342,7 @@ function MaintainerDashboardView({
               </span>
             </div>
             <TableScroll className="mt-4" label="Reviewability queue">
-              <table className="w-full text-left text-token-sm">
+              <table className="w-full whitespace-nowrap text-left text-token-sm">
                 <caption className="sr-only">
                   Reviewable pull requests with bucket, slop band, and reason.
                 </caption>
@@ -738,7 +738,7 @@ export function PreviewResult({
       {preview.installation?.permissionRemediation.length ? (
         <div className="overflow-hidden rounded-token border-hairline">
           <TableScroll label="Permission remediation">
-            <table className="w-full text-left text-token-xs">
+            <table className="w-full whitespace-nowrap text-left text-token-xs">
               <caption className="sr-only">
                 GitHub App permission remediation: current versus required access per permission.
               </caption>

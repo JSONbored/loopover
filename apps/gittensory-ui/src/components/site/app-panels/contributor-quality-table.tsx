@@ -32,7 +32,7 @@ export function ContributorQualityTable({
         />
       ) : (
         <TableScroll className="mt-4" label="Top contributors by quality band">
-          <table className="w-full min-w-[420px] text-left text-token-sm">
+          <table className="w-full min-w-[420px] whitespace-nowrap text-left text-token-sm">
             <caption className="sr-only">
               Contributors with their quality band and open pull request count.
             </caption>

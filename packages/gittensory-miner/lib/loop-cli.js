@@ -16,15 +16,11 @@
 //
 // REAL, NOT FABRICATED: this loop is the first production caller of governor-state.js's `saveCapUsage`
 // (turnsTaken from runMinerAttempt's own real `loopResult.totalTurnsUsed`, elapsedMs from real wall-clock
-// measurement) and of a genuine per-identifier convergence history (attempts/consecutiveFailures/reenqueues
-// tracked in this process's own memory across its own cycles) -- both were previously honest zero/placeholder
-// literals (see attempt-input-builder.js's own header) because a ONE-SHOT `attempt` CLI invocation has no
-// cross-call history to draw on. A long-running loop genuinely does.
-//
-// DOCUMENTED GAP: convergence/cap-usage history is IN-MEMORY, scoped to this loop process's own lifetime (cap
-// usage itself persists across restarts via governor-state.js; per-identifier convergence counters do not --
-// a durable version needs attempt-log.js to grow a repo+issue index, the same separate schema change
-// attempt-input-builder.js's header already flags as out of scope here).
+// measurement). Its per-identifier convergence history (attempts/consecutiveFailures/reenqueues) is the real,
+// SQLite-persisted portfolio-queue attempt-history (portfolio-queue.js's getAttemptHistory, #5654) that the
+// dequeueNext claim + markDone/markFailed calls below already maintain -- the same source a one-shot `attempt`
+// invocation reads (#5654), so both share one source of truth and the counters survive a loop-daemon restart
+// (crash/deploy/systemd bounce) instead of resetting with the process (#5677).
 
 import { checkMinerKillSwitch } from "./governor-kill-switch.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
@@ -169,14 +165,6 @@ function parseIssueNumberFromIdentifier(identifier) {
   return match ? Number(match[1]) : null;
 }
 
-function convergenceKey(repoFullName, identifier) {
-  return `${repoFullName}:${identifier}`;
-}
-
-function zeroConvergence() {
-  return { attempts: 0, consecutiveFailures: 0, reenqueues: 0, reachedDone: false };
-}
-
 /**
  * Run one full discover -> claim -> attempt -> observe -> reenter cycle repeatedly until a kill-switch trips,
  * the run-loop boundary gate halts (non-convergence or a real budget/turn/elapsed cap), re-entry is declined,
@@ -290,7 +278,6 @@ export async function runLoop(args, options = {}) {
   }
 
   let usage = governorState.loadCapUsage();
-  const convergenceHistory = new Map();
   const cycles = [];
   let sinceSeq = eventLedger.readEvents({}).at(-1)?.seq ?? 0;
   let haltReason = null;
@@ -352,9 +339,15 @@ export async function runLoop(args, options = {}) {
         continue;
       }
 
-      const key = convergenceKey(claimed.repoFullName, claimed.identifier);
       const amsPolicy = await resolveAmsPolicyFn(claimed.repoFullName, { env });
-      const convergenceInput = convergenceHistory.get(key) ?? zeroConvergence();
+      // Real, SQLite-persisted per-item convergence history (#5677): the dequeueNext claim above already recorded
+      // this attempt and the markDone/markFailed calls below record the outcome, so reading it back here shares one
+      // source of truth with attempt-cli.js (#5654) and survives a loop-daemon restart instead of resetting.
+      const convergenceInput = portfolioQueue.getAttemptHistory(
+        claimed.repoFullName,
+        claimed.identifier,
+        claimed.apiBaseUrl,
+      );
 
       const boundary = evaluateBoundaryGateFn(
         {
@@ -376,9 +369,6 @@ export async function runLoop(args, options = {}) {
         cycles.push({ cycle: cycleIndex, outcome: "halted", reason: haltReason, repoFullName: claimed.repoFullName, identifier: claimed.identifier });
         break;
       }
-
-      convergenceInput.attempts += 1;
-      convergenceHistory.set(key, convergenceInput);
 
       const cycleStartMs = nowMsFn();
       let lastResult = null;
@@ -420,19 +410,15 @@ export async function runLoop(args, options = {}) {
       // (reenqueues threshold) rather than silently retried forever.
       const permanentBlock = attemptOutcome === "blocked_rejection_signaled";
 
-      if (submitted) {
+      if (submitted || permanentBlock) {
+        // Both terminal -- a submitted PR is done, and a repo-wide AI-usage-policy ban never resolves on retry --
+        // so neither is re-queued. markDone also clears the persisted consecutive-failure streak.
         portfolioQueue.markDone(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
-        convergenceInput.reachedDone = true;
-        convergenceInput.consecutiveFailures = 0;
-      } else if (permanentBlock) {
-        portfolioQueue.markDone(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
-        convergenceInput.consecutiveFailures += 1;
       } else {
+        // Any other blocked/abandoned/stale/governed outcome may resolve on a later retry, so requeue it; markFailed
+        // records the re-enqueue + consecutive failure the non-convergence detector reads on the next cycle.
         portfolioQueue.markFailed(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
-        convergenceInput.consecutiveFailures += 1;
-        convergenceInput.reenqueues += 1;
       }
-      convergenceHistory.set(key, convergenceInput);
 
       let reentryOutcome = "other";
       let prNumber = null;

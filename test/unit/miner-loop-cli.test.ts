@@ -367,6 +367,46 @@ describe("runLoop (#5135)", () => {
     expect(runDiscoverSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("REGRESSION (#5677): reads convergence history from the persisted portfolio queue, so a stuck item's re-enqueue streak survives a loop-daemon restart instead of resetting to fresh", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const item = { repoFullName: "acme/widgets", identifier: "issue:7" };
+
+    // Prior loop cycles that never reached done: each claim -> markFailed persists one re-enqueue + consecutive
+    // failure on the queue row (portfolio-queue.js, #5654/#5661), taking the item to the non-convergence
+    // threshold -- the state a real long-running loop would have accumulated before a restart.
+    const { maxReenqueues } = DEFAULT_AMS_POLICY_SPEC.convergenceThresholds;
+    portfolioQueue.enqueue(item);
+    for (let cycle = 0; cycle < maxReenqueues; cycle += 1) {
+      portfolioQueue.dequeueNext();
+      portfolioQueue.markFailed(item.repoFullName, item.identifier);
+    }
+    expect(portfolioQueue.getAttemptHistory(item.repoFullName, item.identifier).reenqueues).toBe(maxReenqueues);
+    for (const closer of [eventLedger, governorLedger, portfolioQueue, runState, governorState]) closer.close();
+
+    // Restart: a brand-new loop process -- fresh handles to the SAME on-disk files, with no in-memory Map to
+    // inherit. Pre-#5677 the fresh Map would read a zero convergence history and attempt the stuck item anyway.
+    const runAttemptSpy = vi.fn();
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json"], {
+      openGovernorState: () => openGovernorState(paths.governorStatePath),
+      initEventLedger: () => initEventLedger(paths.eventLedgerPath),
+      initGovernorLedger: () => initGovernorLedger(paths.governorLedgerPath),
+      initPortfolioQueue: () => initPortfolioQueueStore(paths.portfolioQueuePath),
+      initRunStateStore: () => initRunStateStore(paths.runStatePath),
+      runDiscover: vi.fn(async () => 0),
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    // Halted before this run's FIRST attempt: the persisted re-enqueue streak (not a reset in-memory Map) was read
+    // straight away, so the stuck item is caught immediately after the restart rather than re-attempted from zero.
+    expect(runAttemptSpy).not.toHaveBeenCalled();
+    const after = reopenAfterRun(paths);
+    expect(after.governorLedger.readGovernorEvents({}).some((event) => event.reason === "non_convergence_detected")).toBe(true);
+    expect(after.portfolioQueue.listQueue()[0]).toMatchObject({ status: "queued" });
+  });
+
   it("REGRESSION: runs a full cycle end to end -- claims, attempts, polls real PR disposition, records the outcome, and re-enters", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

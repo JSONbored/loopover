@@ -615,6 +615,13 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(evaluateClaCheck(claConfig({ consentPhrase: "agree", checkRunName: "CLA Assistant Lite" }), { body: "no", checkRunConclusion: "failure" })[0]?.code).toBe(
       CLA_CONSENT_MISSING_CODE,
     );
+    // #5838: a blank/whitespace-only consentPhrase normalizes to unset, so it never unconditionally satisfies.
+    expect(evaluateClaCheck(claConfig({ consentPhrase: "", checkRunName: "CLA Assistant Lite" }), { body: "no", checkRunConclusion: "failure" })[0]?.code).toBe(
+      CLA_CONSENT_MISSING_CODE,
+    );
+    expect(evaluateClaCheck(claConfig({ consentPhrase: "   " }), { body: "anything" })).toEqual([]);
+    // consentPhrase set but body absent → (ctx.body ?? "") defaults to "" → phrase not satisfied.
+    expect(evaluateClaCheck(claConfig({ consentPhrase: "agree" }), {})[0]?.code).toBe(CLA_CONSENT_MISSING_CODE);
 
     expect(evaluatePreMergeChecks([], { title: "t", body: "b", labels: [], changedPaths: [] })).toEqual([]);
     expect(

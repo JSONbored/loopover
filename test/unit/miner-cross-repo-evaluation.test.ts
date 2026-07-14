@@ -16,7 +16,7 @@ import {
   normalizeCrossRepoFullName,
   parseCrossRepoEvaluationManifest,
   runCrossRepoEvaluation,
-  scanPositiveGittensoryAssumptions,
+  scanPositiveLoopoverAssumptions,
   summarizeCrossRepoEvaluation,
 } from "../../packages/loopover-miner/lib/cross-repo-evaluation.js";
 import type { RepoStackResult } from "../../packages/loopover-miner/lib/stack-detection.js";
@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 function tempRepo(files: Record<string, string> = {}) {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-cross-repo-eval-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-cross-repo-eval-"));
   roots.push(root);
   for (const [rel, content] of Object.entries(files)) {
     writeFileSync(join(root, rel), content, "utf8");
@@ -120,20 +120,20 @@ describe("cross-repo evaluation harness (#4788)", () => {
     });
   });
 
-  describe("scanPositiveGittensoryAssumptions", () => {
+  describe("scanPositiveLoopoverAssumptions", () => {
     it("ignores non-strings and negative guidance lines", () => {
-      expect(scanPositiveGittensoryAssumptions(null as never)).toEqual([]);
+      expect(scanPositiveLoopoverAssumptions(null as never)).toEqual([]);
       const text = [
-        "Do not assume LoopOver/gittensory CI conventions or `npm run test:ci`.",
+        "Do not assume LoopOver CI conventions or `npm run test:ci`.",
         "Run npm run test:ci before finishing.",
       ].join("\n");
-      expect(scanPositiveGittensoryAssumptions(text)).toEqual([
+      expect(scanPositiveLoopoverAssumptions(text)).toEqual([
         { id: "test_ci_script", line: "Run npm run test:ci before finishing." },
       ]);
     });
 
     it("detects other positive assumption markers", () => {
-      const findings = scanPositiveGittensoryAssumptions(
+      const findings = scanPositiveLoopoverAssumptions(
         ["Ensure codecov/patch is green.", "Label with gittensor:bug.", "Wait for the loopover gate."].join("\n"),
       );
       expect(findings.map((f) => f.id).sort()).toEqual(["codecov_patch", "gittensor_label", "loopover_gate"]);
@@ -170,7 +170,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(result.stackDetected).toBe(true);
     });
 
-    it("fails gittensory_assumption when injected instructions leak LoopOver CI defaults", () => {
+    it("fails loopover_assumption when injected instructions leak LoopOver CI defaults", () => {
       const repoPath = tempRepo({
         "package.json": pkg({ scripts: { test: "node --test" } }),
       });
@@ -223,7 +223,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(result.reason).toBe("boom");
     });
 
-    it("passes end-to-end for a plain Node repo without gittensory-specific target config", () => {
+    it("passes end-to-end for a plain Node repo without loopover-specific target config", () => {
       const repoPath = tempRepo({
         "package.json": pkg({ scripts: { test: "node --test" } }),
       });
@@ -302,7 +302,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(summary.total).toBe(4);
       expect(summary.passed).toBe(2);
       expect(summary.majorityPassed).toBe(false);
-      expect(summary.withoutGittensoryConfig).toBe(4);
+      expect(summary.withoutLoopoverConfig).toBe(4);
       expect(summary.failuresByCategory[CROSS_REPO_FAILURE_CATEGORY.STACK_DETECTION]).toBe(1);
       expect(summary.failuresByCategory[CROSS_REPO_FAILURE_CATEGORY.EXECUTION]).toBe(1);
     });
@@ -332,7 +332,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
           "FAIL acme/bad [clone_setup] missing clone",
           "",
           "summary: 1/2 passed (majority failed)",
-          "without gittensory-specific target config: 2/2",
+          "without loopover-specific target config: 2/2",
           "",
           "failures by category:",
           "- clone_setup: 1",

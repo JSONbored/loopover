@@ -35,9 +35,9 @@ fleet/bare-host operator who wants the dashboard durably available, `npm run bui
 `vite-*-api.ts` plugins register for both `configureServer` and `configurePreviewServer`, so nothing
 extra is needed beyond the build step) on port `4174` by default.
 
-[`systemd/gittensory-miner-ui.service.example`](../../systemd/gittensory-miner-ui.service.example) at
+[`systemd/loopover-miner-ui.service.example`](../../systemd/loopover-miner-ui.service.example) at
 the repo root is a ready-to-adapt persistent unit for this — a companion to
-`gittensory-miner.service.example` (the loop daemon), not a replacement for it. Its header comment
+`loopover-miner.service.example` (the loop daemon), not a replacement for it. Its header comment
 carries the full install steps. Like the loop daemon, this is a `Type=simple` service, not a `.timer`
 job — the dashboard is a long-running HTTP server, not a periodic batch task.
 

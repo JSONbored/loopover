@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = join(process.cwd());
-const SERVICE_PATH = join(REPO_ROOT, "systemd/gittensory-miner-ui.service.example");
+const SERVICE_PATH = join(REPO_ROOT, "systemd/loopover-miner-ui.service.example");
 const MINER_UI_README_PATH = join(REPO_ROOT, "apps/gittensory-miner-ui/README.md");
 const DEPLOYMENT_PATH = join(REPO_ROOT, "packages/gittensory-miner/DEPLOYMENT.md");
 const MINER_UI_PACKAGE_JSON_PATH = join(REPO_ROOT, "apps/gittensory-miner-ui/package.json");
@@ -36,14 +36,14 @@ describe("miner-ui persistent-service launcher (#4852)", () => {
   it("documents the persistent-service launcher in the miner-ui README", () => {
     const readme = readFileSync(MINER_UI_README_PATH, "utf8");
     expect(readme).toContain("## Running as a persistent service");
-    expect(readme).toContain("systemd/gittensory-miner-ui.service.example");
+    expect(readme).toContain("systemd/loopover-miner-ui.service.example");
     expect(readme).toContain("npm run build");
     expect(readme).toContain("npm run preview");
   });
 
   it("cross-references the miner-ui service from the main miner's Bare-host deployment doc", () => {
     const deployment = readFileSync(DEPLOYMENT_PATH, "utf8");
-    expect(deployment).toContain("gittensory-miner-ui.service.example");
+    expect(deployment).toContain("loopover-miner-ui.service.example");
     expect(deployment).toContain("apps/gittensory-miner-ui/README.md#running-as-a-persistent-service");
   });
 });

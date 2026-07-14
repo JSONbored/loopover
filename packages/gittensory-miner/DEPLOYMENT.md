@@ -137,12 +137,12 @@ docker compose -f docker-compose.miner.yml up -d --build
 
 ## Bare-host (systemd, no Docker)
 
-To run the miner continuously on a plain Linux host without Docker, supervise `loopover-miner loop` — the autonomous discover → attempt → manage daemon (#5135) — with systemd. [`systemd/gittensory-miner.service.example`](../../systemd/gittensory-miner.service.example) is a ready-to-adapt persistent unit; its header carries the full install steps:
+To run the miner continuously on a plain Linux host without Docker, supervise `loopover-miner loop` — the autonomous discover → attempt → manage daemon (#5135) — with systemd. [`systemd/loopover-miner.service.example`](../../systemd/loopover-miner.service.example) is a ready-to-adapt persistent unit; its header carries the full install steps:
 
 ```sh
 npm install -g @loopover/miner
 loopover-miner init --verify-token   # optional: validate GITHUB_TOKEN before discovery/attempt runs
-sudo cp systemd/gittensory-miner.service.example /etc/systemd/system/gittensory-miner.service
+sudo cp systemd/loopover-miner.service.example /etc/systemd/system/loopover-miner.service
 sudo $EDITOR /etc/systemd/system/gittensory-miner.service   # set User / WorkingDirectory / ExecStart / secrets
 sudo systemctl daemon-reload
 sudo systemctl enable --now loopover-miner.service
@@ -150,7 +150,7 @@ sudo systemctl enable --now loopover-miner.service
 
 Because `loop` is a **long-running daemon that schedules its own cycles**, it is a persistent `Type=simple` service (with `Restart=on-failure`) — **not** a oneshot unit driven by a `.timer`, unlike the periodic `loopover-docker-prune.*.example` hygiene job in [`systemd/`](../../systemd/). Keep `GITHUB_TOKEN` (and any coding-agent credentials) in a root-owned `0600` `EnvironmentFile`, never in the unit file. Follow the loop with `journalctl -u loopover-miner -f`; `systemctl stop` sends SIGTERM, which the loop handles cleanly at its next kill-switch check.
 
-Want the dashboard too? [`systemd/gittensory-miner-ui.service.example`](../../systemd/gittensory-miner-ui.service.example) is a companion unit that serves `apps/gittensory-miner-ui` persistently over the same local state — see that app's [README](../../apps/gittensory-miner-ui/README.md#running-as-a-persistent-service).
+Want the dashboard too? [`systemd/loopover-miner-ui.service.example`](../../systemd/loopover-miner-ui.service.example) is a companion unit that serves `apps/gittensory-miner-ui` persistently over the same local state — see that app's [README](../../apps/gittensory-miner-ui/README.md#running-as-a-persistent-service).
 
 ## Invariants
 

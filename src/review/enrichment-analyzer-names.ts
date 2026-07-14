@@ -26,6 +26,7 @@ export const REES_ANALYZER_NAMES = [
   "history",
   "docCommentDrift",
   "duplication",
+  "duplicationDelta",
   "churnHotspot",
   "blameLink",
   "approvalIntegrity",

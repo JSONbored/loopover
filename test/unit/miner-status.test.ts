@@ -66,7 +66,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     // A self-hoster asking "what's installed" needs the real resolved semver (matching what doctor's own
     // engine-version-skew check already shows), not the declared dependency range.
     expect(status.engine.version).toBe(readInstalledEnginePackageVersion());
-    expect(status.engine.version).not.toBe("^2.0.0");
+    expect(status.engine.version).not.toBe("^3.0.0");
   });
 
   it("buildEngineVersionDisplay prefers a real resolved version when available", () => {
@@ -74,7 +74,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   });
 
   it("REGRESSION: buildEngineVersionDisplay falls back to the declared dependency range when real resolution comes up empty", () => {
-    expect(buildEngineVersionDisplay(() => null)).toBe("^2.0.0");
+    expect(buildEngineVersionDisplay(() => null)).toBe("^3.0.0");
   });
 
   it("collectStatus prefers LOOPOVER_MINER_VERSION over package.json (#4310)", () => {

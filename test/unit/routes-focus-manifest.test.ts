@@ -280,7 +280,7 @@ describe("focus-manifest route auth", () => {
       repoFullName: "JSONbored/gittensory",
       manifest: {
         present: true,
-        wantedPaths: expect.arrayContaining(["apps/gittensory-ui/"]),
+        wantedPaths: expect.arrayContaining(["apps/loopover-ui/"]),
       },
       policy: {
         present: true,
@@ -328,7 +328,7 @@ describe("focus-manifest route auth", () => {
     const refreshed = await app.request(`${FOCUS_MANIFEST_PATH}/refresh`, { method: "POST", headers }, env);
     expect(refreshed.status).toBe(200);
     await expect(refreshed.json()).resolves.toMatchObject({
-      manifest: { present: true, source: "repo_file", wantedPaths: expect.arrayContaining(["apps/gittensory-ui/"]) },
+      manifest: { present: true, source: "repo_file", wantedPaths: expect.arrayContaining(["apps/loopover-ui/"]) },
     });
   });
 

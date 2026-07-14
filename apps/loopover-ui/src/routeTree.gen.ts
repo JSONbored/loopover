@@ -51,7 +51,7 @@ import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.mainta
 import { Route as DocsMaintainerSelfHostingRouteImport } from './routes/docs.maintainer-self-hosting'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
 import { Route as DocsHowReviewsWorkRouteImport } from './routes/docs.how-reviews-work'
-import { Route as DocsLoopOverCommandsRouteImport } from './routes/docs.gittensory-commands'
+import { Route as DocsGittensoryCommandsRouteImport } from './routes/docs.gittensory-commands'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
@@ -294,7 +294,7 @@ const DocsHowReviewsWorkRoute = DocsHowReviewsWorkRouteImport.update({
   path: '/how-reviews-work',
   getParentRoute: () => DocsRoute,
 } as any)
-const DocsLoopOverCommandsRoute = DocsLoopOverCommandsRouteImport.update({
+const DocsGittensoryCommandsRoute = DocsGittensoryCommandsRouteImport.update({
   id: '/gittensory-commands',
   path: '/gittensory-commands',
   getParentRoute: () => DocsRoute,
@@ -424,7 +424,7 @@ export interface FileRoutesByFullPath {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsLoopOverCommandsRoute
+  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
@@ -485,7 +485,7 @@ export interface FileRoutesByTo {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsLoopOverCommandsRoute
+  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
@@ -550,7 +550,7 @@ export interface FileRoutesById {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsLoopOverCommandsRoute
+  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
@@ -1091,7 +1091,7 @@ declare module '@tanstack/react-router' {
       id: '/docs/gittensory-commands'
       path: '/gittensory-commands'
       fullPath: '/docs/gittensory-commands'
-      preLoaderRoute: typeof DocsLoopOverCommandsRouteImport
+      preLoaderRoute: typeof DocsGittensoryCommandsRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/github-app': {
@@ -1283,7 +1283,7 @@ interface DocsRouteChildren {
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
-  DocsLoopOverCommandsRoute: typeof DocsLoopOverCommandsRoute
+  DocsGittensoryCommandsRoute: typeof DocsGittensoryCommandsRoute
   DocsHowReviewsWorkRoute: typeof DocsHowReviewsWorkRoute
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerSelfHostingRoute: typeof DocsMaintainerSelfHostingRoute
@@ -1321,7 +1321,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
-  DocsLoopOverCommandsRoute: DocsLoopOverCommandsRoute,
+  DocsGittensoryCommandsRoute: DocsGittensoryCommandsRoute,
   DocsHowReviewsWorkRoute: DocsHowReviewsWorkRoute,
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerSelfHostingRoute: DocsMaintainerSelfHostingRoute,

@@ -47,11 +47,19 @@ path filter matched; on push to `main`, everything runs.
 | ui → typecheck | `tsc --noEmit` (UI) | `npm run ui:typecheck` | UI type error |
 | ui → tests | vitest jsdom (UI) | `npm run ui:test` | failing UI component test |
 | ui → build | UI build | `npm run ui:build` | build failure (note: it re-runs `ui:openapi` internally) |
+| ui → extension lint | `eslint` (VS Code + miner extensions) | `npm run extension:lint && npm run miner-extension:lint` | extension ESLint error (same `push \|\| ui==true` trigger as the `ui →` rows) |
+| ui → extension typecheck | `tsc --noEmit` (extensions) | `npm run extension:typecheck && npm run miner-extension:typecheck` | extension type error (same `push \|\| ui==true` trigger) |
 | security (PR only) | dependency-review (moderate+) | `npm audit --audit-level=moderate` | a **newly added** dep has a moderate+ advisory |
 
-**One command for everything except `security`:** `npm run test:ci`. There is **no** CodeQL/Analyze
+**One command for *almost* everything except `security`:** `npm run test:ci`. There is **no** CodeQL/Analyze
 workflow in this repo. There is **no** root-level Prettier gate — Prettier is enforced only inside
 `ui:lint` (so it only bites `apps/loopover-ui/**`).
+
+**One CI-gating exception `test:ci` does NOT cover:** the four extension lint/typecheck checks
+(`extension:lint`, `extension:typecheck`, `miner-extension:lint`, `miner-extension:typecheck`) run in CI's
+`validate-code` job (gated on `push || ui==true`, the `ui →` rows above) but are **absent from the `test:ci`
+chain** — so a green local `test:ci` does not exercise them. Run them separately (or rely on CI) if your
+change touches `apps/loopover-extension/**` or `apps/loopover-miner-extension/**`.
 
 **Local-only checks with no separate named CI status — `npm run test:ci` is the only thing that catches
 these for a normal PR:**

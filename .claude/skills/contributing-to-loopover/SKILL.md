@@ -215,7 +215,7 @@ Migrations must use the **next free number** (contiguous, no gaps, no reuse) and
 
 ```sh
 git diff --check                          # no trailing whitespace / conflict markers
-npm run test:ci                           # the entire CI gate, in one command (see below)
+npm run test:ci                           # nearly the entire CI gate, in one command (one exception, see below)
 npm audit --audit-level=moderate          # the dependency-review job's local equivalent
 ```
 
@@ -228,6 +228,9 @@ npm audit --audit-level=moderate          # the dependency-review job's local eq
 `command-reference:check`, `ui:lint`, `ui:typecheck`, `ui:test`, `ui:build`. If any step fails, fix it
 and re-run — do not push a red tree. (Full per-check table in `reference.md`; check `package.json`'s
 own `test:ci` script if this list and that script ever disagree — the script is the source of truth.)
+One CI-gating exception `test:ci` does **not** run: the extension lint/typecheck checks
+(`extension:lint`, `extension:typecheck`, `miner-extension:lint`, `miner-extension:typecheck`), gated in
+CI's `validate-code` on `push || ui==true` — run them separately if you touch the VS Code / miner extensions.
 
 If `ui:lint` fails on formatting, run `npm --workspace @loopover/ui run format`. If
 `ui:openapi:check` fails, you forgot Phase 4's `ui:openapi`.

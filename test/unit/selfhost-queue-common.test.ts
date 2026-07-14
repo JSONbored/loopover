@@ -1295,6 +1295,55 @@ describe("self-host queue common helpers", () => {
     );
   });
 
+  it("falls back to the documented default token for each maintenance job type's missing optional fields", () => {
+    expect(jobCoalesceKey(payload({ type: "backfill-repo-segment", requestedBy: "schedule" }))).toBe(
+      "backfill-repo-segment:unknown:unknown:default:0:start",
+    );
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "backfill-pr-details",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+          mode: "resume",
+          cursor: "page-3",
+        }),
+      ),
+    ).toBe("backfill-pr-details:jsonbored/gittensory:resume:page-3");
+    expect(jobCoalesceKey(payload({ type: "backfill-pr-details", requestedBy: "schedule" }))).toBe(
+      "backfill-pr-details:unknown:default:start",
+    );
+    expect(jobCoalesceKey(payload({ type: "generate-signal-snapshots", requestedBy: "schedule" }))).toBe(
+      "generate-signal-snapshots:all",
+    );
+    expect(jobCoalesceKey(payload({ type: "build-burden-forecasts", requestedBy: "schedule" }))).toBe(
+      "build-burden-forecasts:all",
+    );
+    expect(jobCoalesceKey(payload({ type: "generate-review-recap", requestedBy: "schedule" }))).toBe(
+      "generate-review-recap:all",
+    );
+    expect(
+      jobCoalesceKey(
+        payload({ type: "refresh-contributor-activity", requestedBy: "schedule", login: "OktoFeesh1" }),
+      ),
+    ).toBe("refresh-contributor-activity:oktofeesh1:all");
+    expect(
+      jobCoalesceKey(
+        payload({
+          type: "refresh-contributor-activity",
+          requestedBy: "schedule",
+          repoFullName: "JSONbored/Gittensory",
+        }),
+      ),
+    ).toBe("refresh-contributor-activity:unknown:jsonbored/gittensory");
+    expect(jobCoalesceKey(payload({ type: "rollup-product-usage", requestedBy: "schedule" }))).toBe(
+      "rollup-product-usage:latest:default",
+    );
+    expect(jobCoalesceKey(payload({ type: "generate-weekly-value-report", requestedBy: "schedule" }))).toBe(
+      "generate-weekly-value-report:operator:default",
+    );
+  });
+
   describe("rag-index-repo incremental merge coalescing (#selfhost-maintenance-self-pin)", () => {
     const incrementalA = payload({
       type: "rag-index-repo",

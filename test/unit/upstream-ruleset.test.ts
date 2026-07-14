@@ -1085,6 +1085,10 @@ describe("upstream ruleset drift tracking", () => {
     expect(calls.find((call) => call.method === "POST")?.body?.assignees).toEqual(["alice", "bob"]); // trimmed, empty segment dropped
   });
 
+  // 29 distinct real-D1-backed scenarios run sequentially in this one test -- legitimately more work than
+  // the default 15s test timeout reliably covers under concurrent CI shard/system load (observed timing out
+  // under heavy parallel contention with no assertion failure). An explicit timeout says so instead of
+  // relying on ambient headroom.
   it("handles edge cases while filing upstream drift issues", async () => {
     const defaultRepoEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "1", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "" });
     await upsertUpstreamDriftReport(defaultRepoEnv, driftReport("source-fingerprint", { severity: "medium", affectedAreas: [] }));
@@ -1225,7 +1229,7 @@ describe("upstream ruleset drift tracking", () => {
     const disabledEnv = createTestEnv();
     delete (disabledEnv as Partial<Env>).GITTENSORY_AUTO_FILE_DRIFT_ISSUES;
     await expect(fileUpstreamDriftIssues(disabledEnv)).resolves.toMatchObject({ status: "disabled" });
-  });
+  }, 45000);
 
   it("finds the existing drift issue on page 2 when the repo has more than 100 open signals issues", async () => {
     const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });

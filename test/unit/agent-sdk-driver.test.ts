@@ -88,6 +88,11 @@ describe("createAgentSdkCodingAgentDriver", () => {
   });
 
   it("enumerates tracked and untracked worktree changes with git", async () => {
+    // Real subprocess spawns (init, 2x config, add, commit, plus the driver's own diff enumeration) --
+    // legitimately more wall-clock latency than the default 15s test timeout reliably covers under
+    // concurrent CI shard/system load (observed timing out under heavy parallel contention with no logic
+    // failure; passes in well under 1s in isolation). An explicit timeout says so instead of relying on
+    // ambient headroom.
     const dir = await mkdtemp(join(tmpdir(), "gittensory-agent-sdk-"));
     try {
       await execFileAsync("git", ["init"], { cwd: dir });
@@ -114,7 +119,7 @@ describe("createAgentSdkCodingAgentDriver", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("derives changed files from the worktree after untracked mutating tools", async () => {
     const driver = driverWith({

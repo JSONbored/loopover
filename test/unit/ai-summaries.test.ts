@@ -409,12 +409,16 @@ describe("optional deterministic-summary rewrite layer", () => {
   });
 
   it("routes every forbidden public term through the canonical sanitizer and falls back when AI is unsafe", async () => {
+    // Iterates every entry in FORBIDDEN_PUBLIC_COMMENT_WORDS (40+ words) as its own real round trip through
+    // rewriteSignalBundleWithAi -- legitimately more work than the default 15s test timeout reliably covers
+    // under load (observed timing out under concurrent CI shard contention, not a logic failure: every
+    // assertion that DID run passed). An explicit timeout says so instead of relying on ambient headroom.
     for (const word of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
       const run = vi.fn(async () => ({ response: `Looks great, includes ${word} detail.` }));
       const result = await rewriteSignalBundleWithAi(publicEnv({}, run), rewriteReq());
       expect(result, `forbidden word: ${word}`).toMatchObject({ status: "unsafe", text: DETERMINISTIC_BODY });
     }
-  });
+  }, 30000);
 
   it("rejects reward, ranking, scoreability, and reviewability variants in public AI rewrites", async () => {
     const unsafeOutputs = [

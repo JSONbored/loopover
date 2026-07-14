@@ -193,6 +193,36 @@ export {
   type AcceptanceCriteria,
   type AcceptanceCriteriaInput,
 } from "./miner/acceptance-criteria.js";
+// Pure deny-hook evaluator + rule-proposal synthesis moved out of gittensory-miner (#5667). The miner-lib
+// `deny-hooks.js`/`deny-hook-synthesis.js` are now thin wrappers over these (the SQLite proposal store stays in
+// the miner). `synthesizeDenyRuleProposals` takes an injected `nowMs` clock so synthesis is deterministic/pure.
+export {
+  DEFAULT_DENY_RULES,
+  evaluateDenyHooks,
+  type DenyRule,
+  type DenyVerdict,
+  type ProposedToolCall,
+} from "./miner/deny-hooks.js";
+export {
+  DEFAULT_SYNTHESIS_CONFIG,
+  PROPOSAL_STATUSES,
+  aggregateBlockerHistory,
+  canonicalizeChangedPath,
+  changedPathToDenyGlob,
+  isCoveredByDefaultDenyRules,
+  normalizeBlockerHistory,
+  normalizeBlockerHistoryRecord,
+  normalizeRepoFullName,
+  proposalStatusSet,
+  resolveEffectiveDenyRules,
+  setProposalStatuses,
+  synthesizeDenyRuleProposals,
+  type BlockerHistoryRecord,
+  type DenyRuleProposal,
+  type DenyRuleProposalAudit,
+  type DenyRuleProposalStatus,
+  type SynthesisConfig,
+} from "./miner/deny-hook-synthesis.js";
 // The subset of types/predicted-gate-types.ts's hand-kept mirrors (see that file's own header comment) that
 // the self-review adapter's public signature (SelfReviewContext, SelfReviewSlopAssessment) references. Not
 // previously part of the public barrel; exported now so those types are actually nameable by consumers.

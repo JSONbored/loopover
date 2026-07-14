@@ -20,12 +20,12 @@
   "dependencies": {
     "@hono/node-server": "^1.19.14",
     "@sentry/cli": "^3.6.0",
-    "@sentry/node": "^10.63.0",
-    "hono": "^4.12.27"
+    "@sentry/node": "^10.65.0",
+    "hono": "^4.12.29"
   },
   "devDependencies": {
-    "@types/node": "^22.20.0",
-    "prettier": "3.9.4",
+    "@types/node": "^22.20.1",
+    "prettier": "3.9.5",
     "typescript": "^5.9.3"
   }
 }

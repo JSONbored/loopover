@@ -1800,7 +1800,7 @@ describe("queue processors", () => {
     for (let i = 0; i < 5; i += 1) {
       await repositoriesModule.recordAuditEvent(env, {
         eventType: "agent.sweep.regate.repair_attempt",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey,
         outcome: "queued",
         detail: "prior attempt",
@@ -1865,7 +1865,7 @@ describe("queue processors", () => {
     for (let i = 0; i < 4; i += 1) {
       await repositoriesModule.recordAuditEvent(env, {
         eventType: "agent.sweep.regate.repair_attempt",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey,
         outcome: "queued",
         detail: "prior attempt",

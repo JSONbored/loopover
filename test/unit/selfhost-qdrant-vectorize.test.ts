@@ -48,7 +48,7 @@ describe("initQdrantCollection (#1217)", () => {
     await initQdrantCollection(BASE);
     expect(fake).toHaveBeenCalledOnce();
     const [url, init] = fake.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe(`${BASE}/collections/gittensory`);
+    expect(url).toBe(`${BASE}/collections/loopover`);
     const body = JSON.parse(init.body as string) as { vectors: { size: number; distance: string } };
     expect(body.vectors.distance).toBe("Cosine");
     expect(body.vectors.size).toBe(1024);
@@ -62,7 +62,7 @@ describe("initQdrantCollection (#1217)", () => {
     vi.stubGlobal("fetch", fake);
     await expect(initQdrantCollection(BASE)).resolves.not.toThrow();
     expect(fake).toHaveBeenCalledTimes(2);
-    expect(fake.mock.calls[1]?.[0]).toBe(`${BASE}/collections/gittensory`);
+    expect(fake.mock.calls[1]?.[0]).toBe(`${BASE}/collections/loopover`);
   });
 
   it("throws on a 409 when the existing collection dimension is wrong", async () => {
@@ -71,7 +71,7 @@ describe("initQdrantCollection (#1217)", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "exists" }), { status: 409 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(collectionInfo(1024)), { status: 200 }));
     vi.stubGlobal("fetch", fake);
-    await expect(initQdrantCollection(BASE, "gittensory", 768)).rejects.toThrow(/existing 1024, configured 768/);
+    await expect(initQdrantCollection(BASE, "loopover", 768)).rejects.toThrow(/existing 1024, configured 768/);
   });
 
   it("throws when an existing collection cannot be inspected after a 409", async () => {

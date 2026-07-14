@@ -30,8 +30,8 @@ export type WorktreePlan = {
 };
 
 /** Worktrees live under this dir inside the repo; the branch carries this prefix. */
-export const WORKTREE_SUBDIR = ".gittensory-worktrees";
-export const WORKTREE_BRANCH_PREFIX = "gittensory/attempt/";
+export const WORKTREE_SUBDIR = ".loopover-worktrees";
+export const WORKTREE_BRANCH_PREFIX = "loopover/attempt/";
 const MAX_SLUG_LENGTH = 64;
 
 /** Deterministically slugify an attempt id into a filesystem- and git-ref-safe token (same id → same slug). */

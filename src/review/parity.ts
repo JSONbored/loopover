@@ -251,7 +251,7 @@ export async function computeGateParity(
   opts: { days: number; nowMs: number; project?: string; authoritative?: string; shadow?: string },
 ): Promise<GateParityReport> {
   const authoritative = opts.authoritative ?? "reviewbot";
-  const shadow = opts.shadow ?? "gittensory";
+  const shadow = opts.shadow ?? "loopover";
   const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10);
 

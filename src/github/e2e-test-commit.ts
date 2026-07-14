@@ -57,7 +57,7 @@ export async function commitE2eTestToPrBranch(
   if (args.mode !== "live") return { status: "declined", reason: `commit not pushed: action mode is "${args.mode}"` };
   const { owner, name: repo } = repoParts(args.repoFullName);
   const path = args.testFilePath?.trim() || defaultE2eTestFilePath(args.prNumber);
-  const message = `test: add AI-generated E2E test\n\nGenerated-by: gittensory (invoked by @${args.actor})`;
+  const message = `test: add AI-generated E2E test\n\nGenerated-by: loopover (invoked by @${args.actor})`;
   try {
     return await withInstallationTokenRetry(env, args.installationId, async (token) => {
       const octokit = makeInstallationOctokit(env, token, args.mode, githubRateLimitAdmissionKeyForInstallation(args.installationId));

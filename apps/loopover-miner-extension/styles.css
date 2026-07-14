@@ -1,4 +1,4 @@
-.gittensory-miner-opportunity-badge {
+.loopover-miner-opportunity-badge {
   border: 1px solid rgba(126, 231, 188, 0.35);
   border-radius: 8px;
   background: rgba(15, 17, 23, 0.96);
@@ -8,7 +8,7 @@
   padding: 12px;
 }
 
-.gittensory-miner-opportunity-badge--floating {
+.loopover-miner-opportunity-badge--floating {
   position: fixed;
   right: 16px;
   bottom: 16px;
@@ -17,14 +17,14 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
-.gittensory-miner-opportunity-badge__header {
+.loopover-miner-opportunity-badge__header {
   align-items: center;
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-.gittensory-miner-opportunity-badge__mark {
+.loopover-miner-opportunity-badge__mark {
   align-items: center;
   background: #7ee7bc;
   border-radius: 999px;
@@ -37,33 +37,33 @@
   width: 20px;
 }
 
-.gittensory-miner-opportunity-badge__read-only {
+.loopover-miner-opportunity-badge__read-only {
   color: rgba(244, 247, 245, 0.55);
   font-size: 11px;
   margin-left: auto;
 }
 
-.gittensory-miner-opportunity-badge__score {
+.loopover-miner-opportunity-badge__score {
   align-items: baseline;
   display: flex;
   gap: 8px;
   margin-bottom: 6px;
 }
 
-.gittensory-miner-opportunity-badge__score strong {
+.loopover-miner-opportunity-badge__score strong {
   font-size: 15px;
 }
 
-.gittensory-miner-opportunity-badge__score span {
+.loopover-miner-opportunity-badge__score span {
   color: rgba(244, 247, 245, 0.72);
 }
 
-.gittensory-miner-opportunity-badge__why {
+.loopover-miner-opportunity-badge__why {
   color: rgba(244, 247, 245, 0.78);
   margin: 0;
 }
 
-.gittensory-miner-opportunity-badge__synced {
+.loopover-miner-opportunity-badge__synced {
   color: rgba(244, 247, 245, 0.55);
   font-size: 11px;
   margin: 6px 0 0;

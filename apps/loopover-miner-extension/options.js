@@ -43,7 +43,7 @@ async function removeLegacyDiscoveryIndexUrl() {
 // Mirrors background.js's own literal (#4859) -- these classic (non-ESM-importing) extension scripts share a
 // message-type "protocol" via matching string literals, the same convention content.js already uses for
 // ISSUE_CONTEXT_MESSAGE, not a cross-file import.
-const SYNC_RANKED_CANDIDATES_MESSAGE = "gittensory-miner:sync-ranked-candidates";
+const SYNC_RANKED_CANDIDATES_MESSAGE = "loopover-miner:sync-ranked-candidates";
 const DEFAULT_MINER_UI_URL = "http://localhost:5174";
 
 function normalizeMinerUiUrl(text) {

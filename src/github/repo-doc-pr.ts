@@ -39,7 +39,7 @@ import type { AgentActionMode } from "../settings/agent-execution";
 /** Stable across runs (not per-run unique) so a repeat invocation targets the SAME branch/PR instead of piling up
  *  duplicates -- #3004's diff-aware refresh is expected to update commits on this same branch rather than open a
  *  second PR. #3000 itself only needs the "already an open PR on this branch" short-circuit below. */
-const REPO_DOC_BRANCH_NAME = "gittensory/repo-docs";
+const REPO_DOC_BRANCH_NAME = "loopover/repo-docs";
 const AGENTS_FILE_PATH = "AGENTS.md";
 const CLAUDE_FILE_PATH = "CLAUDE.md";
 const PR_TITLE = "docs: generate AGENTS.md and CLAUDE.md from repo profile";

@@ -44,9 +44,9 @@ export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | u
 export function commandReferenceUrl(env: LoopOverFooterEnv): string {
   const origin = env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL;
   try {
-    return new URL("/docs/gittensory-commands", origin).toString();
+    return new URL("/docs/loopover-commands", origin).toString();
   } catch {
-    return `${LOOPOVER_SITE_URL}/docs/gittensory-commands`;
+    return `${LOOPOVER_SITE_URL}/docs/loopover-commands`;
   }
 }
 

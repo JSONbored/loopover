@@ -961,7 +961,7 @@ export function buildOpenApiSpec() {
     request: {
       query: z.object({
         owner: z.string().min(1).openapi({ param: { description: "Repository owner" }, example: "JSONbored" }),
-        repo: z.string().min(1).openapi({ param: { description: "Repository name" }, example: "gittensory" }),
+        repo: z.string().min(1).openapi({ param: { description: "Repository name" }, example: "loopover" }),
         pullNumber: z.string().min(1).openapi({ param: { description: "Pull request number" }, example: "120" }),
       }),
     },

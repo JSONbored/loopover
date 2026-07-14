@@ -72,7 +72,7 @@ describe("commitE2eTestToPrBranch (#4197)", () => {
 
     const commitCall = calls.find((c) => c.url.endsWith("/git/commits") && c.method === "POST");
     expect(commitCall?.body).toMatchObject({ tree: "new-tree-sha", parents: ["head-commit-sha"] });
-    expect(commitCall?.body.message as string).toContain("Generated-by: gittensory (invoked by @maintainer)");
+    expect(commitCall?.body.message as string).toContain("Generated-by: loopover (invoked by @maintainer)");
 
     // octokit percent-encodes the whole "heads/feature/my-branch" ref value into one path segment.
     const refCall = calls.find((c) => c.method === "PATCH");

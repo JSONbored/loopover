@@ -56,7 +56,7 @@ export function openTelemetryTraceExportEnabled(env: NodeJS.ProcessEnv): boolean
 
 function serviceAttributes(env: NodeJS.ProcessEnv): Attributes {
   const attrs: Attributes = {
-    "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "gittensory-selfhost",
+    "service.name": nonBlank(env.OTEL_SERVICE_NAME) ?? "loopover-selfhost",
     "deployment.environment.name": nonBlank(env.OTEL_SERVICE_ENVIRONMENT) ?? nonBlank(env.SENTRY_ENVIRONMENT) ?? "selfhost",
   };
   const version = nonBlank(env.LOOPOVER_VERSION) ?? nonBlank(env.SENTRY_RELEASE);
@@ -292,7 +292,7 @@ export async function initOpenTelemetry(
   bridge?.validate?.();
   provider = nextProvider;
   Otel = api;
-  tracer = nextProvider.getTracer("gittensory-selfhost");
+  tracer = nextProvider.getTracer("loopover-selfhost");
   active = true;
   return true;
 }

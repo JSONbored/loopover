@@ -43,17 +43,17 @@ describe("computeGateParity — cross-system gate-decision agreement (#preconv-p
   it("folds the paired matrix into agreement / disagree counts + rate", async () => {
     const out = await computeGateParity(
       parityEnv([
-        { project: "gittensory", auth_act: "merge", shadow_act: "merge", reason: "dual_review_approved", n: 40 },
-        { project: "gittensory", auth_act: "close", shadow_act: "close", reason: "consensus_close", n: 10 },
-        { project: "gittensory", auth_act: "hold", shadow_act: "hold", reason: "split", n: 5 },
-        { project: "gittensory", auth_act: "hold", shadow_act: "close", reason: "split", n: 2 }, // benign disagree
+        { project: "loopover", auth_act: "merge", shadow_act: "merge", reason: "dual_review_approved", n: 40 },
+        { project: "loopover", auth_act: "close", shadow_act: "close", reason: "consensus_close", n: 10 },
+        { project: "loopover", auth_act: "hold", shadow_act: "hold", reason: "split", n: 5 },
+        { project: "loopover", auth_act: "hold", shadow_act: "close", reason: "split", n: 2 }, // benign disagree
       ]),
       { days: 90, nowMs: NOW },
     );
     const g = out.rows[0];
     expect(g).toBeDefined();
     if (!g) return;
-    expect(g.project).toBe("gittensory");
+    expect(g.project).toBe("loopover");
     expect(g.pairedSamples).toBe(57);
     expect(g.bothMerge).toBe(40);
     expect(g.bothClose).toBe(10);
@@ -62,7 +62,7 @@ describe("computeGateParity — cross-system gate-decision agreement (#preconv-p
     expect(g.agreementRate).toBeCloseTo(55 / 57);
     expect(g.unsafeDisagreements).toBe(0); // hold→close is the SAFE direction
     expect(out.authoritative).toBe("reviewbot");
-    expect(out.shadow).toBe("gittensory");
+    expect(out.shadow).toBe("loopover");
   });
 
   it("counts ONLY the dangerous direction (shadow MERGES where authoritative HOLDs/CLOSEs) as unsafe", async () => {
@@ -102,10 +102,10 @@ describe("computeGateParity — cross-system gate-decision agreement (#preconv-p
 
   it("binds BOTH source filters (authoritative + shadow) so two distinct writers are compared", async () => {
     const cap: { sql?: string; binds?: unknown[] } = {};
-    await computeGateParity(parityEnv([], cap), { days: 90, nowMs: NOW, authoritative: "reviewbot", shadow: "gittensory" });
+    await computeGateParity(parityEnv([], cap), { days: 90, nowMs: NOW, authoritative: "reviewbot", shadow: "loopover" });
     // binds order: auth-source, fromIso, shadow-source, fromIso (no project filter).
     expect(cap.binds?.[0]).toBe("reviewbot");
-    expect(cap.binds?.[2]).toBe("gittensory");
+    expect(cap.binds?.[2]).toBe("loopover");
     // The per-commit join key requires a non-null head_sha on BOTH sides.
     expect(cap.sql).toContain("head_sha IS NOT NULL");
     expect(cap.sql).toContain("auth.head_sha = shad.head_sha");
@@ -113,11 +113,11 @@ describe("computeGateParity — cross-system gate-decision agreement (#preconv-p
 
   it("passes the project filter through to both CTE binds when scoped", async () => {
     const cap: { sql?: string; binds?: unknown[] } = {};
-    await computeGateParity(parityEnv([], cap), { days: 90, nowMs: NOW, project: "gittensory" });
+    await computeGateParity(parityEnv([], cap), { days: 90, nowMs: NOW, project: "loopover" });
     // binds: auth, fromIso, project, shadow, fromIso, project
     expect(cap.binds).toHaveLength(6);
-    expect(cap.binds?.[2]).toBe("gittensory");
-    expect(cap.binds?.[5]).toBe("gittensory");
+    expect(cap.binds?.[2]).toBe("loopover");
+    expect(cap.binds?.[5]).toBe("loopover");
   });
 
   it("excludes pairs whose action isn't a comparable merge/close/hold", async () => {
@@ -301,9 +301,9 @@ describe("computeGateEval — source scoping for per-system standalone accuracy 
         },
       },
     } as unknown as Env;
-    await computeGateEval(env, { days: 90, nowMs: NOW, source: "gittensory" });
+    await computeGateEval(env, { days: 90, nowMs: NOW, source: "loopover" });
     expect(boundSql).toContain("AND source = ?");
-    expect(bound).toContain("gittensory");
+    expect(bound).toContain("loopover");
   });
 
   it("omits the source filter (scores ALL writers) when no source is given — behavior-preserving", async () => {

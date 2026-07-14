@@ -62,7 +62,7 @@ const PRIVATE_TEXT =
   /\b(raw[-_\s]?score|scoring context|private rubric|gate prompt|review prompt|guardrail paths?|pull request body|pr body|pr title|raw diff)\b/gi;
 const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
 const ALLOWED_CONTEXTS = new Set([
-  "gittensory",
+  "loopover",
   "review",
   "log",
   "sentry_monitor",
@@ -158,7 +158,7 @@ export function resolveSentryMonitorSlug(
   name: SentryMonitorName,
   environment = sentryEnvironment,
 ): string {
-  return `gittensory-selfhost-${slugPart(environment)}-${SENTRY_MONITORS[name].slug}`;
+  return `loopover-selfhost-${slugPart(environment)}-${SENTRY_MONITORS[name].slug}`;
 }
 
 function safeMonitorContext(
@@ -409,7 +409,7 @@ export async function initSentry(env: NodeJS.ProcessEnv): Promise<boolean> {
       : {}),
     ...(useCustomOpenTelemetry ? { skipOpenTelemetrySetup: true } : {}),
     // Identify this instance by a CLEAN, configurable name, not the public-origin URL. An operator sets
-    // SENTRY_SERVER_NAME (e.g. "gittensory-us-east"); unset falls back to the OS hostname.
+    // SENTRY_SERVER_NAME (e.g. "loopover-us-east"); unset falls back to the OS hostname.
     serverName: nonBlank(env.SENTRY_SERVER_NAME) ?? hostname(),
     beforeSend: (e) => scrubEvent(e),
     beforeSendTransaction: (e) => scrubEvent(e),
@@ -492,7 +492,7 @@ function namedCaptureError(error: unknown, eventName?: string): Error {
  *  Sentry's default stack-trace-based grouping fragments the SAME logical failure into separate issues whenever
  *  it is captured from more than one call site (e.g. two different functions each constructing the identical
  *  `new Error("...")` message), which is exactly what happened to GITTENSORY-5/10 and GITTENSORY-C/W before this.
- *  Mirrors forwardStructuredLogToSentry's identical `scope.setFingerprint(["gittensory-log", event])` discipline. */
+ *  Mirrors forwardStructuredLogToSentry's identical `scope.setFingerprint(["loopover-log", event])` discipline. */
 export function captureError(
   error: unknown,
   context?: Record<string, unknown>,
@@ -502,8 +502,8 @@ export function captureError(
   if (!meetsSeverityThreshold("error", resolveSentryMinSeverity(contextRepoFullName(context)))) return;
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
-    if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("gittensory", safeContext); applyOperationalTags(scope, safeContext); }
-    if (eventName) scope.setFingerprint(["gittensory-error", eventName]);
+    if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("loopover", safeContext); applyOperationalTags(scope, safeContext); }
+    if (eventName) scope.setFingerprint(["loopover-error", eventName]);
     Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }
@@ -528,7 +528,7 @@ export function captureReviewFailure(
       scope.setContext("review", safeContext);
       applyOperationalTags(scope, safeContext);
     }
-    if (eventName) scope.setFingerprint(["gittensory-review-failure", eventName]);
+    if (eventName) scope.setFingerprint(["loopover-review-failure", eventName]);
     Sentry!.captureException(namedCaptureError(error, eventName));
   });
 }
@@ -661,7 +661,7 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
     if (event) safeObj.event = event;
     applyOperationalTags(scope, safeObj);
     // Group recurrences of ONE failure into a single issue (by event, not the variable detail in the value).
-    if (event) scope.setFingerprint(["gittensory-log", event]);
+    if (event) scope.setFingerprint(["loopover-log", event]);
     // Sentry uses event.transaction as the issue culprit fallback when the stack has no frames; point it at the
     // operational event slug rather than the forwarding helper.
     if (event)
@@ -707,7 +707,7 @@ export async function withSentryMonitor<T>(
       const monitorContext = safeMonitorContext(name, monitorSlug, context);
       scope.setContext("sentry_monitor", monitorContext);
       applyOperationalTags(scope, { ...monitorContext, monitor: monitorSlug, kind: `sentry_monitor_${name}`, subsystem: "scheduled" });
-      scope.setFingerprint(["gittensory-sentry-monitor", name]);
+      scope.setFingerprint(["loopover-sentry-monitor", name]);
       Sentry!.captureException(error instanceof Error ? error : new Error(String(error)));
     });
     throw error;

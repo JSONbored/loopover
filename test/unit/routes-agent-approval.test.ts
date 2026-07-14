@@ -191,11 +191,11 @@ describe("agent approval-queue routes (#779)", () => {
 
 describe("agent audit-feed route (#784)", () => {
   async function seedAudit(env: Env) {
-    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
     await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: "owner", targetKey: "owner/repo#8", outcome: "completed", detail: "rejected merge", createdAt: "2026-06-18T11:00:00.000Z" });
     // excluded: a non-agent event on this repo, and an agent event on a different repo.
     await recordAuditEvent(env, { eventType: "github_app.pr_visibility_skipped", actor: "x", targetKey: "owner/repo#9", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
-    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "loopover", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
   }
 
   it("returns this repo's agent action + decision events newest-first, excluding non-agent and other-repo events", async () => {
@@ -262,7 +262,7 @@ describe("agent audit-feed route (#784)", () => {
 
   it("reports a null pullNumber for an agent event whose targetKey has no numeric PR", async () => {
     const env = createTestEnv();
-    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "owner/repo#manual", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "loopover", targetKey: "owner/repo#manual", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
     const res = await app.request("/v1/repos/owner/repo/agent/audit-feed", { headers: headers(env) }, env);
     const body = (await res.json()) as { events: Array<{ pullNumber: number | null }> };
     expect(body.events).toHaveLength(1);
@@ -286,7 +286,7 @@ describe("agent audit-feed route (#784)", () => {
 
   it("scrubs forbidden terms from the free-form detail before returning", async () => {
     const env = createTestEnv();
-    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
     const res = await app.request("/v1/repos/owner/repo/agent/audit-feed", { headers: headers(env) }, env);
     const body = (await res.json()) as { events: Array<{ detail: string | null }> };
     expect(body.events[0]?.detail).not.toMatch(/reward/i);
@@ -297,11 +297,11 @@ describe("agent audit-feed route (#784)", () => {
     async function seedUnfilteredAudit(env: Env) {
       // Unlike seedAudit above, none of these are agent.action.%/agent.pending_action.% -- proving the
       // ?pull= branch carries NO eventType restriction (the whole point of listAuditEventsForTarget).
-      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "applied labels: gittensor:bug", createdAt: "2026-06-18T10:00:00.000Z" });
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "applied labels: gittensor:bug", createdAt: "2026-06-18T10:00:00.000Z" });
       await recordAuditEvent(env, { eventType: "github_app.pr_visibility_skipped", actor: "x", targetKey: "owner/repo#7", outcome: "completed", detail: "not_official_gittensor_miner", createdAt: "2026-06-18T11:00:00.000Z" });
       // excluded: a different PR on the same repo, and a same-number PR on a different repo.
-      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
-      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "other/repo#7", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "loopover", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "loopover", targetKey: "other/repo#7", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
     }
 
     it("returns every event type for the single PR's targetKey, newest-first, excluding other targets", async () => {
@@ -345,7 +345,7 @@ describe("agent audit-feed route (#784)", () => {
 
     it("scrubs forbidden terms from detail on the ?pull= branch too", async () => {
       const env = createTestEnv();
-      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
       const res = await app.request("/v1/repos/owner/repo/agent/audit-feed?pull=7", { headers: headers(env) }, env);
       const body = (await res.json()) as { events: Array<{ detail: string | null }> };
       expect(body.events[0]?.detail).not.toMatch(/reward/i);
@@ -354,7 +354,7 @@ describe("agent audit-feed route (#784)", () => {
 
     it("passes through a null detail on the ?pull= branch unchanged (no sanitizer call on a null)", async () => {
       const env = createTestEnv();
-      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: null, createdAt: "2026-06-18T10:00:00.000Z" });
+      await recordAuditEvent(env, { eventType: "github_app.type_label_decision", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: null, createdAt: "2026-06-18T10:00:00.000Z" });
       const res = await app.request("/v1/repos/owner/repo/agent/audit-feed?pull=7", { headers: headers(env) }, env);
       const body = (await res.json()) as { events: Array<{ detail: string | null }> };
       expect(body.events[0]?.detail).toBeNull();

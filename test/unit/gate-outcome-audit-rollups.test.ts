@@ -7,28 +7,28 @@ describe("listGateOutcomeAuditEventRollups (#2203)", () => {
     const env = createTestEnv();
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "octo/demo#1",
       outcome: "completed",
       createdAt: "2026-07-10T12:00:00.000Z",
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.close",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "octo/demo#2",
       outcome: "success",
       createdAt: "2026-07-10T13:00:00.000Z",
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.hold",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "octo/demo#3",
       outcome: "completed",
       createdAt: "2026-07-10T14:00:00.000Z",
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "other/repo#9",
       outcome: "completed",
       createdAt: "2026-07-10T15:00:00.000Z",

@@ -235,7 +235,7 @@ describe("triggerPagerDutyIncident — cooldown gate (alert fatigue control #2)"
     const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     await recordAuditEvent(env, {
       eventType: "external_notification.pagerduty",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "ops_anomaly:acme/widgets",
       outcome: "completed",
       detail: "triggered",

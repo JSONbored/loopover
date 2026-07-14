@@ -31,7 +31,7 @@ export type FixHandoffBlock = {
 
 /** The HTML comment marker prefixing every rendered block, so a contributor's own agent can reliably locate and
  *  parse fix-handoff blocks in a comment body without depending on markdown structure alone. */
-const FIX_HANDOFF_MARKER = "<!-- gittensory:fix-handoff -->";
+const FIX_HANDOFF_MARKER = "<!-- loopover:fix-handoff -->";
 
 /** Public-safe inline-code escaping for a finding path/location. GitHub comments still render markdown inside
  *  collapsibles, so neutralize delimiters that can break out of the `...` span or table-like contexts before

@@ -8,7 +8,7 @@ import {
   PUBLIC_COMMAND_ENTRIES,
 } from "@/lib/command-reference";
 
-export const Route = createFileRoute("/docs/gittensory-commands")({
+export const Route = createFileRoute("/docs/loopover-commands")({
   head: () => ({
     meta: [
       { title: "@loopover command reference — LoopOver docs" },
@@ -23,9 +23,9 @@ export const Route = createFileRoute("/docs/gittensory-commands")({
         content:
           "Every @loopover PR and issue comment command: syntax, default authorization roles, and the hard boundary between auto-review and the one-shot gate.",
       },
-      { property: "og:url", content: "/docs/gittensory-commands" },
+      { property: "og:url", content: "/docs/loopover-commands" },
     ],
-    links: [{ rel: "canonical", href: "/docs/gittensory-commands" }],
+    links: [{ rel: "canonical", href: "/docs/loopover-commands" }],
   }),
   component: LoopOverCommandsReference,
 });

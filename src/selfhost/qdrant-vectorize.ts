@@ -26,7 +26,7 @@ import type {
   SelfHostVectorize,
 } from "./backend-contracts";
 
-const DEFAULT_COLLECTION = "gittensory";
+const DEFAULT_COLLECTION = "loopover";
 const DEFAULT_DIM = 1024; // bge-m3 / mxbai-embed-large (1024-d); set QDRANT_DIM to override
 
 interface QdrantSearchResult {

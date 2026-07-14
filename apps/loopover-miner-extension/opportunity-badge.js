@@ -79,19 +79,19 @@ function escapeOpportunityHtml(value) {
 function renderOpportunityBadgeMarkup(badge, lastSyncedLabel) {
   if (!badge || typeof badge !== "object") return "";
   return `
-    <div class="gittensory-miner-opportunity-badge__header">
-      <span class="gittensory-miner-opportunity-badge__mark">G</span>
+    <div class="loopover-miner-opportunity-badge__header">
+      <span class="loopover-miner-opportunity-badge__mark">G</span>
       <span>LoopOver opportunity</span>
-      <span class="gittensory-miner-opportunity-badge__read-only">Read-only</span>
+      <span class="loopover-miner-opportunity-badge__read-only">Read-only</span>
     </div>
-    <div class="gittensory-miner-opportunity-badge__score">
+    <div class="loopover-miner-opportunity-badge__score">
       <strong>${escapeOpportunityHtml(badge.tier)}</strong>
       <span>${escapeOpportunityHtml(badge.score)}</span>
     </div>
-    <p class="gittensory-miner-opportunity-badge__why">${escapeOpportunityHtml(badge.why)}</p>
+    <p class="loopover-miner-opportunity-badge__why">${escapeOpportunityHtml(badge.why)}</p>
     ${
       lastSyncedLabel
-        ? `<p class="gittensory-miner-opportunity-badge__synced">${escapeOpportunityHtml(lastSyncedLabel)}</p>`
+        ? `<p class="loopover-miner-opportunity-badge__synced">${escapeOpportunityHtml(lastSyncedLabel)}</p>`
         : ""
     }
   `;

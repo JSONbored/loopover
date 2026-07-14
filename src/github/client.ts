@@ -703,7 +703,7 @@ export function makeInstallationOctokit(env: Env, token: string, mode: AgentActi
       const url = options.url;
       await recordAuditEvent(env, {
         eventType: "github.write.suppressed",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: url,
         outcome: effectiveMode === "dry_run" ? "completed" : "denied",
         detail: `${effectiveMode}: suppressed ${method} ${url}`,

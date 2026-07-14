@@ -24,8 +24,8 @@ describe("worktree pool allocator (#4297)", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.allocation.attemptId).toBe("attempt-1");
-    expect(r.allocation.plan.worktreePath).toContain(".gittensory-worktrees");
-    expect(r.allocation.plan.branchName).toContain("gittensory/attempt/");
+    expect(r.allocation.plan.worktreePath).toContain(".loopover-worktrees");
+    expect(r.allocation.plan.branchName).toContain("loopover/attempt/");
     expect(r.state.allocations).toHaveLength(1);
     expect(isWorktreeAllocated(r.state, "attempt-1")).toBe(true);
     expect(availableWorktreeSlots(r.state, config)).toBe(1);

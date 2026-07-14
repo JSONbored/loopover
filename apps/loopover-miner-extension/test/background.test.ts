@@ -253,10 +253,10 @@ describe("background service worker", () => {
       fetchImpl: jsonFetch(200, { candidates: [] }),
     });
 
-    expect(mod.alarmCreateCalls[0]?.[0]).toBe("gittensory-miner:sync-ranked-candidates");
+    expect(mod.alarmCreateCalls[0]?.[0]).toBe("loopover-miner:sync-ranked-candidates");
     mod.dispatchStartup();
     mod.dispatchInstalled();
-    mod.dispatchAlarm("gittensory-miner:sync-ranked-candidates");
+    mod.dispatchAlarm("loopover-miner:sync-ranked-candidates");
     mod.dispatchAlarm("other-alarm");
     await flush();
     expect(mod.localSetCalls.length).toBeGreaterThan(0);

@@ -315,7 +315,7 @@ describe("self-host OpenTelemetry", () => {
     const span = otelMocks.exportedSpans.find((entry) => entry.name === "plain-failure");
     expect(span.status.message).toBe("plain boom");
     expect(span.resource.attributes).toMatchObject({
-      "service.name": "gittensory-selfhost",
+      "service.name": "loopover-selfhost",
       "service.version": "custom-release",
       "deployment.environment.name": "selfhost",
     });
@@ -382,7 +382,7 @@ describe("self-host OpenTelemetry", () => {
       contextManager,
       validate,
     })).toBe(true);
-    await withOtelSpan("selfhost.review.gate", { "gittensory.operation": "gate_decision" }, () => undefined);
+    await withOtelSpan("selfhost.review.gate", { "loopover.operation": "gate_decision" }, () => undefined);
     await flushOpenTelemetry();
 
     expect(otelMocks.OTLPTraceExporter).not.toHaveBeenCalled();
@@ -391,7 +391,7 @@ describe("self-host OpenTelemetry", () => {
     expect(sentryProcessor.onEnd).toHaveBeenCalledTimes(1);
     expect(sentryEndedSpans[0].name).toBe("selfhost.review.gate");
     expect(sentryEndedSpans[0].attributes).toMatchObject({
-      "gittensory.operation": "gate_decision",
+      "loopover.operation": "gate_decision",
     });
 
     await resetOpenTelemetryForTest();
@@ -610,9 +610,9 @@ describe("self-host OpenTelemetry", () => {
       "github.repository": "JSONbored/gittensory",
       "github.pull_request.number": 1001,
       "github.installation_id_hash": "68b9c2136087c5ca",
-      "gittensory.operation": "gate_decision",
-      "gittensory.agent": "dual-ai",
-      "gittensory.decision_outcome": "success",
+      "loopover.operation": "gate_decision",
+      "loopover.agent": "dual-ai",
+      "loopover.decision_outcome": "success",
     });
     await expect(reviewTraceAttributes({})).resolves.toEqual({});
   });

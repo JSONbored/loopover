@@ -194,7 +194,7 @@ describe("syncRankedCandidatesFromMinerUi (#4859)", () => {
     });
     expect(alarmCreateCalls).toHaveLength(1);
     const [name, info] = alarmCreateCalls[0]!;
-    expect(name).toBe("gittensory-miner:sync-ranked-candidates");
+    expect(name).toBe("loopover-miner:sync-ranked-candidates");
     expect(info).toEqual({ periodInMinutes: 10 });
 
     dispatchAlarm("some-other-extensions-alarm");
@@ -298,7 +298,7 @@ describe("options.js miner-UI URL field + Sync now button (#4859)", () => {
       syncResponse: { ok: true, payload: { ok: true, count: 3, minerUiUrl: "http://localhost:5174" } },
     });
     await (elements["#syncNow"] as ReturnType<typeof createClickMock>).dispatchClick();
-    expect(sentMessages).toEqual([{ type: "gittensory-miner:sync-ranked-candidates" }]);
+    expect(sentMessages).toEqual([{ type: "loopover-miner:sync-ranked-candidates" }]);
     expect((elements["#status"] as { textContent: string }).textContent).toMatch(/Synced 3 ranked candidate/);
   });
 

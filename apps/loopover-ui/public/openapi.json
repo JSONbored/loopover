@@ -17161,7 +17161,7 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "example": "gittensory"
+              "example": "loopover"
             },
             "required": true,
             "description": "Repository name",

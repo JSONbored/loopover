@@ -297,7 +297,7 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
   if (allCommandIds.length < 15) {
     failures.push(`src/github/commands.ts: extraction found only ${allCommandIds.length} unique @loopover command ids -- expected 15+; the extraction regex may be broken`);
   } else {
-    const commandDocsPages = ["docs.maintainer-workflow.tsx", "docs.maintainer-install-trust.tsx", "docs.gittensory-commands.tsx"];
+    const commandDocsPages = ["docs.maintainer-workflow.tsx", "docs.maintainer-install-trust.tsx", "docs.loopover-commands.tsx"];
     for (const page of commandDocsPages) {
       const pageText = read(`${DOCS_ROUTES_DIR}/${page}`);
       if (pageText.includes("@/lib/command-reference")) continue;

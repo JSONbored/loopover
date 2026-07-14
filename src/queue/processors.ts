@@ -1089,7 +1089,7 @@ async function surfaceRepairPriorityPullNumbers(
       const targetKey = regateRepairTargetKey(repoFullName, pr.number, pr.headSha);
       const attempts = await countRecentAuditEventsForActorAndTarget(
         env,
-        "gittensory",
+        "loopover",
         REGATE_REPAIR_ATTEMPT_EVENT_TYPE,
         targetKey,
         sinceIso,
@@ -1098,7 +1098,7 @@ async function surfaceRepairPriorityPullNumbers(
       priorityPullNumbers.delete(prNumber);
       const alreadyFlagged = await countRecentAuditEventsForActorAndTarget(
         env,
-        "gittensory",
+        "loopover",
         REGATE_REPAIR_EXHAUSTED_EVENT_TYPE,
         targetKey,
         sinceIso,
@@ -1106,7 +1106,7 @@ async function surfaceRepairPriorityPullNumbers(
       if (alreadyFlagged > 0) return;
       await recordAuditEvent(env, {
         eventType: REGATE_REPAIR_EXHAUSTED_EVENT_TYPE,
-        actor: "gittensory",
+        actor: "loopover",
         targetKey,
         outcome: "denied",
         detail: `re-gate repair exhausted after ${attempts} attempt(s) for the same head SHA; falling back to ordinary staleness cadence`,
@@ -1339,7 +1339,7 @@ export async function sweepRepoRegate(
   if (mode === "paused") {
     await recordAuditEvent(env, {
       eventType: "agent.sweep.regate",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: repoFullName,
       outcome: "denied",
       detail: "agent actions paused — re-gate sweep skipped",
@@ -1366,7 +1366,7 @@ export async function sweepRepoRegate(
   if (regateBacklog > 0 && priorityPullNumbers.length === 0) {
     await recordAuditEvent(env, {
       eventType: "agent.sweep.regate",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: repoFullName,
       outcome: "queued",
       detail:
@@ -1418,7 +1418,7 @@ export async function sweepRepoRegate(
     );
     await recordAuditEvent(env, {
       eventType: "agent.sweep.regate",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: repoFullName,
       outcome: "queued",
       detail: `re-gate sweep deferred: shared GitHub REST budget below the maintenance headroom floor; re-queued after ${sweepRateResetAt}`,
@@ -1521,7 +1521,7 @@ export async function sweepRepoRegate(
   }
   await recordAuditEvent(env, {
     eventType: "agent.sweep.regate",
-    actor: "gittensory",
+    actor: "loopover",
     targetKey: repoFullName,
     outcome: "completed",
     detail: `scheduled re-gate recomputed ${candidates.length} stale open PR verdict(s); ${flaggedPulls.length} flagged; fanned out per-PR re-review`,
@@ -1712,7 +1712,7 @@ export async function sweepRepoBacklogConvergence(
   if (mode === "paused") {
     await recordAuditEvent(env, {
       eventType: "agent.sweep.backlog_convergence",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: repoFullName,
       outcome: "denied",
       detail: "agent actions paused — backlog-convergence sweep skipped",
@@ -1762,7 +1762,7 @@ export async function sweepRepoBacklogConvergence(
   );
   await recordAuditEvent(env, {
     eventType: "agent.sweep.backlog_convergence",
-    actor: "gittensory",
+    actor: "loopover",
     targetKey: repoFullName,
     outcome: "completed",
     detail: `backlog-convergence sweep found ${candidates.length} open PR(s) with a stale/missing public surface`,
@@ -1890,7 +1890,7 @@ export async function regatePullRequest(
     if (repairHeadSha && reachedReadiness) {
       await recordAuditEvent(env, {
         eventType: REGATE_REPAIR_ATTEMPT_EVENT_TYPE,
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: regateRepairTargetKey(repoFullName, prNumber, repairHeadSha),
         outcome: "completed",
         detail: `outage-repair re-review executing for ${repoFullName}#${prNumber}`,
@@ -2489,7 +2489,7 @@ async function runAgentMaintenancePlanAndExecute(
     const ciCompletenessHeadSha = pr.headSha ?? null;
     await recordAuditEvent(env, {
       eventType: "github_app.ci_completeness_unverified",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail: ciAggregate.ciCompletenessWarning,
@@ -2941,7 +2941,7 @@ async function runAgentMaintenancePlanAndExecute(
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.hold",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail: holdDetail,
@@ -3417,7 +3417,7 @@ async function prReadyForReview(
     ) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: `${repoFullName}#${pr.number}`,
         outcome: "queued",
         detail: "CI still running — review deferred until all checks finish",
@@ -3428,7 +3428,7 @@ async function prReadyForReview(
     if (ci.hasMissingRequiredContext) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: `${repoFullName}#${pr.number}`,
         outcome: "queued",
         detail:
@@ -3449,7 +3449,7 @@ async function prReadyForReview(
     const guardTargetKey = `${repoFullName}#${pr.number}#${pr.headSha}`;
     const alreadyFinalizedForSha = await countRecentAuditEventsForActorAndTarget(
       env,
-      "gittensory",
+      "loopover",
       CI_STUCK_FINALIZE_GUARD_EVENT_TYPE,
       guardTargetKey,
       new Date(Date.now() - CI_STUCK_FINALIZE_GUARD_LOOKBACK_MS).toISOString(),
@@ -3457,7 +3457,7 @@ async function prReadyForReview(
     if (alreadyFinalizedForSha >= CI_STUCK_FINALIZE_MAX_PER_SHA) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: `${repoFullName}#${pr.number}`,
         outcome: "queued",
         detail: "CI still stuck pending, but already finalized once for this head SHA — deferring again instead of re-spending a review",
@@ -3486,7 +3486,7 @@ async function prReadyForReview(
     }
     await recordAuditEvent(env, {
       eventType: "github_app.review_finalized_ci_stuck",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail:
@@ -3495,7 +3495,7 @@ async function prReadyForReview(
     }).catch(() => undefined);
     await recordAuditEvent(env, {
       eventType: CI_STUCK_FINALIZE_GUARD_EVENT_TYPE,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: guardTargetKey,
       outcome: "completed",
       detail: "recorded so a repeat evaluation of the SAME head SHA does not pay for another review",
@@ -3657,7 +3657,7 @@ async function maybeForceFreshRebase(
   if (attempt >= MAX_FRESH_REBASE_FORCES) {
     await recordAuditEvent(env, {
       eventType: "agent.action.fresh_rebase_window_cap_exceeded",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "completed",
       detail: `base advanced within the ${windowMinutes}m freshness window, but the ${MAX_FRESH_REBASE_FORCES}-attempt forced-rebase cap was already reached for this PR — falling through to a normal merge decision`,
@@ -3700,7 +3700,7 @@ async function maybeForceFreshRebase(
   await putTransientKey(env, countKey, String(nextAttempt), 24 * 3600);
   await recordAuditEvent(env, {
     eventType: "agent.action.forced_rebase_freshness",
-    actor: "gittensory",
+    actor: "loopover",
     targetKey: `${repoFullName}#${pr.number}`,
     outcome: "completed",
     detail: `forced update_branch (attempt ${nextAttempt}/${MAX_FRESH_REBASE_FORCES}) — base advanced within the ${windowMinutes}m freshness window`,
@@ -4026,7 +4026,7 @@ async function maybeReReviewOnCiCompletion(
     if (viaHeadShaFallback && prNumbers.length > 0) {
       await recordAuditEvent(env, {
         eventType: "github_app.ci_completion_fork_resume",
-        actor: "gittensory",
+        actor: "loopover",
         targetKey: `${repoFullName}#${prNumbers.join(",")}`,
         outcome: "queued",
         detail:
@@ -12061,7 +12061,7 @@ async function maybeThrottleReviewNagPing(
     }
     await recordAuditEvent(env, {
       eventType: "github_app.review_nag_cooldown_applied",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: mode === "live" ? "completed" : "denied",
       detail: `hold applied: ${commenter} pinged ${pingCount} times (limit ${maxPings})`,
@@ -12098,7 +12098,7 @@ async function maybeThrottleReviewNagPing(
     // Autonomy is not currently acting for label/close — nothing to execute, but the policy still engaged.
     await recordAuditEvent(env, {
       eventType: "github_app.review_nag_cooldown_applied",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "denied",
       detail: `close policy engaged but autonomy is not acting for label/close: ${commenter} pinged ${pingCount} times (limit ${maxPings})`,
@@ -12252,7 +12252,7 @@ async function maybeThrottleMonitoredMentions(
     }
     await recordAuditEvent(env, {
       eventType: "github_app.review_nag_cooldown_applied",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: mode === "live" ? "completed" : "denied",
       detail: `hold applied: ${commenter} pinged @${mentionedLogin} ${pingCount} times (limit ${maxPings})`,
@@ -12284,7 +12284,7 @@ async function maybeThrottleMonitoredMentions(
   if (planned.length === 0) {
     await recordAuditEvent(env, {
       eventType: "github_app.review_nag_cooldown_applied",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "denied",
       detail: `close policy engaged but autonomy is not acting for label/close: ${commenter} pinged @${mentionedLogin} ${pingCount} times (limit ${maxPings})`,
@@ -12418,7 +12418,7 @@ async function maybeThrottleLoopOverCommand(
   }
   await recordAuditEvent(env, {
     eventType: "github_app.command_rate_limit_applied",
-    actor: "gittensory",
+    actor: "loopover",
     targetKey,
     outcome: args.mode === "live" ? "completed" : "denied",
     detail: `hold applied: ${args.commenter} invoked ${args.command} ${invocationCount} times (limit ${maxPerWindow})`,

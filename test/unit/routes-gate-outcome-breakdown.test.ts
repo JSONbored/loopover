@@ -37,21 +37,21 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
     const now = "2026-07-11T12:00:00.000Z";
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#1",
       outcome: "completed",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.close",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#2",
       outcome: "success",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.hold",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#3",
       outcome: "completed",
       createdAt: now,
@@ -93,35 +93,35 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
     const now = "2026-07-11T12:00:00.000Z";
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#1",
       outcome: "queued",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.close",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#2",
       outcome: "denied",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.hold",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#3",
       outcome: "denied",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.approve",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#4",
       outcome: "completed",
       createdAt: now,
     });
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#5",
       outcome: "success",
       createdAt: now,

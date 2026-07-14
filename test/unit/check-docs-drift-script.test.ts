@@ -306,7 +306,7 @@ describe("check-docs-drift script", () => {
         "apps/loopover-ui/src/routes/docs.privacy-security.tsx": buildFlagsPageText(baseFlagNames),
         "apps/loopover-ui/src/routes/docs.maintainer-workflow.tsx": buildDocsPageText(allBaseCommandIds),
         "apps/loopover-ui/src/routes/docs.maintainer-install-trust.tsx": buildDocsPageText(allBaseCommandIds),
-        "apps/loopover-ui/src/routes/docs.gittensory-commands.tsx":
+        "apps/loopover-ui/src/routes/docs.loopover-commands.tsx":
           'import { PUBLIC_COMMAND_ENTRIES, MAINTAINER_COMMAND_ENTRIES, ACTION_COMMAND_ENTRIES } from "@/lib/command-reference";',
         "apps/loopover-ui/src/routes/docs.how-reviews-work.tsx": buildGateModePageText(),
         "apps/loopover-ui/src/routes/docs.github-app.tsx": buildGateModePageText(),

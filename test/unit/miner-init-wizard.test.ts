@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CODING_AGENT_DRIVER_NAMES } from "@loopover/engine";
 import {
   createWizardIo,
@@ -191,6 +191,80 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
       await runInteractiveInit(env, cwd, secondIo);
 
       expect(secondIo.lines.some((line) => line.includes("(already existed)"))).toBe(true);
+    });
+  });
+
+  describe("runInteractiveInit with device-flow authorization configured (#5682)", () => {
+    const deviceEnv = (stateDir: string) => ({ GITTENSORY_MINER_CONFIG_DIR: stateDir, GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID: "client-abc" });
+    const jsonResponse = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
+    const noSleep = async () => undefined;
+
+    it("REGRESSION (#5682): defaulting the auth-method choice (empty input) authorizes via device flow and writes its access token as GITHUB_TOKEN", async () => {
+      const stateDir = join(tempRoot(), "state");
+      const cwd = tempRoot();
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ device_code: "dc1", user_code: "WXYZ-1234", verification_uri: "https://github.com/login/device", interval: 1 }))
+        .mockResolvedValueOnce(jsonResponse({ access_token: "gho_device_flow_token" }));
+      // textAnswers order: auth-method choice (empty -> default device flow), then provider selection (skip).
+      const io = createFakeIo({ textAnswers: ["", ""] });
+
+      const exitCode = await runInteractiveInit(deviceEnv(stateDir), cwd, io, { fetchImpl, sleepFn: noSleep });
+
+      expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("GITHUB_TOKEN=gho_device_flow_token\n");
+      expect(io.lines.some((line) => line.includes("WXYZ-1234"))).toBe(true);
+      expect(io.lines.some((line) => line.includes("Authorized."))).toBe(true);
+      // The raw token itself is never printed, only the (distinct) short user_code shown during authorization.
+      expect(io.lines.some((line) => line.includes("gho_device_flow_token"))).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+
+    it("choosing option 2 skips device flow entirely and uses the original masked-token prompt", async () => {
+      const stateDir = join(tempRoot(), "state");
+      const cwd = tempRoot();
+      const fetchImpl = vi.fn();
+      const io = createFakeIo({ textAnswers: ["2", ""], maskedAnswers: ["ghp_pasted_despite_device_flow"] });
+
+      await runInteractiveInit(deviceEnv(stateDir), cwd, io, { fetchImpl, sleepFn: noSleep });
+
+      expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("GITHUB_TOKEN=ghp_pasted_despite_device_flow\n");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("re-prompts the auth-method choice on an invalid answer before accepting a valid one", async () => {
+      const stateDir = join(tempRoot(), "state");
+      const cwd = tempRoot();
+      const io = createFakeIo({ textAnswers: ["bogus", "2", ""], maskedAnswers: ["ghp_after_reprompt"] });
+
+      await runInteractiveInit(deviceEnv(stateDir), cwd, io, { fetchImpl: vi.fn(), sleepFn: noSleep });
+
+      expect(io.lines.some((line) => line.includes("Enter 1 or 2."))).toBe(true);
+      expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("GITHUB_TOKEN=ghp_after_reprompt\n");
+    });
+
+    it("REGRESSION: a device-flow failure falls back to the masked-token prompt rather than failing the whole wizard", async () => {
+      const stateDir = join(tempRoot(), "state");
+      const cwd = tempRoot();
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({}, false, 500));
+      const io = createFakeIo({ textAnswers: ["1", ""], maskedAnswers: ["ghp_fallback_after_failure"] });
+
+      const exitCode = await runInteractiveInit(deviceEnv(stateDir), cwd, io, { fetchImpl, sleepFn: noSleep });
+
+      expect(io.lines.some((line) => line.includes("Device-flow authorization failed (device_code_request_failed)"))).toBe(true);
+      expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("GITHUB_TOKEN=ghp_fallback_after_failure\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("REGRESSION: a non-DeviceFlowError thrown mid-flow (e.g. a raw network failure) also falls back cleanly, reported as device_flow_failed", async () => {
+      const stateDir = join(tempRoot(), "state");
+      const cwd = tempRoot();
+      const fetchImpl = vi.fn().mockRejectedValue(new Error("getaddrinfo ENOTFOUND github.com"));
+      const io = createFakeIo({ textAnswers: ["1", ""], maskedAnswers: ["ghp_fallback_after_network_error"] });
+
+      await runInteractiveInit(deviceEnv(stateDir), cwd, io, { fetchImpl, sleepFn: noSleep });
+
+      expect(io.lines.some((line) => line.includes("Device-flow authorization failed (device_flow_failed)"))).toBe(true);
+      expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("GITHUB_TOKEN=ghp_fallback_after_network_error\n");
     });
   });
 

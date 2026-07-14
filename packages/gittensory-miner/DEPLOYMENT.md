@@ -35,6 +35,13 @@ For provider selection and the CLI-specific model/timeout overrides, see
    gittensory-miner init --interactive    # optional: guided prompt for GITHUB_TOKEN + provider, writes a starter .env, then reruns doctor
    ```
 
+   `init --interactive` offers "Authorize with GitHub" (device flow -- visit a URL, enter a short code, no
+   token to copy or paste) as its first option once `GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID` is configured for the
+   centrally-held `loopover-ams` GitHub App; the original pasted-PAT prompt stays available as option 2, and is
+   what the wizard falls back to automatically on any device-flow failure. Unconfigured, the wizard is
+   byte-identical to the pasted-token-only prompt. Either way, the resulting `GITHUB_TOKEN` acts as your own
+   GitHub account -- there is no separate bot identity; see [`README.md`](README.md) for the credential model.
+
 3. Expected layout after first use (default paths):
 
    ```text

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/JSONbored/gittensory/compare/mcp-v0.9.0...mcp-v1.0.0) (2026-07-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** `gittensory-miner`, `gittensory-miner-mcp`, and `gittensory-mcp` no longer exist as installed binaries; use `loopover-miner`, `loopover-miner-mcp`, and `loopover-mcp`. No dual-read/alias, per the epic's full-cutover mandate. A global npm install/link of the old package names must be reinstalled.
+
+### Features
+
+* **cli:** Phase 3 - full-cutover rename CLI binaries to loopover-* ([#5728](https://github.com/JSONbored/gittensory/issues/5728)) ([f2ee2ad](https://github.com/JSONbored/gittensory/commit/f2ee2ad24e0bf01d0a2dfd8f39421bb80aa527b6))
+
 ## [0.9.0](https://github.com/JSONbored/gittensory/compare/mcp-v0.8.1...mcp-v0.9.0) (2026-07-14)
 
 

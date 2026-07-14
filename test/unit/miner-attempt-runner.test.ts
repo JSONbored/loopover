@@ -11,7 +11,7 @@ import { runMinerAttempt } from "../../packages/gittensory-miner/lib/attempt-run
 import { initEventLedger } from "../../packages/gittensory-miner/lib/event-ledger.js";
 import { initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 import { openGovernorState } from "../../packages/gittensory-miner/lib/governor-state.js";
-import { parseFocusManifest, type CodingAgentDriver, type CodingAgentDriverResult } from "../../packages/gittensory-engine/src/index";
+import { fingerprintFromChangedFiles, parseFocusManifest, type CodingAgentDriver, type CodingAgentDriverResult } from "../../packages/gittensory-engine/src/index";
 
 const roots: string[] = [];
 const closers: Array<{ close(): void }> = [];
@@ -265,6 +265,36 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
     expect(result.outcome).toBe("governed");
     if (result.outcome !== "governed") throw new Error("expected governed");
     expect(result.decision.stage).toBe("kill_switch");
+  });
+
+  it("REGRESSION (#5676): a near-duplicate of a real recent own submission is throttled at the self-plagiarism stage", async () => {
+    const deps = baseDeps();
+    // The driver's changed files (okDriverResult -> ["src/upload.ts"]) fingerprint the prospective submission the
+    // same way attempt-runner computes it; a prior own submission with that SAME fingerprint is the near-duplicate
+    // the chokepoint must catch now that the candidate + recent-history reach it (#5676).
+    deps.governorState.recordOwnSubmission({
+      repoFullName: "acme/widgets",
+      fingerprint: fingerprintFromChangedFiles(["src/upload.ts"]),
+      submittedAt: "2026-07-10T00:00:00Z",
+      pullRequestNumber: 1,
+    });
+    const result = await runMinerAttempt(baseAttemptInput(), deps);
+    expect(result.outcome).toBe("governed");
+    if (result.outcome !== "governed") throw new Error("expected governed");
+    expect(result.decision.allowed).toBe(false);
+    expect(result.decision.stage).toBe("self_plagiarism");
+  });
+
+  it("REGRESSION (#5676): a submission genuinely distinct from every recent own submission is NOT throttled", async () => {
+    const deps = baseDeps();
+    deps.governorState.recordOwnSubmission({
+      repoFullName: "acme/widgets",
+      fingerprint: fingerprintFromChangedFiles(["docs/README.md"]),
+      submittedAt: "2026-07-10T00:00:00Z",
+      pullRequestNumber: 1,
+    });
+    const result = await runMinerAttempt(baseAttemptInput(), deps);
+    expect(result.outcome).toBe("submitted");
   });
 
   it("falls back to the real default governor-ledger append when governorLedgerAppend is omitted", async () => {

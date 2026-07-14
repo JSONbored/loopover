@@ -1088,6 +1088,26 @@ git merge --ff-only origin/main
         even when those three are present).
       </p>
 
+      <h3>Pre-deploy: preview what&apos;s incoming</h3>
+      <p>
+        <code>scripts/selfhost-pre-deploy-summary.sh</code> (#5735) is a read-only preview of what{" "}
+        <code>scripts/selfhost-update.sh</code> would pull in — the commit range between the current
+        checkout (the last-deployed state) and the remote&apos;s tracked branch, plus a flag on any
+        incoming commit that touches a path with a history of breaking a deploy on this instance:{" "}
+        <code>docker-compose*.yml</code>, <code>grafana/provisioning/**</code>/
+        <code>grafana/dashboards/**</code>, <code>migrations/**</code>, <code>Dockerfile*</code>,
+        the deploy scripts themselves, and <code>.env.example</code>. It only runs{" "}
+        <code>git fetch</code> — never a merge or checkout — so it is safe to run anytime, including
+        with a dirty working tree, and takes the same <code>SELFHOST_UPDATE_REMOTE</code>/
+        <code>SELFHOST_UPDATE_BRANCH</code> overrides as <code>selfhost-update.sh</code>:
+      </p>
+      <CodeBlock lang="bash" code={`./scripts/selfhost-pre-deploy-summary.sh`} />
+      <p>
+        It is a skim tool, not a gate — it always exits 0 and never blocks{" "}
+        <code>selfhost-update.sh</code> from running; a flagged path is a prompt to read the actual
+        diff before deploying, not a hard stop.
+      </p>
+
       <h3>Post-update checklist</h3>
       <p>
         <code>scripts/selfhost-update.sh</code> already runs the health probe below for you unless

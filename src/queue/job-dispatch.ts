@@ -343,5 +343,21 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // an empty table). Never throws.
       await retryFailedRelays(env);
       return;
+    default:
+      // Same class of "this job is intentionally not processed" event as the retired-review-job path
+      // (src/index.ts's retired_review_job_ignored) and the DLQ's dlq_message_dead_lettered -- a message.type
+      // that matches no case (a stale message from a renamed/removed job type, a producer/consumer version
+      // skew during a rolling deploy, or a corrupted payload) must never vanish with zero trace. `warn`, not
+      // `error`: this is a non-fatal, expected-to-happen-occasionally drop, not a `queue_message_failed`-class
+      // failure. Never throws -- the caller's ack-after-processJob flow (src/index.ts, src/server.ts) must stay
+      // unaffected; this is an observability addition only, not a behavior change.
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "unknown_job_type_ignored",
+          jobType: (message as { type: string }).type,
+        }),
+      );
+      return;
   }
 }

@@ -1,8 +1,8 @@
 # ============================================================================
-# .loopover.yml — per-repo configuration for gittensory CI & gittensory review
+# .loopover.yml — per-repo configuration for loopover CI & loopover review
 # ============================================================================
 #
-# Drop this file at the root of any repo gittensory watches to tune how the
+# Drop this file at the root of any repo loopover watches to tune how the
 # review engine scores, gates, and comments on its pull requests — as
 # config-as-code, versioned alongside the project it governs.
 #
@@ -219,14 +219,14 @@ gate:
   lockfileIntegrity: off
 
   # CLA / license-compatibility gate (#2564). Confirms contributor license-agreement consent before a PR
-  # can auto-merge — the gittensory analog of a "CLA assistant" bot. off | advisory | block. Default: off.
+  # can auto-merge — the loopover analog of a "CLA assistant" bot. off | advisory | block. Default: off.
   #   advisory — surfaces a cla_consent_missing finding but never blocks.
   #   block    — also hard-blocks (one-shot close for a contributor) when neither detection method
   #              below confirms consent.
   # Config-as-code only — no DB column or dashboard toggle; this can only be set here.
   claMode: off
   cla:
-    # A phrase gittensory looks for in the PR description (case-insensitive substring match), mirroring
+    # A phrase loopover looks for in the PR description (case-insensitive substring match), mirroring
     # review.pre_merge_checks' descriptionContains. String or null. Default: null (not configured).
     consentPhrase: "I have read and agree to the CLA"
     # Name of a separate CLA-bot check-run this repo also runs (e.g. a CLA Assistant GitHub Action). A
@@ -722,7 +722,7 @@ settings:
   #      from the PR title; priority (or any other category you register) ONLY from
   #      `linkedIssueLabelPropagation` above — never inferred from title, files, AI, or existing PR
   #      labels (#priority-linked-issue-gate).
-  #   3. Autonomy-outcome labels (`gittensory:ready-to-merge` etc.) — gated by the `review_state_label`
+  #   3. Autonomy-outcome labels (`loopover:ready-to-merge` etc.) — gated by the `review_state_label`
   #      autonomy class below, advisory commentary on the bot's own verdict.
   #   4. Anti-abuse enforcement labels (blacklist/contributor-cap/review-nag) — gated by the `close`
   #      autonomy class below, applied alongside the close action they accompany.
@@ -736,8 +736,8 @@ settings:
   #     labels (blacklist/contributor-cap/review-nag) ride on the SAME dial as their accompanying close
   #     (`close`, below) — set `close: auto` and they close-and-label together with no `label` grant needed.
   #   - `review_state_label` gates the bot's own disposition-communication labels only:
-  #     gittensory:ready-to-merge / gittensory:changes-requested / gittensory:needs-human-review /
-  #     gittensory:migration-collision. These are advisory signals about the bot's own verdict, not
+  #     loopover:ready-to-merge / loopover:changes-requested / loopover:needs-human-review /
+  #     loopover:migration-collision. These are advisory signals about the bot's own verdict, not
   #     enforcement — for a one-shot review model (merge/close/hold through the required gate check, no
   #     back-and-forth) leave this at the default `observe` so they never appear; set it to `auto` only if
   #     you specifically want that running commentary as GitHub labels.
@@ -824,7 +824,7 @@ settings:
   # List of GitHub logins. Default: [] (no logins watched).
   # reviewNagMonitoredMentions: [your-maintainer-login]
 
-  # Shared repo-scoped exemption list (#2463): GitHub logins never throttled/closed by gittensory's
+  # Shared repo-scoped exemption list (#2463): GitHub logins never throttled/closed by loopover's
   # deterministic anti-abuse mechanisms (review-nag cooldown today; the per-contributor open-item cap
   # above will reuse this list too), on top of the standing owner/admin/automation-bot exemption.
   # List of GitHub logins. Default: [] (no additional exemptions).
@@ -856,8 +856,8 @@ settings:
   # moderationBannedLabel: mod:banned    # Label applied at >= the ban threshold. Default: the global config's bannedLabel.
 
   # Review-evasion protection (#review-evasion-protection, anti-abuse): a contributor closing or converting
-  # their own PR to draft while gittensory has an ACTIVE review pass running against it is dodging the
-  # one-shot review process, not making an ordinary close. When enabled, gittensory reopens (if needed) and
+  # their own PR to draft while loopover has an ACTIVE review pass running against it is dodging the
+  # one-shot review process, not making an ordinary close. When enabled, loopover reopens (if needed) and
   # re-closes the PR as the App -- a close the contributor cannot themselves reopen (#one-shot-reopen) --
   # posts an explanation comment, applies the configured label, and records a `review_evasion` moderation
   # strike (subject to moderationRules above including it). CLOSE BY DEFAULT as of #4011 -- "off" is an
@@ -1057,7 +1057,7 @@ settings:
 #       url_template: "https://pr-{number}.myapp.workers.dev"
 #     routes:
 #       # An explicit, always-screenshotted route list. When non-empty, REPLACES automatic file-to-route
-#       # inference entirely -- for a repo whose routing convention isn't gittensory-ui's TanStack file-based
+#       # inference entirely -- for a repo whose routing convention isn't loopover-ui's TanStack file-based
 #       # one. Empty/default ⇒ automatic inference (falling back to "/" when nothing matches).
 #       paths:
 #         - "/pricing"
@@ -1095,11 +1095,11 @@ settings:
 #     # .github/workflows/visual-capture-fallback.yml -- a fork-safe GitHub Actions job (contents: read, no
 #     # secrets) that builds, serves, and screenshots the PR's own code, and use its captured PNGs as the
 #     # "after" shot instead. Requires that workflow file to be present in this repo (copy it from
-#     # JSONbored/gittensory unmodified -- see the workflow's own header for setup). Bool. Default: false (no
-#     # dispatch, byte-identical to today). Not needed for gittensory-ui / metagraphed, which already have
+#     # JSONbored/loopover unmodified -- see the workflow's own header for setup). Bool. Default: false (no
+#     # dispatch, byte-identical to today). Not needed for loopover-ui / metagraphed, which already have
 #     # their own preview-deploy pipeline. (#4112, part of the #3607 visual-capture convergence epic)
 #     actions_fallback: false
-#   # Maintainer overrides for the public review-panel CONTENT (not what gittensory measures). The
+#   # Maintainer overrides for the public review-panel CONTENT (not what loopover measures). The
 #   # Gittensor attribution + register link is always appended to the footer regardless; maintainer text
 #   # failing the public-safe filter is dropped, never published.
 #   footer:
@@ -1156,20 +1156,20 @@ settings:
 #   screenshots: false
 #   improvementSignal: false
 
-# Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles gittensory's own
+# Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles loopover's own
 # converged review capabilities. Each key here couples this instance to an external system and is OFF unless
 # BOTH a deployment-wide LOOPOVER_EXPERIMENTAL_* env kill-switch AND an explicit per-repo `true` are set (no
 # LOOPOVER_REVIEW_REPOS allowlist fallback -- unlike `features:`, there is no default-on path). `gittensor`
-# is the first plugin: gittensory's original subnet mining-registry/scoring integration (per-repo emission
+# is the first plugin: loopover's original subnet mining-registry/scoring integration (per-repo emission
 # share, maintainer cut, label multipliers pulled from the gittensor subnet's registry), now opt-in rather
 # than a core dependency -- a self-host instance that never sets this has zero footprint from it: no fetch
 # from the gittensor subnet registry, no local tracking/backfill of other repos on that subnet. Future
-# plugins land in this same block as gittensory broadens beyond gittensor.
+# plugins land in this same block as loopover broadens beyond gittensor.
 # experimental:
 #   gittensor: true
 
-# Registry-review lane (#2435): lets a self-hosted maintainer point gittensory at their OWN structured
-# registry (e.g. a subnet/plugin/package catalog) without a gittensory code change -- reviewing additions
+# Registry-review lane (#2435): lets a self-hosted maintainer point loopover at their OWN structured
+# registry (e.g. a subnet/plugin/package catalog) without a loopover code change -- reviewing additions
 # to a data file the same way it reviews code. Uncomment and set at least entryFileGlob + collectionField
 # (both required; the block is ignored with a warning if either is missing).
 # contentLane:
@@ -1204,7 +1204,7 @@ settings:
 
 # Cross-repo maintainer recap digest (#1963, #2250): config-as-code override for the CRON-scheduled digest
 # that folds gate-precision + outcome-calibration across every scanned repo into one report (distinct from
-# the single-repo reviewRecap above). Operator-level, not per-repo -- only meaningful on the gittensory
+# the single-repo reviewRecap above). Operator-level, not per-repo -- only meaningful on the loopover
 # self-repo's own manifest (the repo this instance identifies as); a present block there wins over the
 # LOOPOVER_MAINTAINER_RECAP / LOOPOVER_RECAP_CADENCE env vars, which stay the fallback when absent.
 # maintainerRecap:

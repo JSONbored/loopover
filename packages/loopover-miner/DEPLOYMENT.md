@@ -135,6 +135,24 @@ docker compose -f docker-compose.miner.yml up -d --build
 
 **Scaling to N parallel workers.** `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` — `-p` namespaces the volume) or point each at a distinct `LOOPOVER_MINER_CONFIG_DIR` on its own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in [`k8s/`](../../k8s/) (per-pod volumes).
 
+### Running fleet mode alongside ORB's `ams-observability` profile
+
+Fleet mode keeps miner state in a named `miner-data` volume, but ORB's `ams-reporting-exporter` (root [`docker-compose.yml`](../../docker-compose.yml), `--profile ams-observability`) reads the miner's ledgers from a **host** directory (default `~/.config/loopover-miner`). A named volume's host path is a Docker-managed internal detail, so the two never line up on their own — the exporter reads an empty directory and the Grafana AMS datasources stay **silently empty**.
+
+To bridge them, relocate the fleet miner's state onto a host directory with the opt-in override, then run both profiles together:
+
+```sh
+cp packages/loopover-miner/docker-compose.miner.override.yml.example \
+   packages/loopover-miner/docker-compose.miner.override.yml   # gitignored; edit the host path only if you want a non-default location
+
+docker compose -f docker-compose.yml \
+  -f packages/loopover-miner/docker-compose.miner.yml \
+  -f packages/loopover-miner/docker-compose.miner.override.yml \
+  --profile ams-observability up -d
+```
+
+The override bind-mounts `/data/miner` to `${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}` — the **same** variable and default the exporter already uses — so both read one location with no `docker volume inspect` archaeology. Leave both unset for the default, or set `LOOPOVER_MINER_CONFIG_DIR` once and both the fleet miner and the exporter follow it. This override is opt-in and additive: without it, `docker-compose.miner.yml`'s named-volume default is unchanged.
+
 ## Bare-host (systemd, no Docker)
 
 To run the miner continuously on a plain Linux host without Docker, supervise `loopover-miner loop` — the autonomous discover → attempt → manage daemon (#5135) — with systemd. [`systemd/loopover-miner.service.example`](../../systemd/loopover-miner.service.example) is a ready-to-adapt persistent unit; its header carries the full install steps:

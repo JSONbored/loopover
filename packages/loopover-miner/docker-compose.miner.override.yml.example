@@ -1,0 +1,32 @@
+# Optional fleet-mode ↔ ORB `ams-observability` bridge (#5805). Copy to `docker-compose.miner.override.yml`
+# (gitignored) and use it ONLY when you run the fleet-mode miner AND ORB's `--profile ams-observability` on the
+# SAME host and want the Grafana AMS dashboards populated.
+#
+# WHY THIS EXISTS: fleet mode (docker-compose.miner.yml) keeps miner state in a Docker-managed NAMED volume
+# (`miner-data`), whose real host path is an internal detail (…/var/lib/docker/volumes/<project>_miner-data/_data).
+# ORB's `ams-reporting-exporter` (root docker-compose.yml, `ams-observability` profile) reads the miner's ledgers
+# via a HOST bind mount defaulting to `~/.config/loopover-miner` (laptop mode's path). Those two never resolve to
+# the same location, so with the plain fleet-mode setup the exporter reads an empty directory and the Grafana AMS
+# datasources stay silently empty, with no error surfaced anywhere. This override relocates the fleet miner's
+# `/data/miner` state onto a real host directory the exporter can read.
+#
+# HOW IT STAYS IN SYNC: the bind source below uses the SAME `${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}`
+# variable and default the exporter already uses, so both read one location automatically — no `docker volume
+# inspect` archaeology. Leave both unset to use the default; or set `LOOPOVER_MINER_CONFIG_DIR` once and BOTH the
+# fleet miner (via this override) and the exporter follow it.
+#
+# HOW TO USE — run the two profiles together (see DEPLOYMENT.md's "Running fleet mode alongside ORB's
+# ams-observability profile" section for the full walkthrough):
+#
+#   docker compose -f docker-compose.yml \
+#     -f packages/loopover-miner/docker-compose.miner.yml \
+#     -f packages/loopover-miner/docker-compose.miner.override.yml \
+#     --profile ams-observability up -d
+#
+# Compose merges a service's `volumes` by container path, so this bind mount REPLACES the base file's
+# `miner-data:/data/miner` named-volume mount for the same `/data/miner` target — it does not add a second mount.
+# The now-unused `miner-data` top-level volume declaration in the base file stays declared but unmounted (harmless).
+services:
+  miner:
+    volumes:
+      - "${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}:/data/miner"

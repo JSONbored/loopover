@@ -24,6 +24,10 @@ secrets/*
 !secrets/README.md
 docker-compose.override.yml
 !docker-compose.override.yml.example
+# Fleet-mode ↔ ams-observability bridge override an operator copies from the committed `.example` (#5805); their
+# real host path stays local, only the `.example` template is tracked.
+packages/loopover-miner/docker-compose.miner.override.yml
+!packages/loopover-miner/docker-compose.miner.override.yml.example
 *.local
 # A second local-override naming shape beyond bare `*.local` (e.g. alertmanager.local): a host-specific
 # compose override named docker-compose.local-<label>.yml (label distinguishes multiple such overrides

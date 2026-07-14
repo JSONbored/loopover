@@ -851,6 +851,9 @@ services:
     volumes:
       # Read-only live-ledger access for the exporter only -- Grafana does not get this mount (mirrors the
       # /appdb:ro pattern above). Point this at the SAME host directory your miner uses as LOOPOVER_MINER_CONFIG_DIR.
+      # LAPTOP mode already writes there. FLEET mode (packages/loopover-miner/docker-compose.miner.yml) keeps state
+      # in a named volume, so it needs the opt-in bind-mount override + combined command -- see "Running fleet mode
+      # alongside ORB's ams-observability profile" in packages/loopover-miner/DEPLOYMENT.md (#5805).
       - "${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}:/ams-ledgers:ro"
       - grafana-reporting-data:/reporting
       # Directory bind mount, not a single-file one -- see reporting-exporter's own comment above for why

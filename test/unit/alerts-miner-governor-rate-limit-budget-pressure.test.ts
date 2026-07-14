@@ -48,7 +48,7 @@ describe("LoopOverMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {
     const group = alertsDoc.groups.find((g) => g.rules.some((r) => r.alert === rule.alert));
-    expect(group?.name).toBe("gittensory-miner-governor");
+    expect(group?.name).toBe("loopover-miner-governor");
   });
 
   it("keys off the real renderer's rate-limit-remaining gauge, not an invented metric name", () => {
@@ -84,7 +84,7 @@ describe("LoopOverMinerGovernorCapUsageHigh alert (#5187)", () => {
 
   it("lives in the same miner-scoped governor rule group", () => {
     const group = alertsDoc.groups.find((g) => g.rules.some((r) => r.alert === rule.alert));
-    expect(group?.name).toBe("gittensory-miner-governor");
+    expect(group?.name).toBe("loopover-miner-governor");
   });
 
   it("keys off the real renderer's cap-usage gauge, thresholded at 90%", () => {

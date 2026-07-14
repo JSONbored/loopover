@@ -79,7 +79,7 @@
       "url": "/d/loopover-miner-usage/loopover-miner-usage",
       "icon": "external link",
       "targetBlank": false,
-      "tooltip": "AMS's own coding-agent usage dashboard -- a separate local CLI (gittensory-miner) from every provider above, tracked on its own dashboard since it's a structurally different local-SQLite source, not another row in ai_usage_events."
+      "tooltip": "AMS's own coding-agent usage dashboard -- a separate local CLI (loopover-miner) from every provider above, tracked on its own dashboard since it's a structurally different local-SQLite source, not another row in ai_usage_events."
     }
   ],
   "panels": [

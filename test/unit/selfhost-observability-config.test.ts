@@ -148,7 +148,7 @@ describe("self-host observability trace config", () => {
           static_configs: [{ targets: ["postgres-exporter:9187"] }],
         }),
         expect.objectContaining({
-          job_name: "gittensory-backup",
+          job_name: "loopover-backup",
           fallback_scrape_protocol: "PrometheusText0.0.4",
           static_configs: [{ targets: ["backup-exporter:9101"] }],
         }),

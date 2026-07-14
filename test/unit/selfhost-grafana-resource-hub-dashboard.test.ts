@@ -42,7 +42,7 @@ describe("LoopOver — Resource hub: AMS cross-link (#5189)", () => {
     expect(panel?.gridPos, "must have grid sizing like the other panels").toBeDefined();
     // It notes AMS is a separate CLI a dual-role operator runs alongside ORB (context, not a feature spec).
     expect(panel?.options?.content).toMatch(/separate/i);
-    expect(panel?.options?.content).toMatch(/gittensory-miner/);
+    expect(panel?.options?.content).toMatch(/loopover-miner/);
   });
 
   it("gives every panel a unique id (a duplicate id silently breaks Grafana panel rendering)", () => {

@@ -1,4 +1,4 @@
-# AMS (gittensory-miner) redacted SQLite reporting datasources (#5184).
+# AMS (loopover-miner) redacted SQLite reporting datasources (#5184).
 #
 # Grafana must not mount the miner's live LOOPOVER_MINER_CONFIG_DIR ledgers. The attempt log and prediction
 # ledger contain free-form reasons, payload JSON, repo/target identifiers, readiness scores, and blocker/warning

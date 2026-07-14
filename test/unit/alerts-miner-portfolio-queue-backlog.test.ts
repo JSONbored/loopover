@@ -47,7 +47,7 @@ describe("LoopOverMinerPortfolioQueueItemStuck alert (#5186)", () => {
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {
     const group = alertsDoc.groups.find((g) => g.rules.some((r) => r.alert === rule.alert));
-    expect(group?.name).toBe("gittensory-miner-portfolio-queue");
+    expect(group?.name).toBe("loopover-miner-portfolio-queue");
   });
 
   it("keys off the real renderer's oldest-lease-age gauge, not an invented metric name", () => {
@@ -80,7 +80,7 @@ describe("LoopOverMinerPortfolioQueueBacklogHigh alert (#5186)", () => {
 
   it("lives in the same miner-scoped portfolio-queue rule group", () => {
     const group = alertsDoc.groups.find((g) => g.rules.some((r) => r.alert === rule.alert));
-    expect(group?.name).toBe("gittensory-miner-portfolio-queue");
+    expect(group?.name).toBe("loopover-miner-portfolio-queue");
   });
 
   it("keys off the real renderer's items gauge, scoped to the queued status label", () => {

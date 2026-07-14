@@ -5,9 +5,9 @@
 #
 # Every rule below is grounded ONLY in metrics the loopover app actually exports at
 # GET /metrics, plus the synthetic `up` metric Prometheus emits per scrape target. The
-# exceptions are the final three groups -- gittensory-miner-prediction (#5188),
-# gittensory-miner-portfolio-queue (#5186), and gittensory-miner-governor (#5187) -- which
-# target the gittensory-miner's OWN separate scrape surface (see each group's own comment
+# exceptions are the final three groups -- loopover-miner-prediction (#5188),
+# loopover-miner-portfolio-queue (#5186), and loopover-miner-governor (#5187) -- which
+# target the loopover-miner's OWN separate scrape surface (see each group's own comment
 # for why it still ships here and stays dormant until a miner scrape target exists).
 #
 # Thresholds are sane defaults for a SMALL single-host self-host. Tune the numbers in
@@ -30,7 +30,7 @@ groups:
         # `up` is 0 when Prometheus cannot scrape /metrics (process down, crash-loop,
         # network partition, or wrong port). Scoped to our job so node/other targets
         # don't trip this. 2m absorbs a single missed scrape + a restart.
-        expr: up{job="gittensory"} == 0
+        expr: up{job="loopover"} == 0
         for: 2m
         labels:
           severity: critical
@@ -621,7 +621,7 @@ groups:
           runbook: "Check CLOUDFLARE_D1_MONITOR_API_TOKEN is still valid and CLOUDFLARE_D1_MONITOR_ACCOUNT_ID/DATABASE_ID are correct. Tail logs for level=error event=d1_size_probe_error."
 
   # ── Miner prediction-calibration drift (#5188) ────────────────────────────
-  # UNLIKE every group above, this rule targets the gittensory-MINER's own scrape surface, not the
+  # UNLIKE every group above, this rule targets the loopover-MINER's own scrape surface, not the
   # loopover server's GET /metrics. The miner is a local CLI (not a daemon), so an operator renders
   # renderMinerPredictionMetrics (packages/loopover-engine/src/miner-prediction-metrics.ts, #4264, wired
   # into a command in #4838 over the calibration-report join built in #4849) to a file/pushgateway their
@@ -630,7 +630,7 @@ groups:
   # the 0/0 case undefined), so it loads cleanly via `selfhost:validate-observability` and never false-fires
   # on an install that has no miner scrape configured yet -- exactly like loopover-d1-storage stays silent
   # without the D1 probe.
-  - name: gittensory-miner-prediction
+  - name: loopover-miner-prediction
     rules:
       - alert: LoopOverMinerPredictionCalibrationDrift
         # Calibration = how often the miner's predicted gate conclusion matched the realized outcome. This is
@@ -661,17 +661,17 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory miner prediction calibration has drifted"
+          summary: "loopover miner prediction calibration has drifted"
           description: "{{ $value | humanizePercentage }} of the miner's recently resolved gate predictions were incorrect over the last 6h (sustained 30m). Predicted-gate accuracy has drifted out of tolerance."
-          runbook: "Compare loopover_miner_prediction_correct_total vs loopover_miner_prediction_incorrect_total and review the miner's own calibration report (`gittensory-miner calibration`). Sustained drift usually means the predicted-gate heuristics need recalibration against the repo(s) the miner now targets, or a recent upstream gate-behavior change the predictor hasn't caught up to."
+          runbook: "Compare loopover_miner_prediction_correct_total vs loopover_miner_prediction_incorrect_total and review the miner's own calibration report (`loopover-miner calibration`). Sustained drift usually means the predicted-gate heuristics need recalibration against the repo(s) the miner now targets, or a recent upstream gate-behavior change the predictor hasn't caught up to."
 
   # ── Miner portfolio-queue backlog health (#5186) ──────────────────────────
-  # Same DORMANT-until-a-scrape-target-exists posture as gittensory-miner-prediction above: an operator runs
-  # `gittensory-miner queue metrics` (packages/loopover-miner/lib/portfolio-queue-cli.js's
+  # Same DORMANT-until-a-scrape-target-exists posture as loopover-miner-prediction above: an operator runs
+  # `loopover-miner queue metrics` (packages/loopover-miner/lib/portfolio-queue-cli.js's
   # renderPortfolioQueueMetrics) to a file/pushgateway their Prometheus scrapes. Absent
   # loopover_miner_portfolio_queue_* series simply yield no result, so this loads cleanly via
   # `selfhost:validate-observability` and never false-fires on an install with no miner scrape configured.
-  - name: gittensory-miner-portfolio-queue
+  - name: loopover-miner-portfolio-queue
     rules:
       - alert: LoopOverMinerPortfolioQueueItemStuck
         # The concrete "is a claimed item actually stuck" signal, distinct from #4827 (the lease/timeout/reclaim
@@ -686,9 +686,9 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory miner has a claimed portfolio-queue item stuck in progress"
+          summary: "loopover miner has a claimed portfolio-queue item stuck in progress"
           description: "The oldest in-flight portfolio-queue claim lease is {{ $value | printf \"%.0f\" }}s old (sustained 15m), well past the 30m default reclaim window. A crashed/killed attempt process's lease isn't being automatically reclaimed."
-          runbook: "Run `gittensory-miner queue list --json` to find the stuck item, and `gittensory-miner queue claim-batch` (or a scheduled reclaim sweep) to trigger the lease-expiry self-heal (portfolio-queue-expiry.js's sweepStuckItems). If it stays stuck after that, release it manually with `gittensory-miner queue release <owner/repo> <identifier>`."
+          runbook: "Run `loopover-miner queue list --json` to find the stuck item, and `loopover-miner queue claim-batch` (or a scheduled reclaim sweep) to trigger the lease-expiry self-heal (portfolio-queue-expiry.js's sweepStuckItems). If it stays stuck after that, release it manually with `loopover-miner queue release <owner/repo> <identifier>`."
 
       - alert: LoopOverMinerPortfolioQueueBacklogHigh
         # Standing size of the queued (not yet claimed) backlog, the miner counterpart of
@@ -700,7 +700,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "gittensory miner portfolio-queue backlog above 200"
+          summary: "loopover miner portfolio-queue backlog above 200"
           description: "{{ $value | printf \"%.0f\" }} portfolio-queue items are queued (sustained 30m) -- claiming/attempting is falling behind discovery."
           runbook: "Check whether `queue next` / `loop` is running at all (a laptop-mode miner only drains the queue while actively invoked), or whether WIP caps (#4850's --global-wip/--per-repo-wip) are set low enough to bottleneck throughput relative to discovery volume."
 
@@ -711,7 +711,7 @@ groups:
   # series simply yield no result. Read-only: these rules alert on the governor's already-persisted rate-limit
   # (#5134/write-rate-limit.ts) and cap-usage (#5134/budget-cap.ts) state; they do not gate, retry, or modify
   # governor decision logic in any way (governor-chokepoint.js/governor-chokepoint-persisted.js are untouched).
-  - name: gittensory-miner-governor
+  - name: loopover-miner-governor
     rules:
       - alert: LoopOverMinerGovernorRateLimitPressureHigh
         # remaining_ratio is 1 for an empty bucket and 0 once a write-rate-limit bucket (global or per-repo,

@@ -133,18 +133,18 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     // #4589: no coverage gap was supplied here, so "Test coverage" stays an empty (thus invisible) collapsible.
     expect(body).not.toContain("Test coverage");
     // #5078: advisoryAiRouting isn't set in the base `settings` fixture, so the beta chat collapsible stays empty too.
-    expect(body).not.toContain("[BETA] Chat with LoopOver");
+    expect(body).not.toContain("🧪 Chat with LoopOver");
   });
 
   it("never includes a duplicate AI 'Review details' collapsible", () => {
     const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
     const collapsibles = buildPublicSafeCollapsibles({ repo, pr: currentPr, profile, detection, settings, collisions, preflight, queueHealth, env: {} });
-    // #4589/#5078: "Test coverage" and "[BETA] Chat with LoopOver" are always present (title-wise) after
+    // #4589/#5078: "Test coverage" and "🧪 Chat with LoopOver" are always present (title-wise) after
     // Signal definitions, but their bodies are empty (thus invisible when rendered) whenever their respective
     // gating inputs aren't supplied, as here.
-    expect(collapsibles.map((section) => section.title)).toEqual(["Review context", "Contributor next steps", "Signal definitions", "Test coverage", "[BETA] Chat with LoopOver"]);
+    expect(collapsibles.map((section) => section.title)).toEqual(["Review context", "Contributor next steps", "Signal definitions", "Test coverage", "🧪 Chat with LoopOver"]);
     expect(collapsibles.find((section) => section.title === "Test coverage")?.body).toBe("");
-    expect(collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver")?.body).toBe("");
+    expect(collapsibles.find((section) => section.title === "🧪 Chat with LoopOver")?.body).toBe("");
     expect(collapsibles.map((section) => section.title)).not.toContain("Review details");
     // No section may carry the private maintainer-notes content.
     expect(collapsibles.map((section) => section.title)).not.toContain("Maintainer notes");
@@ -213,10 +213,10 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
     });
   });
 
-  // #5078: the "[BETA] Chat with LoopOver" collapsible points readers at the ask/chat commands -- empty
+  // #5078: the "🧪 Chat with LoopOver" collapsible points readers at the ask/chat commands -- empty
   // (thus invisible) unless the repo has opted into chatQa or intentRouting, mirroring #4589's own
   // "never mention a command that would bounce" principle.
-  describe("[BETA] Chat with LoopOver collapsible (#5078)", () => {
+  describe("🧪 Chat with LoopOver collapsible (#5078)", () => {
     const advisoryAiRoutingAllOff = {
       slop: false, e2eTestGen: false, planner: false, summaries: false,
       chatQa: false, chatQaFrontierFallback: false, intentRouting: false,
@@ -228,7 +228,23 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
         repo, pr: currentPr, profile, detection, collisions, preflight, queueHealth, env: {},
         settings: { ...settings, advisoryAiRouting: advisoryAiRoutingAllOff },
       });
-      expect(collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver")?.body).toBe("");
+      expect(collapsibles.find((section) => section.title === "🧪 Chat with LoopOver")?.body).toBe("");
+    });
+
+    it("marks the beta collapsible with the shared 🧪 badge + 'may change' disclaimer, and uses em-dashes consistently (#5096)", () => {
+      const { currentPr, detection, collisions, queueHealth, preflight, profile } = buildFixtures();
+      const collapsibles = buildPublicSafeCollapsibles({
+        repo, pr: currentPr, profile, detection, collisions, preflight, queueHealth, env: {},
+        settings: { ...settings, advisoryAiRouting: { ...advisoryAiRoutingAllOff, chatQa: true, intentRouting: true } },
+      });
+      const beta = collapsibles.find((section) => section.title === "🧪 Chat with LoopOver")!;
+      // The 🧪 badge (stronger than a "[BETA]" text prefix) is on the title, and the disclaimer is auto-appended.
+      expect(beta.title).toBe("🧪 Chat with LoopOver");
+      expect(beta.title).not.toContain("[BETA]");
+      expect(beta.body).toContain("_🧪 Experimental — new and may change._");
+      // #5096: the body's copy is em-dash-consistent — the old literal double-hyphen is gone.
+      expect(beta.body).toContain("automatically — no exact syntax required");
+      expect(beta.body).not.toContain("automatically -- no exact syntax");
     });
 
     it("renders ask/chat usage + the docs link when chatQa is enabled", () => {
@@ -238,7 +254,7 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
         env: { PUBLIC_SITE_ORIGIN: "https://example-selfhost.test" },
         settings: { ...settings, advisoryAiRouting: { ...advisoryAiRoutingAllOff, chatQa: true } },
       });
-      const beta = collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver");
+      const beta = collapsibles.find((section) => section.title === "🧪 Chat with LoopOver");
       expect(beta?.body).toContain("`@loopover ask <question>`");
       expect(beta?.body).toContain("`@loopover chat <question>`");
       expect(beta?.body).toContain("https://example-selfhost.test/docs/loopover-commands");
@@ -252,7 +268,7 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
         repo, pr: currentPr, profile, detection, collisions, preflight, queueHealth, env: {},
         settings: { ...settings, advisoryAiRouting: { ...advisoryAiRoutingAllOff, intentRouting: true } },
       });
-      const beta = collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver");
+      const beta = collapsibles.find((section) => section.title === "🧪 Chat with LoopOver");
       expect(beta?.body).toContain("routed to the closest matching read-only command");
       expect(beta?.body).toContain(LOOPOVER_SITE_URL);
     });

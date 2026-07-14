@@ -1,4 +1,4 @@
-# Alertmanager configuration for the gittensory self-host stack (#980 observability).
+# Alertmanager configuration for the loopover self-host stack (#980 observability).
 # Schema: Alertmanager v0.27+ (UTF-8 matchers; `matchers:` as a list of strings).
 # Mounted at /etc/alertmanager/alertmanager.yml in the alertmanager container.
 #
@@ -8,7 +8,7 @@
 # means `docker compose --profile observability up -d` always comes up green.
 #
 # THIS IS A REQUIRED STEP for any deployment you expect to run unattended, not an
-# optional one — see https://gittensory.aethereal.dev/docs/self-hosting-operations
+# optional one — see https://loopover.ai/docs/self-hosting-operations
 # (apps/loopover-ui/src/routes/docs.self-hosting-operations.tsx), "Alerting — required
 # for a 24/7 deployment" section, for the fastest verified path (a Discord webhook via
 # webhook_url_file, uncomment the block below) and for the Grafana "Alerts" row you can

@@ -47,7 +47,7 @@ describe("LoopOverMinerPredictionCalibrationDrift alert (#5188)", () => {
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {
     const group = alertsDoc.groups.find((g) => g.rules.some((r) => r.alert === rule.alert));
-    expect(group?.name).toBe("gittensory-miner-prediction");
+    expect(group?.name).toBe("loopover-miner-prediction");
   });
 
   it("keys off the miner renderer's real correct/incorrect counters, not invented metric names", () => {

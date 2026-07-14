@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1](https://github.com/JSONbored/gittensory/compare/mcp-v0.8.0...mcp-v0.8.1) (2026-07-14)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^1.0.0 to ^2.0.0
+
 ## [0.8.0](https://github.com/JSONbored/gittensory/compare/mcp-v0.7.1...mcp-v0.8.0) (2026-07-14)
 
 

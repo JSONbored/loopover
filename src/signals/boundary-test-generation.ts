@@ -32,7 +32,11 @@ export type BoundaryTouch = {
 // true-positive set). Each pattern only matches an ADDED line (a line starting with a single `+`, not `++`
 // which is the `+++ b/file` patch header) so this only ever reacts to genuinely new code, never context lines
 // or the file the diff is against.
-const ARRAY_INDEX_BOUNDS_PATTERN = /\[\s*(?:[\w.]+\.length|[\w.]+\.length\s*-\s*1|-1)\s*\]|\.length\s*(?:-\s*1)?\s*[<>]=?/;
+// The `.at(<literal>)` alternative catches the modern `arr.at(-1)` / `arr.at(0)` last-element/off-by-one
+// idiom (bracket forms above miss it). Deliberately only a NUMERIC literal argument (optionally negative):
+// a bare identifier like `.at(idx)` carries none of the specific boundary signal `-1`/`0` does, and matching
+// it would reintroduce the false-positive noise this pattern set is kept small to avoid.
+const ARRAY_INDEX_BOUNDS_PATTERN = /\[\s*(?:[\w.]+\.length|[\w.]+\.length\s*-\s*1|-1)\s*\]|\.length\s*(?:-\s*1)?\s*[<>]=?|\.at\(\s*-?\d+\s*\)/;
 const NULL_OR_UNDEFINED_BRANCH_PATTERN = /(?:===?|!==?)\s*(?:null|undefined)\b|\b(?:null|undefined)\s*(?:===?|!==?)|\?\?|\?\./;
 const EMPTY_COLLECTION_CHECK_PATTERN = /\.length\s*(?:===?|!==?|[<>]=?)\s*0\b|\blen\(.*\)\s*(?:===?|!==?|[<>]=?)\s*0\b|\.(?:isEmpty|is_empty)\s*\(/;
 

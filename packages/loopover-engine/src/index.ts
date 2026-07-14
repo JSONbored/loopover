@@ -585,6 +585,15 @@ export {
   type TaskGraphScore,
 } from "./idea-intake.js";
 export {
+  buildResultsPayload,
+  MAX_DIFF_PREVIEW_FILES,
+  type DiffPreviewFile,
+  type IterationResult,
+  type LoopResultStatus,
+  type ResultChangedFile,
+  type ResultsPayload,
+} from "./results-payload.js";
+export {
   buildMetadataRankInput,
   computeMetadataDupRisk,
   computeMetadataFeasibility,

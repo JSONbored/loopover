@@ -156,6 +156,7 @@ import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/p
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
+import { buildResultsPayload } from "../results-payload";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -956,6 +957,25 @@ const planIdeaClaimsOutputSchema = {
   errors: z.array(z.string()).optional(),
 };
 
+// Loop results-delivery input (#4801): a completed iteration's already-computed metadata.
+const buildResultsPayloadShape = {
+  repoFullName: z.string().min(1),
+  prNumber: z.number().int().nullable().optional(),
+  title: z.string(),
+  changedFiles: z
+    .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
+    .max(5000)
+    .optional(),
+  status: z.enum(["open", "merged", "closed"]).optional(),
+};
+
+const buildResultsPayloadOutputSchema = {
+  prLink: z.string().nullable().optional(),
+  summary: z.string().optional(),
+  diffPreview: z.unknown().optional(),
+  totals: z.unknown().optional(),
+};
+
 // Deterministic structural-improvement counterpart to checkSlopRiskShape (#4746, sub-issue I of epic #4737):
 // the positive-axis mirror of checkSlopRisk, same pure local-metadata contract. changedFiles/tests/testFiles
 // are reused verbatim (same shape as checkSlopRiskShape) so the two signals never disagree about what counts
@@ -1726,6 +1746,17 @@ export class LoopoverMcp {
         outputSchema: planIdeaClaimsOutputSchema,
       },
       async (input) => this.toolResult(await this.planIdeaClaims(input)),
+    );
+
+    server.registerTool(
+      "loopover_build_results_payload",
+      {
+        description:
+          "Package a completed loop iteration into the customer-facing result (#4801): a PR link, a plain-language summary, and a bounded diff preview, from already-computed iteration metadata. Deterministic and source-free — it formats the result, it does not fetch, open, or deliver anything.",
+        inputSchema: buildResultsPayloadShape,
+        outputSchema: buildResultsPayloadOutputSchema,
+      },
+      async (input) => this.toolResult(await this.buildLoopResults(input)),
     );
 
     server.registerTool(
@@ -3029,6 +3060,15 @@ export class LoopoverMcp {
     return {
       summary: `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
       data: { ok: true, verdict: claimPlan.graphVerdict, claimPlan } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async buildLoopResults(input: z.infer<z.ZodObject<typeof buildResultsPayloadShape>>): Promise<ToolPayload> {
+    await this.enforceToolRateLimit("loopover_build_results_payload");
+    const payload = buildResultsPayload(input);
+    return {
+      summary: payload.summary,
+      data: payload as unknown as Record<string, unknown>,
     };
   }
 

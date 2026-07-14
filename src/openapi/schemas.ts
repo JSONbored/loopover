@@ -822,6 +822,7 @@ export const RepositorySettingsSchema = z
     reviewNagMonitoredMentions: z.array(z.string()).optional(),
     autoCloseExemptLogins: z.array(z.string()).optional(),
     hardGuardrailGlobs: z.array(z.string()).nullable().optional(),
+    hardGuardrailGlobsOverridesInvariants: z.boolean().nullable().optional(),
     manualReviewLabel: z.string().nullable().optional(),
     readyToMergeLabel: z.string().nullable().optional(),
     changesRequestedLabel: z.string().nullable().optional(),

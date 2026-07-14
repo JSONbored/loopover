@@ -126,6 +126,7 @@ export type GatePolicyPack = "gittensor" | "oss-anti-slop";
 export type RepositorySettings = {
   repoFullName: string;
   hardGuardrailGlobs?: string[] | null | undefined;
+  hardGuardrailGlobsOverridesInvariants?: boolean | null | undefined;
 };
 
 export type RecentMergedPullRequestRecord = {
@@ -331,6 +332,7 @@ export type FocusManifestReviewConfig = {
 
 export type FocusManifestSettings = {
   hardGuardrailGlobs?: string[] | null | undefined;
+  hardGuardrailGlobsOverridesInvariants?: boolean | null | undefined;
 };
 
 export type FocusManifest = {

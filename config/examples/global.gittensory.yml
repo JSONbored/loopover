@@ -48,9 +48,13 @@ settings:
   autoCloseExemptLogins:
     - your-admin-login
 
-  # Hard manual-review path guardrails are config-as-code only. Omit or use [] for no path
-  # guardrails; set a concrete list when you want otherwise-mergeable PRs held for a person.
+  # Hard manual-review path guardrails are config-as-code only and safe by default (#3943): this list is
+  # ADDED to a fixed, built-in invariant set (DEFAULT_HARD_GUARDRAIL_GLOBS in
+  # src/review/guardrail-config.ts), never allowed to shrink it. Set
+  # hardGuardrailGlobsOverridesInvariants: true below to let this list fully REPLACE the built-in set
+  # instead (including [] to disable path guardrails entirely) — a deliberate opt-in, not the default.
   hardGuardrailGlobs: []
+  hardGuardrailGlobsOverridesInvariants: false
 
   # Disposition label names are config-as-code, not engine identity. Set any value to your repo's
   # preferred label name, or explicit null to disable that label while preserving the action/hold.

@@ -22,7 +22,7 @@ describe("resolveHardGuardrailGlobs", () => {
     expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: null })).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
   });
 
-  it("adds configured guardrail globs without allowing them to replace invariants", () => {
+  it("adds configured guardrail globs without allowing them to replace invariants by default", () => {
     const configured = ["src/custom/**", ".github/workflows/**"];
     const resolved = resolveHardGuardrailGlobs({ hardGuardrailGlobs: configured });
 
@@ -33,7 +33,30 @@ describe("resolveHardGuardrailGlobs", () => {
     expect(configured).toEqual(["src/custom/**", ".github/workflows/**"]);
   });
 
-  it("keeps invariant guardrails when configured globs are explicitly empty", () => {
+  it("keeps invariant guardrails when configured globs are explicitly empty and override is not set", () => {
     expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: [] })).toEqual(DEFAULT_HARD_GUARDRAIL_GLOBS);
+    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: [], hardGuardrailGlobsOverridesInvariants: false })).toEqual(
+      DEFAULT_HARD_GUARDRAIL_GLOBS,
+    );
+  });
+
+  it("REPLACES (not adds to) invariants when hardGuardrailGlobsOverridesInvariants is true", () => {
+    const configured = ["src/custom/**"];
+    const resolved = resolveHardGuardrailGlobs({ hardGuardrailGlobs: configured, hardGuardrailGlobsOverridesInvariants: true });
+
+    expect(resolved).toEqual(["src/custom/**"]);
+    expect(resolved).not.toContain(".github/workflows/**");
+    expect(resolved).not.toBe(configured);
+
+    resolved.push("mutated/**");
+    expect(configured).toEqual(["src/custom/**"]);
+  });
+
+  it("disables path guardrails entirely when override is true and configured globs are explicitly empty", () => {
+    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobs: [], hardGuardrailGlobsOverridesInvariants: true })).toEqual([]);
+  });
+
+  it("returns an empty list when override is true but hardGuardrailGlobs itself is unset", () => {
+    expect(resolveHardGuardrailGlobs({ hardGuardrailGlobsOverridesInvariants: true })).toEqual([]);
   });
 });

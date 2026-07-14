@@ -218,8 +218,13 @@ Two `autonomy` classes govern every label the bot can apply, and they are **inde
 
 All disposition labels are configurable under `settings.*Label`, and explicit `null` disables the
 label without disabling the underlying merge/close/hold decision. Hard path guardrails are
-config-as-code only: omitting `settings.hardGuardrailGlobs` or setting it to `[]` means no path
-guardrails, and a concrete list replaces any lower-layer private global default.
+config-as-code only and safe by default (#3943): `settings.hardGuardrailGlobs` is ADDED to a fixed,
+built-in invariant set (`DEFAULT_HARD_GUARDRAIL_GLOBS` in `src/review/guardrail-config.ts`) — an
+ordinary edit can only ever widen guardrail coverage, never shrink it. Set
+`settings.hardGuardrailGlobsOverridesInvariants: true` to opt out of that safety net entirely: once
+set, `hardGuardrailGlobs` REPLACES (never merges with) the built-in set or any lower-layer private
+global default, including an explicit `[]` to disable path guardrails altogether — a deliberate,
+separately-visible decision, not a side effect of trimming the list.
 
 ```yaml
 # .loopover.yml (global default) — recommended one-shot baseline

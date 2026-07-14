@@ -44,6 +44,9 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/review/outcomes-wire.ts",
 ];
 
+// Default, safe-by-default invariant set (restored by #3943 after the original pure-config-as-code design
+// let a `.gittensory.yml` edit silently remove its own guardrail protection). Repo settings can only ADD to
+// this set UNLESS the repo explicitly opts in via `hardGuardrailGlobsOverridesInvariants` (below).
 export const DEFAULT_HARD_GUARDRAIL_GLOBS = [
   ...CONFIG_AS_CODE_GUARDRAIL_GLOBS,
   ...WORKFLOW_AND_RUNTIME_GUARDRAIL_GLOBS,
@@ -51,14 +54,24 @@ export const DEFAULT_HARD_GUARDRAIL_GLOBS = [
 ];
 
 /**
- * Resolve hard-guardrail path globs from the already-effective repo settings. Built-in config-as-code,
- * workflow/runtime, and engine decision guardrails are invariants; repo settings may only add globs.
+ * Resolve hard-guardrail path globs from the already-effective repo settings.
+ *
+ * Safe by default (#3943): `DEFAULT_HARD_GUARDRAIL_GLOBS` is an invariant floor, and a repo's configured
+ * `hardGuardrailGlobs` is ADDED to it (deduplicated), never allowed to shrink it — so an ordinary
+ * `.gittensory.yml` edit (even a careless or malicious one) can only ever widen guardrail protection.
+ *
+ * Full self-hoster control, opt-in (config-as-code mandate): a repo that explicitly sets
+ * `hardGuardrailGlobsOverridesInvariants: true` takes complete ownership of its guardrail list —
+ * `hardGuardrailGlobs` is then used EXACTLY as given (including an explicit `[]` to disable path guardrails
+ * entirely), REPLACING rather than adding to the built-in floor. This is deliberately a second, explicit
+ * field rather than reusing `hardGuardrailGlobs: []`'s presence/absence, so opting out of the safety net is
+ * always a conscious, separately-visible decision in the config file, not a side effect of trimming a list.
  */
 export function resolveHardGuardrailGlobs(
-  settings: Pick<RepositorySettings, "hardGuardrailGlobs"> | null | undefined,
+  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants"> | null | undefined,
 ): string[] {
   const configured = settings?.hardGuardrailGlobs;
-  return Array.from(
-    new Set([...DEFAULT_HARD_GUARDRAIL_GLOBS, ...(Array.isArray(configured) ? configured : [])]),
-  );
+  const configuredList = Array.isArray(configured) ? configured : [];
+  if (settings?.hardGuardrailGlobsOverridesInvariants === true) return [...configuredList];
+  return Array.from(new Set([...DEFAULT_HARD_GUARDRAIL_GLOBS, ...configuredList]));
 }

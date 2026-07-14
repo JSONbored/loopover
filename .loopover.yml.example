@@ -668,12 +668,17 @@ settings:
   # of this setting. Bool. Default: false.
   closeOwnerAuthors: false
 
-  # Hard manual-review path guardrails are config-as-code only. Configured globs are ADDED to a fixed
-  # set of built-in invariant guardrails (config-as-code files, CI workflows/scripts, and core
-  # engine-decision paths — see DEFAULT_HARD_GUARDRAIL_GLOBS in src/review/guardrail-config.ts) that
-  # always apply and can never be disabled from here. Omit or use [] to rely on just those built-in
-  # invariants, with no repo-specific additions.
+  # Hard manual-review path guardrails are config-as-code only. Safe by default (#3943): whatever you list
+  # here is ADDED to a fixed, built-in invariant set (CI workflows/scripts, deploy config, config-as-code
+  # files, core engine-decision paths — see DEFAULT_HARD_GUARDRAIL_GLOBS in src/review/guardrail-config.ts)
+  # that an ordinary edit here can only ever widen, never shrink. Bool. Default: [].
   hardGuardrailGlobs: []
+
+  # Opt-in escape hatch: set true to make hardGuardrailGlobs above REPLACE (not add to) the built-in
+  # invariant set, including using [] to disable path guardrails entirely. A deliberate, separately-visible
+  # decision — only set this if you specifically want full control over your own guardrail list instead of
+  # the safe-by-default add-only behavior. Bool. Default: false.
+  hardGuardrailGlobsOverridesInvariants: false
 
   # Require a linked issue on every PR (dashboard equivalent of the toggle that
   # can auto-promote gate.linkedIssue to block). Bool. Default: false.

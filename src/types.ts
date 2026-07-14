@@ -1043,9 +1043,18 @@ export type RepositorySettings = {
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
   /** Hard manual-review guardrail globs. Config-as-code only: set in private/global or per-repo
-   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Absent means no path guardrails. Arrays are
-   *  replacement overlays, so a repo can clear a global default with `[]`. */
+   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Safe by default (#3943): ADDED to the built-in
+   *  invariant floor (`DEFAULT_HARD_GUARDRAIL_GLOBS` in src/review/guardrail-config.ts), never allowed to
+   *  shrink it, unless {@link hardGuardrailGlobsOverridesInvariants} is explicitly `true` — see that field. */
   hardGuardrailGlobs?: string[] | null | undefined;
+  /** Opt-in escape hatch (config-as-code mandate) from {@link hardGuardrailGlobs}'s safe-by-default
+   *  add-only behavior: when explicitly `true`, `hardGuardrailGlobs` is used EXACTLY as configured —
+   *  REPLACING the built-in invariant floor rather than adding to it, including an explicit `[]` to
+   *  disable path guardrails entirely. Deliberately a separate, explicitly-named field (rather than
+   *  overloading `hardGuardrailGlobs: []`'s meaning) so a repo choosing to drop the built-in safety net is
+   *  always a conscious, separately-visible config decision. Default `false`/absent preserves #3943's
+   *  protection: an ordinary `.gittensory.yml` edit can only ever widen guardrail coverage. */
+  hardGuardrailGlobsOverridesInvariants?: boolean | null | undefined;
   /** Label applied when an otherwise-ready PR is held for manual review by a guardrail. Config-as-code only;
    *  `null` disables the label while keeping the hold. Distinct from `review_state_label`, so operators can
    *  apply one manual-review label without enabling ready/changes-requested disposition labels. */

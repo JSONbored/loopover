@@ -9635,6 +9635,10 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "hardGuardrailGlobsOverridesInvariants": {
+            "type": "boolean",
+            "nullable": true
           }
         },
         "required": [

@@ -342,6 +342,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     reviewNagMonitoredMentions: "reviewNagMonitoredMentions:",
     autoCloseExemptLogins: "autoCloseExemptLogins:",
     hardGuardrailGlobs: "hardGuardrailGlobs:",
+    hardGuardrailGlobsOverridesInvariants: "hardGuardrailGlobsOverridesInvariants:",
     manualReviewLabel: "manualReviewLabel:",
     readyToMergeLabel: "readyToMergeLabel:",
     changesRequestedLabel: "changesRequestedLabel:",
@@ -2318,6 +2319,20 @@ describe("parseFocusManifest settings override + resolveEffectiveSettings", () =
     const invalidIgnored = resolveEffectiveSettings({ hardGuardrailGlobs: ["db-default/**"] } as unknown as RepositorySettings, invalidArray);
     expect(invalidIgnored.hardGuardrailGlobs).toEqual(["db-default/**"]);
     expect(invalidArray.warnings.some((w) => /did not contain any valid path globs/.test(w))).toBe(true);
+  });
+
+  it("parses + resolves hardGuardrailGlobsOverridesInvariants as a plain boolean flag", () => {
+    const enabled = parseFocusManifest({ settings: { hardGuardrailGlobsOverridesInvariants: true } });
+    expect(enabled.settings.hardGuardrailGlobsOverridesInvariants).toBe(true);
+    const eff = resolveEffectiveSettings({ hardGuardrailGlobsOverridesInvariants: false } as unknown as RepositorySettings, enabled);
+    expect(eff.hardGuardrailGlobsOverridesInvariants).toBe(true);
+
+    const omitted = resolveEffectiveSettings({ hardGuardrailGlobsOverridesInvariants: true } as unknown as RepositorySettings, parseFocusManifest({}));
+    expect(omitted.hardGuardrailGlobsOverridesInvariants).toBe(true);
+
+    const malformed = parseFocusManifest({ settings: { hardGuardrailGlobsOverridesInvariants: "yes" as never } });
+    expect(malformed.settings.hardGuardrailGlobsOverridesInvariants).toBeUndefined();
+    expect(malformed.warnings.some((w) => /settings\.hardGuardrailGlobsOverridesInvariants/.test(w))).toBe(true);
   });
 
   it("#label-scoping: parses + resolves reviewNagMonitoredMentions from the settings: block, overlaying the DB", () => {

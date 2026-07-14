@@ -1129,6 +1129,37 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q loopover)"`}
         .
       </p>
 
+      <h3>Optional: auto-pause on a post-deploy regression</h3>
+      <p>
+        <code>scripts/selfhost-post-update-regression-gate.sh</code> (#5736) goes one step further
+        than the post-update checklist above: it verifies the service doesn&apos;t just come back
+        up, but <em>stays</em> up once real traffic starts flowing. It observes a window of the{" "}
+        <code>loopover</code> service&apos;s own logs for a dead-job spike (every attempt exhausted
+        its retries) and, if the count exceeds a threshold, automatically flips the DB-backed global
+        kill-switch (<code>global_agent_controls.frozen</code>) so a bad deploy that starts silently
+        failing jobs pauses every agent write action fleet-wide instead of accumulating failures
+        until you notice. It never depends on the optional observability profile
+        (Prometheus/Grafana/Loki) being enabled -- it reads the service&apos;s own logs directly,
+        the same way <code>docker compose logs loopover</code> always works regardless of which
+        profiles you&apos;ve opted into. Run it after <code>selfhost-post-update-check.sh</code>{" "}
+        passes, once you&apos;re ready to let real webhook traffic through -- it blocks for the full
+        observation window by design (3 minutes by default):
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`./scripts/selfhost-post-update-regression-gate.sh
+
+# Tune the observation window and/or the dead-job threshold that triggers the pause
+SELFHOST_REGRESSION_WINDOW_SECONDS=300 SELFHOST_REGRESSION_JOB_DEAD_THRESHOLD=10 \\
+  ./scripts/selfhost-post-update-regression-gate.sh`}
+      />
+      <p>If it trips, clear the pause once you&apos;ve confirmed the regression is fixed:</p>
+      <CodeBlock
+        lang="bash"
+        code={`docker compose exec -T postgres psql -U loopover -d loopover \\
+  -c "UPDATE global_agent_controls SET frozen = 0 WHERE id = 'singleton';"`}
+      />
+
       <h3>Rollback: no dedicated command</h3>
       <p>
         There is no <code>rollback</code> script. Rolling back means re-running one of the two

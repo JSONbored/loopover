@@ -96,10 +96,12 @@ export function shouldFireMaintainerRecap(
 }
 
 /** The repos this recap scans. Mirrors ops-wire.ts's opsScanRepos / pr-reconciliation.ts's watchedRepos: prefer
- *  agent-configured repos when any opted in (the acting-autonomy surface), else fall back to every registered
- *  repo so the digest still reports before the agent is enabled anywhere. */
+ *  agent-configured repos when any opted in (the acting-autonomy surface), else fall back to every installed
+ *  repo so the digest still reports before the agent is enabled anywhere. The maintainer recap digest reports
+ *  on PR/issue backlog and review activity for repos the agent runs on -- core review-ops, unrelated to
+ *  gittensor-subnet registry membership, so `isInstalled` (#5016), not `isRegistered`. */
 async function recapScanRepos(env: Env): Promise<string[]> {
-  const repos = (await listRepositories(env)).filter((repo) => repo.isRegistered);
+  const repos = (await listRepositories(env)).filter((repo) => repo.isInstalled);
   const configured: string[] = [];
   for (const repo of repos) {
     try {

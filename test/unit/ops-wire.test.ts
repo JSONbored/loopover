@@ -291,6 +291,30 @@ describe("runOpsAlerts — cron path over gittensory's outcome data", () => {
     expect(found["owner/no-install"]).toBeUndefined();
   });
 
+  it("#5016: scans an installed-but-not-subnet-registered repo (outcome monitoring is core review-ops, not subnet-gated)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 0)")
+      .bind("acme/installed-not-registered", "acme", "installed-not-registered")
+      .run();
+    await seedGateFalsePositiveAnomaly(env, "acme/installed-not-registered");
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["acme/installed-not-registered"]?.some((a) => /gate false-positive spike/.test(a))).toBe(true);
+  });
+
+  it("#5016: excludes a subnet-registered-but-not-installed repo from the ops scan", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 0, 1)")
+      .bind("acme/registered-not-installed", "acme", "registered-not-installed")
+      .run();
+    await seedGateFalsePositiveAnomaly(env, "acme/registered-not-installed");
+
+    const found = await runOpsAlerts(env);
+
+    expect(found["acme/registered-not-installed"]).toBeUndefined();
+  });
+
   it("detects and reports a review burst end-to-end (a PR published far more review surfaces than normal in the window)", async () => {
     setSelfHostedMetricsMode(true); // keep the repo label so the counter assertion can target the exact series
     const env = createTestEnv();

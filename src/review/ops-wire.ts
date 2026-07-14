@@ -172,12 +172,15 @@ export function worstAnomaly(anomalies: string[]): { line: string; severity: Pag
 
 // ── Cron alerts: scan gittensory's outcome data, emit a structured log on drift (flag-gated by the caller) ──
 
-/** The registered repos to scan. Scoped to REGISTERED repos (the ones gittensory actually tracks outcomes
- *  for) — same `isRegistered` filter the other scheduled fan-outs use. */
+/** The installed repos to scan. Mirrors fanOutAgentRegateSweepJobs's own repo population (#5016): outcome
+ *  telemetry (gate precision, slop calibration, review-burst detection) is core review-quality monitoring for
+ *  any repo the review agent actually runs on, unrelated to gittensor-subnet registry membership -- NOT
+ *  `isRegistered`, which this used to (wrongly) match, despite this doc comment's own inner installationId
+ *  guard below already assuming installation, not registration, is what matters. */
 async function opsScanRepos(env: Env): Promise<string[]> {
-  const repos = (await listRepositories(env)).filter((repo) => repo.isRegistered);
+  const repos = (await listRepositories(env)).filter((repo) => repo.isInstalled);
   // Prefer agent-configured repos when any opted in (the acting-autonomy surface, like the regate sweep); fall
-  // back to every registered repo so outcome telemetry is still scanned before the agent is enabled anywhere.
+  // back to every installed repo so outcome telemetry is still scanned before the agent is enabled anywhere.
   const configured: string[] = [];
   for (const repo of repos) {
     try {

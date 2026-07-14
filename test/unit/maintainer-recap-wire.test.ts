@@ -192,6 +192,32 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
     expect(posted).toHaveLength(1);
   });
 
+  it("#5016: includes an installed-but-not-subnet-registered repo in the digest (PR/issue backlog reporting is core review-ops, not subnet-gated)", async () => {
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 0)")
+      .bind("acme/installed-not-registered", "acme", "installed-not-registered")
+      .run();
+    await seedMergedPr(env, "acme/installed-not-registered", 1);
+    stubDiscordFetch();
+
+    const { report } = ranRecap(await runMaintainerRecapJob(env));
+
+    expect(report.repos.map((r) => r.repoFullName)).toContain("acme/installed-not-registered");
+  });
+
+  it("#5016: excludes a subnet-registered-but-not-installed repo from the digest", async () => {
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 0, 1)")
+      .bind("acme/registered-not-installed", "acme", "registered-not-installed")
+      .run();
+    await seedMergedPr(env, "acme/registered-not-installed", 1);
+    stubDiscordFetch();
+
+    const { report } = ranRecap(await runMaintainerRecapJob(env));
+
+    expect(report.repos.map((r) => r.repoFullName)).not.toContain("acme/registered-not-installed");
+  });
+
   it("keeps miner cohort diagnostics out of the scheduled external recap", async () => {
     const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK });
     await seedRegisteredRepo(env, "owner/alpha");

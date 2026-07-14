@@ -99,8 +99,10 @@ async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow
   return evalRowFromCalibration(repoFullName, calibration.recommendations.positive, calibration.recommendations.negative);
 }
 
-/** The registered, agent-configured repos to tune over — SAME scoping the ops scan + regate sweep use (only
- *  repos that opt into the acting-autonomy surface). A repo whose settings blip is skipped, never aborts.
+/** The installed, agent-configured repos to tune over — SAME scoping the ops scan + regate sweep use (only
+ *  repos that opt into the acting-autonomy surface). Self-tune calibrates the review gate's own confidence
+ *  floor from outcome data, core review-quality machinery unrelated to gittensor-subnet registry membership,
+ *  so this is `isInstalled` (#5016), not `isRegistered`. A repo whose settings blip is skipped, never aborts.
  *
  *  Per-repo opt-out (#4104): unlike rag/reputation/grounding, selftune has no `LOOPOVER_REVIEW_REPOS`
  *  allowlist to fall back to — every agent-configured repo is already IN by default once the global flag is
@@ -113,7 +115,7 @@ async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow
  *  safety boundary this config key must not touch. Unset (the default) changes nothing. A manifest-load error
  *  fails open (repo stays included), matching the existing settings-blip fail-safe below. */
 async function selfTuneRepos(env: Env): Promise<string[]> {
-  const repos = (await listRepositories(env)).filter((repo) => repo.isRegistered);
+  const repos = (await listRepositories(env)).filter((repo) => repo.isInstalled);
   const configured: string[] = [];
   for (const repo of repos) {
     try {

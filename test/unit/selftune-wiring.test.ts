@@ -301,6 +301,40 @@ describe("selfTuneRepos — per-repo review.selftune FORCE-OFF (#4104)", () => {
     expect(await loadShadowOverride(env as never, `${owner}/${name}`)).toBeNull();
   });
 
+  it("#5016: tunes an installed-but-not-subnet-registered repo (gate self-calibration is core review-ops, not subnet-gated)", async () => {
+    const owner = "acme";
+    const name = "installed-not-registered";
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered, installation_id) VALUES (?, ?, ?, 1, 0, ?)")
+      .bind(`${owner}/${name}`, owner, name, 9601)
+      .run();
+    await env.DB.prepare("INSERT INTO repository_settings (repo_full_name, autonomy_json) VALUES (?, ?)")
+      .bind(`${owner}/${name}`, ACTING_AUTONOMY)
+      .run();
+    await seedRecommendationOutcomes(env, `${owner}/${name}`, 5, 10);
+
+    await runSelfTune(env);
+
+    expect((await loadShadowOverride(env as never, `${owner}/${name}`))?.override.confidenceFloor).toBeGreaterThan(0);
+  });
+
+  it("#5016: excludes a subnet-registered-but-not-installed repo from the tuning pass", async () => {
+    const owner = "acme";
+    const name = "registered-not-installed";
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
+    await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered, installation_id) VALUES (?, ?, ?, 0, 1, ?)")
+      .bind(`${owner}/${name}`, owner, name, 9602)
+      .run();
+    await env.DB.prepare("INSERT INTO repository_settings (repo_full_name, autonomy_json) VALUES (?, ?)")
+      .bind(`${owner}/${name}`, ACTING_AUTONOMY)
+      .run();
+    await seedRecommendationOutcomes(env, `${owner}/${name}`, 5, 10);
+
+    await runSelfTune(env);
+
+    expect(await loadShadowOverride(env as never, `${owner}/${name}`)).toBeNull();
+  });
+
   it("unset review.selftune (the default) does not change today's behavior — an agent-configured repo still tunes normally", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
     await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);

@@ -280,4 +280,10 @@ describe("gittensory-miner manage status (#2325)", () => {
     expect(runManageStatus(["--verbose"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown option");
   });
+
+  it("rejects a stray positional argument with usage", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runManageStatus(["acme/widgets"])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner manage status [--json]");
+  });
 });

@@ -123,3 +123,51 @@ describe("buildUnifiedReviewDiff — the #1528 fix: never silently drop the file
     expect(keepHighSignalHunks(patch, 20)).toContain("dropped");
   });
 });
+
+describe("keepHighSignalHunks — non-positive budget guard (#5849)", () => {
+  it("returns only the truncation marker when the budget is zero", () => {
+    expect(keepHighSignalHunks("@@ a\n+x\n+y", 0)).toBe("… (this file's diff truncated)");
+  });
+
+  it("returns only the truncation marker when the budget is negative (e.g. a header already overran remaining)", () => {
+    expect(keepHighSignalHunks("@@ a\n+x\n+y", -25)).toBe("… (this file's diff truncated)");
+  });
+
+  it("head-slices a single oversized hunk rather than dropping it whole", () => {
+    // No second "@@" header → hunks.length <= 1, so the single-hunk branch head-slices to fit the budget.
+    const single = `@@ only\n${"+padding line\n".repeat(20)}`;
+    const out = keepHighSignalHunks(single, 30);
+    expect(out.startsWith(single.slice(0, 30))).toBe(true);
+    expect(out).toContain("… (this file's diff truncated)");
+  });
+});
+
+describe("buildUnifiedReviewDiff — header defaults + budget-floor truncation (#5849)", () => {
+  it("defaults missing additions/deletions to +0/-0 and a missing status to 'modified'", () => {
+    const diff = buildUnifiedReviewDiff([{ path: "src/a.ts", patch: "@@ a\n+x" }]);
+    expect(diff).toContain("### src/a.ts (modified) +0/-0");
+  });
+
+  it("uses the provided additions/deletions counts when present", () => {
+    const diff = buildUnifiedReviewDiff([{ path: "src/a.ts", patch: "@@ a\n+x", status: "added", additions: 3, deletions: 1 }]);
+    expect(diff).toContain("### src/a.ts (added) +3/-1");
+  });
+
+  it("stops with a truncation notice once the remaining budget falls below the per-file floor", () => {
+    const big = `@@ big\n${"+line of added content\n".repeat(30)}`;
+    const diff = buildUnifiedReviewDiff(
+      [
+        { path: "src/a.ts", patch: big, status: "modified", additions: 30, deletions: 0 },
+        { path: "src/b.ts", patch: big, status: "modified", additions: 30, deletions: 0 },
+      ],
+      320,
+    );
+    expect(diff).toContain("…diff truncated (2 files total)");
+  });
+
+  it("lists a patch-less file with its (defaulted) counts instead of dropping it", () => {
+    const diff = buildUnifiedReviewDiff([{ path: "logo.bin", patch: undefined, status: "added" }]);
+    expect(diff).toContain("### logo.bin (added) +0/-0");
+    expect(diff).toContain("(no inline patch — binary or too large)");
+  });
+});

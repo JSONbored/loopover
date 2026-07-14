@@ -7,13 +7,6 @@
 
 * **mcp:** wire gittensory_feasibility_gate's claimStatus to the local claim ledger ([#5157](https://github.com/JSONbored/gittensory/issues/5157)) ([#5389](https://github.com/JSONbored/gittensory/issues/5389)) ([91b235d](https://github.com/JSONbored/gittensory/commit/91b235dbc4c9e3c818ff0a76e98f087c1f3ec8c2))
 
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @loopover/engine bumped from ^1.0.0 to ^2.0.0
-
 ## [0.7.1](https://github.com/JSONbored/gittensory/compare/mcp-v0.7.0...mcp-v0.7.1) (2026-07-08)
 
 

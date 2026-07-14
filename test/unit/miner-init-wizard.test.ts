@@ -78,7 +78,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
   });
 
   it("resolveWizardEnvFilePath writes to the same state dir init already uses", () => {
-    expect(resolveWizardEnvFilePath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/state" })).toBe(
+    expect(resolveWizardEnvFilePath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" })).toBe(
       "/custom/state/.env",
     );
   });
@@ -132,7 +132,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
     it("writes a starter .env (mode 0600), initializes laptop state, and passes a clean doctor run when the provider is skipped", async () => {
       const stateDir = join(tempRoot(), "state");
       const cwd = tempRoot(); // no .gittensory-miner.yml here => config-content check passes
-      const env = { GITTENSORY_MINER_CONFIG_DIR: stateDir };
+      const env = { LOOPOVER_MINER_CONFIG_DIR: stateDir };
       const io = createFakeIo({ maskedAnswers: ["ghp_test_token_123"], textAnswers: [""] });
 
       const exitCode = await runInteractiveInit(env, cwd, io);
@@ -155,7 +155,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
     it("re-prompts when the token is left empty before accepting a valid one", async () => {
       const stateDir = join(tempRoot(), "state");
       const cwd = tempRoot();
-      const env = { GITTENSORY_MINER_CONFIG_DIR: stateDir };
+      const env = { LOOPOVER_MINER_CONFIG_DIR: stateDir };
       const io = createFakeIo({ maskedAnswers: ["", "ghp_after_retry"], textAnswers: [""] });
 
       await runInteractiveInit(env, cwd, io);
@@ -167,7 +167,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
     it("writes the selected provider and its filled-in companion var, skipping the one left empty", async () => {
       const stateDir = join(tempRoot(), "state");
       const cwd = tempRoot();
-      const env = { GITTENSORY_MINER_CONFIG_DIR: stateDir };
+      const env = { LOOPOVER_MINER_CONFIG_DIR: stateDir };
       const claudeIndex = CODING_AGENT_DRIVER_NAMES.indexOf("claude-cli");
       const io = createFakeIo({
         maskedAnswers: ["ghp_provider_case"],
@@ -184,7 +184,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
     it("reports the sqlite file as already existing on a second run against the same state dir", async () => {
       const stateDir = join(tempRoot(), "state");
       const cwd = tempRoot();
-      const env = { GITTENSORY_MINER_CONFIG_DIR: stateDir };
+      const env = { LOOPOVER_MINER_CONFIG_DIR: stateDir };
 
       await runInteractiveInit(env, cwd, createFakeIo({ maskedAnswers: ["ghp_first"], textAnswers: [""] }));
       const secondIo = createFakeIo({ maskedAnswers: ["ghp_second"], textAnswers: [""] });
@@ -195,7 +195,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
   });
 
   describe("runInteractiveInit with device-flow authorization configured (#5682)", () => {
-    const deviceEnv = (stateDir: string) => ({ GITTENSORY_MINER_CONFIG_DIR: stateDir, GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID: "client-abc" });
+    const deviceEnv = (stateDir: string) => ({ LOOPOVER_MINER_CONFIG_DIR: stateDir, LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID: "client-abc" });
     const jsonResponse = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
     const noSleep = async () => undefined;
 
@@ -321,7 +321,7 @@ describe("gittensory-miner init --interactive wizard (#5176)", () => {
     // wizard (distinct prompt text, distinct code path) without hanging; the full multi-turn prompt flow is
     // exercised precisely and deterministically by the direct runInteractiveInit tests above.
     const stateDir = tempRoot();
-    const result = runCliResult(["init", "--interactive"], { GITTENSORY_MINER_CONFIG_DIR: stateDir });
+    const result = runCliResult(["init", "--interactive"], { LOOPOVER_MINER_CONFIG_DIR: stateDir });
     expect(result.output).toContain("GitHub token (input hidden)");
     expect(result.output).not.toContain("initialized " + stateDir);
   });

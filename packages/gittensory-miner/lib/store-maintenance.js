@@ -15,8 +15,8 @@ import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 /** Env opt-ins for ledger retention (unset ⇒ retention disabled). */
-export const LEDGER_RETENTION_DAYS_ENV = "GITTENSORY_MINER_LEDGER_RETENTION_DAYS";
-export const LEDGER_RETENTION_MAX_ROWS_ENV = "GITTENSORY_MINER_LEDGER_RETENTION_MAX_ROWS";
+export const LEDGER_RETENTION_DAYS_ENV = "LOOPOVER_MINER_LEDGER_RETENTION_DAYS";
+export const LEDGER_RETENTION_MAX_ROWS_ENV = "LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS";
 
 /** Fixed retention specs for the three append-only ledgers. These identifiers are INTERNAL constants — never
  *  caller/user text — and are validated as plain identifiers before interpolation as defence in depth. */

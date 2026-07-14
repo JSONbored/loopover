@@ -65,12 +65,12 @@ Per-repo tuning for the Governor self-plagiarism throttle consulted before `open
 
 ### `killSwitch` (object, default: `{ paused: false }`)
 
-Per-repo kill-switch consulted by the Governor chokepoint before every write action (#2341). Distinct from `minerEnabled`: `minerEnabled` is a discovery-time opt-out (a miner never even considers the repo), while `killSwitch.paused` is a runtime halt of an already-in-flight queue — un-pausing resumes exactly where the queue left off. A separate, operator-controlled GLOBAL kill-switch (env var `GITTENSORY_MINER_KILL_SWITCH`) halts every repo at once and always wins over this per-repo flag.
+Per-repo kill-switch consulted by the Governor chokepoint before every write action (#2341). Distinct from `minerEnabled`: `minerEnabled` is a discovery-time opt-out (a miner never even considers the repo), while `killSwitch.paused` is a runtime halt of an already-in-flight queue — un-pausing resumes exactly where the queue left off. A separate, operator-controlled GLOBAL kill-switch (env var `LOOPOVER_MINER_KILL_SWITCH`) halts every repo at once and always wins over this per-repo flag.
 
 - `paused` (boolean, default: `false`) — halts all miner WRITE actions for this repo without deregistering it from targeting/discovery.
 
 ### `execution` (object, default: `{ liveModeOptIn: null }`)
 
-Per-repo dry-run/live execution opt-in consulted by the Governor chokepoint (#2342). A freshly-configured miner always defaults to dry-run (observe/log only, never execute a write) — this field is the only per-repo path to live mode, and it alone is not sufficient: the miner's own operator must also separately opt in globally (env var `GITTENSORY_MINER_LIVE_MODE=live`) before writes actually execute. A repo that wants to guarantee it never receives live automated writes, regardless of any operator's global setting, should use `killSwitch.paused: true` instead — the kill-switch always takes precedence over any live-mode opt-in.
+Per-repo dry-run/live execution opt-in consulted by the Governor chokepoint (#2342). A freshly-configured miner always defaults to dry-run (observe/log only, never execute a write) — this field is the only per-repo path to live mode, and it alone is not sufficient: the miner's own operator must also separately opt in globally (env var `LOOPOVER_MINER_LIVE_MODE=live`) before writes actually execute. A repo that wants to guarantee it never receives live automated writes, regardless of any operator's global setting, should use `killSwitch.paused: true` instead — the kill-switch always takes precedence over any live-mode opt-in.
 
 - `liveModeOptIn` (string or `null`, default: `null`) — must equal EXACTLY the literal `"live"` to opt in. Any other value (a typo, `"yes"`, `"on"`, or a boolean `true` from a malformed file) is treated as not opted in — deliberately not a boolean flag, so a fat-fingered config can never accidentally enable live writes.

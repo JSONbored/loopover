@@ -19,8 +19,8 @@ set -eu
 # aborting the whole export -- Prometheus treats an absent series as "no data", not an error, so a partial
 # export is strictly better than a stale-forever or entirely-missing one.
 
-MINER_BIN="${GITTENSORY_MINER_BIN:-gittensory-miner}"
-OUT_FILE="${GITTENSORY_MINER_PROMETHEUS_TEXTFILE:-/var/lib/node_exporter/textfile_collector/gittensory_miner.prom}"
+MINER_BIN="${LOOPOVER_MINER_BIN:-gittensory-miner}"
+OUT_FILE="${LOOPOVER_MINER_PROMETHEUS_TEXTFILE:-/var/lib/node_exporter/textfile_collector/gittensory_miner.prom}"
 TMP_FILE="${OUT_FILE}.tmp"
 
 mkdir -p "$(dirname "$OUT_FILE")"

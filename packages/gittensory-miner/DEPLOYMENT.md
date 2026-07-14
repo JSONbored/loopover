@@ -6,7 +6,7 @@ Two form factors for running `@loopover/miner`: **laptop mode** (single machine,
 | ---------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | **Best for**     | One contributor machine, local experimentation                                                 | Many parallel miner attempts on a host or small cluster                           |
 | **Dependencies** | Node.js `>=22.13.0` only                                                                       | Docker (or compatible runtime) + Node image or custom image                       |
-| **State**        | SQLite files under `~/.config/gittensory-miner/` (override with `GITTENSORY_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `GITTENSORY_MINER_CONFIG_DIR`) volume |
+| **State**        | SQLite files under `~/.config/gittensory-miner/` (override with `LOOPOVER_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `LOOPOVER_MINER_CONFIG_DIR`) volume |
 | **Setup**        | `npm install -g @loopover/miner` or workspace build                                | `docker build` + `docker run` with env + volume (see below)                       |
 | **Footprint**    | One Node process, local disk for ledgers/queues                                                | One container per worker; scale horizontally by adding containers                 |
 
@@ -36,7 +36,7 @@ For provider selection and the CLI-specific model/timeout overrides, see
    ```
 
    `init --interactive` offers "Authorize with GitHub" (device flow -- visit a URL, enter a short code, no
-   token to copy or paste) as its first option once `GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID` is configured for the
+   token to copy or paste) as its first option once `LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID` is configured for the
    centrally-held `loopover-ams` GitHub App; the original pasted-PAT prompt stays available as option 2, and is
    what the wizard falls back to automatically on any device-flow failure. Unconfigured, the wizard is
    byte-identical to the pasted-token-only prompt. Either way, the resulting `GITHUB_TOKEN` acts as your own
@@ -67,10 +67,10 @@ For provider selection and the CLI-specific model/timeout overrides, see
    Not every file appears immediately: `laptop-state` is written by `init`, and each of the others is created
    the first time its subsystem actually runs (an attempt, a discovery pass, a replay, an Orb export, …), so a
    fresh install that has only run `status`/`doctor` will show a subset. All sixteen default into this one
-   directory. Override the directory for every store at once with `GITTENSORY_MINER_CONFIG_DIR` or
+   directory. Override the directory for every store at once with `LOOPOVER_MINER_CONFIG_DIR` or
    `XDG_CONFIG_HOME` (same resolution chain as `@loopover/mcp`); every store except `laptop-state.sqlite3`
-   (directory only) also honors its own `GITTENSORY_MINER_<NAME>_DB` path override — e.g.
-   `GITTENSORY_MINER_PORTFOLIO_QUEUE_DB` — to relocate an individual file. `doctor`'s `store-integrity:*` checks
+   (directory only) also honors its own `LOOPOVER_MINER_<NAME>_DB` path override — e.g.
+   `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` — to relocate an individual file. `doctor`'s `store-integrity:*` checks
    report the persistent stores, so it is the quickest way to confirm what exists and is readable on disk.
 
 4. Optional per-repo miner goals: copy [`.gittensory-miner.yml.example`](../../.gittensory-miner.yml.example) to a target repo as `.gittensory-miner.yml`. See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md).
@@ -87,7 +87,7 @@ Run a disposable worker with persistent SQLite state on a mounted volume. Inject
 
 ```sh
 docker run --rm -it \
-  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
+  -e LOOPOVER_MINER_CONFIG_DIR=/data/miner \
   -e GITHUB_TOKEN \
   -v miner-data:/data/miner \
   gittensory-miner:latest \
@@ -96,7 +96,7 @@ docker run --rm -it \
 
 The image entrypoint is `gittensory-miner`; pass subcommands after the image name (`status`, `doctor`, `claim`, …).
 
-- **`/data/miner` volume** — holds all SQLite state (`claim-ledger.sqlite3`, `plan-store.sqlite3`, etc.) so containers are disposable. Defaults to `GITTENSORY_MINER_CONFIG_DIR=/data/miner` in the image.
+- **`/data/miner` volume** — holds all SQLite state (`claim-ledger.sqlite3`, `plan-store.sqlite3`, etc.) so containers are disposable. Defaults to `LOOPOVER_MINER_CONFIG_DIR=/data/miner` in the image.
 - **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
 - **Scale** — launch additional containers with the same volume (or partitioned config dirs) for parallel attempts.
 
@@ -108,7 +108,7 @@ uses it exactly as if `GITHUB_TOKEN` had been set directly:
 
 ```sh
 docker run --rm -it \
-  -e GITTENSORY_MINER_CONFIG_DIR=/data/miner \
+  -e LOOPOVER_MINER_CONFIG_DIR=/data/miner \
   -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
   -v miner-data:/data/miner \
   -v /path/to/your/secret:/run/secrets/github_token:ro \
@@ -133,7 +133,7 @@ cp .gittensory-miner.env.example .gittensory-miner.env   # fill in GITHUB_TOKEN 
 docker compose -f docker-compose.miner.yml up -d --build
 ```
 
-**Scaling to N parallel workers.** `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` — `-p` namespaces the volume) or point each at a distinct `GITTENSORY_MINER_CONFIG_DIR` on its own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in [`k8s/`](../../k8s/) (per-pod volumes).
+**Scaling to N parallel workers.** `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` — `-p` namespaces the volume) or point each at a distinct `LOOPOVER_MINER_CONFIG_DIR` on its own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in [`k8s/`](../../k8s/) (per-pod volumes).
 
 ## Bare-host (systemd, no Docker)
 

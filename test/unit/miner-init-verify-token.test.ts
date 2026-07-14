@@ -12,7 +12,7 @@ function makeTempEnv() {
   return {
     env: {
       ...process.env,
-      GITTENSORY_MINER_CONFIG_DIR: configDir,
+      LOOPOVER_MINER_CONFIG_DIR: configDir,
     },
     configDir,
     dbPath: join(configDir, "laptop-state.sqlite3"),

@@ -33,7 +33,7 @@ quota, instead of silently failing to save or leaving storage partially written.
 `npm test` runs with `--coverage` enabled (v8 provider) and enforces `vitest.config.ts`'s
 `coverage.thresholds` — a measured baseline (#4865), not an aspirational target. The suite imports
 `background.js`, `opportunity-badge.js`, and `toolbar-badge.js` directly (via the existing
-`__GITTENSORY_MINER_EXTENSION_TEST__` hook) so v8 can attribute coverage; the root `test/unit/miner-*.test.ts`
+`__LOOPOVER_MINER_EXTENSION_TEST__` hook) so v8 can attribute coverage; the root `test/unit/miner-*.test.ts`
 files remain as broader behavior tests through the `node:vm` harness.
 
 `content.js` and `options.js` are deliberately deferred — they need a jsdom mount harness before

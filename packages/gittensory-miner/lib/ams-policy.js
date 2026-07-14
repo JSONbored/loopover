@@ -12,10 +12,10 @@ import { resolveLocalStoreDbPath } from "./local-store.js";
 
 const AMS_POLICY_FILENAME = ".gittensory-ams.yml";
 
-/** Resolve the operator's local AMS policy file path: explicit env var > `GITTENSORY_MINER_CONFIG_DIR` >
+/** Resolve the operator's local AMS policy file path: explicit env var > `LOOPOVER_MINER_CONFIG_DIR` >
  *  `XDG_CONFIG_HOME`/`~/.config`, mirroring every other local-store path in this package. */
 export function resolveAmsPolicyConfigPath(env = process.env) {
-  return resolveLocalStoreDbPath(AMS_POLICY_FILENAME, "GITTENSORY_MINER_AMS_POLICY_PATH", env);
+  return resolveLocalStoreDbPath(AMS_POLICY_FILENAME, "LOOPOVER_MINER_AMS_POLICY_PATH", env);
 }
 
 function normalizeOptions(options = {}) {

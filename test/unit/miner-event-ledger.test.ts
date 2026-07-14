@@ -27,10 +27,10 @@ afterEach(() => {
 
 describe("gittensory-miner event ledger (#2290)", () => {
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolveEventLedgerDbPath({ GITTENSORY_MINER_EVENT_LEDGER_DB: "/custom/e.sqlite3" })).toBe(
+    expect(resolveEventLedgerDbPath({ LOOPOVER_MINER_EVENT_LEDGER_DB: "/custom/e.sqlite3" })).toBe(
       "/custom/e.sqlite3",
     );
-    expect(resolveEventLedgerDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolveEventLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/event-ledger.sqlite3",
     );
     expect(resolveEventLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(

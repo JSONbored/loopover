@@ -153,18 +153,18 @@ describe("gittensory-miner startup update check (#2331)", () => {
     ).toBe("http://localhost:4873");
   });
 
-  it("skips the check when --no-update-check or GITTENSORY_MINER_NO_UPDATE_CHECK=1 is set", () => {
+  it("skips the check when --no-update-check or LOOPOVER_MINER_NO_UPDATE_CHECK=1 is set", () => {
     expect(shouldSkipUpdateCheck(["--version", "--no-update-check"])).toBe(
       true,
     );
     expect(
       shouldSkipUpdateCheck(["version"], {
-        GITTENSORY_MINER_NO_UPDATE_CHECK: "1",
+        LOOPOVER_MINER_NO_UPDATE_CHECK: "1",
       }),
     ).toBe(true);
     expect(
       shouldSkipUpdateCheck(["version"], {
-        GITTENSORY_MINER_NO_UPDATE_CHECK: "true",
+        LOOPOVER_MINER_NO_UPDATE_CHECK: "true",
       }),
     ).toBe(true);
     expect(shouldSkipUpdateCheck(["version"], {})).toBe(false);

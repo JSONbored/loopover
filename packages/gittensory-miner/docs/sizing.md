@@ -29,7 +29,7 @@ dominated by the operator's chosen coding-agent CLI process, not by anything thi
 ## Methodology
 
 - **Laptop mode CPU/RAM**: GNU `/usr/bin/time -v` around the CLI process directly (no container).
-- **Laptop mode disk**: `du -sh`/`du -ah` on the resolved `GITTENSORY_MINER_CONFIG_DIR` after the run.
+- **Laptop mode disk**: `du -sh`/`du -ah` on the resolved `LOOPOVER_MINER_CONFIG_DIR` after the run.
 - **Fleet mode CPU/RAM**: `docker stats --no-stream` polled once per second per container while each worker
   ran `discover` followed by a `sleep` tail (so short-lived containers stay observable long enough to sample);
   the reported number is the peak observed sample per container.
@@ -43,10 +43,10 @@ dominated by the operator's chosen coding-agent CLI process, not by anything thi
 ### Exact commands (laptop mode)
 
 ```sh
-GITTENSORY_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
+LOOPOVER_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
   node packages/gittensory-miner/bin/gittensory-miner.js init --json
 
-GITTENSORY_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
+LOOPOVER_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
   node packages/gittensory-miner/bin/gittensory-miner.js discover octocat/Hello-World --dry-run --json
 
 du -sh /tmp/sizing-laptop

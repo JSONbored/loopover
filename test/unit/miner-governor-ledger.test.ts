@@ -35,10 +35,10 @@ afterEach(() => {
 
 describe("gittensory-miner governor ledger (#2328)", () => {
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolveGovernorLedgerDbPath({ GITTENSORY_MINER_GOVERNOR_LEDGER_DB: "/custom/g.sqlite3" })).toBe(
+    expect(resolveGovernorLedgerDbPath({ LOOPOVER_MINER_GOVERNOR_LEDGER_DB: "/custom/g.sqlite3" })).toBe(
       "/custom/g.sqlite3",
     );
-    expect(resolveGovernorLedgerDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolveGovernorLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/governor-ledger.sqlite3",
     );
     expect(resolveGovernorLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -197,8 +197,8 @@ describe("gittensory-miner governor ledger (#2328)", () => {
   it("uses the default singleton ledger helpers and closes cleanly", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-default-"));
     roots.push(root);
-    const previousConfigDir = process.env.GITTENSORY_MINER_CONFIG_DIR;
-    process.env.GITTENSORY_MINER_CONFIG_DIR = root;
+    const previousConfigDir = process.env.LOOPOVER_MINER_CONFIG_DIR;
+    process.env.LOOPOVER_MINER_CONFIG_DIR = root;
     try {
       const entry = appendGovernorEvent({
         eventType: "allowed",
@@ -210,8 +210,8 @@ describe("gittensory-miner governor ledger (#2328)", () => {
       closeDefaultGovernorLedger();
       closeDefaultGovernorLedger();
     } finally {
-      if (previousConfigDir === undefined) delete process.env.GITTENSORY_MINER_CONFIG_DIR;
-      else process.env.GITTENSORY_MINER_CONFIG_DIR = previousConfigDir;
+      if (previousConfigDir === undefined) delete process.env.LOOPOVER_MINER_CONFIG_DIR;
+      else process.env.LOOPOVER_MINER_CONFIG_DIR = previousConfigDir;
     }
   });
 });

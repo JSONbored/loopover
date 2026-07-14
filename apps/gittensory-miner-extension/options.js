@@ -51,7 +51,7 @@ function normalizeMinerUiUrl(text) {
   return trimmed || DEFAULT_MINER_UI_URL;
 }
 
-if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
+if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerOptionsInternals = {
     parseWatchedRepos,
     parseRankedCandidatesJson,

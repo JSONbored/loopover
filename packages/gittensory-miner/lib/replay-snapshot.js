@@ -35,7 +35,7 @@ const defaultDbFileName = "replay-snapshot.sqlite3";
 let defaultDb = null;
 
 export function resolveReplaySnapshotDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_REPLAY_SNAPSHOT_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_REPLAY_SNAPSHOT_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

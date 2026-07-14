@@ -27,11 +27,11 @@ const defaultDbFileName = "orb-export.sqlite3";
 
 export function resolveOrbExportDbPath(env = process.env) {
   const explicitPath =
-    typeof env.GITTENSORY_MINER_ORB_EXPORT_DB === "string" ? env.GITTENSORY_MINER_ORB_EXPORT_DB.trim() : "";
+    typeof env.LOOPOVER_MINER_ORB_EXPORT_DB === "string" ? env.LOOPOVER_MINER_ORB_EXPORT_DB.trim() : "";
   if (explicitPath) return explicitPath;
 
   const explicitConfigDir =
-    typeof env.GITTENSORY_MINER_CONFIG_DIR === "string" ? env.GITTENSORY_MINER_CONFIG_DIR.trim() : "";
+    typeof env.LOOPOVER_MINER_CONFIG_DIR === "string" ? env.LOOPOVER_MINER_CONFIG_DIR.trim() : "";
   if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
 
   const configHome =
@@ -166,7 +166,7 @@ export function latestClosedAt(batch) {
 export const DEFAULT_AMS_COLLECTOR_URL = "https://api.loopover.ai/v1/ams/ingest";
 
 export function resolveAmsCollectorUrl(env = process.env) {
-  const explicit = typeof env.GITTENSORY_MINER_AMS_COLLECTOR_URL === "string" ? env.GITTENSORY_MINER_AMS_COLLECTOR_URL.trim() : "";
+  const explicit = typeof env.LOOPOVER_MINER_AMS_COLLECTOR_URL === "string" ? env.LOOPOVER_MINER_AMS_COLLECTOR_URL.trim() : "";
   return explicit || DEFAULT_AMS_COLLECTOR_URL;
 }
 
@@ -292,7 +292,7 @@ export async function runOrbExportCli(args, options = {}) {
     const send = options.sendAmsExportBatch ?? sendAmsExportBatch;
     const secret = store.getOrCreateAnonSecret();
     const env = options.env ?? process.env;
-    const collectorToken = env.GITTENSORY_MINER_AMS_COLLECTOR_TOKEN ?? "";
+    const collectorToken = env.LOOPOVER_MINER_AMS_COLLECTOR_TOKEN ?? "";
     const sendResult = await send({ batch: toSend, secret, collectorToken });
     if (sendResult.sent > 0) {
       const nextCursor = latestClosedAt(toSend);

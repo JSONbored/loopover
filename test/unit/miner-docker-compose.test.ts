@@ -38,9 +38,9 @@ describe("docker-compose.miner.yml (#5177)", () => {
     const envBlock = JSON.stringify(miner.environment ?? {});
     // no secret-named key is assigned a value directly in the compose `environment` block
     expect(envBlock).not.toMatch(/TOKEN|API_KEY|SECRET|PASSWORD/i);
-    // regression: GITTENSORY_MINER_CONFIG_DIR must NOT be pinned in `environment` — Compose's `environment`
+    // regression: LOOPOVER_MINER_CONFIG_DIR must NOT be pinned in `environment` — Compose's `environment`
     // silently overrides `env_file`, so pinning it here would make any env-file override a dead footgun.
-    expect(envBlock).not.toMatch(/GITTENSORY_MINER_CONFIG_DIR/);
+    expect(envBlock).not.toMatch(/LOOPOVER_MINER_CONFIG_DIR/);
   });
 
   it("gitignores the operator's real env file while keeping the committed example", () => {

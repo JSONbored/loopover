@@ -69,7 +69,7 @@ describe("k8s miner manifests (#5181)", () => {
       throw new Error("no container in the StatefulSet pod template");
     expect(container.args).toContain("run");
     const env = container.env as Array<Record<string, any>>;
-    const configDir = env.find((e) => e.name === "GITTENSORY_MINER_CONFIG_DIR");
+    const configDir = env.find((e) => e.name === "LOOPOVER_MINER_CONFIG_DIR");
     expect(configDir?.value).toBe("/data/miner");
     const token = env.find((e) => e.name === "GITHUB_TOKEN");
     expect(token?.valueFrom?.secretKeyRef?.key).toBe("GITHUB_TOKEN");

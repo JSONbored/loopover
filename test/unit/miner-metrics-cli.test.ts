@@ -71,14 +71,14 @@ describe("gittensory-miner metrics CLI (#4838)", () => {
     appendPrediction(seed, 1, "hold");
     seed.close();
 
-    const prev = process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB;
-    process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB = dbPath;
+    const prev = process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB;
+    process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB = dbPath;
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       expect(runMetrics([])).toBe(0);
     } finally {
-      if (prev === undefined) delete process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB;
-      else process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB = prev;
+      if (prev === undefined) delete process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB = prev;
     }
     expect(String(log.mock.calls[0]?.[0])).toContain('gittensory_miner_predictions_total{conclusion="hold"} 1');
   });

@@ -463,7 +463,7 @@ describe("runAttempt (#5132)", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-governor-state-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({
       outcome: "submitted",
       spec: { command: "gh pr create", cwd: "/fake", timeoutMs: 1000 },
@@ -614,7 +614,7 @@ describe("runAttempt (#5132)", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-portfolio-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({
       outcome: "abandon",
       loopResult: { outcome: "abandon", totalTurnsUsed: 0, totalCostUsd: 0, iterationsUsed: 0 },

@@ -34,10 +34,10 @@ afterEach(() => {
 
 describe("resolvePolicyVerdictCacheDbPath (#4843)", () => {
   it("prefers the store-specific env var, then the config dir, then XDG/~config", () => {
-    expect(resolvePolicyVerdictCacheDbPath({ GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB: "/custom/pvc.sqlite3" })).toBe(
+    expect(resolvePolicyVerdictCacheDbPath({ LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB: "/custom/pvc.sqlite3" })).toBe(
       "/custom/pvc.sqlite3",
     );
-    expect(resolvePolicyVerdictCacheDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe(
+    expect(resolvePolicyVerdictCacheDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(
       join("/cfg", "policy-verdict-cache.sqlite3"),
     );
     expect(resolvePolicyVerdictCacheDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -125,7 +125,7 @@ describe("gittensory-miner policy-verdict cache store (#4843)", () => {
 
   it("resolves its default path from the env when no path is passed", () => {
     const dbPath = tempDbPath();
-    vi.stubEnv("GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB", dbPath);
+    vi.stubEnv("LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB", dbPath);
     // Call with no argument so the default parameter resolves the path from the env.
     const store = initPolicyVerdictCacheStore();
     stores.push(store);

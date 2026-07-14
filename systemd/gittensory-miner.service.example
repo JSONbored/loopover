@@ -40,7 +40,7 @@ RestartSec=30
 # Keep secrets out of this unit file -- use a root-owned 0600 EnvironmentFile instead:
 #   EnvironmentFile=/etc/gittensory-miner.env
 # Optional overrides (see the package README for the full list):
-#   Environment=GITTENSORY_MINER_CONFIG_DIR=/var/lib/gittensory-miner/config
+#   Environment=LOOPOVER_MINER_CONFIG_DIR=/var/lib/gittensory-miner/config
 #   Environment=MINER_CODING_AGENT_PROVIDER=claude-code
 # Kill switch: `systemctl stop` sends SIGTERM; the loop checks its kill switch each cycle and exits cleanly.
 TimeoutStopSec=120

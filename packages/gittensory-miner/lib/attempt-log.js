@@ -15,7 +15,7 @@ const defaultDbFileName = "attempt-log.sqlite3";
 let defaultAttemptLog = null;
 
 export function resolveAttemptLogDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_ATTEMPT_LOG_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_ATTEMPT_LOG_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

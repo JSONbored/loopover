@@ -47,10 +47,10 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
   });
 
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolvePortfolioQueueDbPath({ GITTENSORY_MINER_PORTFOLIO_QUEUE_DB: "/custom/q.sqlite3" })).toBe(
+    expect(resolvePortfolioQueueDbPath({ LOOPOVER_MINER_PORTFOLIO_QUEUE_DB: "/custom/q.sqlite3" })).toBe(
       "/custom/q.sqlite3",
     );
-    expect(resolvePortfolioQueueDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolvePortfolioQueueDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/portfolio-queue.sqlite3",
     );
     expect(resolvePortfolioQueueDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -186,7 +186,7 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
   it("module-level markFailed delegates to the default portfolio-queue store (#2347)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
     enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
     expect(dequeueNext()?.status).toBe("in_progress");
     expect(markFailed("o/a", "work")?.status).toBe("queued");
@@ -212,7 +212,7 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
   it("module-level markDone delegates to the default portfolio-queue store", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
     enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
     expect(markDone("o/a", "work")?.status).toBe("done");
     expect(markDone("o/a", "work")).toBeNull();
@@ -458,7 +458,7 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     it("module-level getAttemptHistory delegates to the default portfolio-queue store", () => {
       const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-default-"));
       roots.push(root);
-      vi.stubEnv("GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+      vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
       enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
       dequeueNext();
       expect(getAttemptHistory("o/a", "work").attempts).toBe(1);

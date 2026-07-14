@@ -573,8 +573,8 @@ describe("runDiscover (#4247)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-default-"));
     roots.push(root);
     const dbPath = join(root, "portfolio-queue.sqlite3");
-    const previousDbPath = process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB;
-    process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB = dbPath;
+    const previousDbPath = process.env.LOOPOVER_MINER_PORTFOLIO_QUEUE_DB;
+    process.env.LOOPOVER_MINER_PORTFOLIO_QUEUE_DB = dbPath;
     try {
       const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
         issues: [fanOutIssue({ issueNumber: 5 })],
@@ -599,8 +599,8 @@ describe("runDiscover (#4247)", () => {
       stores.push(reopened);
       expect(reopened.listQueue().map((entry) => entry.identifier)).toEqual(["issue:5"]);
     } finally {
-      if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB;
-      else process.env.GITTENSORY_MINER_PORTFOLIO_QUEUE_DB = previousDbPath;
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_PORTFOLIO_QUEUE_DB;
+      else process.env.LOOPOVER_MINER_PORTFOLIO_QUEUE_DB = previousDbPath;
     }
   });
 
@@ -762,8 +762,8 @@ describe("runDiscover (#4247)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pdc-default-"));
     roots.push(root);
     const cacheDbPath = join(root, "policy-doc-cache.sqlite3");
-    const previousCacheDbPath = process.env.GITTENSORY_MINER_POLICY_DOC_CACHE_DB;
-    process.env.GITTENSORY_MINER_POLICY_DOC_CACHE_DB = cacheDbPath;
+    const previousCacheDbPath = process.env.LOOPOVER_MINER_POLICY_DOC_CACHE_DB;
+    process.env.LOOPOVER_MINER_POLICY_DOC_CACHE_DB = cacheDbPath;
     try {
       const portfolioQueue = tempQueueStore();
       const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
@@ -790,8 +790,8 @@ describe("runDiscover (#4247)", () => {
       stores.push(reopened);
       expect(reopened.get("https://api.github.com/repos/acme/widgets/contents/AI-USAGE.md")).toBeNull();
     } finally {
-      if (previousCacheDbPath === undefined) delete process.env.GITTENSORY_MINER_POLICY_DOC_CACHE_DB;
-      else process.env.GITTENSORY_MINER_POLICY_DOC_CACHE_DB = previousCacheDbPath;
+      if (previousCacheDbPath === undefined) delete process.env.LOOPOVER_MINER_POLICY_DOC_CACHE_DB;
+      else process.env.LOOPOVER_MINER_POLICY_DOC_CACHE_DB = previousCacheDbPath;
     }
   });
 
@@ -832,8 +832,8 @@ describe("runDiscover (#4247)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-pvc-default-"));
     roots.push(root);
     const cacheDbPath = join(root, "policy-verdict-cache.sqlite3");
-    const previousCacheDbPath = process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB;
-    process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB = cacheDbPath;
+    const previousCacheDbPath = process.env.LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB;
+    process.env.LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB = cacheDbPath;
     try {
       const portfolioQueue = tempQueueStore();
       const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
@@ -860,8 +860,8 @@ describe("runDiscover (#4247)", () => {
       stores.push(reopened);
       expect(reopened.get("acme/widgets")).toBeNull();
     } finally {
-      if (previousCacheDbPath === undefined) delete process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB;
-      else process.env.GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB = previousCacheDbPath;
+      if (previousCacheDbPath === undefined) delete process.env.LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB;
+      else process.env.LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB = previousCacheDbPath;
     }
   });
 
@@ -942,8 +942,8 @@ describe("runDiscover (#4247)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-discover-cli-rc-default-"));
     roots.push(root);
     const rankedCandidatesDbPath = join(root, "ranked-candidates.sqlite3");
-    const previousDbPath = process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB;
-    process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB = rankedCandidatesDbPath;
+    const previousDbPath = process.env.LOOPOVER_MINER_RANKED_CANDIDATES_DB;
+    process.env.LOOPOVER_MINER_RANKED_CANDIDATES_DB = rankedCandidatesDbPath;
     try {
       const portfolioQueue = tempQueueStore();
       const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
@@ -970,8 +970,8 @@ describe("runDiscover (#4247)", () => {
       stores.push(reopened);
       expect(reopened.listRankedCandidates()).toHaveLength(1);
     } finally {
-      if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB;
-      else process.env.GITTENSORY_MINER_RANKED_CANDIDATES_DB = previousDbPath;
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_RANKED_CANDIDATES_DB;
+      else process.env.LOOPOVER_MINER_RANKED_CANDIDATES_DB = previousDbPath;
     }
   });
 

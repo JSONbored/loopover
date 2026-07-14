@@ -24,7 +24,7 @@ const defaultDbFileName = "event-ledger.sqlite3";
 let defaultEventLedger = null;
 
 export function resolveEventLedgerDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_EVENT_LEDGER_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_EVENT_LEDGER_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

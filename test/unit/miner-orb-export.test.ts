@@ -184,8 +184,8 @@ describe("filterBatchSinceCursor / latestClosedAt (#5681)", () => {
 describe("resolveAmsCollectorUrl (#5681)", () => {
   it("defaults to gittensory's hosted collector; an explicit env var overrides it", () => {
     expect(resolveAmsCollectorUrl({})).toBe(DEFAULT_AMS_COLLECTOR_URL);
-    expect(resolveAmsCollectorUrl({ GITTENSORY_MINER_AMS_COLLECTOR_URL: "  " })).toBe(DEFAULT_AMS_COLLECTOR_URL);
-    expect(resolveAmsCollectorUrl({ GITTENSORY_MINER_AMS_COLLECTOR_URL: "https://example.test/ingest" })).toBe("https://example.test/ingest");
+    expect(resolveAmsCollectorUrl({ LOOPOVER_MINER_AMS_COLLECTOR_URL: "  " })).toBe(DEFAULT_AMS_COLLECTOR_URL);
+    expect(resolveAmsCollectorUrl({ LOOPOVER_MINER_AMS_COLLECTOR_URL: "https://example.test/ingest" })).toBe("https://example.test/ingest");
   });
 });
 

@@ -7,7 +7,7 @@ AMS does **not** have a single `config.js` resolver. Configuration is layered by
 | Layer | Source | Scope | Typical modules |
 | --- | --- | --- | --- |
 | **Per-target-repo file** | `.gittensory-miner.yml` (or `.github/gittensory-miner.yml`, JSON variants) | One cloned target repo | `lib/miner-goal-spec.js`, engine `parseMinerGoalSpecContent` |
-| **Operator env** | `GITTENSORY_MINER_*` / `MINER_*` | This miner process / fleet container | `lib/local-store.js`, `lib/governor-kill-switch.js`, `lib/attempt-cli.js`, … |
+| **Operator env** | `LOOPOVER_MINER_*` / `MINER_*` | This miner process / fleet container | `lib/local-store.js`, `lib/governor-kill-switch.js`, `lib/attempt-cli.js`, … |
 | **CLI flags** | `gittensory-miner <cmd> …` argv | One invocation | `lib/attempt-cli.js`, `lib/discover-cli.js`, `lib/loop-cli.js`, … |
 | **Operator file (not goal spec)** | `~/.config/gittensory-miner/.gittensory-ams.yml` | Operator execution policy | `lib/ams-policy.js` |
 
@@ -26,7 +26,7 @@ First existing file wins (engine `MINER_GOAL_SPEC_FILENAMES`):
 
 ### Kill switch (halt miner writes)
 
-**Sources:** `GITTENSORY_MINER_KILL_SWITCH` (operator env) and `.gittensory-miner.yml` → `killSwitch.paused`.
+**Sources:** `LOOPOVER_MINER_KILL_SWITCH` (operator env) and `.gittensory-miner.yml` → `killSwitch.paused`.
 
 **Order (safest wins, engine `resolveMinerKillSwitch`):**
 
@@ -38,7 +38,7 @@ There is **no CLI flag** for kill-switch today. `MINER_CODING_AGENT_PAUSED` is a
 
 ### Governor live write mode
 
-**Sources:** `GITTENSORY_MINER_LIVE_MODE=live` (operator env) and `.gittensory-miner.yml` → `execution.liveModeOptIn: live`.
+**Sources:** `LOOPOVER_MINER_LIVE_MODE=live` (operator env) and `.gittensory-miner.yml` → `execution.liveModeOptIn: live`.
 
 **Order (engine `resolveMinerActionMode`):**
 
@@ -76,7 +76,7 @@ There is **no `.gittensory-miner.yml` forge block** today; `--api-base-url` foll
 
 ### Local SQLite store paths
 
-**Sources:** per-store `GITTENSORY_MINER_*_DB` env var, then `GITTENSORY_MINER_CONFIG_DIR`, then XDG default (`lib/local-store.js`).
+**Sources:** per-store `LOOPOVER_MINER_*_DB` env var, then `LOOPOVER_MINER_CONFIG_DIR`, then XDG default (`lib/local-store.js`).
 
 Explicit per-store env **wins** over config dir; config dir **wins** over XDG. No CLI or goal-spec override.
 

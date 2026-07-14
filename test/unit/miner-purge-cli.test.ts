@@ -235,24 +235,24 @@ describe("runPurge --dry-run (#5564)", () => {
   it("opens the real default on-disk stores in dry-run when no resolveDbPaths override is supplied", () => {
     const root = tempDir();
     const previousDirs: Record<string, string | undefined> = {
-      GITTENSORY_MINER_CLAIM_LEDGER_DB: process.env.GITTENSORY_MINER_CLAIM_LEDGER_DB,
-      GITTENSORY_MINER_EVENT_LEDGER_DB: process.env.GITTENSORY_MINER_EVENT_LEDGER_DB,
-      GITTENSORY_MINER_GOVERNOR_LEDGER_DB: process.env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB,
-      GITTENSORY_MINER_PREDICTION_LEDGER_DB: process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB,
-      GITTENSORY_MINER_ATTEMPT_LOG_DB: process.env.GITTENSORY_MINER_ATTEMPT_LOG_DB,
+      LOOPOVER_MINER_CLAIM_LEDGER_DB: process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB,
+      LOOPOVER_MINER_EVENT_LEDGER_DB: process.env.LOOPOVER_MINER_EVENT_LEDGER_DB,
+      LOOPOVER_MINER_GOVERNOR_LEDGER_DB: process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB,
+      LOOPOVER_MINER_PREDICTION_LEDGER_DB: process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB,
+      LOOPOVER_MINER_ATTEMPT_LOG_DB: process.env.LOOPOVER_MINER_ATTEMPT_LOG_DB,
     };
-    process.env.GITTENSORY_MINER_CLAIM_LEDGER_DB = join(root, "claim-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_EVENT_LEDGER_DB = join(root, "event-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB = join(root, "governor-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB = join(root, "prediction-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_ATTEMPT_LOG_DB = join(root, "attempt-log.sqlite3");
+    process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB = join(root, "claim-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = join(root, "event-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = join(root, "governor-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB = join(root, "prediction-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_ATTEMPT_LOG_DB = join(root, "attempt-log.sqlite3");
     try {
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       expect(runPurge(["--repo", "acme/widgets", "--dry-run", "--json"])).toBe(0);
       const result = JSON.parse(String(log.mock.calls[0]?.[0]));
       expect(result.stores.every((entry: { wouldPurge: number }) => entry.wouldPurge === 0)).toBe(true);
       // Nothing was created — dry run against nonexistent default-path stores makes zero writes.
-      expect(existsSync(process.env.GITTENSORY_MINER_CLAIM_LEDGER_DB)).toBe(false);
+      expect(existsSync(process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB)).toBe(false);
     } finally {
       for (const [key, value] of Object.entries(previousDirs)) {
         if (value === undefined) delete process.env[key];
@@ -382,16 +382,16 @@ describe("runPurge (real, #5564)", () => {
   it("opens and closes the real default on-disk stores when no override is supplied (owned stores)", () => {
     const root = tempDir();
     const previousDirs: Record<string, string | undefined> = {
-      GITTENSORY_MINER_CLAIM_LEDGER_DB: process.env.GITTENSORY_MINER_CLAIM_LEDGER_DB,
-      GITTENSORY_MINER_EVENT_LEDGER_DB: process.env.GITTENSORY_MINER_EVENT_LEDGER_DB,
-      GITTENSORY_MINER_GOVERNOR_LEDGER_DB: process.env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB,
-      GITTENSORY_MINER_PREDICTION_LEDGER_DB: process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB,
+      LOOPOVER_MINER_CLAIM_LEDGER_DB: process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB,
+      LOOPOVER_MINER_EVENT_LEDGER_DB: process.env.LOOPOVER_MINER_EVENT_LEDGER_DB,
+      LOOPOVER_MINER_GOVERNOR_LEDGER_DB: process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB,
+      LOOPOVER_MINER_PREDICTION_LEDGER_DB: process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB,
     };
     const claimDbPath = join(root, "claim-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_CLAIM_LEDGER_DB = claimDbPath;
-    process.env.GITTENSORY_MINER_EVENT_LEDGER_DB = join(root, "event-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB = join(root, "governor-ledger.sqlite3");
-    process.env.GITTENSORY_MINER_PREDICTION_LEDGER_DB = join(root, "prediction-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB = claimDbPath;
+    process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = join(root, "event-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = join(root, "governor-ledger.sqlite3");
+    process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB = join(root, "prediction-ledger.sqlite3");
     try {
       // Seed a real claim via the default store path before purging through it.
       const seeded = openClaimLedger(claimDbPath);

@@ -13,13 +13,13 @@ const defaultMaxConcurrency = 2;
 let defaultWorktreeAllocator = null;
 
 export function resolveWorktreeAllocatorDbPath(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_WORKTREE_ALLOCATOR_DB === "string"
-    ? env.GITTENSORY_MINER_WORKTREE_ALLOCATOR_DB.trim()
+  const explicitPath = typeof env.LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB === "string"
+    ? env.LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB.trim()
     : "";
   if (explicitPath) return explicitPath;
 
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
+    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
   if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
 
@@ -30,13 +30,13 @@ export function resolveWorktreeAllocatorDbPath(env = process.env) {
 }
 
 export function resolveWorktreeBaseDir(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_WORKTREE_DIR === "string"
-    ? env.GITTENSORY_MINER_WORKTREE_DIR.trim()
+  const explicitPath = typeof env.LOOPOVER_MINER_WORKTREE_DIR === "string"
+    ? env.LOOPOVER_MINER_WORKTREE_DIR.trim()
     : "";
   if (explicitPath) return explicitPath;
 
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
+    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
   if (explicitConfigDir) return join(explicitConfigDir, defaultWorktreeDirName);
 

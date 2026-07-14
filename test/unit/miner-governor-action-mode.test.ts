@@ -35,7 +35,7 @@ describe("resolveMinerActionModeGate (#2342)", () => {
 
   it("the operator's global env opt-in alone also stays dry_run without repo opt-in", () => {
     expect(
-      resolveMinerActionModeGate({ killSwitchScope: "none", env: { GITTENSORY_MINER_LIVE_MODE: "live" } }),
+      resolveMinerActionModeGate({ killSwitchScope: "none", env: { LOOPOVER_MINER_LIVE_MODE: "live" } }),
     ).toEqual({ mode: "dry_run", executes: false });
   });
 
@@ -44,34 +44,34 @@ describe("resolveMinerActionModeGate (#2342)", () => {
       resolveMinerActionModeGate({
         killSwitchScope: "none",
         repoLiveModeOptIn: "live",
-        env: { GITTENSORY_MINER_LIVE_MODE: "live" },
+        env: { LOOPOVER_MINER_LIVE_MODE: "live" },
       }),
     ).toEqual({ mode: "live", executes: true });
   });
 
   it("a near-miss opt-in value stays dry_run (fail closed)", () => {
     expect(
-      resolveMinerActionModeGate({ killSwitchScope: "none", repoLiveModeOptIn: "YES", env: { GITTENSORY_MINER_LIVE_MODE: "1" } }),
+      resolveMinerActionModeGate({ killSwitchScope: "none", repoLiveModeOptIn: "YES", env: { LOOPOVER_MINER_LIVE_MODE: "1" } }),
     ).toEqual({ mode: "dry_run", executes: false });
   });
 
   it("the kill-switch always wins over a live opt-in", () => {
     expect(
-      resolveMinerActionModeGate({ killSwitchScope: "repo", repoLiveModeOptIn: "live", env: { GITTENSORY_MINER_LIVE_MODE: "live" } }),
+      resolveMinerActionModeGate({ killSwitchScope: "repo", repoLiveModeOptIn: "live", env: { LOOPOVER_MINER_LIVE_MODE: "live" } }),
     ).toEqual({ mode: "paused", executes: false });
   });
 
   it("defaults to reading process.env when no env override is given", () => {
-    const original = process.env.GITTENSORY_MINER_LIVE_MODE;
+    const original = process.env.LOOPOVER_MINER_LIVE_MODE;
     try {
-      process.env.GITTENSORY_MINER_LIVE_MODE = "live";
+      process.env.LOOPOVER_MINER_LIVE_MODE = "live";
       expect(resolveMinerActionModeGate({ killSwitchScope: "none", repoLiveModeOptIn: "live" })).toEqual({
         mode: "live",
         executes: true,
       });
     } finally {
-      if (original === undefined) delete process.env.GITTENSORY_MINER_LIVE_MODE;
-      else process.env.GITTENSORY_MINER_LIVE_MODE = original;
+      if (original === undefined) delete process.env.LOOPOVER_MINER_LIVE_MODE;
+      else process.env.LOOPOVER_MINER_LIVE_MODE = original;
     }
   });
 });

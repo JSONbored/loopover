@@ -19,7 +19,7 @@ afterEach(() => {
 function envForTempStores(): Record<string, string | undefined> {
   const dir = mkdtempSync(join(tmpdir(), "miner-calibration-cli-"));
   tempDirs.push(dir);
-  return { GITTENSORY_MINER_CONFIG_DIR: dir };
+  return { LOOPOVER_MINER_CONFIG_DIR: dir };
 }
 
 function seedPrediction(env: Record<string, string | undefined>, targetId: number, conclusion: string) {

@@ -16,7 +16,7 @@ const defaultDbFileName = "claim-ledger.sqlite3";
 let defaultClaimLedger = null;
 
 export function resolveClaimLedgerDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_CLAIM_LEDGER_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_CLAIM_LEDGER_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

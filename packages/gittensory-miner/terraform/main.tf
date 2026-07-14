@@ -1,6 +1,6 @@
 # Terraform starter module for a dedicated fleet-mode AMS (Autonomous Miner System) host on Hetzner Cloud.
 # Provisions a single, firewalled VM with Docker pre-installed via cloud-init and a persistent volume mounted at
-# /data/miner (the miner's built-in GITTENSORY_MINER_CONFIG_DIR default), so the append-only attempt log,
+# /data/miner (the miner's built-in LOOPOVER_MINER_CONFIG_DIR default), so the append-only attempt log,
 # prediction ledger, and every other local store survive instance recreation.
 #
 # This is the CLI-worker profile — it exposes NO public endpoints by default (unlike the root terraform/ module,

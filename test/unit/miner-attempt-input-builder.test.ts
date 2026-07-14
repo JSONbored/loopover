@@ -34,7 +34,7 @@ function reviewContext() {
 describe("buildAttemptGovernorContext (#5132)", () => {
   it("reflects the global kill switch and live-mode env vars, uses AmsPolicySpec's real capLimits", () => {
     const ctx = buildAttemptGovernorContext(
-      { GITTENSORY_MINER_KILL_SWITCH: "1", GITTENSORY_MINER_LIVE_MODE: "live" },
+      { LOOPOVER_MINER_KILL_SWITCH: "1", LOOPOVER_MINER_LIVE_MODE: "live" },
       { ...DEFAULT_AMS_POLICY_SPEC, capLimits: { budget: 9, turns: 8, elapsedMs: 7 } },
     );
     expect(ctx.killSwitchGlobal).toBe(true);
@@ -80,7 +80,7 @@ describe("buildAttemptGovernorContext (#5132)", () => {
 
   it("REGRESSION (#5675): a repo's real unfavorable-outcome streak, threaded through the governor context, throttles the chokepoint", () => {
     const ctx = buildAttemptGovernorContext(
-      { GITTENSORY_MINER_LIVE_MODE: "live" },
+      { LOOPOVER_MINER_LIVE_MODE: "live" },
       DEFAULT_AMS_POLICY_SPEC,
       false,
       undefined,

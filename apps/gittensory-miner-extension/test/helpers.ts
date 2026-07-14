@@ -177,7 +177,7 @@ export async function loadExtensionModules(options: ChromeMockOptions = {}) {
 
   const harness = buildChromeMock(options);
   vi.stubGlobal("chrome", harness.chrome);
-  vi.stubGlobal("__GITTENSORY_MINER_EXTENSION_TEST__", true);
+  vi.stubGlobal("__LOOPOVER_MINER_EXTENSION_TEST__", true);
   if (options.fetchImpl) vi.stubGlobal("fetch", options.fetchImpl);
 
   await import("../opportunity-badge.js");

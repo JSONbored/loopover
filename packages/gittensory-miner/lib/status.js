@@ -50,8 +50,8 @@ const CONFIG_FILE_CANDIDATES = Object.freeze([
 
 /** The miner's local-state directory (holds the run-state / queue / ledger SQLite files). */
 export function resolveMinerStateDir(env = process.env) {
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
+    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
   if (explicitConfigDir) return explicitConfigDir;
 

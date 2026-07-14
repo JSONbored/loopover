@@ -13,9 +13,9 @@ function jsonResponse(body: unknown, ok = true, status = 200) {
 
 describe("resolveAmsOauthClientId (#5682)", () => {
   it("returns the trimmed configured client id, or empty when unset/blank", () => {
-    expect(resolveAmsOauthClientId({ GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID: "  client-abc  " })).toBe("client-abc");
+    expect(resolveAmsOauthClientId({ LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID: "  client-abc  " })).toBe("client-abc");
     expect(resolveAmsOauthClientId({})).toBe("");
-    expect(resolveAmsOauthClientId({ GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID: "   " })).toBe("");
+    expect(resolveAmsOauthClientId({ LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID: "   " })).toBe("");
   });
 });
 

@@ -9,7 +9,7 @@ points — review resource sizing, storage class, and your registry before apply
 ## Why a StatefulSet (not a Deployment)
 
 The miner keeps all state in **local SQLite ledgers** (`claim-ledger.sqlite3`, `plan-store.sqlite3`, …) under
-`GITTENSORY_MINER_CONFIG_DIR` (`/data/miner`). Those stores are **not safe for concurrent multi-pod access**, so
+`LOOPOVER_MINER_CONFIG_DIR` (`/data/miner`). Those stores are **not safe for concurrent multi-pod access**, so
 each worker needs its **own** volume. A Deployment can only mount a single shared PVC across every replica; a
 **StatefulSet's `volumeClaimTemplates`** give each replica its own PersistentVolumeClaim — so scaling to N
 replicas yields N workers with fully isolated state. That per-pod isolation is the whole reason these manifests

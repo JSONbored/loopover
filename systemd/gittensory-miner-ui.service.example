@@ -26,7 +26,7 @@
 #   journalctl -u gittensory-miner-ui -f                # follow the dashboard server's output
 #
 # The dashboard reads the SAME local SQLite stores gittensory-miner.service.example's loop daemon writes to
-# (see packages/gittensory-miner/README.md's "Local storage" table) -- point GITTENSORY_MINER_CONFIG_DIR at
+# (see packages/gittensory-miner/README.md's "Local storage" table) -- point LOOPOVER_MINER_CONFIG_DIR at
 # the same directory as the loop service's unit if you run both on one host.
 
 [Unit]
@@ -49,7 +49,7 @@ ExecStart=/usr/bin/npm --workspace @loopover/ui-miner run preview
 Restart=on-failure
 RestartSec=10
 # Optional overrides (see packages/gittensory-miner/README.md's "Local storage" table for the full list):
-#   Environment=GITTENSORY_MINER_CONFIG_DIR=/var/lib/gittensory-miner/config
+#   Environment=LOOPOVER_MINER_CONFIG_DIR=/var/lib/gittensory-miner/config
 TimeoutStopSec=30
 
 [Install]

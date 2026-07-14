@@ -58,8 +58,8 @@ see the tradeoff explained above for why `600` breaks the app's own ability to r
 |---|---|---|
 | `github_app_private_key.pem` | `GITHUB_APP_PRIVATE_KEY_FILE` | Your GitHub App's private key (PEM). |
 | `github_webhook_secret.txt` | `GITHUB_WEBHOOK_SECRET_FILE` | HMAC key GitHub webhook deliveries are verified against. |
-| `loopover_api_token.txt` | `GITTENSORY_API_TOKEN_FILE` | Server-to-server API bearer token. |
-| `loopover_mcp_token.txt` | `GITTENSORY_MCP_TOKEN_FILE` | Shared MCP bearer token. |
+| `loopover_api_token.txt` | `LOOPOVER_API_TOKEN_FILE` | Server-to-server API bearer token. |
+| `loopover_mcp_token.txt` | `LOOPOVER_MCP_TOKEN_FILE` | Shared MCP bearer token. |
 | `internal_job_token.txt` | `INTERNAL_JOB_TOKEN_FILE` | Gates internal-only routes (e.g. `/v1/internal/*`). |
 | `selfhost_setup_token.txt` | `SELFHOST_SETUP_TOKEN_FILE` | Unlocks the first-run `/setup` wizard. |
 | `token_encryption_secret.txt` | `TOKEN_ENCRYPTION_SECRET_FILE` | AES-256-GCM master secret for maintainer BYOK keys at rest. |

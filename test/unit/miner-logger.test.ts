@@ -190,9 +190,9 @@ describe("createLogger pretty timestamps (#4835)", () => {
 });
 
 describe("createLogger env + default streams (#4835)", () => {
-  it("reads GITTENSORY_MINER_LOG_LEVEL when no explicit level is given", () => {
+  it("reads LOOPOVER_MINER_LOG_LEVEL when no explicit level is given", () => {
     const { out, err, streams } = capture();
-    const logger = createLogger({ env: { GITTENSORY_MINER_LOG_LEVEL: "debug" }, streams });
+    const logger = createLogger({ env: { LOOPOVER_MINER_LOG_LEVEL: "debug" }, streams });
     expect(logger.level).toBe("debug");
     logger.debug("d");
     expect(out).toEqual(["d\n"]);

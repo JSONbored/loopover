@@ -11,7 +11,7 @@ export const DEFAULT_SOURCE_ROOTS = [
   "packages/gittensory-miner/scripts",
 ];
 
-const MINER_ENV_PREFIXES = ["GITTENSORY_MINER_", "MINER_"];
+const MINER_ENV_PREFIXES = ["LOOPOVER_MINER_", "MINER_"];
 const SOURCE_FILE_EXTENSIONS = new Set([".cjs", ".js", ".mjs", ".ts", ".tsx"]);
 const DEFAULT_PATTERNS = [
   /env\.([A-Z][A-Z0-9_]*)\s*\?\?\s*""/g,

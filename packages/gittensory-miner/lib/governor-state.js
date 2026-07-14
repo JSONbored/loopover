@@ -26,7 +26,7 @@ const DEFAULT_REPUTATION_HISTORY = Object.freeze({ decided: 0, unfavorable: 0 })
 let defaultGovernorState = null;
 
 export function resolveGovernorStateDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_GOVERNOR_STATE_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_GOVERNOR_STATE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

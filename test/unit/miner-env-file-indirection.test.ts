@@ -138,7 +138,7 @@ describe("loadMinerFileSecrets (#5178)", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          GITTENSORY_MINER_CONFIG_DIR: join(root, "state"),
+          LOOPOVER_MINER_CONFIG_DIR: join(root, "state"),
           GITHUB_TOKEN: "",
           GITHUB_TOKEN_FILE: secretPath,
         },

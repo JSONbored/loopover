@@ -67,7 +67,7 @@ describe("gittensory-miner package skeleton (#2287)", () => {
     expect(runCapture(["--version", "--no-update-check"])).toContain("@loopover/miner/");
     expect(
       runCapture(["--version", "--no-update-check"], {
-        GITTENSORY_MINER_VERSION: "gittensory-miner-fleet@abc1234",
+        LOOPOVER_MINER_VERSION: "gittensory-miner-fleet@abc1234",
       }),
     ).toContain("gittensory-miner-fleet@abc1234");
   });

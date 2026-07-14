@@ -2,7 +2,7 @@
 set -eu
 
 # AMS (gittensory-miner) redacted reporting export (#5184 follow-up; closes the gap PR #5471 flagged: Grafana must
-# never mount the miner's live GITTENSORY_MINER_CONFIG_DIR ledgers directly -- attempt_log_events.reason and
+# never mount the miner's live LOOPOVER_MINER_CONFIG_DIR ledgers directly -- attempt_log_events.reason and
 # .payload_json are free-form and can carry arbitrary internal detail). Mirrors export-grafana-reporting-db.sh's
 # shape (incremental fingerprint fast-path, atomic tmp-then-move, fail-open on a missing/unreadable source) but is
 # deliberately a SEPARATE script: the two AMS ledgers are SQLite-only (the miner has no Postgres mode) and each
@@ -18,7 +18,7 @@ set -eu
 # would otherwise serve the previous run's output forever.
 SCRIPT_VERSION="${GITTENSORY_AMS_REPORTING_SCRIPT_VERSION:-1}"
 
-OUT_DIR="${GITTENSORY_REPORTING_DIR:-/reporting}"
+OUT_DIR="${LOOPOVER_REPORTING_DIR:-/reporting}"
 ATTEMPT_LOG_SOURCE_DB="${GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
 ATTEMPT_LOG_OUT_DB="${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-$OUT_DIR/ams-attempt-log.sqlite}"
 PREDICTION_LEDGER_SOURCE_DB="${GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"

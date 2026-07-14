@@ -58,7 +58,7 @@ describe("gittensory-miner doctor — coding-agent CLI checks (#4304)", () => {
   });
 
   it("runDoctorChecks includes both coding-agent CLI checks", () => {
-    const names = runDoctorChecks({ GITTENSORY_MINER_CONFIG_DIR: tempRoot() }).map((check) => check.name);
+    const names = runDoctorChecks({ LOOPOVER_MINER_CONFIG_DIR: tempRoot() }).map((check) => check.name);
     expect(names).toContain("claude-cli-present");
     expect(names).toContain("codex-cli-present");
   });
@@ -442,7 +442,7 @@ describe("gittensory-miner doctor — credential presence checks (#5170)", () =>
   });
 
   it("runDoctorChecks now includes the github-token and coding-agent-credential checks", () => {
-    const names = runDoctorChecks({ GITTENSORY_MINER_CONFIG_DIR: tempRoot() }).map((check) => check.name);
+    const names = runDoctorChecks({ LOOPOVER_MINER_CONFIG_DIR: tempRoot() }).map((check) => check.name);
     expect(names).toContain("github-token");
     expect(names).toContain("coding-agent-credential");
   });
@@ -453,7 +453,7 @@ describe("gittensory-miner doctor — credential presence checks (#5170)", () =>
     const checks = runDoctorChecks({
       MINER_CODING_AGENT_PROVIDER: "claude-cli",
       GITHUB_TOKEN: "ghp_present",
-      GITTENSORY_MINER_CONFIG_DIR: tempRoot(),
+      LOOPOVER_MINER_CONFIG_DIR: tempRoot(),
     });
     const credential = checks.find((check) => check.name === "coding-agent-credential");
     expect(credential?.ok).toBe(false);
@@ -468,7 +468,7 @@ describe("gittensory-miner doctor — credential presence checks (#5170)", () =>
       GITHUB_TOKEN: SECRET_GH,
       CLAUDE_CODE_OAUTH_TOKEN: SECRET_CLAUDE,
       ANTHROPIC_API_KEY: SECRET_ANTHROPIC,
-      GITTENSORY_MINER_CONFIG_DIR: tempRoot(),
+      LOOPOVER_MINER_CONFIG_DIR: tempRoot(),
     });
     for (const check of checks) {
       expect(check.detail).not.toContain(SECRET_GH);

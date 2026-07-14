@@ -42,10 +42,10 @@ const fullCandidate = {
 
 describe("gittensory-miner ranked-candidates store (#4859 prerequisite)", () => {
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolveRankedCandidatesDbPath({ GITTENSORY_MINER_RANKED_CANDIDATES_DB: "/custom/ranked.sqlite3" })).toBe(
+    expect(resolveRankedCandidatesDbPath({ LOOPOVER_MINER_RANKED_CANDIDATES_DB: "/custom/ranked.sqlite3" })).toBe(
       "/custom/ranked.sqlite3",
     );
-    expect(resolveRankedCandidatesDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolveRankedCandidatesDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/ranked-candidates.sqlite3",
     );
     expect(resolveRankedCandidatesDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -241,7 +241,7 @@ describe("gittensory-miner ranked-candidates store (#4859 prerequisite)", () => 
 
   it("module-level convenience functions operate on the lazily-opened default store", () => {
     const root = tempRoot();
-    vi.stubEnv("GITTENSORY_MINER_RANKED_CANDIDATES_DB", join(root, "ranked-candidates.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_RANKED_CANDIDATES_DB", join(root, "ranked-candidates.sqlite3"));
     const result = saveRankedCandidates([fullCandidate], Date.parse("2026-07-13T12:00:00.000Z"));
     expect(result.count).toBe(1);
     expect(listRankedCandidates()).toEqual([{ ...fullCandidate, rankedAt: "2026-07-13T12:00:00.000Z" }]);

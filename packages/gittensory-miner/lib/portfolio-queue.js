@@ -14,7 +14,7 @@ const defaultDbFileName = "portfolio-queue.sqlite3";
 let defaultPortfolioQueueStore = null;
 
 export function resolvePortfolioQueueDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_PORTFOLIO_QUEUE_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

@@ -12,7 +12,7 @@ describe("miner deployment guide (#2330)", () => {
     expect(doc).toContain("Fleet mode");
     expect(doc).toContain("gittensory-miner status");
     expect(doc).toContain("gittensory-miner doctor");
-    expect(doc).toContain("GITTENSORY_MINER_CONFIG_DIR");
+    expect(doc).toContain("LOOPOVER_MINER_CONFIG_DIR");
     expect(doc).toContain("100% client-side");
     expect(doc).toContain("credentials");
     expect(doc).toContain("docker build");
@@ -29,7 +29,7 @@ describe("miner deployment guide (#2330)", () => {
     expect(dockerfile).toContain("npm prune --omit=dev --ignore-scripts");
     expect(dockerfile).toContain("@loopover/engine");
     expect(dockerfile).toContain("USER node");
-    expect(dockerfile).toContain("GITTENSORY_MINER_CONFIG_DIR=/data/miner");
+    expect(dockerfile).toContain("LOOPOVER_MINER_CONFIG_DIR=/data/miner");
     expect(dockerfile).toContain("VOLUME");
     expect(dockerfile).toMatch(/No HEALTHCHECK/i);
     expect(dockerfile).not.toMatch(/GITHUB_TOKEN|ghp_|github_pat_/i);

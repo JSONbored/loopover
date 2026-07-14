@@ -13,7 +13,7 @@ import { applySchemaMigrations } from "./schema-version.js";
 const defaultDbFileName = "policy-doc-cache.sqlite3";
 
 export function resolvePolicyDocCacheDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_POLICY_DOC_CACHE_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_POLICY_DOC_CACHE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

@@ -208,14 +208,14 @@ describe("gittensory-miner ledger metrics CLI (#4841)", () => {
     seed.appendEvent({ type: "plan_built", payload: { steps: 1 } });
     seed.close();
 
-    const prev = process.env.GITTENSORY_MINER_EVENT_LEDGER_DB;
-    process.env.GITTENSORY_MINER_EVENT_LEDGER_DB = dbPath;
+    const prev = process.env.LOOPOVER_MINER_EVENT_LEDGER_DB;
+    process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = dbPath;
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       expect(runLedgerMetrics([])).toBe(0);
     } finally {
-      if (prev === undefined) delete process.env.GITTENSORY_MINER_EVENT_LEDGER_DB;
-      else process.env.GITTENSORY_MINER_EVENT_LEDGER_DB = prev;
+      if (prev === undefined) delete process.env.LOOPOVER_MINER_EVENT_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = prev;
     }
     expect(String(log.mock.calls[0]?.[0])).toContain('gittensory_miner_events_total{type="plan_built"} 1');
   });

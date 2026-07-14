@@ -15,8 +15,8 @@
 #   sh scripts/restore-miner.sh --yes /path/to/backups/<ts>   # restores a specific backup
 set -eu
 
-STATE_DIR="${GITTENSORY_MINER_CONFIG_DIR:-$HOME/.config/gittensory-miner}"
-BACKUP_DIR="${GITTENSORY_MINER_BACKUP_DIR:-$STATE_DIR/backups}"
+STATE_DIR="${LOOPOVER_MINER_CONFIG_DIR:-$HOME/.config/gittensory-miner}"
+BACKUP_DIR="${LOOPOVER_MINER_BACKUP_DIR:-$STATE_DIR/backups}"
 
 usage() {
   cat <<USAGE >&2
@@ -25,7 +25,7 @@ Usage: $0 --yes [BACKUP_DIR]
 Restores gittensory-miner local state from a backup produced by backup-miner.sh.
 
   BACKUP_DIR   A specific timestamped backup directory. Defaults to the newest one
-               under \$GITTENSORY_MINER_BACKUP_DIR ($BACKUP_DIR).
+               under \$LOOPOVER_MINER_BACKUP_DIR ($BACKUP_DIR).
   --yes        Required. This OVERWRITES the live state directory ($STATE_DIR).
 
 STOP the miner (and any loop/systemd/docker service using this state dir) first --

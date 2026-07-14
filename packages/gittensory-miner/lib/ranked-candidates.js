@@ -21,7 +21,7 @@ const defaultDbFileName = "ranked-candidates.sqlite3";
 let defaultRankedCandidatesStore = null;
 
 export function resolveRankedCandidatesDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_RANKED_CANDIDATES_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_RANKED_CANDIDATES_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

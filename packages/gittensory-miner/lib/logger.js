@@ -119,7 +119,7 @@ export function formatLine({ level, message, fields, pretty, timestamp }) {
 /**
  * Build a level-aware logger. All I/O is injectable for tests: `streams` (defaults to process stdout/stderr),
  * `now` (defaults to an ISO-8601 clock, only consulted in `pretty` mode), and `env` (defaults to process.env,
- * read for `GITTENSORY_MINER_LOG_LEVEL`). `fields` seeds every line with contextual fields; `child(extra)`
+ * read for `LOOPOVER_MINER_LOG_LEVEL`). `fields` seeds every line with contextual fields; `child(extra)`
  * returns a logger that merges additional fields onto this one.
  * @param {import("./logger.js").LoggerOptions} [options]
  * @returns {import("./logger.js").Logger}
@@ -129,7 +129,7 @@ export function createLogger(options = {}) {
   const stdout = streams?.stdout ?? process.stdout;
   const stderr = streams?.stderr ?? process.stderr;
   const clock = now ?? defaultClock;
-  const envLevel = env.GITTENSORY_MINER_LOG_LEVEL ?? "";
+  const envLevel = env.LOOPOVER_MINER_LOG_LEVEL ?? "";
   const activeLevel = resolveLogLevel({ level, quiet, verbose, envLevel });
   const threshold = LEVEL_RANK[activeLevel];
 

@@ -12,8 +12,8 @@ const roots: string[] = [];
 
 function isolatedMinerEnv(configDir: string): Record<string, string> {
   return {
-    GITTENSORY_MINER_CONFIG_DIR: configDir,
-    GITTENSORY_MINER_NO_UPDATE_CHECK: "1",
+    LOOPOVER_MINER_CONFIG_DIR: configDir,
+    LOOPOVER_MINER_NO_UPDATE_CHECK: "1",
     GITHUB_TOKEN: "e2e-fixture-token",
   };
 }

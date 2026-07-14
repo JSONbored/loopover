@@ -1,7 +1,7 @@
 # Fleet-mode image for @loopover/miner (#4295). Build context = monorepo root:
 #   docker build -f packages/gittensory-miner/Dockerfile -t gittensory-miner:latest .
 # SECRETS ARE NEVER BAKED: supply operator credentials at `docker run` time only.
-# Persistent SQLite ledgers live on a mounted volume (default GITTENSORY_MINER_CONFIG_DIR=/data/miner).
+# Persistent SQLite ledgers live on a mounted volume (default LOOPOVER_MINER_CONFIG_DIR=/data/miner).
 
 ARG GITTENSORY_VERSION=
 
@@ -22,8 +22,8 @@ FROM public.ecr.aws/docker/library/node:24-slim AS runtime
 WORKDIR /app
 ARG GITTENSORY_VERSION=
 ENV NODE_ENV=production \
-    GITTENSORY_MINER_CONFIG_DIR=/data/miner \
-    GITTENSORY_MINER_VERSION=${GITTENSORY_VERSION} \
+    LOOPOVER_MINER_CONFIG_DIR=/data/miner \
+    LOOPOVER_MINER_VERSION=${GITTENSORY_VERSION} \
     PATH=/app/node_modules/.bin:$PATH
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/packages/gittensory-miner ./packages/gittensory-miner

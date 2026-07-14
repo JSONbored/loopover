@@ -20,11 +20,11 @@ afterEach(() => {
 
 describe("checkMinerKillSwitch (#2341)", () => {
   it("global env switch halts regardless of per-repo state", () => {
-    expect(checkMinerKillSwitch({ repoPaused: false, env: { GITTENSORY_MINER_KILL_SWITCH: "true" } })).toEqual({
+    expect(checkMinerKillSwitch({ repoPaused: false, env: { LOOPOVER_MINER_KILL_SWITCH: "true" } })).toEqual({
       scope: "global",
       active: true,
     });
-    expect(checkMinerKillSwitch({ repoPaused: true, env: { GITTENSORY_MINER_KILL_SWITCH: "true" } })).toEqual({
+    expect(checkMinerKillSwitch({ repoPaused: true, env: { LOOPOVER_MINER_KILL_SWITCH: "true" } })).toEqual({
       scope: "global",
       active: true,
     });
@@ -36,13 +36,13 @@ describe("checkMinerKillSwitch (#2341)", () => {
   });
 
   it("defaults to reading process.env when no env override is given", () => {
-    const original = process.env.GITTENSORY_MINER_KILL_SWITCH;
+    const original = process.env.LOOPOVER_MINER_KILL_SWITCH;
     try {
-      process.env.GITTENSORY_MINER_KILL_SWITCH = "1";
+      process.env.LOOPOVER_MINER_KILL_SWITCH = "1";
       expect(checkMinerKillSwitch({ repoPaused: false })).toEqual({ scope: "global", active: true });
     } finally {
-      if (original === undefined) delete process.env.GITTENSORY_MINER_KILL_SWITCH;
-      else process.env.GITTENSORY_MINER_KILL_SWITCH = original;
+      if (original === undefined) delete process.env.LOOPOVER_MINER_KILL_SWITCH;
+      else process.env.LOOPOVER_MINER_KILL_SWITCH = original;
     }
   });
 });

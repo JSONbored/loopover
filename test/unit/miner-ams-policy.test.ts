@@ -24,15 +24,15 @@ function tempRoot() {
 
 describe("resolveAmsPolicyConfigPath (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
-    expect(resolveAmsPolicyConfigPath({ GITTENSORY_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
-    expect(resolveAmsPolicyConfigPath({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".gittensory-ams.yml"));
+    expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_AMS_POLICY_PATH: "/custom/policy.yml" })).toBe("/custom/policy.yml");
+    expect(resolveAmsPolicyConfigPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".gittensory-ams.yml"));
   });
 });
 
 describe("resolveAmsPolicy (#5132)", () => {
   it("returns the engine's safe defaults when no local operator policy exists", async () => {
     const root = tempRoot();
-    const result = await resolveAmsPolicy("acme/widgets", { env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
   });
 
@@ -41,7 +41,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("target repo policy must not be fetched");
     });
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -52,7 +52,7 @@ describe("resolveAmsPolicy (#5132)", () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("target repo policy must not be fetched");
     });
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
     expect(result.spec.submissionMode).toBe("observe");
     expect(result.spec.slopThreshold).toBe("clean");
@@ -67,7 +67,7 @@ describe("resolveAmsPolicy (#5132)", () => {
       fetchCalls += 1;
       throw new Error("target repo policy must not be fetched");
     };
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
     expect(fetchCalls).toBe(0);
   });
@@ -80,7 +80,7 @@ describe("resolveAmsPolicy (#5132)", () => {
       fetchCalls += 1;
       throw new Error("target repo policy must not be fetched");
     };
-    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("acme/widgets", { fetchImpl, env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result.source).toBe("local");
     expect(result.spec).toEqual(DEFAULT_AMS_POLICY_SPEC);
     expect(result.warnings.join(" ")).toMatch(/not valid YAML/i);
@@ -90,7 +90,7 @@ describe("resolveAmsPolicy (#5132)", () => {
   it("returns defaults for any repoFullName, without ever calling fetch", async () => {
     const root = tempRoot();
     const fetchImpl = vi.fn();
-    const result = await resolveAmsPolicy("not-a-repo", { fetchImpl, env: { GITTENSORY_MINER_CONFIG_DIR: root } });
+    const result = await resolveAmsPolicy("not-a-repo", { fetchImpl, env: { LOOPOVER_MINER_CONFIG_DIR: root } });
     expect(result).toEqual({ spec: DEFAULT_AMS_POLICY_SPEC, source: "default", warnings: [] });
     expect(fetchImpl).not.toHaveBeenCalled();
   });

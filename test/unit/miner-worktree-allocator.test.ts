@@ -36,15 +36,15 @@ afterEach(() => {
 describe("gittensory-miner worktree allocator scaffolding (#4298)", () => {
   it("resolves DB and worktree base paths from env overrides", () => {
     expect(
-      resolveWorktreeAllocatorDbPath({ GITTENSORY_MINER_WORKTREE_ALLOCATOR_DB: "/custom/alloc.sqlite3" }),
+      resolveWorktreeAllocatorDbPath({ LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB: "/custom/alloc.sqlite3" }),
     ).toBe("/custom/alloc.sqlite3");
-    expect(resolveWorktreeBaseDir({ GITTENSORY_MINER_WORKTREE_DIR: "/custom/worktrees" })).toBe(
+    expect(resolveWorktreeBaseDir({ LOOPOVER_MINER_WORKTREE_DIR: "/custom/worktrees" })).toBe(
       "/custom/worktrees",
     );
-    expect(resolveWorktreeAllocatorDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe(
+    expect(resolveWorktreeAllocatorDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(
       "/cfg/worktree-allocator.sqlite3",
     );
-    expect(resolveWorktreeBaseDir({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/worktrees");
+    expect(resolveWorktreeBaseDir({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/worktrees");
   });
 
   it("creates a permissioned SQLite store and allocates distinct worktree paths", () => {

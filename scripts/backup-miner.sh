@@ -1,6 +1,6 @@
 #!/bin/sh
 # gittensory-miner local-state backup (#4872): every store is an independent SQLite file directly under
-# GITTENSORY_MINER_CONFIG_DIR (packages/gittensory-miner/docs/operations-runbook.md's "Local state at a
+# LOOPOVER_MINER_CONFIG_DIR (packages/gittensory-miner/docs/operations-runbook.md's "Local state at a
 # glance") -- there is no Postgres/Qdrant involved, so this is deliberately a simpler sibling to
 # scripts/backup.sh, not a reuse of it (that script's manifest/multi-target logic has nothing to compose with
 # here). Backs up EVERY *.sqlite3 file currently present, discovered by glob rather than a hardcoded filename
@@ -14,12 +14,12 @@
 #
 # Usage:
 #   sh scripts/backup-miner.sh
-#   GITTENSORY_MINER_CONFIG_DIR=/data/miner GITTENSORY_MINER_BACKUP_RETAIN=14 sh scripts/backup-miner.sh
+#   LOOPOVER_MINER_CONFIG_DIR=/data/miner LOOPOVER_MINER_BACKUP_RETAIN=14 sh scripts/backup-miner.sh
 set -eu
 
-STATE_DIR="${GITTENSORY_MINER_CONFIG_DIR:-$HOME/.config/gittensory-miner}"
-OUT_DIR="${GITTENSORY_MINER_BACKUP_DIR:-$STATE_DIR/backups}"
-RETAIN="${GITTENSORY_MINER_BACKUP_RETAIN:-7}"
+STATE_DIR="${LOOPOVER_MINER_CONFIG_DIR:-$HOME/.config/gittensory-miner}"
+OUT_DIR="${LOOPOVER_MINER_BACKUP_DIR:-$STATE_DIR/backups}"
+RETAIN="${LOOPOVER_MINER_BACKUP_RETAIN:-7}"
 
 if ! command -v sqlite3 >/dev/null 2>&1; then
   echo "[backup-miner] sqlite3 not found; cannot take a safe online backup" >&2

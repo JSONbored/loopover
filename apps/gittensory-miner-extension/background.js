@@ -171,7 +171,7 @@ if (chrome.action && chrome.storage.onChanged) {
   });
 }
 
-if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
+if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerBackgroundInternals = {
     PING_MESSAGE,
     ISSUE_CONTEXT_MESSAGE,

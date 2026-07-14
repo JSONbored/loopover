@@ -60,4 +60,4 @@ The module provisions the **host**; you finish the miner setup over SSH (secrets
 | `server_ipv6`   | Public IPv6 of the host                                                  |
 | `ssh_command`   | Ready-to-run SSH command                                                 |
 | `volume_device` | Block device path for the data volume                                   |
-| `data_mount`    | `/data/miner` — the miner's `GITTENSORY_MINER_CONFIG_DIR`; the run mount |
+| `data_mount`    | `/data/miner` — the miner's `LOOPOVER_MINER_CONFIG_DIR`; the run mount |

@@ -42,17 +42,17 @@ Until the contract issue lands, treat these as **documentation placeholders** fo
 
 | Variable (provisional) | Default | Purpose |
 |------------------------|---------|---------|
-| `GITTENSORY_MINER_DISCOVERY_PLANE` | unset / `false` | Master opt-in. When not truthy (`1`, `true`, `yes`, `on`), the miner must not call the hosted index or emit discovery-plane telemetry. |
-| `GITTENSORY_MINER_DISCOVERY_INDEX_URL` | unset | Hosted index base URL. Required when the plane is enabled; ignored when opt-in is off. |
-| `GITTENSORY_MINER_DISCOVERY_TELEMETRY` | unset / `false` | Separate opt-in for anonymized operational telemetry ([#4301](https://github.com/JSONbored/gittensory/issues/4301)). Plane queries can stay on while telemetry stays off. |
+| `LOOPOVER_MINER_DISCOVERY_PLANE` | unset / `false` | Master opt-in. When not truthy (`1`, `true`, `yes`, `on`), the miner must not call the hosted index or emit discovery-plane telemetry. |
+| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | unset | Hosted index base URL. Required when the plane is enabled; ignored when opt-in is off. |
+| `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | unset / `false` | Separate opt-in for anonymized operational telemetry ([#4301](https://github.com/JSONbored/gittensory/issues/4301)). Plane queries can stay on while telemetry stays off. |
 
 **Truthy-string convention** (when implemented): `/^(1|true|yes|on)$/i`, matching other `GITTENSORY_*` flags in this repo.
 
 **Operator checklist (enabled plane):**
 
-1. Set `GITTENSORY_MINER_DISCOVERY_PLANE=true` (exact name may change — see [#4300](https://github.com/JSONbored/gittensory/issues/4300)).
-2. Set `GITTENSORY_MINER_DISCOVERY_INDEX_URL` to the operator-trusted index endpoint ([#4250](https://github.com/JSONbored/gittensory/issues/4250)).
-3. Optionally set `GITTENSORY_MINER_DISCOVERY_TELEMETRY=true` if you want anonymized operational events for the hosted service — not required for index queries.
+1. Set `LOOPOVER_MINER_DISCOVERY_PLANE=true` (exact name may change — see [#4300](https://github.com/JSONbored/gittensory/issues/4300)).
+2. Set `LOOPOVER_MINER_DISCOVERY_INDEX_URL` to the operator-trusted index endpoint ([#4250](https://github.com/JSONbored/gittensory/issues/4250)).
+3. Optionally set `LOOPOVER_MINER_DISCOVERY_TELEMETRY=true` if you want anonymized operational events for the hosted service — not required for index queries.
 4. Keep `GITHUB_TOKEN` (or equivalent) on the instance only; never configure tokens intended for the hosted plane to receive.
 
 With opt-in off (default), behavior is byte-identical to today: local SQLite ledgers, local fan-out, no hosted calls.

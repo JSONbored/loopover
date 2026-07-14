@@ -6,7 +6,7 @@ operations, see your ops runbook.
 
 ## What's observable
 
-The miner writes append-only SQLite ledgers under `GITTENSORY_MINER_CONFIG_DIR` (default
+The miner writes append-only SQLite ledgers under `LOOPOVER_MINER_CONFIG_DIR` (default
 `~/.config/gittensory-miner` on a laptop, or `/data/miner` in the fleet Docker image — see
 [`DEPLOYMENT.md`](../DEPLOYMENT.md)):
 
@@ -17,7 +17,7 @@ The miner writes append-only SQLite ledgers under `GITTENSORY_MINER_CONFIG_DIR` 
 - **`prediction-ledger.sqlite3`** — recorded predicted-gate verdicts for later scoring.
 
 Those live files can contain free-form payloads, repo/target identifiers, readiness scores, and blocker/warning
-codes. Keep `GITTENSORY_MINER_CONFIG_DIR` private to the miner. Grafana should read only sanitized reporting
+codes. Keep `LOOPOVER_MINER_CONFIG_DIR` private to the miner. Grafana should read only sanitized reporting
 exports that operators create from those ledgers.
 
 ## Point Grafana at reporting exports
@@ -41,10 +41,10 @@ not under the miner config directory.
    docker compose --profile ams-observability up -d
    ```
 
-   Set `GITTENSORY_MINER_CONFIG_DIR` in your `.env` (see [`.env.example`](../../../.env.example)) to the same
+   Set `LOOPOVER_MINER_CONFIG_DIR` in your `.env` (see [`.env.example`](../../../.env.example)) to the same
    directory your miner uses. The `ams-reporting-exporter` container mounts it **read-only**, runs
    [`scripts/export-ams-reporting-db.sh`](../../../scripts/export-ams-reporting-db.sh) on an interval
-   (`GITTENSORY_AMS_REPORTING_EXPORT_INTERVAL_SECONDS`, default 30s), and writes the redacted snapshots into the
+   (`LOOPOVER_AMS_REPORTING_EXPORT_INTERVAL_SECONDS`, default 30s), and writes the redacted snapshots into the
    same `reporting` volume Grafana already reads — Grafana itself never mounts the live ledgers. The exported
    schema drops `attempt_log_events.reason`/`.payload_json` (the free-form fields) entirely; every other column,
    including the `predictions` table's `blocker_codes_json`/`warning_codes_json` (fixed, engine-defined codes —
@@ -78,16 +78,16 @@ None of these is a long-running HTTP server — Prometheus can't scrape a one-sh
 wire [`scripts/export-miner-prometheus-textfile.sh`](../../../scripts/export-miner-prometheus-textfile.sh) into
 your own cron/systemd timer alongside [node_exporter's textfile
 collector](https://github.com/prometheus/node_exporter#textfile-collector): the script runs all four commands and
-atomically writes their concatenated output to `$GITTENSORY_MINER_PROMETHEUS_TEXTFILE` (default
+atomically writes their concatenated output to `$LOOPOVER_MINER_PROMETHEUS_TEXTFILE` (default
 `/var/lib/node_exporter/textfile_collector/gittensory_miner.prom`), the standard directory node_exporter's
-textfile collector watches. Point `GITTENSORY_MINER_BIN` at the miner binary if it isn't on `PATH`.
+textfile collector watches. Point `LOOPOVER_MINER_BIN` at the miner binary if it isn't on `PATH`.
 
 A broken/corrupt local store for one family (e.g. the portfolio queue) never blocks the other three — that
 family's metrics are simply omitted from the file for that run (logged to stderr), not the whole export.
 
 ```sh
 # crontab -e
-*/5 * * * * GITTENSORY_MINER_CONFIG_DIR=/data/miner sh /path/to/gittensory/scripts/export-miner-prometheus-textfile.sh
+*/5 * * * * LOOPOVER_MINER_CONFIG_DIR=/data/miner sh /path/to/gittensory/scripts/export-miner-prometheus-textfile.sh
 ```
 
 Then point your own `prometheus.yml` at node_exporter as usual — no changes to this repo's `prometheus/` config
@@ -120,6 +120,6 @@ maintainer-side collector) — every invocation requires `--enable --send` expli
 
 | Variable | Purpose |
 | --- | --- |
-| `GITTENSORY_MINER_AMS_COLLECTOR_URL` | Override the collector endpoint (default: gittensory's hosted collector). |
-| `GITTENSORY_MINER_AMS_COLLECTOR_TOKEN` | Optional bearer credential, only needed if your collector requires one. |
-| `GITTENSORY_MINER_ORB_EXPORT_DB` | Override the local secret+cursor store path (default: `orb-export.sqlite3` under `GITTENSORY_MINER_CONFIG_DIR`). |
+| `LOOPOVER_MINER_AMS_COLLECTOR_URL` | Override the collector endpoint (default: gittensory's hosted collector). |
+| `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | Optional bearer credential, only needed if your collector requires one. |
+| `LOOPOVER_MINER_ORB_EXPORT_DB` | Override the local secret+cursor store path (default: `orb-export.sqlite3` under `LOOPOVER_MINER_CONFIG_DIR`). |

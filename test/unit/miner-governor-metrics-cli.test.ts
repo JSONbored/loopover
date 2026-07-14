@@ -208,15 +208,15 @@ describe("runGovernorMetrics (#5187)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-metrics-cli-default-"));
     roots.push(root);
     const dbPath = join(root, "governor-state.sqlite3");
-    const previousDbPath = process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB;
-    process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB = dbPath;
+    const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;
+    process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB = dbPath;
     try {
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       expect(await runGovernorMetrics([])).toBe(0);
       expect(log).toHaveBeenCalled();
     } finally {
-      if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB;
-      else process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB = previousDbPath;
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;
+      else process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB = previousDbPath;
     }
   });
 

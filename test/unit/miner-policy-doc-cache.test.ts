@@ -32,10 +32,10 @@ afterEach(() => {
 
 describe("resolvePolicyDocCacheDbPath (#4842)", () => {
   it("prefers the store-specific env var, then the config dir, then XDG/~config", () => {
-    expect(resolvePolicyDocCacheDbPath({ GITTENSORY_MINER_POLICY_DOC_CACHE_DB: "/custom/pdc.sqlite3" })).toBe(
+    expect(resolvePolicyDocCacheDbPath({ LOOPOVER_MINER_POLICY_DOC_CACHE_DB: "/custom/pdc.sqlite3" })).toBe(
       "/custom/pdc.sqlite3",
     );
-    expect(resolvePolicyDocCacheDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe(
+    expect(resolvePolicyDocCacheDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe(
       join("/cfg", "policy-doc-cache.sqlite3"),
     );
     expect(resolvePolicyDocCacheDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -96,7 +96,7 @@ describe("gittensory-miner policy-doc cache store (#4842)", () => {
 
   it("resolves its default path from the env when no path is passed", () => {
     const dbPath = tempDbPath();
-    vi.stubEnv("GITTENSORY_MINER_POLICY_DOC_CACHE_DB", dbPath);
+    vi.stubEnv("LOOPOVER_MINER_POLICY_DOC_CACHE_DB", dbPath);
     // Call with no argument so the default parameter resolves the path from the env.
     const store = initPolicyDocCacheStore();
     stores.push(store);

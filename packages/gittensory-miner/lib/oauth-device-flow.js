@@ -19,7 +19,7 @@ const DEFAULT_INTERVAL_SECONDS = 5;
 /** The centrally-held loopover-ams App's OAuth client id -- public (not secret), so it's safe to read from a
  *  plain env var. Empty/unset means device-flow authorization isn't available in this build/deployment. */
 export function resolveAmsOauthClientId(env = process.env) {
-  return typeof env.GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID === "string" ? env.GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID.trim() : "";
+  return typeof env.LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID === "string" ? env.LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID.trim() : "";
 }
 
 export class DeviceFlowError extends Error {

@@ -42,8 +42,8 @@ describe("gittensory-miner plan store (#2318)", () => {
   });
 
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolvePlanStoreDbPath({ GITTENSORY_MINER_PLAN_STORE_DB: "/custom/p.sqlite3" })).toBe("/custom/p.sqlite3");
-    expect(resolvePlanStoreDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolvePlanStoreDbPath({ LOOPOVER_MINER_PLAN_STORE_DB: "/custom/p.sqlite3" })).toBe("/custom/p.sqlite3");
+    expect(resolvePlanStoreDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/plan-store.sqlite3",
     );
     expect(resolvePlanStoreDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/gittensory-miner/plan-store.sqlite3");

@@ -11,7 +11,7 @@ Current scope is intentionally small:
 - workspace package wiring
 - CLI entry point
 - `--help` and `version` commands
-- startup npm version nudge (override with `--no-update-check` or `GITTENSORY_MINER_NO_UPDATE_CHECK=1`)
+- startup npm version nudge (override with `--no-update-check` or `LOOPOVER_MINER_NO_UPDATE_CHECK=1`)
 
 Environment variables read by the miner are documented in [`docs/env-reference.md`](docs/env-reference.md).
 Regenerate that file with `npm run miner:env-reference` from the repo root after adding or removing env reads.
@@ -101,26 +101,26 @@ Phase 6 of the same roadmap tracker and hasn't been scaffolded yet. (#4279)
 
 Independent local SQLite stores back the commands above. Each keeps its own file, its own table(s), and (for most stores) its own env-var override — this is a DRY pass over their shared path-resolution/open boilerplate (`local-store.js`), not a merge into one database. (#4272)
 
-See [`docs/env-reference.md`](docs/env-reference.md) for the full `GITTENSORY_MINER_*` / `MINER_*` env-var list.
+See [`docs/env-reference.md`](docs/env-reference.md) for the full `LOOPOVER_MINER_*` / `MINER_*` env-var list.
 
 | Store | File | Primary table(s) | Module | Env var override |
 | --- | --- | --- | --- | --- |
-| Laptop bootstrap | `laptop-state.sqlite3` | `laptop_meta` | `laptop-init.js` | `GITTENSORY_MINER_CONFIG_DIR` (path only) |
-| Run state | `run-state.sqlite3` | `miner_run_state` | `run-state.js` | `GITTENSORY_MINER_RUN_STATE_DB` |
-| Claim ledger | `claim-ledger.sqlite3` | `miner_claims` | `claim-ledger.js` | `GITTENSORY_MINER_CLAIM_LEDGER_DB` |
-| Portfolio queue | `portfolio-queue.sqlite3` | `miner_portfolio_queue` | `portfolio-queue.js` | `GITTENSORY_MINER_PORTFOLIO_QUEUE_DB` |
-| Event ledger | `event-ledger.sqlite3` | `miner_event_ledger` | `event-ledger.js` | `GITTENSORY_MINER_EVENT_LEDGER_DB` |
-| Plan store | `plan-store.sqlite3` | `miner_plans` | `plan-store.js` | `GITTENSORY_MINER_PLAN_STORE_DB` |
-| Governor ledger | `governor-ledger.sqlite3` | `governor_events` | `governor-ledger.js` | `GITTENSORY_MINER_GOVERNOR_LEDGER_DB` |
-| Governor state | `governor-state.sqlite3` | `governor_scalar_state`, `governor_reputation_history`, `governor_own_submissions` | `governor-state.js` | `GITTENSORY_MINER_GOVERNOR_STATE_DB` |
-| Attempt log | `attempt-log.sqlite3` | `attempt_log_events` | `attempt-log.js` | `GITTENSORY_MINER_ATTEMPT_LOG_DB` |
-| Prediction ledger | `prediction-ledger.sqlite3` | `predictions` | `prediction-ledger.js` | `GITTENSORY_MINER_PREDICTION_LEDGER_DB` |
-| Replay snapshot | `replay-snapshot.sqlite3` | `replay_snapshots` | `replay-snapshot.js` | `GITTENSORY_MINER_REPLAY_SNAPSHOT_DB` |
-| Deny-hook synthesis | `deny-hook-synthesis.sqlite3` | `deny_rule_proposals` | `deny-hook-synthesis.js` | `GITTENSORY_MINER_DENY_HOOK_SYNTHESIS_DB` |
-| Worktree allocator | `worktree-allocator.sqlite3` | `worktree_slots` | `worktree-allocator.js` | `GITTENSORY_MINER_WORKTREE_ALLOCATOR_DB` |
-| Orb export | `orb-export.sqlite3` | `orb_export_meta` | `orb-export.js` | `GITTENSORY_MINER_ORB_EXPORT_DB` |
-| Policy-doc cache | `policy-doc-cache.sqlite3` | `policy_doc_cache` | `policy-doc-cache.js` | `GITTENSORY_MINER_POLICY_DOC_CACHE_DB` |
-| Policy-verdict cache | `policy-verdict-cache.sqlite3` | `policy_verdict_cache` | `policy-verdict-cache.js` | `GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB` |
+| Laptop bootstrap | `laptop-state.sqlite3` | `laptop_meta` | `laptop-init.js` | `LOOPOVER_MINER_CONFIG_DIR` (path only) |
+| Run state | `run-state.sqlite3` | `miner_run_state` | `run-state.js` | `LOOPOVER_MINER_RUN_STATE_DB` |
+| Claim ledger | `claim-ledger.sqlite3` | `miner_claims` | `claim-ledger.js` | `LOOPOVER_MINER_CLAIM_LEDGER_DB` |
+| Portfolio queue | `portfolio-queue.sqlite3` | `miner_portfolio_queue` | `portfolio-queue.js` | `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB` |
+| Event ledger | `event-ledger.sqlite3` | `miner_event_ledger` | `event-ledger.js` | `LOOPOVER_MINER_EVENT_LEDGER_DB` |
+| Plan store | `plan-store.sqlite3` | `miner_plans` | `plan-store.js` | `LOOPOVER_MINER_PLAN_STORE_DB` |
+| Governor ledger | `governor-ledger.sqlite3` | `governor_events` | `governor-ledger.js` | `LOOPOVER_MINER_GOVERNOR_LEDGER_DB` |
+| Governor state | `governor-state.sqlite3` | `governor_scalar_state`, `governor_reputation_history`, `governor_own_submissions` | `governor-state.js` | `LOOPOVER_MINER_GOVERNOR_STATE_DB` |
+| Attempt log | `attempt-log.sqlite3` | `attempt_log_events` | `attempt-log.js` | `LOOPOVER_MINER_ATTEMPT_LOG_DB` |
+| Prediction ledger | `prediction-ledger.sqlite3` | `predictions` | `prediction-ledger.js` | `LOOPOVER_MINER_PREDICTION_LEDGER_DB` |
+| Replay snapshot | `replay-snapshot.sqlite3` | `replay_snapshots` | `replay-snapshot.js` | `LOOPOVER_MINER_REPLAY_SNAPSHOT_DB` |
+| Deny-hook synthesis | `deny-hook-synthesis.sqlite3` | `deny_rule_proposals` | `deny-hook-synthesis.js` | `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` |
+| Worktree allocator | `worktree-allocator.sqlite3` | `worktree_slots` | `worktree-allocator.js` | `LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB` |
+| Orb export | `orb-export.sqlite3` | `orb_export_meta` | `orb-export.js` | `LOOPOVER_MINER_ORB_EXPORT_DB` |
+| Policy-doc cache | `policy-doc-cache.sqlite3` | `policy_doc_cache` | `policy-doc-cache.js` | `LOOPOVER_MINER_POLICY_DOC_CACHE_DB` |
+| Policy-verdict cache | `policy-verdict-cache.sqlite3` | `policy_verdict_cache` | `policy-verdict-cache.js` | `LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB` |
 
 The policy-doc and policy-verdict caches are the only stores above that hold no miner state of their own — both are
 pure optimization, and deleting either file only forces the next run to redo the work it would have skipped. The
@@ -131,7 +131,7 @@ instead of re-downloading static content, spending no extra rate-limit budget wh
 confirmed unchanged, it reuses the already-resolved AI-usage-policy verdict instead of re-resolving it from the
 (identical) doc text (#4843).
 
-Every store resolves its file the same way: the store-specific env var above, else `GITTENSORY_MINER_CONFIG_DIR`,
+Every store resolves its file the same way: the store-specific env var above, else `LOOPOVER_MINER_CONFIG_DIR`,
 else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens
 its file with `0700`/`0600` permissions and a shared `PRAGMA busy_timeout` so two instances on the same file
 serialize writes instead of racing.
@@ -175,7 +175,7 @@ gittensory-miner doctor
 gittensory-miner status
 ```
 
-`init` creates `~/.config/gittensory-miner/` (or `GITTENSORY_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only). Every local store already applies its own pending schema migrations automatically the moment some other command first opens it, but `migrate` lets an operator proactively bring every EXISTING store file up to date in one pass (e.g. right after upgrading) instead of relying on whichever command happens to touch a given store first; a store file that hasn't been created yet is reported as skipped, not created.
+`init` creates `~/.config/gittensory-miner/` (or `LOOPOVER_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only). Every local store already applies its own pending schema migrations automatically the moment some other command first opens it, but `migrate` lets an operator proactively bring every EXISTING store file up to date in one pass (e.g. right after upgrading) instead of relying on whichever command happens to touch a given store first; a store file that hasn't been created yet is reported as skipped, not created.
 
 First-time operators can instead run `gittensory-miner init --interactive` (#5176): a guided prompt for `GITHUB_TOKEN` (input hidden, never echoed or written to any log) and an optional coding-agent provider — plus that provider's model/timeout companion vars, each individually skippable with Enter — writes a starter `.env` to the state dir, then automatically reruns `doctor` against the collected values so setup problems surface immediately. `--interactive` makes no network calls of its own beyond what `doctor` already makes (none); non-interactive `init` invocations are unaffected.
 

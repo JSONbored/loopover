@@ -18,7 +18,7 @@ const defaultDbFileName = "policy-verdict-cache.sqlite3";
 const DECISIVE_DOCS = new Set(["AI-USAGE.md", "CONTRIBUTING.md"]);
 
 export function resolvePolicyVerdictCacheDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_POLICY_VERDICT_CACHE_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

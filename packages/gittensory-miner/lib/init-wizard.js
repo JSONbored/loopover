@@ -13,7 +13,7 @@ import { DeviceFlowError, resolveAmsOauthClientId, runDeviceFlowAuthorization } 
 // this module never calls verifyGithubToken (that stays behind the separate, explicitly opt-in
 // `init --verify-token` flag).
 //
-// #5682: when GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID is configured, the wizard offers "Authorize with GitHub"
+// #5682: when LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID is configured, the wizard offers "Authorize with GitHub"
 // (device flow -- see oauth-device-flow.js) as an ADDITIONAL onboarding path alongside the original pasted-PAT
 // prompt, never replacing it. Unconfigured (today's default -- the App isn't registered yet) is byte-identical
 // to the original prompt-only flow, so every existing deployment is unaffected until an operator opts in.
@@ -54,7 +54,7 @@ async function promptAuthMethod(io) {
 }
 
 /**
- * Collect a GitHub credential for the wizard's starter .env. When GITTENSORY_MINER_AMS_OAUTH_CLIENT_ID isn't
+ * Collect a GitHub credential for the wizard's starter .env. When LOOPOVER_MINER_AMS_OAUTH_CLIENT_ID isn't
  * configured (today's default, before the loopover-ams App is registered), this is IDENTICAL to the original
  * masked-token-only prompt -- no menu, no behavior change. Once configured, offers device-flow authorization as
  * the default choice, with the original pasted-token path still available (option 2) and as the automatic

@@ -18,10 +18,10 @@ const DEFAULT_CLONE_DIR_NAME = "repos";
 const DEFAULT_BASE_BRANCH = "main";
 
 export function resolveRepoCloneBaseDir(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_REPO_CLONE_DIR === "string" ? env.GITTENSORY_MINER_REPO_CLONE_DIR.trim() : "";
+  const explicitPath = typeof env.LOOPOVER_MINER_REPO_CLONE_DIR === "string" ? env.LOOPOVER_MINER_REPO_CLONE_DIR.trim() : "";
   if (explicitPath) return explicitPath;
 
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string" ? env.GITTENSORY_MINER_CONFIG_DIR.trim() : "";
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string" ? env.LOOPOVER_MINER_CONFIG_DIR.trim() : "";
   if (explicitConfigDir) return join(explicitConfigDir, DEFAULT_CLONE_DIR_NAME);
 
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim() ? env.XDG_CONFIG_HOME.trim() : join(homedir(), ".config");

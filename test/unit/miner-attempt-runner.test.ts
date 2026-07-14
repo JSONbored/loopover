@@ -270,7 +270,7 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
   it("falls back to the real default governor-ledger append when governorLedgerAppend is omitted", async () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-runner-default-governor-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_LEDGER_DB", join(root, "default-governor.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_LEDGER_DB", join(root, "default-governor.sqlite3"));
     const deps = baseDeps();
     delete (deps as { governorLedgerAppend?: unknown }).governorLedgerAppend;
 
@@ -283,7 +283,7 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
   it("falls back to the real default governor-state store when governorState is omitted", async () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-runner-default-governor-state-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "default-governor-state.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "default-governor-state.sqlite3"));
     const deps = baseDeps();
     delete (deps as { governorState?: unknown }).governorState;
 

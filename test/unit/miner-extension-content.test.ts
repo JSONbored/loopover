@@ -210,7 +210,7 @@ describe("miner extension opportunity badge", () => {
       "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
-      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      __LOOPOVER_MINER_EXTENSION_TEST__: true,
       TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {
@@ -349,7 +349,7 @@ describe("miner extension opportunity badge", () => {
       "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
-      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      __LOOPOVER_MINER_EXTENSION_TEST__: true,
       Date: { now: () => fakeNowMs },
       TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
@@ -402,7 +402,7 @@ describe("miner extension opportunity badge", () => {
       "#syncNow": { addEventListener: () => {} },
     };
     const context: Record<string, unknown> = {
-      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      __LOOPOVER_MINER_EXTENSION_TEST__: true,
       TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {
@@ -482,7 +482,7 @@ function createMockContainer() {
 
 function loadBadgeInternals() {
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
   };
   context.globalThis = context;
   const vmContext = createContext(context);
@@ -501,7 +501,7 @@ function loadBadgeInternals() {
 function loadContentInternals() {
   const badge = loadBadgeInternals();
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
     __gittensoryMinerOpportunityBadge: badge,
     location: { pathname: "/JSONbored/gittensory/pull/146" },
     document: {
@@ -532,7 +532,7 @@ function loadBackgroundInternals({
   rankedCandidatesSavedAt = null as number | null,
 } = {}) {
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
     chrome: {
       storage: {
         sync: {
@@ -565,7 +565,7 @@ function loadBackgroundInternals({
 
 function loadOptionsInternals() {
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
     TextEncoder,
     document: { querySelector: () => null },
     chrome: {

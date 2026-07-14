@@ -19,6 +19,6 @@ output "volume_device" {
 }
 
 output "data_mount" {
-  description = "Where the persistent volume is mounted — the miner's GITTENSORY_MINER_CONFIG_DIR. Point the miner container's state mount here."
+  description = "Where the persistent volume is mounted — the miner's LOOPOVER_MINER_CONFIG_DIR. Point the miner container's state mount here."
   value       = "/data/miner"
 }

@@ -17,9 +17,9 @@ function fixtureRoot(): string {
     [
       "export function readEnv(env = process.env) {",
       "  const ignored = process.env.OTHER_APP_VAR;",
-      "  const config = env.GITTENSORY_MINER_CONFIG_DIR ?? '';",
+      "  const config = env.LOOPOVER_MINER_CONFIG_DIR ?? '';",
       "  const provider = env.MINER_CODING_AGENT_PROVIDER ?? '';",
-      "  return resolveLocalStoreDbPath('state.sqlite3', 'GITTENSORY_MINER_RUN_STATE_DB', env);",
+      "  return resolveLocalStoreDbPath('state.sqlite3', 'LOOPOVER_MINER_RUN_STATE_DB', env);",
       "}",
       "",
     ].join("\n"),
@@ -28,7 +28,7 @@ function fixtureRoot(): string {
     join(root, "packages", "gittensory-miner", "lib", "b.js"),
     [
       "export function duplicate(env = process.env) {",
-      "  return env.GITTENSORY_MINER_CONFIG_DIR;",
+      "  return env.LOOPOVER_MINER_CONFIG_DIR;",
       "}",
       "",
     ].join("\n"),
@@ -37,8 +37,8 @@ function fixtureRoot(): string {
 }
 
 describe("generate-env-reference (#5179)", () => {
-  it("filters to GITTENSORY_MINER_* and MINER_* vars only", () => {
-    expect(isMinerEnvVar("GITTENSORY_MINER_CONFIG_DIR")).toBe(true);
+  it("filters to LOOPOVER_MINER_* and MINER_* vars only", () => {
+    expect(isMinerEnvVar("LOOPOVER_MINER_CONFIG_DIR")).toBe(true);
     expect(isMinerEnvVar("MINER_CODING_AGENT_PROVIDER")).toBe(true);
     expect(isMinerEnvVar("OTHER_APP_VAR")).toBe(false);
   });
@@ -46,12 +46,12 @@ describe("generate-env-reference (#5179)", () => {
   it("extracts static env reads, resolveLocalStoreDbPath names, and first references", () => {
     expect(collectMinerEnvVars({ rootDir: fixtureRoot() })).toEqual([
       {
-        name: "GITTENSORY_MINER_CONFIG_DIR",
+        name: "LOOPOVER_MINER_CONFIG_DIR",
         firstReference: "lib/a.js",
         defaultValue: "",
       },
       {
-        name: "GITTENSORY_MINER_RUN_STATE_DB",
+        name: "LOOPOVER_MINER_RUN_STATE_DB",
         firstReference: "lib/a.js",
         defaultValue: null,
       },
@@ -66,8 +66,8 @@ describe("generate-env-reference (#5179)", () => {
   it("renders a deterministic markdown table with names, references, and defaults", () => {
     expect(
       renderMinerEnvReferenceMarkdown([
-        { name: "GITTENSORY_MINER_CONFIG_DIR", firstReference: "lib/a.js", defaultValue: "" },
-        { name: "GITTENSORY_MINER_RUN_STATE_DB", firstReference: "lib/run-state.js", defaultValue: null },
+        { name: "LOOPOVER_MINER_CONFIG_DIR", firstReference: "lib/a.js", defaultValue: "" },
+        { name: "LOOPOVER_MINER_RUN_STATE_DB", firstReference: "lib/run-state.js", defaultValue: null },
       ]),
     ).toBe(
       [
@@ -77,8 +77,8 @@ describe("generate-env-reference (#5179)", () => {
         "",
         "| Name | First reference | Default |",
         "| --- | --- | --- |",
-        "| `GITTENSORY_MINER_CONFIG_DIR` | `lib/a.js` | `\"\"` |",
-        "| `GITTENSORY_MINER_RUN_STATE_DB` | `lib/run-state.js` | (none) |",
+        "| `LOOPOVER_MINER_CONFIG_DIR` | `lib/a.js` | `\"\"` |",
+        "| `LOOPOVER_MINER_RUN_STATE_DB` | `lib/run-state.js` | (none) |",
         "",
       ].join("\n"),
     );
@@ -93,7 +93,7 @@ describe("generate-env-reference (#5179)", () => {
     expect(written.changed).toBe(true);
     expect(existsSync(outputAbs)).toBe(true);
     const generated = readFileSync(outputAbs, "utf8");
-    expect(generated).toContain("GITTENSORY_MINER_CONFIG_DIR");
+    expect(generated).toContain("LOOPOVER_MINER_CONFIG_DIR");
 
     expect(writeMinerEnvReference({ rootDir: root, outputPath, check: true }).changed).toBe(false);
 

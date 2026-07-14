@@ -19,7 +19,7 @@ Both commands follow the same convention, so any scheduler can detect a failed r
 
 For scheduled runs, two flags matter:
 
-- `--no-update-check` (or `GITTENSORY_MINER_NO_UPDATE_CHECK=1`) — skip the npm-registry version nudge so
+- `--no-update-check` (or `LOOPOVER_MINER_NO_UPDATE_CHECK=1`) — skip the npm-registry version nudge so
   an unattended run never depends on / prints it.
 - `--json` — machine-parseable stdout, so an alert handler can attach the structured output.
 
@@ -28,7 +28,7 @@ For scheduled runs, two flags matter:
 ```cron
 # crontab env applies to every job below.
 MAILTO=you@example.com
-GITTENSORY_MINER_NO_UPDATE_CHECK=1
+LOOPOVER_MINER_NO_UPDATE_CHECK=1
 
 # Poll a tracked PR every 10 minutes. The `||` branch fires on any non-zero exit: it logs the failing
 # code to syslog AND re-raises it with `exit "$status"`, so the failure stays visible to exit-status
@@ -61,7 +61,7 @@ OnFailure=gittensory-miner-alert@%n.service
 
 [Service]
 Type=oneshot
-Environment=GITTENSORY_MINER_NO_UPDATE_CHECK=1
+Environment=LOOPOVER_MINER_NO_UPDATE_CHECK=1
 # A non-zero exit (2) marks the unit failed and triggers OnFailure=.
 ExecStart=/usr/local/bin/gittensory-miner discover --search "label:good-first-issue" --json
 ```

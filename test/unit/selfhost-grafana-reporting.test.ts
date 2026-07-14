@@ -33,9 +33,9 @@ function runExporter(root: string, sourceDb: string, outDb: string, env: Record<
     cwd: process.cwd(),
     env: {
       ...process.env,
-      GITTENSORY_REPORTING_SOURCE_DB: sourceDb,
-      GITTENSORY_REPORTING_DIR: root,
-      GITTENSORY_REPORTING_DB: outDb,
+      LOOPOVER_REPORTING_SOURCE_DB: sourceDb,
+      LOOPOVER_REPORTING_DIR: root,
+      LOOPOVER_REPORTING_DB: outDb,
       ...env,
     },
     stdio: "pipe",

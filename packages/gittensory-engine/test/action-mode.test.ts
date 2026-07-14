@@ -18,7 +18,7 @@ test("barrel: the public entrypoint re-exports the action-mode primitive (#2342)
   assert.equal(typeof isGlobalMinerLiveModeOptIn, "function");
   assert.equal(typeof buildMinerDryRunGovernorLedgerEvent, "function");
   assert.equal(MINER_LIVE_MODE_OPT_IN, "live");
-  assert.equal(MINER_LIVE_MODE_ENV_VAR, "GITTENSORY_MINER_LIVE_MODE");
+  assert.equal(MINER_LIVE_MODE_ENV_VAR, "LOOPOVER_MINER_LIVE_MODE");
 });
 
 test("isExplicitMinerLiveModeOptIn: only the exact literal opts in, no truthy coercion", () => {
@@ -29,9 +29,9 @@ test("isExplicitMinerLiveModeOptIn: only the exact literal opts in, no truthy co
 });
 
 test("isGlobalMinerLiveModeOptIn: only the exact env value opts in", () => {
-  assert.equal(isGlobalMinerLiveModeOptIn({ GITTENSORY_MINER_LIVE_MODE: "live" }), true);
+  assert.equal(isGlobalMinerLiveModeOptIn({ LOOPOVER_MINER_LIVE_MODE: "live" }), true);
   for (const value of [undefined, "", "1", "true", "Live", "on"]) {
-    assert.equal(isGlobalMinerLiveModeOptIn({ GITTENSORY_MINER_LIVE_MODE: value }), false);
+    assert.equal(isGlobalMinerLiveModeOptIn({ LOOPOVER_MINER_LIVE_MODE: value }), false);
   }
 });
 

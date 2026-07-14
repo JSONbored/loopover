@@ -251,8 +251,8 @@ describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-pause-cli-default-"));
     roots.push(root);
     const dbPath = join(root, "governor-state.sqlite3");
-    const previousDbPath = process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB;
-    process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB = dbPath;
+    const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;
+    process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB = dbPath;
     try {
       vi.spyOn(console, "log").mockImplementation(() => undefined);
       expect(await runGovernorPause(["--reason", "default path"])).toBe(0);
@@ -261,8 +261,8 @@ describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
       states.push(reopened);
       expect(reopened.loadPauseState()).toMatchObject({ paused: true, reason: "default path" });
     } finally {
-      if (previousDbPath === undefined) delete process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB;
-      else process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB = previousDbPath;
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;
+      else process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB = previousDbPath;
     }
   });
 });

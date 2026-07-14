@@ -1,7 +1,7 @@
 # Kubernetes workload for gittensory-miner (AMS) fleet mode (#5181).
 #
 # This is a StatefulSet, NOT a Deployment: the miner keeps all of its state in local SQLite ledgers
-# (claim-ledger.sqlite3, plan-store.sqlite3, …) under GITTENSORY_MINER_CONFIG_DIR, and those stores are NOT
+# (claim-ledger.sqlite3, plan-store.sqlite3, …) under LOOPOVER_MINER_CONFIG_DIR, and those stores are NOT
 # safe for concurrent multi-pod access. A Deployment can only mount one shared PVC across every replica; a
 # StatefulSet's volumeClaimTemplates give each replica its OWN PersistentVolumeClaim, so N workers run with
 # fully isolated state — the safety property this manifest exists to guarantee. See k8s/README.md.
@@ -45,7 +45,7 @@ spec:
           # ENTRYPOINT is `gittensory-miner`; `run` is the continuous fleet-worker loop.
           args: ["run"]
           env:
-            - name: GITTENSORY_MINER_CONFIG_DIR
+            - name: LOOPOVER_MINER_CONFIG_DIR
               value: /data/miner
             - name: GITHUB_TOKEN
               valueFrom:

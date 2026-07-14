@@ -43,19 +43,19 @@ afterEach(() => {
 describe("gittensory-miner shared local-store helper (#4272)", () => {
   it("resolveLocalStoreDbPath prefers the explicit env var, then config dir, then XDG, then the home default", () => {
     expect(
-      resolveLocalStoreDbPath("thing.sqlite3", "GITTENSORY_MINER_THING_DB", {
-        GITTENSORY_MINER_THING_DB: "/custom/thing.sqlite3",
+      resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", {
+        LOOPOVER_MINER_THING_DB: "/custom/thing.sqlite3",
       }),
     ).toBe("/custom/thing.sqlite3");
     expect(
-      resolveLocalStoreDbPath("thing.sqlite3", "GITTENSORY_MINER_THING_DB", {
-        GITTENSORY_MINER_CONFIG_DIR: "/custom/config",
+      resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", {
+        LOOPOVER_MINER_CONFIG_DIR: "/custom/config",
       }),
     ).toBe("/custom/config/thing.sqlite3");
     expect(
-      resolveLocalStoreDbPath("thing.sqlite3", "GITTENSORY_MINER_THING_DB", { XDG_CONFIG_HOME: "/xdg" }),
+      resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", { XDG_CONFIG_HOME: "/xdg" }),
     ).toBe("/xdg/gittensory-miner/thing.sqlite3");
-    expect(resolveLocalStoreDbPath("thing.sqlite3", "GITTENSORY_MINER_THING_DB", {})).toMatch(
+    expect(resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", {})).toMatch(
       /\/\.config\/gittensory-miner\/thing\.sqlite3$/,
     );
   });
@@ -126,10 +126,10 @@ describe("gittensory-miner shared local-store helper (#4272)", () => {
   it("regression: the four migrated stores still resolve to independent files, and each on-disk file only has its own table (#4272)", () => {
     const configDir = tempRoot();
 
-    const runStatePath = resolveRunStateDbPath({ GITTENSORY_MINER_CONFIG_DIR: configDir });
-    const claimLedgerPath = resolveClaimLedgerDbPath({ GITTENSORY_MINER_CONFIG_DIR: configDir });
-    const portfolioQueuePath = resolvePortfolioQueueDbPath({ GITTENSORY_MINER_CONFIG_DIR: configDir });
-    const eventLedgerPath = resolveEventLedgerDbPath({ GITTENSORY_MINER_CONFIG_DIR: configDir });
+    const runStatePath = resolveRunStateDbPath({ LOOPOVER_MINER_CONFIG_DIR: configDir });
+    const claimLedgerPath = resolveClaimLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: configDir });
+    const portfolioQueuePath = resolvePortfolioQueueDbPath({ LOOPOVER_MINER_CONFIG_DIR: configDir });
+    const eventLedgerPath = resolveEventLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: configDir });
 
     const paths = [runStatePath, claimLedgerPath, portfolioQueuePath, eventLedgerPath];
     expect(new Set(paths).size).toBe(paths.length); // no accidental merge into one shared file

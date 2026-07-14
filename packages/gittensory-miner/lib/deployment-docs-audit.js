@@ -1,11 +1,11 @@
 // Docs-accuracy audit for the miner's DEPLOYMENT.md (#5180). Mirrors the self-host docs audit
 // (apps/gittensory-ui/src/lib/selfhost-docs-audit.ts): parse the deployment doc, then assert every
-// GITTENSORY_MINER_* / MINER_* env var, repo-relative file path, and `gittensory-miner <subcommand>`
+// LOOPOVER_MINER_* / MINER_* env var, repo-relative file path, and `gittensory-miner <subcommand>`
 // it documents still exists under packages/gittensory-miner/**. A rename or move that leaves the doc
 // stale then fails CI with a message naming the exact stale claim, instead of misleading operators.
 
-/** The miner's own env-var namespace: GITTENSORY_MINER_* and the shorter MINER_* aliases it reads. */
-const ENV_VAR_PATTERN = /\b(?:GITTENSORY_MINER|MINER)_[A-Z0-9_]+\b/g;
+/** The miner's own env-var namespace: LOOPOVER_MINER_* and the shorter MINER_* aliases it reads. */
+const ENV_VAR_PATTERN = /\b(?:LOOPOVER_MINER|MINER)_[A-Z0-9_]+\b/g;
 
 /** `gittensory-miner <subcommand>` CLI invocations, excluding the `@loopover/miner` package spelling. */
 const SUBCOMMAND_PATTERN = /(?<![\w./@-])gittensory-miner\s+([a-z][a-z0-9-]*)/g;
@@ -19,7 +19,7 @@ const NON_REPO_LINK_PATTERN = /^(?:https?:\/\/|mailto:|#|~|\/)/;
 /** `cliArgs[0] === "<name>"` guards in the miner bin — the CLI's registered top-level command table. */
 const CLI_DISPATCH_PATTERN = /cliArgs\[0\]\s*===\s*"([a-z][a-z0-9-]*)"/g;
 
-/** Collect every GITTENSORY_MINER_* / MINER_* token that appears in `text` (doc prose/code or source). */
+/** Collect every LOOPOVER_MINER_* / MINER_* token that appears in `text` (doc prose/code or source). */
 export function scanEnvVarTokens(text) {
   const tokens = new Set();
   for (const match of text.matchAll(ENV_VAR_PATTERN)) {

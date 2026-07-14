@@ -39,10 +39,10 @@ describe("gittensory-miner run-state store (#2289)", () => {
   });
 
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolveRunStateDbPath({ GITTENSORY_MINER_RUN_STATE_DB: "/custom/state.sqlite3" })).toBe(
+    expect(resolveRunStateDbPath({ LOOPOVER_MINER_RUN_STATE_DB: "/custom/state.sqlite3" })).toBe(
       "/custom/state.sqlite3",
     );
-    expect(resolveRunStateDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolveRunStateDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/run-state.sqlite3",
     );
     expect(resolveRunStateDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -106,7 +106,7 @@ describe("gittensory-miner run-state store (#2289)", () => {
   });
 
   it("exposes module-level get/set helpers backed by the default local DB path", () => {
-    vi.stubEnv("GITTENSORY_MINER_RUN_STATE_DB", join(tempRoot(), "default.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_RUN_STATE_DB", join(tempRoot(), "default.sqlite3"));
 
     expect(getRunState("acme/widgets")).toBeNull();
     expect(setRunState("acme/widgets", "discovering")).toMatchObject({
@@ -209,7 +209,7 @@ describe("gittensory-miner run-state store (#2289)", () => {
   });
 
   it("exposes the module-level listRunStates helper backed by the default local DB path", () => {
-    vi.stubEnv("GITTENSORY_MINER_RUN_STATE_DB", join(tempRoot(), "default-list.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_RUN_STATE_DB", join(tempRoot(), "default-list.sqlite3"));
 
     expect(listRunStates()).toEqual([]);
     setRunState("acme/widgets", "preparing");
@@ -219,7 +219,7 @@ describe("gittensory-miner run-state store (#2289)", () => {
   });
 
   it("module-level getRunState forwards apiBaseUrl to the default store (#5563)", () => {
-    vi.stubEnv("GITTENSORY_MINER_RUN_STATE_DB", join(tempRoot(), "default-get.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_RUN_STATE_DB", join(tempRoot(), "default-get.sqlite3"));
     setRunState("acme/widgets", "planning", "https://ghe.example.com/api/v3");
     expect(getRunState("acme/widgets")).toBeNull(); // github.com default: no row there
     expect(getRunState("acme/widgets", "https://ghe.example.com/api/v3")).toBe("planning");

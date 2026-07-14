@@ -40,7 +40,7 @@ export function resolveUpgradeCommand(packageName = defaultPackageName) {
 }
 
 export function shouldSkipUpdateCheck(cliArgs, env = process.env) {
-  if (/^(1|true|yes)$/i.test(env.GITTENSORY_MINER_NO_UPDATE_CHECK ?? ""))
+  if (/^(1|true|yes)$/i.test(env.LOOPOVER_MINER_NO_UPDATE_CHECK ?? ""))
     return true;
   return cliArgs.includes("--no-update-check");
 }

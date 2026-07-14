@@ -51,7 +51,7 @@ export type MinerExecutionPolicy = {
    * Explicit opt-in to LIVE write execution for this repo. Must equal EXACTLY the literal string `"live"` — any
    * other value (a typo, `"yes"`, `"on"`, or a boolean `true` from a malformed file) is treated as not opted
    * in, so a fat-fingered config can never accidentally enable live writes. A miner also stays in dry-run
-   * unless its own operator separately opts in globally (`GITTENSORY_MINER_LIVE_MODE=live`) — this field alone
+   * unless its own operator separately opts in globally (`LOOPOVER_MINER_LIVE_MODE=live`) — this field alone
    * cannot force a stranger's miner instance live. Default: null (dry-run).
    */
   liveModeOptIn: typeof MINER_LIVE_MODE_OPT_IN | null;

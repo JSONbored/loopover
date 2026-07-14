@@ -14,15 +14,15 @@ test("barrel: the public entrypoint re-exports the kill-switch primitive (#2341)
   assert.equal(typeof resolveMinerKillSwitch, "function");
   assert.equal(typeof isMinerKillSwitchActive, "function");
   assert.equal(typeof buildMinerKillSwitchTransitionGovernorLedgerEvent, "function");
-  assert.equal(MINER_KILL_SWITCH_ENV_VAR, "GITTENSORY_MINER_KILL_SWITCH");
+  assert.equal(MINER_KILL_SWITCH_ENV_VAR, "LOOPOVER_MINER_KILL_SWITCH");
 });
 
 test("isGlobalMinerKillSwitch: accepts the same truthy-string idiom as isGlobalAgentPause", () => {
   for (const value of ["1", "true", "TRUE", "yes", "on", "On"]) {
-    assert.equal(isGlobalMinerKillSwitch({ GITTENSORY_MINER_KILL_SWITCH: value }), true, `expected ${value} to be truthy`);
+    assert.equal(isGlobalMinerKillSwitch({ LOOPOVER_MINER_KILL_SWITCH: value }), true, `expected ${value} to be truthy`);
   }
   for (const value of [undefined, "", "0", "false", "no", "off", "banana"]) {
-    assert.equal(isGlobalMinerKillSwitch({ GITTENSORY_MINER_KILL_SWITCH: value }), false, `expected ${String(value)} to be falsy`);
+    assert.equal(isGlobalMinerKillSwitch({ LOOPOVER_MINER_KILL_SWITCH: value }), false, `expected ${String(value)} to be falsy`);
   }
 });
 

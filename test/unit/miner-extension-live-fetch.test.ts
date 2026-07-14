@@ -72,7 +72,7 @@ function loadBackgroundWithFakeChrome({
   }
 
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
     chrome,
     fetch: fetchImpl,
   };
@@ -241,7 +241,7 @@ describe("options.js miner-UI URL field + Sync now button (#4859)", () => {
       "#syncNow": createClickMock(),
     };
     const context: Record<string, unknown> = {
-      __GITTENSORY_MINER_EXTENSION_TEST__: true,
+      __LOOPOVER_MINER_EXTENSION_TEST__: true,
       TextEncoder,
       document: { querySelector: (selector: string) => elements[selector as keyof typeof elements] ?? null },
       chrome: {

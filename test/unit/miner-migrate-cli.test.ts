@@ -12,7 +12,7 @@ const roots: string[] = [];
 function tempEnv() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-migrate-"));
   roots.push(root);
-  return { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+  return { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
 }
 
 const STORE_NAMES = [

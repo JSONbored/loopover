@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 // Export coverage for scripts/export-ams-reporting-db.sh (#5184 follow-up / PR #5471's flagged confidentiality
-// gap): Grafana must never mount the miner's live GITTENSORY_MINER_CONFIG_DIR ledgers directly, so this script
+// gap): Grafana must never mount the miner's live LOOPOVER_MINER_CONFIG_DIR ledgers directly, so this script
 // reads them read-only and writes a redacted snapshot for ams-ledgers-datasource.test.ts's provisioning to point
 // at. Mirrors selfhost-grafana-reporting.test.ts's spawn-the-real-script style.
 const tmpRoots: string[] = [];
@@ -41,7 +41,7 @@ function runExporter(
       ...process.env,
       GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB: overrides.attemptLogSource ?? join(root, "attempt-log.sqlite3"),
       GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB: overrides.predictionLedgerSource ?? join(root, "prediction-ledger.sqlite3"),
-      GITTENSORY_REPORTING_DIR: reportingDir,
+      LOOPOVER_REPORTING_DIR: reportingDir,
       ...(overrides.scriptVersion ? { GITTENSORY_AMS_REPORTING_SCRIPT_VERSION: overrides.scriptVersion } : {}),
     },
     stdio: "pipe",

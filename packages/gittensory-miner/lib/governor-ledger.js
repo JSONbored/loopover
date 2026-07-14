@@ -23,13 +23,13 @@ const defaultDbFileName = "governor-ledger.sqlite3";
 let defaultGovernorLedger = null;
 
 export function resolveGovernorLedgerDbPath(env = process.env) {
-  const explicitPath = typeof env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB === "string"
-    ? env.GITTENSORY_MINER_GOVERNOR_LEDGER_DB.trim()
+  const explicitPath = typeof env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB === "string"
+    ? env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB.trim()
     : "";
   if (explicitPath) return explicitPath;
 
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
+    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
   if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
 

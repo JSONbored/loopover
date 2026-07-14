@@ -110,6 +110,6 @@ const opportunityBadgeApi = {
 
 globalThis.__gittensoryMinerOpportunityBadge = opportunityBadgeApi;
 
-if (globalThis.__GITTENSORY_MINER_EXTENSION_TEST__) {
+if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
   globalThis.__gittensoryMinerOpportunityBadgeTestExports = opportunityBadgeApi;
 }

@@ -162,14 +162,14 @@ describe("evaluateGovernorChokepointGatePersisted (#5134)", () => {
 
   it("opens and closes its own default governor-state store when the caller supplies none", () => {
     const { root, ledger } = tempStore();
-    process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB = join(root, "governor-state.sqlite3");
+    process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB = join(root, "governor-state.sqlite3");
     try {
       const result = evaluateGovernorChokepointGatePersisted(baseInput(), {
         append: (event) => ledger.appendGovernorEvent(event as never),
       });
       expect(result.decision.allowed).toBe(true);
     } finally {
-      delete process.env.GITTENSORY_MINER_GOVERNOR_STATE_DB;
+      delete process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;
     }
 
     // The default store's mutation was persisted to the same on-disk file a reopened handle can see.

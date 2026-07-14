@@ -15,7 +15,7 @@ function readYaml(path: string): Record<string, unknown> {
 // would be unreliable/environment-dependent here (same constraint as docker-compose-override-example.test.ts).
 describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)", () => {
   const EXPECTED_LIMITS: Record<string, string> = {
-    loopover: "${GITTENSORY_MEM_LIMIT:-2g}",
+    loopover: "${LOOPOVER_MEM_LIMIT:-2g}",
     redis: "${REDIS_MEM_LIMIT:-512m}",
     postgres: "${POSTGRES_MEM_LIMIT:-2g}",
     qdrant: "${QDRANT_MEM_LIMIT:-2g}",
@@ -51,7 +51,7 @@ describe("docker-compose.yml — per-service memory limits (#1828, #2495, #3893)
     const env = readFileSync(".env.example", "utf8");
 
     for (const key of [
-      "GITTENSORY_MEM_LIMIT",
+      "LOOPOVER_MEM_LIMIT",
       "REDIS_MEM_LIMIT",
       "POSTGRES_MEM_LIMIT",
       "QDRANT_MEM_LIMIT",

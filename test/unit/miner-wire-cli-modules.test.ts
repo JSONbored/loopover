@@ -306,8 +306,8 @@ describe("orb export — wires the anonymized telemetry batch-builder (#4833)", 
     // Isolated tmp DB paths (never touches a real ~/.config/gittensory-miner), matching the pattern already
     // established for the analogous getAttemptHistory/recordOwnSubmission DI-fallback tests.
     const dir = tempDir();
-    vi.stubEnv("GITTENSORY_MINER_ORB_EXPORT_DB", join(dir, "orb-export.sqlite3"));
-    vi.stubEnv("GITTENSORY_MINER_EVENT_LEDGER_DB", join(dir, "ledger.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_ORB_EXPORT_DB", join(dir, "orb-export.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_EVENT_LEDGER_DB", join(dir, "ledger.sqlite3"));
 
     // Seed via the SAME real default ledger path runOrbExportCli will open — closedAt omitted (→ null) so the
     // send path's `latestClosedAt` also exercises its null branch (no cursor advance possible).

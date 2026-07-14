@@ -10,15 +10,15 @@ import { registerCleanupResource } from "./process-lifecycle.js";
 // (env-var/config-dir/XDG path resolution, mkdirSync(0o700) + chmodSync(0o600), and `PRAGMA busy_timeout`).
 
 /**
- * Resolve a local store's DB path from, in order: an explicit env var, `GITTENSORY_MINER_CONFIG_DIR`,
+ * Resolve a local store's DB path from, in order: an explicit env var, `LOOPOVER_MINER_CONFIG_DIR`,
  * `XDG_CONFIG_HOME` (falling back to `~/.config`) — mirroring every store's prior hand-written resolver.
  */
 export function resolveLocalStoreDbPath(defaultDbFileName, explicitEnvVarName, env = process.env) {
   const explicitPath = typeof env[explicitEnvVarName] === "string" ? env[explicitEnvVarName].trim() : "";
   if (explicitPath) return explicitPath;
 
-  const explicitConfigDir = typeof env.GITTENSORY_MINER_CONFIG_DIR === "string"
-    ? env.GITTENSORY_MINER_CONFIG_DIR.trim()
+  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
+    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
     : "";
   if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
 

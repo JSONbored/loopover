@@ -6,7 +6,7 @@ Operator-facing runbook for **local SQLite state**: what the concurrency guarant
 
 ## Local state at a glance
 
-Every miner keeps **independent SQLite files** under one state directory (default `~/.config/gittensory-miner/`, override with `GITTENSORY_MINER_CONFIG_DIR`). Each store has its own file, table, and optional per-store env override — see the table in [`../README.md`](../README.md#local-storage) and [`env-reference.md`](env-reference.md).
+Every miner keeps **independent SQLite files** under one state directory (default `~/.config/gittensory-miner/`, override with `LOOPOVER_MINER_CONFIG_DIR`). Each store has its own file, table, and optional per-store env override — see the table in [`../README.md`](../README.md#local-storage) and [`env-reference.md`](env-reference.md).
 
 Common files you will touch in incidents:
 
@@ -41,9 +41,9 @@ PRAGMA busy_timeout = 5000;
 | Two **short-lived** writers on the **same file** (e.g. CLI command finishing while `loop` is idle, or Grafana reading while the miner appends) | SQLite waits up to **5 seconds** for the lock, then proceeds or surfaces `database is locked` |
 | Append-only ledgers (`event-ledger`, `attempt-log`, …) | Writes use **`BEGIN IMMEDIATE`** (or equivalent single-statement atomicity) so sequence allocation cannot interleave |
 | Claim / queue stores | **`INSERT … ON CONFLICT`** and **`UPDATE … RETURNING`** patterns avoid read-then-write races **within one file** |
-| Two **long-running `gittensory-miner loop` daemons** on the **same `GITTENSORY_MINER_CONFIG_DIR`** | **Unsupported.** `busy_timeout` reduces transient lock errors; it does **not** make multi-process loop workers safe on one volume |
+| Two **long-running `gittensory-miner loop` daemons** on the **same `LOOPOVER_MINER_CONFIG_DIR`** | **Unsupported.** `busy_timeout` reduces transient lock errors; it does **not** make multi-process loop workers safe on one volume |
 
-**Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `GITTENSORY_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in [`../DEPLOYMENT.md`](../DEPLOYMENT.md)).
+**Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in [`../DEPLOYMENT.md`](../DEPLOYMENT.md)).
 
 ### Quick health check
 
@@ -94,7 +94,7 @@ gittensory-miner status --json
    docker compose -p miner-b -f docker-compose.miner.yml up -d
    ```
 
-   Or set distinct `GITTENSORY_MINER_CONFIG_DIR` per worker.
+   Or set distinct `LOOPOVER_MINER_CONFIG_DIR` per worker.
 
 3. Re-run `gittensory-miner doctor`. If locks persist with a single process, see **Ledger corrupted** below.
 
@@ -106,7 +106,7 @@ Proactive tooling (#4872), not just the reactive "ledger corrupted" scenario bel
 schedule (cron, systemd timer, etc.) so a good restore point always exists before anything goes wrong.
 
 - **[`scripts/backup-miner.sh`](../../../scripts/backup-miner.sh)** — backs up every `*.sqlite3` file currently
-  present under `GITTENSORY_MINER_CONFIG_DIR` into a new timestamped directory, using SQLite's own online
+  present under `LOOPOVER_MINER_CONFIG_DIR` into a new timestamped directory, using SQLite's own online
   `.backup` command (safe even while the miner is running — see the corruption scenario's warning below about
   why a plain `cp` is not) plus a `PRAGMA integrity_check` on each resulting file before it's kept. Stores
   discovered by glob, not a hardcoded list, so a newly added store is backed up automatically without this doc
@@ -114,8 +114,8 @@ schedule (cron, systemd timer, etc.) so a good restore point always exists befor
 
   ```sh
   sh scripts/backup-miner.sh
-  # Env overrides: GITTENSORY_MINER_CONFIG_DIR (source), GITTENSORY_MINER_BACKUP_DIR (default
-  # $GITTENSORY_MINER_CONFIG_DIR/backups), GITTENSORY_MINER_BACKUP_RETAIN (default 7 — oldest backups beyond
+  # Env overrides: LOOPOVER_MINER_CONFIG_DIR (source), LOOPOVER_MINER_BACKUP_DIR (default
+  # $LOOPOVER_MINER_CONFIG_DIR/backups), LOOPOVER_MINER_BACKUP_RETAIN (default 7 — oldest backups beyond
   # this count are pruned after a fully successful run; a run with any failed store skips pruning so no older,
   # good backup is ever lost to make room for a bad one).
   ```

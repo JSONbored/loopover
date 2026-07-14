@@ -16,7 +16,7 @@ import type { GovernorLedgerEvent } from "../governor-ledger.js";
 const TRUTHY_ENV_VALUE = /^(1|true|yes|on)$/i;
 
 /** Env var an operator sets to halt ALL miner write activity, across every repo, immediately. */
-export const MINER_KILL_SWITCH_ENV_VAR = "GITTENSORY_MINER_KILL_SWITCH";
+export const MINER_KILL_SWITCH_ENV_VAR = "LOOPOVER_MINER_KILL_SWITCH";
 
 /** Which trigger (if any) is currently halting miner write activity for a given repo. */
 export type MinerKillSwitchScope = "global" | "repo" | "none";

@@ -78,8 +78,8 @@ function runBackup(stateDir: string, backupDir: string, sqliteBin: string, extra
     encoding: "utf8",
     env: {
       ...process.env,
-      GITTENSORY_MINER_CONFIG_DIR: stateDir,
-      GITTENSORY_MINER_BACKUP_DIR: backupDir,
+      LOOPOVER_MINER_CONFIG_DIR: stateDir,
+      LOOPOVER_MINER_BACKUP_DIR: backupDir,
       PATH: `${sqliteBin}:${process.env.PATH ?? ""}`,
       ...extraEnv,
     },
@@ -98,8 +98,8 @@ function runRestore(
       encoding: "utf8",
       env: {
         ...process.env,
-        GITTENSORY_MINER_CONFIG_DIR: stateDir,
-        GITTENSORY_MINER_BACKUP_DIR: backupDir,
+        LOOPOVER_MINER_CONFIG_DIR: stateDir,
+        LOOPOVER_MINER_BACKUP_DIR: backupDir,
         PATH: `${sqliteBin}:${process.env.PATH ?? ""}`,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -209,7 +209,7 @@ describe("backup-miner.sh", () => {
       writeFileSync(join(backupDir, ts, "run-state.sqlite3"), "old content");
     }
 
-    runBackup(stateDir, backupDir, sqliteBin, { GITTENSORY_MINER_BACKUP_RETAIN: "2" });
+    runBackup(stateDir, backupDir, sqliteBin, { LOOPOVER_MINER_BACKUP_RETAIN: "2" });
 
     const remaining = readdirSync(backupDir).sort();
     // The 3 pre-seeded + 1 new run = 4 total; RETAIN=2 keeps only the 2 newest (by mtime, which favors the
@@ -225,7 +225,7 @@ describe("backup-miner.sh", () => {
     writeFileSync(join(backupDir, "20260101T000000Z", "run-state.sqlite3"), "old good content");
     writeSqliteFile(stateDir, "backup-fails.sqlite3");
 
-    expect(() => runBackup(stateDir, backupDir, sqliteBin, { GITTENSORY_MINER_BACKUP_RETAIN: "1" })).toThrow();
+    expect(() => runBackup(stateDir, backupDir, sqliteBin, { LOOPOVER_MINER_BACKUP_RETAIN: "1" })).toThrow();
 
     // Both the pre-seeded backup AND the new (failed) run's directory survive -- pruning never ran.
     expect(readdirSync(backupDir).length).toBe(2);

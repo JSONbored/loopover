@@ -17,7 +17,7 @@ import { resolveCodingAgentModeFromConfig } from "../../packages/gittensory-engi
 describe("miner config precedence (#5198)", () => {
   describe("kill switch: env global > .gittensory-miner.yml repo pause", () => {
     it("global env wins when both global env and repo yml pause are set", () => {
-      expect(resolveDocumentedKillSwitchScope({ GITTENSORY_MINER_KILL_SWITCH: "true" }, true)).toBe("global");
+      expect(resolveDocumentedKillSwitchScope({ LOOPOVER_MINER_KILL_SWITCH: "true" }, true)).toBe("global");
     });
 
     it("falls back to repo yml pause when global env is unset", () => {

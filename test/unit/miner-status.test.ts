@@ -44,7 +44,7 @@ function fakeBinDir(name: string): string {
 
 describe("gittensory-miner status/doctor (#2288)", () => {
   it("resolves the state dir from the config-dir override, XDG, then the home default", () => {
-    expect(resolveMinerStateDir({ GITTENSORY_MINER_CONFIG_DIR: "/custom/state" })).toBe("/custom/state");
+    expect(resolveMinerStateDir({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" })).toBe("/custom/state");
     expect(resolveMinerStateDir({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/gittensory-miner");
     expect(resolveMinerStateDir({})).toMatch(/\/\.config\/gittensory-miner$/);
   });
@@ -52,7 +52,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   it("collectStatus reports the installed versions, state dir, and config-file discovery", () => {
     const root = tempRoot();
     writeFileSync(join(root, ".gittensory-miner.yml"), "minerEnabled: true\n");
-    const status = collectStatus({ GITTENSORY_MINER_CONFIG_DIR: join(root, "state") }, root);
+    const status = collectStatus({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") }, root);
     expect(status.package.name).toBe("@loopover/miner");
     expect(typeof status.package.version).toBe("string");
     expect(status.engine.name).toBe("@loopover/engine");
@@ -62,7 +62,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("REGRESSION: collectStatus reports the REAL installed engine version, not the declared dependency range", () => {
     const root = tempRoot();
-    const status = collectStatus({ GITTENSORY_MINER_CONFIG_DIR: join(root, "state") }, root);
+    const status = collectStatus({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") }, root);
     // The monorepo declares "*" for this workspace dependency -- a self-hoster asking "what's installed"
     // needs the real resolved semver (matching what doctor's own engine-version-skew check already shows),
     // not the meaningless declared range.
@@ -78,11 +78,11 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     expect(buildEngineVersionDisplay(() => null)).toBe("*");
   });
 
-  it("collectStatus prefers GITTENSORY_MINER_VERSION over package.json (#4310)", () => {
+  it("collectStatus prefers LOOPOVER_MINER_VERSION over package.json (#4310)", () => {
     const status = collectStatus(
       {
-        GITTENSORY_MINER_CONFIG_DIR: "/s",
-        GITTENSORY_MINER_VERSION: "gittensory-miner-fleet@deadbeef",
+        LOOPOVER_MINER_CONFIG_DIR: "/s",
+        LOOPOVER_MINER_VERSION: "gittensory-miner-fleet@deadbeef",
       },
       tempRoot(),
     );
@@ -91,10 +91,10 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("runStatus prints human-readable text (0) and machine JSON with --json", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    expect(runStatus([], { GITTENSORY_MINER_CONFIG_DIR: "/s" }, tempRoot())).toBe(0);
+    expect(runStatus([], { LOOPOVER_MINER_CONFIG_DIR: "/s" }, tempRoot())).toBe(0);
     expect(String(log.mock.calls[0]?.[0])).toContain("@loopover/miner");
     log.mockClear();
-    expect(runStatus(["--json"], { GITTENSORY_MINER_CONFIG_DIR: "/s" }, tempRoot())).toBe(0);
+    expect(runStatus(["--json"], { LOOPOVER_MINER_CONFIG_DIR: "/s" }, tempRoot())).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).stateDir).toBe("/s");
   });
 
@@ -102,7 +102,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     // A healthy setup now also requires GITHUB_TOKEN (#5170); no coding-agent provider is configured, so the
     // provider-credential check is a clean skip.
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
     initLaptopState(env);
     const cwd = tempRoot(); // a config-less working dir ⇒ config-content check is a clean pass
     const checks = runDoctorChecks(env, cwd);
@@ -132,7 +132,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   });
 
   it("doctor flags a corrupted store (#4834)", () => {
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
     const eventLedgerPath = resolveEventLedgerDbPath(env);
     mkdirSync(dirname(eventLedgerPath), { recursive: true });
     writeFileSync(eventLedgerPath, "this is not a sqlite database");
@@ -178,7 +178,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   });
 
   it("doctor flags a malformed config file (#4873)", () => {
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
     const cwd = tempRoot();
     writeFileSync(join(cwd, ".gittensory-miner.yml"), "wantedPaths: not-a-list\n");
     expect(runDoctorChecks(env, cwd).find((check) => check.name === "config-content")?.ok).toBe(false);
@@ -242,7 +242,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   it("runDoctor supports --json output", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state"), GITHUB_TOKEN: "ghp_present" };
     initLaptopState(env);
     expect(runDoctor(["--json"], env)).toBe(0);
     expect(JSON.parse(String(log.mock.calls[0]?.[0])).checks).toBeDefined();
@@ -273,7 +273,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     const root = tempRoot();
     const filePath = join(root, "not-a-dir");
     writeFileSync(filePath, "");
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(filePath, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(filePath, "state") };
     expect(runDoctorChecks(env).find((check) => check.name === "state-dir-writable")?.ok).toBe(false);
     expect(runDoctor([], env)).toBe(1);
     expect(errorLog).toHaveBeenCalled();
@@ -285,7 +285,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     });
     vi.stubGlobal("fetch", fetchStub);
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
     initLaptopState(env);
     runStatus(["--json"], env, tempRoot());
     runDoctor([], env);
@@ -294,13 +294,13 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
   describe("driver section of status/status --json (#5164)", () => {
     it("reports provider: null, modelEnvVar: null, cliPresent: null when no provider is configured", () => {
-      const status = collectStatus({ GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
+      const status = collectStatus({ LOOPOVER_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
       expect(status.driver).toEqual({ provider: null, modelEnvVar: null, cliPresent: null });
     });
 
     it("reports the noop provider with no model env var and no CLI to check (cliPresent: null)", () => {
       const status = collectStatus(
-        { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "noop" },
+        { LOOPOVER_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "noop" },
         tempRoot(),
       );
       expect(status.driver).toEqual({ provider: "noop", modelEnvVar: null, cliPresent: null });
@@ -308,7 +308,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("reports the agent-sdk provider with no model env var and no CLI to check (cliPresent: null)", () => {
       const status = collectStatus(
-        { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "agent-sdk" },
+        { LOOPOVER_MINER_CONFIG_DIR: "/s", PATH: "", MINER_CODING_AGENT_PROVIDER: "agent-sdk" },
         tempRoot(),
       );
       expect(status.driver).toEqual({ provider: "agent-sdk", modelEnvVar: null, cliPresent: null });
@@ -317,7 +317,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     it("claude-cli configured + CLI present on PATH: reports the model env-var name and cliPresent: true", () => {
       const status = collectStatus(
         {
-          GITTENSORY_MINER_CONFIG_DIR: "/s",
+          LOOPOVER_MINER_CONFIG_DIR: "/s",
           MINER_CODING_AGENT_PROVIDER: "claude-cli",
           PATH: fakeBinDir("claude"),
         },
@@ -332,7 +332,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("claude-cli configured + CLI absent from PATH: cliPresent: false", () => {
       const status = collectStatus(
-        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "claude-cli", PATH: tempRoot() },
+        { LOOPOVER_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "claude-cli", PATH: tempRoot() },
         tempRoot(),
       );
       expect(status.driver.cliPresent).toBe(false);
@@ -341,7 +341,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
     it("codex-cli configured + CLI present on PATH: reports the model env-var name and cliPresent: true", () => {
       const status = collectStatus(
         {
-          GITTENSORY_MINER_CONFIG_DIR: "/s",
+          LOOPOVER_MINER_CONFIG_DIR: "/s",
           MINER_CODING_AGENT_PROVIDER: "codex-cli",
           PATH: fakeBinDir("codex"),
         },
@@ -356,7 +356,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("codex-cli configured + CLI absent from PATH: cliPresent: false", () => {
       const status = collectStatus(
-        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: tempRoot() },
+        { LOOPOVER_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: tempRoot() },
         tempRoot(),
       );
       expect(status.driver.cliPresent).toBe(false);
@@ -364,12 +364,12 @@ describe("gittensory-miner status/doctor (#2288)", () => {
 
     it("human-readable status text renders the driver line for both configured and unconfigured cases", () => {
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
-      runStatus([], { GITTENSORY_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
+      runStatus([], { LOOPOVER_MINER_CONFIG_DIR: "/s", PATH: "" }, tempRoot());
       expect(String(log.mock.calls[0]?.[0])).toContain("driver: none configured");
       log.mockClear();
       runStatus(
         [],
-        { GITTENSORY_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: fakeBinDir("codex") },
+        { LOOPOVER_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: fakeBinDir("codex") },
         tempRoot(),
       );
       expect(String(log.mock.calls[0]?.[0])).toContain(
@@ -386,7 +386,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
         runStatus(
           ["--json"],
           {
-            GITTENSORY_MINER_CONFIG_DIR: "/s",
+            LOOPOVER_MINER_CONFIG_DIR: "/s",
             ...(provider ? { MINER_CODING_AGENT_PROVIDER: provider } : {}),
             MINER_CODING_AGENT_CLAUDE_MODEL: secretModelValue,
             MINER_CODING_AGENT_CODEX_MODEL: secretModelValue,

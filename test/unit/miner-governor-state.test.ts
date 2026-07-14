@@ -413,7 +413,7 @@ describe("governor-state module-level default singleton (#5134)", () => {
   it("loadPauseState/savePauseState module-level wrappers round-trip through the default singleton (#4851)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-singleton-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
     expect(loadPauseState()).toEqual({ paused: false, reason: null, pausedAt: null });
     const written = savePauseState({ paused: true, reason: "singleton pause" });
     expect(written).toMatchObject({ paused: true, reason: "singleton pause" });
@@ -423,7 +423,7 @@ describe("governor-state module-level default singleton (#5134)", () => {
   it("loadReputationHistory/saveReputationHistory module-level wrappers round-trip through the default singleton, forwarding apiBaseUrl (#5563)", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-state-singleton-reputation-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
     expect(loadReputationHistory("acme/widgets", "https://ghe.example.com/api/v3")).toEqual({
       decided: 0,
       unfavorable: 0,

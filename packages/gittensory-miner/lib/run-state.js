@@ -9,7 +9,7 @@ const defaultDbFileName = "run-state.sqlite3";
 let defaultRunStateStore = null;
 
 export function resolveRunStateDbPath(env = process.env) {
-  return resolveLocalStoreDbPath(defaultDbFileName, "GITTENSORY_MINER_RUN_STATE_DB", env);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_RUN_STATE_DB", env);
 }
 
 function normalizeDbPath(dbPath) {

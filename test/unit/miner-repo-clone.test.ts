@@ -37,9 +37,9 @@ function commitFile(originPath: string, fileName: string, content: string) {
 
 describe("resolveRepoCloneBaseDir / resolveRepoCloneDir (#5132)", () => {
   it("resolves from explicit env, config dir, and XDG default, in precedence order", () => {
-    expect(resolveRepoCloneBaseDir({ GITTENSORY_MINER_REPO_CLONE_DIR: "/custom/repos" })).toBe("/custom/repos");
-    expect(resolveRepoCloneBaseDir({ GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/repos");
-    expect(resolveRepoCloneDir("acme/widgets", { GITTENSORY_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/repos/acme/widgets");
+    expect(resolveRepoCloneBaseDir({ LOOPOVER_MINER_REPO_CLONE_DIR: "/custom/repos" })).toBe("/custom/repos");
+    expect(resolveRepoCloneBaseDir({ LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/repos");
+    expect(resolveRepoCloneDir("acme/widgets", { LOOPOVER_MINER_CONFIG_DIR: "/cfg" })).toBe("/cfg/repos/acme/widgets");
   });
 
   it("rejects a malformed repoFullName", () => {

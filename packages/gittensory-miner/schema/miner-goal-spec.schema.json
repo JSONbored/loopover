@@ -103,7 +103,7 @@
         "liveModeOptIn": {
           "type": ["string", "null"],
           "default": null,
-          "description": "Must equal exactly \"live\" to opt this repo into live write execution; any other value stays dry-run. Also requires the operator's own global opt-in (GITTENSORY_MINER_LIVE_MODE=live) unless the operator's own config already grants it. Default: null."
+          "description": "Must equal exactly \"live\" to opt this repo into live write execution; any other value stays dry-run. Also requires the operator's own global opt-in (LOOPOVER_MINER_LIVE_MODE=live) unless the operator's own config already grants it. Default: null."
         }
       }
     }

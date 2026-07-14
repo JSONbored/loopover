@@ -60,9 +60,9 @@ export function printHelp(input) {
       "                                                                 Right-to-be-forgotten: delete a repo's rows from every local store",
       "",
       "Options:",
-      "  --no-update-check  Skip the npm registry version nudge (also GITTENSORY_MINER_NO_UPDATE_CHECK=1)",
-      "  --quiet            Log only warnings and errors (also GITTENSORY_MINER_LOG_LEVEL=error)",
-      "  --verbose          Log debug-level diagnostics (also GITTENSORY_MINER_LOG_LEVEL=debug)",
+      "  --no-update-check  Skip the npm registry version nudge (also LOOPOVER_MINER_NO_UPDATE_CHECK=1)",
+      "  --quiet            Log only warnings and errors (also LOOPOVER_MINER_LOG_LEVEL=error)",
+      "  --verbose          Log debug-level diagnostics (also LOOPOVER_MINER_LOG_LEVEL=debug)",
       "  --log-level <lvl>  Set the log level explicitly: silent|error|warn|info|debug",
     ].join("\n"),
   );

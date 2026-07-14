@@ -113,7 +113,7 @@ function loadBackground(
   if (withAction) chrome.action = { setBadgeText, setBadgeBackgroundColor };
   const warn = vi.fn();
   const context: Record<string, unknown> = {
-    __GITTENSORY_MINER_EXTENSION_TEST__: true,
+    __LOOPOVER_MINER_EXTENSION_TEST__: true,
     chrome,
     console: { warn },
   };

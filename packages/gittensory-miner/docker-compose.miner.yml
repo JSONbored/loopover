@@ -16,7 +16,7 @@
 #     • run N separate compose projects, each with its own volume:
 #         docker compose -p miner-1 -f docker-compose.miner.yml up -d
 #         docker compose -p miner-2 -f docker-compose.miner.yml up -d   # …etc; -p namespaces the volume
-#     • or point each worker at a distinct GITTENSORY_MINER_CONFIG_DIR on its own mount.
+#     • or point each worker at a distinct LOOPOVER_MINER_CONFIG_DIR on its own mount.
 #   (A single-shared-volume `--scale` is only safe for one active worker; Kubernetes StatefulSet per-pod PVCs, see
 #   k8s/, are the built-in answer for isolated horizontal scaling.)
 services:
@@ -32,7 +32,7 @@ services:
     # and NEVER commit the real file — env vars stay out of the compose file and out of `docker inspect` args.
     env_file:
       - .gittensory-miner.env
-    # The state dir is fixed at /data/miner — it is the Dockerfile's built-in GITTENSORY_MINER_CONFIG_DIR default
+    # The state dir is fixed at /data/miner — it is the Dockerfile's built-in LOOPOVER_MINER_CONFIG_DIR default
     # AND the volume mount below. It is deliberately NOT set here (and NOT offered as an env-file override):
     # Compose's `environment` would silently override an env-file value, and the mount is pinned to /data/miner,
     # so exposing it as a knob would be a silently-ignored footgun. To relocate state, change the volume mount.

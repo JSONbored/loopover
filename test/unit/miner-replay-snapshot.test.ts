@@ -382,7 +382,7 @@ describe("exportReplaySnapshot (#3010)", () => {
   it("falls back to the default (env-resolved) store when deps.store is omitted", async () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-replay-snapshot-default-"));
     roots.push(root);
-    vi.stubEnv("GITTENSORY_MINER_REPLAY_SNAPSHOT_DB", join(root, "default.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_REPLAY_SNAPSHOT_DB", join(root, "default.sqlite3"));
     const { exec } = scriptedExec(happyPathScripts());
 
     const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec });

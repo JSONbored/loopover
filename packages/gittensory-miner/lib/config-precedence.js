@@ -11,7 +11,7 @@ import { resolveForgeConfig } from "./forge-config.js";
 
 /** Kill-switch scope from operator env + parsed goal-spec `killSwitch.paused`. */
 export function resolveDocumentedKillSwitchScope(env, repoPaused) {
-  const global = /^(1|true|yes|on)$/i.test(env.GITTENSORY_MINER_KILL_SWITCH ?? "");
+  const global = /^(1|true|yes|on)$/i.test(env.LOOPOVER_MINER_KILL_SWITCH ?? "");
   return resolveMinerKillSwitch({ global, repoPaused });
 }
 

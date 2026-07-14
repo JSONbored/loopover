@@ -44,10 +44,10 @@ describe("gittensory-miner claim ledger (#2314)", () => {
   });
 
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
-    expect(resolveClaimLedgerDbPath({ GITTENSORY_MINER_CLAIM_LEDGER_DB: "/custom/c.sqlite3" })).toBe(
+    expect(resolveClaimLedgerDbPath({ LOOPOVER_MINER_CLAIM_LEDGER_DB: "/custom/c.sqlite3" })).toBe(
       "/custom/c.sqlite3",
     );
-    expect(resolveClaimLedgerDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+    expect(resolveClaimLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/claim-ledger.sqlite3",
     );
     expect(resolveClaimLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
@@ -173,7 +173,7 @@ describe("gittensory-miner claim ledger (#2314)", () => {
 
   it("top-level claimIssue and listActiveClaims use the default ledger store", () => {
     const root = tempRoot();
-    vi.stubEnv("GITTENSORY_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
     closeDefaultClaimLedger();
     const claim = claimIssue("o/a", 99, "default-store");
     expect(claim).toMatchObject({ issueNumber: 99, status: "active" });
@@ -184,7 +184,7 @@ describe("gittensory-miner claim ledger (#2314)", () => {
 
   it("top-level recordClaim, releaseClaim, expireClaim, and listClaims use the default ledger store, forwarding apiBaseUrl (#5563)", () => {
     const root = tempRoot();
-    vi.stubEnv("GITTENSORY_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
+    vi.stubEnv("LOOPOVER_MINER_CLAIM_LEDGER_DB", join(root, "claim-ledger.sqlite3"));
     closeDefaultClaimLedger();
     const ghClaim = recordClaim({ repoFullName: "o/a", issueNumber: 5, apiBaseUrl: "https://api.github.com" });
     const geClaim = recordClaim({ repoFullName: "o/a", issueNumber: 5, apiBaseUrl: "https://ghe.example.com/api/v3" });

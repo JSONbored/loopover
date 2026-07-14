@@ -16,7 +16,7 @@ export type MinerActionMode = "paused" | "dry_run" | "live";
 
 /**
  * The ONLY value that opts a miner into LIVE write execution. Deliberately a specific string literal, not a
- * boolean -- a fat-fingered `liveModeOptIn: true`, `"yes"`, `"on"`, or `GITTENSORY_MINER_LIVE_MODE=1` must never
+ * boolean -- a fat-fingered `liveModeOptIn: true`, `"yes"`, `"on"`, or `LOOPOVER_MINER_LIVE_MODE=1` must never
  * accidentally unlock writes the way a truthy-coerced flag could. Per the issue's explicit requirement: "not a
  * generic boolean flag that could be accidentally true."
  */
@@ -24,7 +24,7 @@ export const MINER_LIVE_MODE_OPT_IN = "live";
 
 /** Env var an operator sets (to exactly {@link MINER_LIVE_MODE_OPT_IN}) to opt their own miner instance into
  *  live write execution. Repo-side opt-in alone is never enough to execute writes. */
-export const MINER_LIVE_MODE_ENV_VAR = "GITTENSORY_MINER_LIVE_MODE";
+export const MINER_LIVE_MODE_ENV_VAR = "LOOPOVER_MINER_LIVE_MODE";
 
 /** True only when `value` is EXACTLY the {@link MINER_LIVE_MODE_OPT_IN} string -- no truthy coercion, no case
  *  folding, no alternate spellings. Everything else (including `true`, `"Live"`, `"1"`) reads as not opted in. */

@@ -79,9 +79,9 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     expect(reality.hasEnvRead("MINER_CODING_AGENT_TIMEOUT_MS")).toBe(true);
   });
 
-  it("extracts every documented GITTENSORY_MINER_* / MINER_* env var", () => {
-    expect(claims.envVars).toContain("GITTENSORY_MINER_CONFIG_DIR");
-    expect(claims.envVars.every((name) => /^(?:GITTENSORY_MINER|MINER)_/.test(name))).toBe(true);
+  it("extracts every documented LOOPOVER_MINER_* / MINER_* env var", () => {
+    expect(claims.envVars).toContain("LOOPOVER_MINER_CONFIG_DIR");
+    expect(claims.envVars.every((name) => /^(?:LOOPOVER_MINER|MINER)_/.test(name))).toBe(true);
   });
 
   it("extracts repo-relative file paths and drops external issue links", () => {
@@ -111,8 +111,8 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
 
   it("scanEnvVarTokens keeps the namespaced token whole and finds bare MINER_* aliases", () => {
     expect(
-      [...scanEnvVarTokens("read GITTENSORY_MINER_CONFIG_DIR and MINER_PING_STATUS here")].sort(),
-    ).toEqual(["GITTENSORY_MINER_CONFIG_DIR", "MINER_PING_STATUS"]);
+      [...scanEnvVarTokens("read LOOPOVER_MINER_CONFIG_DIR and MINER_PING_STATUS here")].sort(),
+    ).toEqual(["LOOPOVER_MINER_CONFIG_DIR", "MINER_PING_STATUS"]);
     expect(scanEnvVarTokens("no env vars here").size).toBe(0);
   });
 
@@ -144,21 +144,21 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
 
   it("auditDeploymentDocs reports ok when every claim is backed by reality", () => {
     const result = auditDeploymentDocs(
-      { envVars: ["GITTENSORY_MINER_CONFIG_DIR"], filePaths: ["Dockerfile"], subcommands: ["loop"] },
+      { envVars: ["LOOPOVER_MINER_CONFIG_DIR"], filePaths: ["Dockerfile"], subcommands: ["loop"] },
       ALWAYS_IN_SYNC,
     );
     expect(result).toEqual({ ok: true, failures: [] });
   });
 
   it("flags a documented env var with no corresponding read (renamed-var regression)", () => {
-    // Regression: an operator renames GITTENSORY_MINER_CONFIG_DIR in code but leaves the doc untouched.
+    // Regression: an operator renames LOOPOVER_MINER_CONFIG_DIR in code but leaves the doc untouched.
     const result = auditDeploymentDocs(
-      { envVars: ["GITTENSORY_MINER_CONFIG_DIR"], filePaths: [], subcommands: [] },
-      { ...ALWAYS_IN_SYNC, hasEnvRead: (name) => name !== "GITTENSORY_MINER_CONFIG_DIR" },
+      { envVars: ["LOOPOVER_MINER_CONFIG_DIR"], filePaths: [], subcommands: [] },
+      { ...ALWAYS_IN_SYNC, hasEnvRead: (name) => name !== "LOOPOVER_MINER_CONFIG_DIR" },
     );
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]).toContain("GITTENSORY_MINER_CONFIG_DIR");
+    expect(result.failures[0]).toContain("LOOPOVER_MINER_CONFIG_DIR");
     expect(result.failures[0]).toContain("no read");
   });
 
@@ -187,10 +187,10 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
   it("assertDeploymentDocsInSync throws and names every stale claim at once", () => {
     expect(() =>
       assertDeploymentDocsInSync(
-        { envVars: ["GITTENSORY_MINER_GONE"], filePaths: ["gone.yml"], subcommands: ["gone"] },
+        { envVars: ["LOOPOVER_MINER_GONE"], filePaths: ["gone.yml"], subcommands: ["gone"] },
         { hasEnvRead: () => false, pathExists: () => false, isRegisteredCommand: () => false },
       ),
-    ).toThrow(/GITTENSORY_MINER_GONE[\s\S]*gone\.yml[\s\S]*gittensory-miner gone/);
+    ).toThrow(/LOOPOVER_MINER_GONE[\s\S]*gone\.yml[\s\S]*gittensory-miner gone/);
   });
 
   it("assertDeploymentDocsInSync returns the ok result without throwing when in sync", () => {

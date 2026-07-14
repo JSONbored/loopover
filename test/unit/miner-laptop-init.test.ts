@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe("gittensory-miner laptop init (#2329)", () => {
   it("resolves the laptop SQLite path from the state-dir override and XDG fallback", () => {
-    expect(resolveLaptopStateDbPath({ GITTENSORY_MINER_CONFIG_DIR: "/custom/state" }))
+    expect(resolveLaptopStateDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" }))
       .toBe("/custom/state/laptop-state.sqlite3");
     expect(resolveLaptopStateDbPath({ XDG_CONFIG_HOME: "/xdg" }))
       .toBe("/xdg/gittensory-miner/laptop-state.sqlite3");
@@ -42,7 +42,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("fresh init creates the state dir and SQLite file", () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     const first = initLaptopState(env);
     expect(first.created).toBe(true);
     expect(existsSync(first.dbPath)).toBe(true);
@@ -52,7 +52,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("re-running init is idempotent and does not clobber existing metadata", () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     const first = initLaptopState(env);
     writeFileSync(join(first.stateDir, "marker.txt"), "keep-me");
     const second = initLaptopState(env);
@@ -62,7 +62,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("runInit prints human text (0) and machine JSON with --json", async () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await runInit([], env)).toBe(0);
     expect(String(log.mock.calls[0]?.[0])).toContain("initialized");
@@ -75,7 +75,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("doctor sqlite check reports a missing file with guidance", () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     const check = checkLaptopStateSqlite(env);
     expect(check.ok).toBe(false);
     expect(check.detail).toContain("gittensory-miner init");
@@ -83,7 +83,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("doctor sqlite check reports unreadable files", () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     const dbPath = resolveLaptopStateDbPath(env);
     mkdirSync(join(root, "state"), { recursive: true });
     writeFileSync(dbPath, "not-a-sqlite-db");
@@ -129,7 +129,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
 
   it("runInit notes when sqlite already existed", async () => {
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     initLaptopState(env);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await runInit([], env)).toBe(0);
@@ -142,7 +142,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
     });
     vi.stubGlobal("fetch", fetchStub);
     const root = tempRoot();
-    const env = { GITTENSORY_MINER_CONFIG_DIR: join(root, "state") };
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
     vi.spyOn(console, "log").mockImplementation(() => {});
     await runInit([], env);
     checkDockerPresent();

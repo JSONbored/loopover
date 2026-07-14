@@ -94,3 +94,32 @@ Then point your own `prometheus.yml` at node_exporter as usual — no changes to
 are needed. See [`prometheus/rules/alerts.yml`](../../../prometheus/rules/alerts.yml)'s
 `gittensory-miner-prediction` / `gittensory-miner-portfolio-queue` / `gittensory-miner-governor` rule groups for
 alert rules that already target these exact metric names.
+
+## Anonymized central telemetry (opt-in, off by default)
+
+Everything above stays entirely on your own machine. Separately, the miner can send a small, anonymized batch
+of its own PR-outcome history to gittensory's hosted AMS collector — the same fleet-growth/usage telemetry Orb's
+self-host collector already sends for maintainers, mirrored for contributors:
+
+```sh
+gittensory-miner orb export --enable --send
+```
+
+- **`--enable`** alone only builds and prints the anonymized batch locally — no network call, so you can inspect
+  exactly what would be sent before ever transmitting anything.
+- **`--enable --send`** additionally POSTs that batch to the collector and advances a local cursor, so the next
+  run only sends events since the last successful send.
+
+**What's sent:** for each of your own resolved PRs — an HMAC-anonymized repo hash and PR hash (a per-instance
+secret generated once and kept only on your machine; the collector never holds it and can't reverse the hash), the
+`merged`/`closed` decision, a fixed low-cardinality rejection-reason bucket, and the close timestamp. No repo
+names, PR numbers, diffs, code, or free text ever leave your machine.
+
+**Nothing is sent unless you explicitly opt in.** There is no default-on behavior here (unlike Orb's own
+maintainer-side collector) — every invocation requires `--enable --send` explicitly.
+
+| Variable | Purpose |
+| --- | --- |
+| `GITTENSORY_MINER_AMS_COLLECTOR_URL` | Override the collector endpoint (default: gittensory's hosted collector). |
+| `GITTENSORY_MINER_AMS_COLLECTOR_TOKEN` | Optional bearer credential, only needed if your collector requires one. |
+| `GITTENSORY_MINER_ORB_EXPORT_DB` | Override the local secret+cursor store path (default: `orb-export.sqlite3` under `GITTENSORY_MINER_CONFIG_DIR`). |

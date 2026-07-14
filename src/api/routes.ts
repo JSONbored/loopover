@@ -137,6 +137,7 @@ import {
 } from "../github/commands";
 import { handleGitHubWebhook, handleOrbRelay } from "../github/webhook";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
+import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
@@ -3482,6 +3483,19 @@ export function createApp() {
     return c.json(result, 200);
   });
 
+  // Gittensory AMS (#5681) — central telemetry collector for the miner product, mirroring the Orb ingest
+  // route above (same optional bearer-token gate, same hard body ceiling — readOrbIngestBody is generic over
+  // request bytes despite the name, so it's reused as-is rather than duplicated).
+  app.post("/v1/ams/ingest", async (c) => {
+    if (!(await isAuthorizedAmsIngest(c.env, extractBearerToken(c.req.header("authorization"))))) return c.json({ error: "unauthorized" }, 401);
+    const body = await readOrbIngestBody(c.req.raw, c.req.header("content-length"));
+    if (body === null) return c.json({ error: "payload_too_large" }, 413);
+    if (!body) return c.json({ error: "invalid_request" }, 400);
+    const result = await handleAmsIngest(body, c.env.DB);
+    if ("error" in result) return c.json(result, 400);
+    return c.json(result, 200);
+  });
+
   // Fleet calibration analytics over the collected orb_signals — gate accuracy (precision / FP / reversal /
   // cycle-time) aggregated median-robustly across the self-host fleet. Owner-only: bearer-gated by the
   // `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN). `?days=` windows the lookback (default 90).
@@ -5701,6 +5715,14 @@ async function isAuthorizedOrbIngest(env: Env, token: string | undefined): Promi
   return timingSafeEqual(token, env.ORB_INGEST_TOKEN);
 }
 
+// Optional AMS-ingest auth (#5681), same fail-open shape as isAuthorizedOrbIngest: unset ⇒ open ingress, set ⇒
+// the collector requires an exact bearer match. A separate token/env var from ORB_INGEST_TOKEN so the two
+// products' collector credentials can be rotated or locked down independently.
+async function isAuthorizedAmsIngest(env: Env, token: string | undefined): Promise<boolean> {
+  if (!env.AMS_INGEST_TOKEN) return true;
+  return timingSafeEqual(token, env.AMS_INGEST_TOKEN);
+}
+
 function requiresApiToken(path: string): boolean {
   if (path === "/health") return false;
   if (path === "/v1/mcp/compatibility") return false;
@@ -5723,6 +5745,7 @@ function requiresApiToken(path: string): boolean {
   if (path === "/v1/orb/relay/register") return false;
   if (path === "/v1/orb/relay/pull") return false;
   if (path === "/v1/orb/ingest") return false;
+  if (path === "/v1/ams/ingest") return false;
   if (path.startsWith("/v1/internal/")) return false;
   return path.startsWith("/v1/");
 }

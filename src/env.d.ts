@@ -274,6 +274,10 @@ declare global {
     MCP_READ_REPO_ALLOWLIST?: string;
     /** Shared bearer secret required by the hosted Orb ingest collector. */
     ORB_INGEST_TOKEN?: string;
+    /** Shared bearer secret required by the hosted AMS ingest collector (#5681) — same optional, fail-open
+     *  gate as ORB_INGEST_TOKEN, kept as a separate secret so the two products' collector credentials never
+     *  overlap. */
+    AMS_INGEST_TOKEN?: string;
     /** AES-256-GCM master secret for maintainer BYOK provider keys (encrypt/decrypt at rest). A Worker/self-host
      *  secret, never a public var. When absent, BYOK is unavailable and review uses the configured instance
      *  reviewer when available. */

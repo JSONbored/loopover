@@ -37,6 +37,8 @@ const MIGRATIONS_DIR = process.env.CHECK_SCHEMA_DRIFT_DIR || "migrations";
 // table here without also confirming it is genuinely raw-SQL-only is a reviewer-visible diff, not a silent
 // gap this check would otherwise catch.
 export const RAW_SQL_ONLY_TABLES = new Set([
+  "ams_instances",
+  "ams_signals",
   "contributor_gate_history",
   "global_agent_controls",
   "global_contributor_blacklist",

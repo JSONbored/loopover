@@ -99,7 +99,7 @@ if (cliArgs[0] === "queue") {
 }
 
 if (cliArgs[0] === "orb" && cliArgs[1] === "export") {
-  process.exit(runOrbExportCli(cliArgs.slice(2)));
+  process.exit(await runOrbExportCli(cliArgs.slice(2)));
 }
 
 if (cliArgs[0] === "claim") {

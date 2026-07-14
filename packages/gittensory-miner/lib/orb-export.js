@@ -2,19 +2,21 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { generateAnonSecret, hmacAnonymize as engineHmacAnonymize } from "@loopover/engine";
 import { readPrOutcomes } from "./pr-outcome.js";
 import { initEventLedger } from "./event-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
-// Optional anonymized Orb telemetry export (#4277). The self-host Orb collector (src/selfhost/orb-collector.ts,
-// #1255) is ALWAYS-ON for a maintainer's own instance; a miner runs on a third-party contributor's laptop with a
-// much lower consent bar, so this export is OPT-IN (default OFF) — hence "optional". It mirrors the collector's
-// privacy posture: repo/PR identifiers are HMAC-anonymized with a per-instance DEDICATED secret (generated once,
-// persisted locally, single-purpose), and only a fixed low-cardinality reason bucket + the decision leave — never
-// raw repo names or free text. The data source is the local pr_outcome ledger (pr-outcome.js), not a hosted D1.
-// This module builds the anonymized batch and manages the local secret + cursor; performing the network POST is the
-// caller's job, so this stays pure over its inputs + local store and needs no network to test.
+// Optional anonymized Orb telemetry export (#4277, network send wired in #5681). The self-host Orb collector
+// (src/selfhost/orb-collector.ts, #1255) is ALWAYS-ON for a maintainer's own instance; a miner runs on a
+// third-party contributor's laptop with a much lower consent bar, so this export is OPT-IN (default OFF) —
+// hence "optional". It mirrors the collector's privacy posture: repo/PR identifiers are HMAC-anonymized with a
+// per-instance DEDICATED secret (generated once, persisted locally, single-purpose), and only a fixed
+// low-cardinality reason bucket + the decision leave — never raw repo names or free text. The data source is
+// the local pr_outcome ledger (pr-outcome.js), not a hosted D1. `generateAnonSecret`/`hmacAnonymize` are the
+// same primitive src/selfhost/orb-collector.ts uses (@loopover/engine, #5680) — one anonymization
+// implementation shared by both products instead of two independently-maintained copies.
 
 /** OPT-IN: a laptop miner exports nothing unless a contributor explicitly turns it on. */
 export const ORB_EXPORT_ENABLED_BY_DEFAULT = false;
@@ -45,10 +47,12 @@ function normalizeDbPath(dbPath) {
   return path;
 }
 
-/** HMAC a value with the per-instance secret — mirrors orb-collector.ts's hmacField (sha256, first 24 hex). */
+/** HMAC a value with the per-instance secret. Validates the secret (the shared engine primitive stays pure
+ *  and doesn't), then delegates the actual hash to @loopover/engine's hmacAnonymize — the same primitive
+ *  src/selfhost/orb-collector.ts uses, so both products anonymize identically. */
 export function hmacAnonymize(value, secret) {
   if (typeof secret !== "string" || !secret) throw new Error("invalid_anon_secret");
-  return createHmac("sha256", secret).update(String(value)).digest("hex").slice(0, 24);
+  return engineHmacAnonymize(String(value), secret);
 }
 
 /**
@@ -104,7 +108,7 @@ export function openOrbExportStore(dbPath = resolveOrbExportDbPath()) {
     getOrCreateAnonSecret() {
       const existing = readValue(ANON_SECRET_KEY);
       if (existing) return existing;
-      const generated = randomBytes(32).toString("hex");
+      const generated = generateAnonSecret();
       setStatement.run(ANON_SECRET_KEY, generated);
       return generated;
     },
@@ -134,10 +138,72 @@ export function collectOrbExportBatch({ store, eventLedger, enabled = ORB_EXPORT
   return buildAnonymizedOrbBatch(outcomes, store.getOrCreateAnonSecret());
 }
 
-const ORB_EXPORT_USAGE = "Usage: gittensory-miner orb export [--enable] [--dry-run] [--json]";
+/** Stable per-instance identifier: a hash of the instance's own anon secret (no App-id concept on the AMS side,
+ *  unlike orb-collector.ts's instanceId — a miner laptop has no GitHub App). */
+export function amsInstanceId(secret) {
+  return createHash("sha256").update(String(secret)).digest("hex").slice(0, 16);
+}
+
+/** Drop rows already sent in a prior export: everything with a `closedAt` at/before the cursor. A row with no
+ *  `closedAt` (shouldn't happen for a resolved PR, but defensive) is always included, since there is no
+ *  watermark to compare it against. A null/unset cursor means "first export" — everything goes. */
+export function filterBatchSinceCursor(batch, cursor) {
+  if (!cursor) return batch;
+  return batch.filter((row) => !row.closedAt || row.closedAt > cursor);
+}
+
+/** The newest `closedAt` among a batch's rows, or `null` if none carry one — the next cursor value to persist
+ *  after a successful send. */
+export function latestClosedAt(batch) {
+  let latest = null;
+  for (const row of batch) {
+    if (row.closedAt && (latest === null || row.closedAt > latest)) latest = row.closedAt;
+  }
+  return latest;
+}
+
+/** gittensory's hosted AMS collector — mirrors orb-collector.ts's ORB_COLLECTOR_URL default pattern. */
+export const DEFAULT_AMS_COLLECTOR_URL = "https://api.loopover.ai/v1/ams/ingest";
+
+export function resolveAmsCollectorUrl(env = process.env) {
+  const explicit = typeof env.GITTENSORY_MINER_AMS_COLLECTOR_URL === "string" ? env.GITTENSORY_MINER_AMS_COLLECTOR_URL.trim() : "";
+  return explicit || DEFAULT_AMS_COLLECTOR_URL;
+}
+
+/**
+ * POST an already-anonymized batch to the AMS ingest collector, signed the same way orb-collector.ts signs its
+ * own export (a full-length HMAC over the JSON body, distinct from the per-field hmacAnonymize truncated hash
+ * above — a body signature and a field anonymization hash are different concerns). Returns `{ sent }` on a 2xx
+ * response, `{ sent: 0, error }` otherwise — a network failure or non-2xx never throws, matching this module's
+ * fail-open posture (a telemetry hiccup must never break the miner's real work).
+ */
+export async function sendAmsExportBatch({ batch, secret, collectorUrl = resolveAmsCollectorUrl(), collectorToken, fetchFn = fetch }) {
+  if (!Array.isArray(batch) || batch.length === 0) return { sent: 0 };
+  const instanceId = amsInstanceId(secret);
+  const body = JSON.stringify({ instanceId, events: batch });
+  const signature = createHmac("sha256", secret).update(body).digest("hex");
+  try {
+    const res = await fetchFn(collectorUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ams-signature": `sha256=${signature}`,
+        "x-ams-instance": instanceId,
+        ...(collectorToken ? { authorization: `Bearer ${collectorToken}` } : {}),
+      },
+      body,
+    });
+    if (!res.ok) return { sent: 0, error: `http_${res.status}` };
+  } catch (error) {
+    return { sent: 0, error: describeCliError(error) };
+  }
+  return { sent: batch.length };
+}
+
+const ORB_EXPORT_USAGE = "Usage: gittensory-miner orb export [--enable] [--send] [--dry-run] [--json]";
 
 export function parseOrbExportArgs(args) {
-  const options = { json: false, enable: false, dryRun: false };
+  const options = { json: false, enable: false, send: false, dryRun: false };
   for (const token of args) {
     if (token === "--json") {
       options.json = true;
@@ -145,6 +211,13 @@ export function parseOrbExportArgs(args) {
     }
     if (token === "--enable") {
       options.enable = true;
+      continue;
+    }
+    // Distinct from --enable: --enable alone only builds+prints the anonymized batch locally (no network I/O),
+    // so a contributor can inspect exactly what would be sent before ever transmitting it. --send additionally
+    // POSTs that batch to the collector and advances the cursor — the previously-missing network step (#5681).
+    if (token === "--send") {
+      options.send = true;
       continue;
     }
     // #4847: openOrbExportStore() itself creates the local SQLite file (a real write) even before any secret is
@@ -158,19 +231,24 @@ export function parseOrbExportArgs(args) {
   return options;
 }
 
-/** CLI entry for the anonymized Orb telemetry batch-builder (#4833 wires the previously caller-less exporter).
- *  OPT-IN: prints nothing to export unless `--enable` is passed. Only builds the anonymized batch (repo/PR
- *  identifiers HMAC-hashed) — never performs the network POST. */
-export function runOrbExportCli(args, options = {}) {
+/** CLI entry for the anonymized Orb telemetry batch-builder + sender (#4833 wired the caller-less exporter's
+ *  batch-building; #5681 wired the network send). OPT-IN: prints nothing to export unless `--enable` is
+ *  passed. `--enable` alone only builds+prints the anonymized batch locally — no network I/O, so a contributor
+ *  can inspect exactly what would be sent first. `--enable --send` additionally POSTs the (cursor-filtered)
+ *  batch to the AMS collector and advances the cursor on success, so a re-run doesn't resend history that was
+ *  already delivered. */
+export async function runOrbExportCli(args, options = {}) {
   const parsed = parseOrbExportArgs(args);
   if ("error" in parsed) {
     return reportCliFailure(argsWantJson(args), parsed.error);
   }
 
   if (parsed.dryRun) {
-    const dryRunResult = { outcome: "dry_run", enabled: parsed.enable };
+    const dryRunResult = { outcome: "dry_run", enabled: parsed.enable, send: parsed.send };
     if (parsed.json) {
       console.log(JSON.stringify(dryRunResult, null, 2));
+    } else if (parsed.enable && parsed.send) {
+      console.log("DRY RUN: would build an anonymized Orb export batch and send it to the collector. No local writes or network calls were made.");
     } else if (parsed.enable) {
       console.log("DRY RUN: would build and report an anonymized Orb export batch. No local writes were made.");
     } else {
@@ -181,6 +259,8 @@ export function runOrbExportCli(args, options = {}) {
 
   // Open the stores INSIDE the try so a bad config path / SQLite open failure returns 2 instead of crashing the
   // process; the finally guards each close with `?.` since either initializer may have thrown before assigning.
+  // The --send path's await happens INSIDE this try so `finally` (which closes the store) can never run before
+  // the cursor advance below it -- resolving the send result AFTER the store closed would write to a dead handle.
   const ownsStore = options.openOrbExportStore === undefined;
   const ownsLedger = options.initEventLedger === undefined;
   let store;
@@ -194,9 +274,34 @@ export function runOrbExportCli(args, options = {}) {
       else console.log("orb export is opt-in and disabled — pass --enable to build an anonymized batch");
       return 0;
     }
-    if (parsed.json) console.log(JSON.stringify({ enabled: true, batch }, null, 2));
-    else console.log(`${batch.length} anonymized event(s)`);
-    return 0;
+
+    if (!parsed.send) {
+      if (parsed.json) console.log(JSON.stringify({ enabled: true, sent: false, batch }, null, 2));
+      else console.log(`${batch.length} anonymized event(s) — pass --send to transmit them to the collector`);
+      return 0;
+    }
+
+    const cursor = store.getCursor();
+    const toSend = filterBatchSinceCursor(batch, cursor);
+    if (toSend.length === 0) {
+      if (parsed.json) console.log(JSON.stringify({ enabled: true, sent: 0, skipped: batch.length }, null, 2));
+      else console.log("no new events since the last export");
+      return 0;
+    }
+
+    const send = options.sendAmsExportBatch ?? sendAmsExportBatch;
+    const secret = store.getOrCreateAnonSecret();
+    const env = options.env ?? process.env;
+    const collectorToken = env.GITTENSORY_MINER_AMS_COLLECTOR_TOKEN ?? "";
+    const sendResult = await send({ batch: toSend, secret, collectorToken });
+    if (sendResult.sent > 0) {
+      const nextCursor = latestClosedAt(toSend);
+      if (nextCursor) store.setCursor(nextCursor);
+    }
+    if (parsed.json) console.log(JSON.stringify({ enabled: true, ...sendResult, skipped: batch.length - toSend.length }, null, 2));
+    else if (sendResult.error) console.log(`export failed: ${sendResult.error}`);
+    else console.log(`sent ${sendResult.sent} anonymized event(s)`);
+    return sendResult.error ? 1 : 0;
   } catch (error) {
     return reportCliFailure(parsed.json, describeCliError(error));
   } finally {

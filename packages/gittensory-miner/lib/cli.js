@@ -55,7 +55,7 @@ export function printHelp(input) {
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "  gittensory-miner state get <owner/repo> [--json]",
       "  gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--dry-run] [--json]",
-      "  gittensory-miner orb export [--enable] [--dry-run] [--json]   Build the opt-in anonymized telemetry batch",
+      "  gittensory-miner orb export [--enable] [--send] [--dry-run] [--json]   Build (and optionally send) the opt-in anonymized telemetry batch",
       "  gittensory-miner purge --repo <owner/repo> [--dry-run] [--json]",
       "                                                                 Right-to-be-forgotten: delete a repo's rows from every local store",
       "",

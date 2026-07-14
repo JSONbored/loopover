@@ -45,7 +45,7 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
 ];
 
 // Default, safe-by-default invariant set (restored by #3943 after the original pure-config-as-code design
-// let a `.gittensory.yml` edit silently remove its own guardrail protection). Repo settings can only ADD to
+// let a `.loopover.yml` edit silently remove its own guardrail protection). Repo settings can only ADD to
 // this set UNLESS the repo explicitly opts in via `hardGuardrailGlobsOverridesInvariants` (below).
 export const DEFAULT_HARD_GUARDRAIL_GLOBS = [
   ...CONFIG_AS_CODE_GUARDRAIL_GLOBS,
@@ -58,7 +58,7 @@ export const DEFAULT_HARD_GUARDRAIL_GLOBS = [
  *
  * Safe by default (#3943): `DEFAULT_HARD_GUARDRAIL_GLOBS` is an invariant floor, and a repo's configured
  * `hardGuardrailGlobs` is ADDED to it (deduplicated), never allowed to shrink it — so an ordinary
- * `.gittensory.yml` edit (even a careless or malicious one) can only ever widen guardrail protection.
+ * `.loopover.yml` edit (even a careless or malicious one) can only ever widen guardrail protection.
  *
  * Full self-hoster control, opt-in (config-as-code mandate): a repo that explicitly sets
  * `hardGuardrailGlobsOverridesInvariants: true` takes complete ownership of its guardrail list —

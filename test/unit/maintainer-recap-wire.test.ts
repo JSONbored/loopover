@@ -47,7 +47,7 @@ async function seedMergedPr(env: Env, repoFullName: string, number: number): Pro
 }
 
 // Only RECORDS calls to the Discord webhook itself -- recapScanRepos's resolveRepositorySettings also fetches
-// each repo's .gittensory.yml (loadRepoFocusManifest), which must keep succeeding (generic 204) but not be
+// each repo's .loopover.yml (loadRepoFocusManifest), which must keep succeeding (generic 204) but not be
 // mistaken for a webhook post.
 function stubDiscordFetch(): Array<{ body: string }> {
   const calls: Array<{ body: string }> = [];

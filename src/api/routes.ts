@@ -772,7 +772,7 @@ const maintainerSettingsSchema = z
 
 /** Readiness/quality can never hard-block a PR (buildQualityGateWarning is always advisory-severity;
  *  isConfiguredGateBlocker has no branch for it) — downgrade a settings-write's `qualityGateMode: "block"` to
- *  `"advisory"` here too, mirroring the same downgrade `.gittensory.yml`'s `gate.readiness.mode` /
+ *  `"advisory"` here too, mirroring the same downgrade `.loopover.yml`'s `gate.readiness.mode` /
  *  `settings.qualityGateMode` already get in normalizeReadinessGateMode, so the dashboard/API save path can
  *  never persist a value that implies enforcement it doesn't have (#2267). Callers check for `undefined`
  *  (a PATCH-style save that didn't touch this field) before calling — this only handles the defined case, so
@@ -3103,7 +3103,7 @@ export function createApp() {
       gittensorSnapshot: context.gittensorSnapshot,
     });
     // Pre-submission gate prediction: the SAME advisory + evaluateGateCheck the maintainer PR pipeline
-    // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .gittensory.yml gate
+    // runs, over a synthetic PR from this local branch, using ONLY the repo's PUBLIC .loopover.yml gate
     // policy (never the maintainer's private DB settings). Self-scoped (requireContributorAccess above).
     // #2349: this login's own predict-vs-real track record, personalizing ONLY the returned readinessScore
     // (see buildPredictedGateVerdict's contributorCalibration doc comment for the safety boundary).
@@ -3876,7 +3876,7 @@ export function createApp() {
     const windowDays = Number.isFinite(Number(body?.windowDays)) ? Math.max(1, Math.min(90, Math.round(Number(body.windowDays)))) : undefined;
     const manifest = await loadRepoFocusManifest(c.env, repoFullName).catch(() => null);
     if (!manifest?.reviewRecap.enabled) {
-      return c.json({ ok: false, status: "skipped", reason: "reviewRecap is not enabled for this repository (.gittensory.yml reviewRecap.enabled)" }, 200);
+      return c.json({ ok: false, status: "skipped", reason: "reviewRecap is not enabled for this repository (.loopover.yml reviewRecap.enabled)" }, 200);
     }
     const { recap, delivery } = await generateAndSendReviewRecap(c.env, repoFullName, { windowDays: windowDays ?? manifest.reviewRecap.cadenceDays });
     return c.json({ ok: true, recap, delivery });
@@ -4880,7 +4880,7 @@ async function buildSelfDogfoodRegistrationPackResponse(env: Env) {
 async function buildGittensorConfigRecommendationResponse(env: Env, fullName: string) {
   /* v8 ignore start -- Config recommendation route-level shaping over covered signal helpers. */
   // Intentionally the raw DB settings, not resolveRepositorySettings's merged view: this tool recommends what
-  // to ADD to .gittensory.yml based on the repo's currently-active (dashboard/API-configured) behavior — using
+  // to ADD to .loopover.yml based on the repo's currently-active (dashboard/API-configured) behavior — using
   // the yml-merged view here would be comparing the recommendation against itself once a yml override exists
   // (#2912).
   const intelligence = await buildRepoIntelligenceResponse(env, fullName);

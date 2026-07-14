@@ -695,7 +695,7 @@ describe("world-class backend signals", () => {
   });
 
   it("regression (#4606): buildPublicCommentSignalBundle agrees with the public panel on linkedIssueGateMode alone", () => {
-    // A repo that opts into the linked-issue gate purely via `.gittensory.yml` (linkedIssueGateMode !== "off")
+    // A repo that opts into the linked-issue gate purely via `.loopover.yml` (linkedIssueGateMode !== "off")
     // and never touches the legacy `requireLinkedIssue` boolean must still surface `missing_linked_issue` in
     // the AI-rewrite signal bundle -- previously the bundle checked `requireLinkedIssue` alone and silently
     // dropped the finding in exactly this configuration.

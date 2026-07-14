@@ -11,7 +11,7 @@ import type { RepositorySettings } from "../types";
  *
  * Deliberately omits every secret / wallet / hotkey / coldkey / raw-trust-score / reward field (house rule) — none
  * of the rendered fields derives from a private score, so the output is safe to post publicly. The handler still
- * wraps it in `sanitizePublicComment` + `gittensoryFooter` as a second belt. `executionMode` is passed in resolved
+ * wraps it in `sanitizePublicComment` + `loopoverFooter` as a second belt. `executionMode` is passed in resolved
  * (the caller applies the global kill-switch via {@link resolveAgentActionMode}) so this stays pure. */
 export function summarizeEffectiveConfig(settings: RepositorySettings, executionMode: AgentActionMode): string {
   const autonomyLines = AGENT_ACTION_CLASSES.map(

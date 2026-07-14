@@ -542,7 +542,7 @@ describe("agent approval queue (#779)", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
     // expectedCiContexts (#selfhost-ci-verification) is config-as-code only, resolved from the repo's focus
-    // manifest (.gittensory.yml gate.expectedCiContexts) — not a repository_settings DB column.
+    // manifest (.loopover.yml gate.expectedCiContexts) — not a repository_settings DB column.
     await upsertRepoFocusManifest(env, "owner/repo", { gate: { expectedCiContexts: ["build", "test"] } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });

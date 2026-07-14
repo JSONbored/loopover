@@ -392,7 +392,7 @@ async function seedGateEnabledRepo(env: Env): Promise<void> {
     linkedIssueGateMode: "block",
     requireLinkedIssue: true,
   });
-  // .gittensory.yml authoritatively sets the linked-issue blocker to "block" (config-as-code).
+  // .loopover.yml authoritatively sets the linked-issue blocker to "block" (config-as-code).
   await upsertRepoFocusManifest(env, "JSONbored/gittensory", { gate: { linkedIssue: "block" } });
 }
 

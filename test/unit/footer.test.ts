@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gittensoryFooter, gittensorRepoEarnUrl, GITTENSOR_HOME_URL, LOOPOVER_SITE_URL, maintainerControlPanelUrl } from "../../src/github/footer";
+import { loopoverFooter, gittensorRepoEarnUrl, GITTENSOR_HOME_URL, LOOPOVER_SITE_URL, maintainerControlPanelUrl } from "../../src/github/footer";
 import { FORBIDDEN_PUBLIC_COMMENT_WORDS } from "../../src/queue-intelligence";
 
 describe("maintainerControlPanelUrl", () => {
@@ -18,7 +18,7 @@ describe("maintainerControlPanelUrl", () => {
 
 describe("gittensory public-comment footer", () => {
   it("always shows the earn CTA + attribution (permanent marketing surface on every PR)", () => {
-    const footer = gittensoryFooter({});
+    const footer = loopoverFooter({});
     expect(footer).toMatch(/earn/i);
     expect(footer).toContain("register to start earning");
     expect(footer).toContain(GITTENSOR_HOME_URL);
@@ -26,16 +26,16 @@ describe("gittensory public-comment footer", () => {
   });
 
   it("points the CTA at a specific repo's public miner page when given an earnUrl", () => {
-    const footer = gittensoryFooter({}, { earnUrl: gittensorRepoEarnUrl("JSONbored/gittensory") });
+    const footer = loopoverFooter({}, { earnUrl: gittensorRepoEarnUrl("JSONbored/gittensory") });
     expect(footer).toContain("https://gittensor.io/miners/repository?name=JSONbored%2Fgittensory&tab=miners");
   });
 
   it("falls back to the Gittensor home URL when no earnUrl is given", () => {
-    expect(gittensoryFooter({})).toContain(`(${GITTENSOR_HOME_URL})`);
+    expect(loopoverFooter({})).toContain(`(${GITTENSOR_HOME_URL})`);
   });
 
   it("never uses reward/payout/score wording (would throw in sanitizePublicComment)", () => {
-    const footer = gittensoryFooter({}, { earnUrl: gittensorRepoEarnUrl("o/r") }).toLowerCase();
+    const footer = loopoverFooter({}, { earnUrl: gittensorRepoEarnUrl("o/r") }).toLowerCase();
     for (const word of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
       expect(footer).not.toContain(word.toLowerCase());
     }
@@ -43,7 +43,7 @@ describe("gittensory public-comment footer", () => {
 
   it("preserves maintainer custom lead text while appending the Gittensor CTA", () => {
     const earnUrl = gittensorRepoEarnUrl("JSONbored/gittensory");
-    const footer = gittensoryFooter({}, { customText: "Thanks for contributing to LoopOver!", earnUrl });
+    const footer = loopoverFooter({}, { customText: "Thanks for contributing to LoopOver!", earnUrl });
     expect(footer.startsWith("Thanks for contributing to LoopOver!")).toBe(true);
     expect(footer).toContain("register to start earning");
     expect(footer).toContain(earnUrl);
@@ -55,18 +55,18 @@ describe("gittensory public-comment footer", () => {
   // attribution link -- both the default-copy branch and the maintainer-customText branch splice it in,
   // and the Gittensor register link (a separate, shared network) is never rebranded.
   it("#4613: uses PUBLIC_SITE_ORIGIN in the attribution link when configured", () => {
-    const footer = gittensoryFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" });
+    const footer = loopoverFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" });
     expect(footer).toContain("Checked by [LoopOver](https://gittensory.example.org)");
     expect(footer).not.toContain(LOOPOVER_SITE_URL);
     expect(footer).toContain(GITTENSOR_HOME_URL); // the network link is never rebranded
   });
 
   it("#4613: falls back to LOOPOVER_SITE_URL when PUBLIC_SITE_ORIGIN is unset", () => {
-    expect(gittensoryFooter({})).toContain(`Checked by [LoopOver](${LOOPOVER_SITE_URL})`);
+    expect(loopoverFooter({})).toContain(`Checked by [LoopOver](${LOOPOVER_SITE_URL})`);
   });
 
   it("#4613: uses PUBLIC_SITE_ORIGIN in the attribution link on the customText branch too", () => {
-    const footer = gittensoryFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" }, { customText: "Thanks for contributing!" });
+    const footer = loopoverFooter({ PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" }, { customText: "Thanks for contributing!" });
     expect(footer).toContain("Checked by [LoopOver](https://gittensory.example.org)");
     expect(footer).not.toContain(LOOPOVER_SITE_URL);
   });

@@ -1,5 +1,5 @@
 // Impact-map activation wiring (#2184, config slice of #1971). Mirrors rag-wire.ts's isRagEnabled: a single
-// GLOBAL env kill-switch the self-host operator controls, ANDed with the per-repo `.gittensory.yml
+// GLOBAL env kill-switch the self-host operator controls, ANDed with the per-repo `.loopover.yml
 // review.impact_map` manifest toggle (resolved via `resolveReviewPromptOverrides`'s `impactMap` field) — so a
 // repo can only ever NARROW what the operator has already turned on, never widen it. Both OFF by default:
 // with the env flag unset, impact-map computation is never invoked from the review path at all (the caller

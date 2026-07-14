@@ -38,7 +38,7 @@ function missingIssueAdvisory(): Advisory {
   };
 }
 
-describe(".gittensory.yml settings override (resolveEffectiveSettings)", () => {
+describe(".loopover.yml settings override (resolveEffectiveSettings)", () => {
   it("returns the DB settings unchanged when the manifest has no overrides", () => {
     const eff = resolveEffectiveSettings(settings({ linkedIssueGateMode: "block" }), parseFocusManifest(null));
     expect(eff.linkedIssueGateMode).toBe("block");
@@ -305,7 +305,7 @@ describe("policy pack (#692)", () => {
     expect(gateCheckPolicy(settings({ gatePack: "gittensor" }), null, true).confirmedContributor).toBe(true);
   });
 
-  it(".gittensory.yml gate.pack overlays the pack and flips the gate to block any author end-to-end", () => {
+  it(".loopover.yml gate.pack overlays the pack and flips the gate to block any author end-to-end", () => {
     const eff = resolveEffectiveSettings(settings({ gatePack: "gittensor", linkedIssueGateMode: "block" }), parseFocusManifest({ gate: { pack: "oss-anti-slop" } }));
     expect(eff.gatePack).toBe("oss-anti-slop");
     expect(evaluateGateCheck(missingIssueAdvisory(), gateCheckPolicy(eff, null, false)).conclusion).toBe("failure");
@@ -322,7 +322,7 @@ describe("AI consensus defect gate blocker", () => {
     expect(evaluateGateCheck(aiDefectAdvisory(), gateCheckPolicy(settings({ aiReviewMode: "advisory" }), null, true)).conclusion).toBe("success");
   });
 
-  it("blocks a confirmed contributor when the maintainer opts into aiReview: block (incl. via .gittensory.yml)", () => {
+  it("blocks a confirmed contributor when the maintainer opts into aiReview: block (incl. via .loopover.yml)", () => {
     const blocked = evaluateGateCheck(aiDefectAdvisory(), gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
     expect(blocked.conclusion).toBe("failure");
     expect(blocked.blockers.map((f) => f.code)).toEqual(["ai_consensus_defect"]);
@@ -452,7 +452,7 @@ describe("slop gate (#530/#532)", () => {
     expect(result.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
   });
 
-  it("gateCheckPolicy threads slop settings + the live slopRisk into the policy (incl. .gittensory.yml)", () => {
+  it("gateCheckPolicy threads slop settings + the live slopRisk into the policy (incl. .loopover.yml)", () => {
     const eff = resolveEffectiveSettings(settings({ slopGateMode: "off" }), parseFocusManifest({ gate: { slop: { mode: "block", minScore: 50 } } }));
     expect(eff.slopGateMode).toBe("block");
     expect(eff.slopGateMinScore).toBe(50);

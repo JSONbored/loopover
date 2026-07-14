@@ -912,9 +912,9 @@ describe("queue processors", () => {
           comment: { id: 1, body: "@loopover help — also @JSONbored can you look?", user: { login: "chatty", type: "User" }, author_association: "NONE" },
         },
       });
-      const gittensoryPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      const loopoverPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
       const mentionPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.monitored_mention_ping'").first<{ n: number }>();
-      expect(gittensoryPings?.n).toBe(1);
+      expect(loopoverPings?.n).toBe(1);
       expect(mentionPings?.n).toBe(1);
     });
 

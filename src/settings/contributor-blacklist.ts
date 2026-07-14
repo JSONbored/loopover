@@ -1,5 +1,5 @@
 // Contributor blacklist (#1425, anti-abuse). Pure resolution + matching for the banned-login list the converged
-// engine acts on. Config-driven and layered the same as other settings (`.gittensory.yml` > DB) and unioned with
+// engine acts on. Config-driven and layered the same as other settings (`.loopover.yml` > DB) and unioned with
 // the shared/global list at the point of use — NEVER hard-coded for any repo. Logins are public data; entries
 // may carry private maintainer metadata, so public surfaces must not echo it. Mirrors the shape of
 // command-authorization.ts (normalize → typed policy + warnings).
@@ -17,7 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Normalize a raw blacklist value (DB JSON or `.gittensory.yml`) into validated, de-duplicated entries. Never
+/** Normalize a raw blacklist value (DB JSON or `.loopover.yml`) into validated, de-duplicated entries. Never
  *  throws: malformed entries are dropped with a warning. De-dup is by case-insensitive login (the FIRST wins, so
  *  its richer metadata is kept). */
 export function normalizeContributorBlacklist(input: unknown): { entries: ContributorBlacklistEntry[]; warnings: string[] } {

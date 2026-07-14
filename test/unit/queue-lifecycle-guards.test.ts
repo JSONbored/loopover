@@ -2355,7 +2355,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
     });
 
-    it("applies no label when reviewEvasionLabel is explicitly null (a .gittensory.yml-only 'no label' override)", async () => {
+    it("applies no label when reviewEvasionLabel is explicitly null (a .loopover.yml-only 'no label' override)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       const labelPostBodies: string[] = [];
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2379,7 +2379,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       // reviewEvasionLabel is a NOT NULL DB column (upsertRepositorySettings coalesces null -> the default at
       // write time, per the migration's own "never persisted" comment) -- null only ever reaches this handler
-      // via the .gittensory.yml config-as-code layer, so the resolved-settings layer is mocked directly here.
+      // via the .loopover.yml config-as-code layer, so the resolved-settings layer is mocked directly here.
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
       vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionLabel: null });
 
@@ -2771,7 +2771,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
     });
 
-    it("applies no label when reviewEvasionLabel is explicitly null (a .gittensory.yml-only 'no label' override)", async () => {
+    it("applies no label when reviewEvasionLabel is explicitly null (a .loopover.yml-only 'no label' override)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       const labelPostBodies: string[] = [];
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3261,7 +3261,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/42/comments"))).toBe(true);
     });
 
-    it("applies no label when reviewEvasionLabel is explicitly null (a .gittensory.yml-only 'no label' override)", async () => {
+    it("applies no label when reviewEvasionLabel is explicitly null (a .loopover.yml-only 'no label' override)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       const labelPostBodies: string[] = [];
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -4733,7 +4733,7 @@ describe("automation-bot-skip: end-to-end webhook + re-entry wiring (#automation
     repository: { name: "bot-skip-repo", full_name: "owner/bot-skip-repo", private: false, owner: { login: "owner" } },
   };
 
-  // resolveRepositorySettings itself probes for a config-as-code override (.gittensory.yml/.json in both the
+  // resolveRepositorySettings itself probes for a config-as-code override (.loopover.yml/.json in both the
   // repo root and .github/) BEFORE the skip check can even run (it needs the resolved settings for the
   // per-repo override) -- so those 4 raw.githubusercontent.com probes are unavoidable, pre-existing overhead
   // on EVERY webhook, not the "waste" this feature eliminates. The real signal is that NOTHING beyond that

@@ -20,7 +20,7 @@ import type {
   ScoringModelSnapshotRecord,
 } from "../types";
 import type { PublicContributorProfile } from "../github/public";
-import { commandReferenceUrl, gittensoryFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../github/footer";
+import { commandReferenceUrl, loopoverFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../github/footer";
 import type { FocusManifestReviewConfig, ReviewFieldKey } from "./focus-manifest";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
@@ -4138,7 +4138,7 @@ export const PR_PANEL_GENERATE_TESTS_MARKER = "<!-- gittensory-generate-tests:v1
 /** Earn-CTA target for a public-comment footer. The repo-scoped miner page is only meaningful for
  *  repos registered on Gittensor (per `gittensorRepoEarnUrl`'s documented contract); for an
  *  unregistered repo the page has no miner data, so fall back to the general Gittensor home URL
- *  (the `gittensoryFooter` default) instead of implying THIS repo's contributions already earn. */
+ *  (the `loopoverFooter` default) instead of implying THIS repo's contributions already earn. */
 function footerEarnUrl(repo: RepositoryRecord | null, repoFullName: string): string | undefined {
   return repo?.isRegistered ? gittensorRepoEarnUrl(repoFullName) : undefined;
 }
@@ -4472,7 +4472,7 @@ export function buildPublicPrIntelligenceComment(args: {
   const changeScopeComponent = readinessByKey.get("change_scope")!;
   const contributorWorkload = contributorWorkloadPanelResult(args.profile);
   const contributorContext = contributorContextPanelResult(args.pr, args.profile, args.detection, confirmedMiner);
-  // Each row carries a stable key so a maintainer can show/hide it from `.gittensory.yml review.fields`
+  // Each row carries a stable key so a maintainer can show/hide it from `.loopover.yml review.fields`
   // (default: shown). Hiding a row is cosmetic — the underlying signal/gate still functions.
   const allRows: Array<{ key: ReviewFieldKey; cells: [string, string, string, string] }> = [
     { key: "linkedIssue", cells: ["Linked issue", linkedIssueResult.result, linkedIssueResult.evidence, linkedIssueResult.action] },
@@ -4500,9 +4500,9 @@ export function buildPublicPrIntelligenceComment(args: {
   // Always-on earn CTA — a permanent, free marketing surface on every reviewed PR. For a registered
   // repo the CTA points at this repo's public Gittensor miner page (social proof for THIS repo + a
   // path to register); for an unregistered repo it falls back to the general Gittensor home URL.
-  // The earn CTA stays a permanent marketing surface; `.gittensory.yml review.footer.text` can replace
+  // The earn CTA stays a permanent marketing surface; `.loopover.yml review.footer.text` can replace
   // the lead copy (already public-safe-validated) but the Gittensor register link + attribution remain.
-  const footer = gittensoryFooter(args.env, { earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined });
+  const footer = loopoverFooter(args.env, { earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined });
   return [
     "<!-- gittensory-pr-panel:v1 -->",
     "",
@@ -4598,7 +4598,7 @@ function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: Pu
     ]),
     "",
     "---",
-    gittensoryFooter(args.env, { earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined }),
+    loopoverFooter(args.env, { earnUrl: footerEarnUrl(args.repo, args.pr.repoFullName), customText: args.review?.footerText ?? undefined }),
   ].join("\n");
 }
 
@@ -4617,7 +4617,7 @@ export type PublicPrPanelSignalRow = { key: ReviewFieldKey; cells: [string, stri
  * SAME inputs `buildPublicPrIntelligenceComment` uses. It calls the same private panel helpers, so the rows
  * are byte-identical to the legacy panel's. Exposed for the unified-comment bridge (convergence) so the
  * converged comment surfaces gittensory's exact signals; the legacy path is unchanged. The `key` lets the
- * caller honor `.gittensory.yml review.fields` visibility the same way the legacy renderer does.
+ * caller honor `.loopover.yml review.fields` visibility the same way the legacy renderer does.
  */
 export function buildPublicPrPanelSignalRows(args: {
   repo: RepositoryRecord | null;
@@ -4711,8 +4711,8 @@ export function buildPublicPrPanelSignalRows(args: {
 // It is deliberately threaded in as an EXTRA prefix on the SAME Improvement row's Evidence cell rather than a
 // new row/toggle key: the row (and therefore the quadrant prefix) already only renders when `improvementSignal`
 // resolves on for the repo, so reusing it keeps opted-out repos byte-identical for free, with no second
-// `fields:` key to hand-sync across `.gittensory.yml.example` / `config/examples/loopover.full.yml` /
-// `gittensory-repo-focus-manifest.ts` / `.gittensory.yml`. No dashboard visualization (`apps/loopover-ui/`)
+// `fields:` key to hand-sync across `.loopover.yml.example` / `config/examples/loopover.full.yml` /
+// `gittensory-repo-focus-manifest.ts` / `.loopover.yml`. No dashboard visualization (`apps/loopover-ui/`)
 // or queue-level "high risk / low value" worklist is built here -- explicitly out of scope for this issue (see
 // its own "Optional" deliverable and this PR's description for the fast-follow call).
 

@@ -67,7 +67,7 @@ export function gateCheckPolicy(
     guardrailMatches?: ReturnType<typeof guardrailPathMatches> | undefined;
   },
 ) {
-  // `settings` is already the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved upstream by
+  // `settings` is already the EFFECTIVE config (`.loopover.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
   // The `oss-anti-slop` pack (#692) is repo-agnostic and carries no confirmed-contributor field at all (no
   // Gittensor coupling). The `gittensor` pack still threads confirmedContributor for context/telemetry, but
@@ -80,10 +80,10 @@ export function gateCheckPolicy(
     qualityGateMode: settings.qualityGateMode,
     qualityGateMinScore: settings.qualityGateMinScore ?? null,
     aiReviewGateMode: settings.aiReviewMode,
-    // Calibrated AI close-confidence floor (#7) — config-as-code via `.gittensory.yml gate.aiReview.closeConfidence`,
+    // Calibrated AI close-confidence floor (#7) — config-as-code via `.loopover.yml gate.aiReview.closeConfidence`,
     // resolved into settings upstream. `null`/undefined ⇒ advisory.ts applies the 0.93 default.
     aiReviewCloseConfidence: settings.aiReviewCloseConfidence ?? null,
-    // Sub-floor AI-judgment disposition (#4603) — DB-backed (dashboard-settable) + `.gittensory.yml
+    // Sub-floor AI-judgment disposition (#4603) — DB-backed (dashboard-settable) + `.loopover.yml
     // gate.aiReview.lowConfidenceDisposition` override, resolved into settings upstream. `null`/undefined ⇒
     // advisory.ts applies the "hold_for_review" default.
     aiReviewLowConfidenceDisposition: settings.aiReviewLowConfidenceDisposition ?? null,

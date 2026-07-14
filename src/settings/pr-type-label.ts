@@ -156,7 +156,7 @@ export function resolvePrTypeLabel(input: {
     // (removeOtherTypeLabels: true -- e.g. bug/feature, genuinely mutually-exclusive categories) lets the
     // LAST-configured match win, not the first (#5385 fix -- was first-match-wins, which meant a linked issue
     // carrying BOTH gittensor:bug and gittensor:feature always resolved to bug, the lower-value label, purely
-    // because bug is declared before feature in `.gittensory.yml`). Operators must declare exclusive mappings
+    // because bug is declared before feature in `.loopover.yml`). Operators must declare exclusive mappings
     // in ASCENDING precedence order (lowest-value category first, e.g. bug then feature) so the last match
     // encountered while iterating is the highest-precedence one that actually applies -- this mirrors the
     // repo's own default mapping order, which is already bug/feature/priority (ascending multiplier value).

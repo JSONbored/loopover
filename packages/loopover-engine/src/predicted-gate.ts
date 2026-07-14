@@ -36,8 +36,8 @@ import { evaluatePreMergeChecks } from "./review/pre-merge-checks.js";
  * evaluateGateCheck over a synthetic PR built from the contributor's local branch metadata. The verdict a
  * miner sees pre-submission is therefore the same verdict the gate would compute post-submission.
  *
- * Boundary: the gate POLICY is sourced ONLY from the repo's PUBLIC `.gittensory.yml` (`manifest.gate`) +
- * safe defaults — never the maintainer's private dashboard/DB settings. The `.gittensory.yml` is in the
+ * Boundary: the gate POLICY is sourced ONLY from the repo's PUBLIC `.loopover.yml` (`manifest.gate`) +
+ * safe defaults — never the maintainer's private dashboard/DB settings. The `.loopover.yml` is in the
  * repo and publicly viewable, so this leaks nothing a contributor could not already read. The result is
  * explicitly labelled "predicted" and notes that private overrides and AI-consensus blockers are not
  * evaluated pre-submission.
@@ -273,7 +273,7 @@ export function buildPredictedGateVerdict(args: {
   }
 
   // Pack-aware (#693): under `oss-anti-slop` the gate blocks ANY author, so drop the confirmed-contributor
-  // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .gittensory.yml.
+  // gate entirely (mirrors gateCheckPolicy). `gittensor` keeps it. Pack comes from the PUBLIC .loopover.yml.
   const pack: GatePolicyPack = gate.pack ?? "gittensor";
   const effectiveConfirmedContributor = pack === "oss-anti-slop" ? undefined : args.confirmedContributor;
 

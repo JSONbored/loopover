@@ -3,7 +3,7 @@
 // only ever counts open items on the SAME repo -- an actor spreading low-volume spam/farming PRs across several
 // gated repos in that install never trips any single repo's cap. This is cross-REPO-within-one-install only (no
 // federation, no cross-instance privacy design): a same-database aggregate against every repo this install
-// already tracks. Deliberately an env var (not a per-repo `.gittensory.yml`/DB field like the caps above) --
+// already tracks. Deliberately an env var (not a per-repo `.loopover.yml`/DB field like the caps above) --
 // this setting aggregates ACROSS repos, so it cannot be "this repo's" setting; it belongs to the install as a
 // whole, mirroring how global_contributor_blacklist is a tenant-free singleton rather than a per-repo column.
 //

@@ -4,7 +4,7 @@ import {
   suggestCommand as suggestCommandFromCatalog,
   type CommandSuggestCatalog,
 } from "./command-suggest";
-import { commandReferenceUrl, gittensoryFooter, type LoopOverFooterEnv } from "./footer";
+import { commandReferenceUrl, loopoverFooter, type LoopOverFooterEnv } from "./footer";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
 import type { ChatQaResult } from "../services/ai-chat-qa";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
@@ -430,7 +430,7 @@ export function buildPublicAgentCommandComment(args: {
    *  place, so this renders a visible "replying to" link back to the specific question being answered. Every
    *  other command still shares the panel slot and has no single triggering comment to point back at. */
   replyingToUrl?: string | undefined;
-  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
+  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `loopoverFooter` (#4613). */
   env: LoopOverFooterEnv;
 }): string {
   const repoFullName = args.repo?.fullName ?? args.pullRequest?.repoFullName ?? "this repository";
@@ -487,7 +487,7 @@ export function buildPublicAgentCommandComment(args: {
     ...feedbackPromptSections(args.answerId),
     "",
     "---",
-    gittensoryFooter(args.env),
+    loopoverFooter(args.env),
   ].join("\n");
   return sanitizePublicComment(body);
 }

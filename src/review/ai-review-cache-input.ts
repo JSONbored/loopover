@@ -78,7 +78,7 @@ export type AiReviewCacheInput = {
       }
     | null
     | undefined;
-  // `.gittensory.yml` review.ai_model (#selfhost-ai-model-override): the PER-REPO override, distinct from
+  // `.loopover.yml` review.ai_model (#selfhost-ai-model-override): the PER-REPO override, distinct from
   // selfHostProviderConfig above (the operator's global env vars) -- a repo flipping its own ai_model warrants a
   // fresh review under the new model/effort, not a replay of a decision made under the old one. All-null (the
   // default, no override set) fingerprints the same as an absent manifest, so this is a no-op for every repo that

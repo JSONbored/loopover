@@ -1,5 +1,5 @@
 // Canonical REES enrichment-analyzer name registry (#2050). The single source of truth for the analyzer keys that
-// both the operator `REES_ANALYZERS` env list and the per-repo `.gittensory.yml` `review.enrichment` toggles are
+// both the operator `REES_ANALYZERS` env list and the per-repo `.loopover.yml` `review.enrichment` toggles are
 // validated against. A leaf module with no imports, so the review wiring and the signals-layer manifest parser can
 // share it without a heavy or circular dependency.
 

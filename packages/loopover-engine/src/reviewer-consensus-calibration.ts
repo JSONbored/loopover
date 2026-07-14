@@ -6,7 +6,7 @@
 // while a split verdict is unstable and the replay harness should weight it less. It is a companion to the pairwise
 // judge (which measures order-stability of a single judge) at the level of independent reviewers.
 //
-// The hosted review stack decides whether a repo is currently opted in from its resolved `.gittensory.yml`/private
+// The hosted review stack decides whether a repo is currently opted in from its resolved `.loopover.yml`/private
 // config; the miner replay harness can then ingest only the structured per-dimension vote fields exposed here. No raw
 // review text, secrets, trust values, rewards, rankings, or maintainer evidence is represented in this type surface.
 
@@ -455,7 +455,7 @@ function renderRejectedRow(row: ReviewerConsensusCalibrationIngestion["rejected"
 }
 
 /**
- * Resolve the explicit per-repo opt-in from a parsed `.gittensory.yml`-style object. Default is opted out. The
+ * Resolve the explicit per-repo opt-in from a parsed `.loopover.yml`-style object. Default is opted out. The
  * preferred path is `miner.calibration.shareStructuredReviewerConsensus`;
  * `calibration.shareStructuredReviewerConsensus` is accepted as a narrow alias so private-config surfaces can place
  * the field at top level if needed.

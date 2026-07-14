@@ -604,7 +604,7 @@ describe("queue processors", () => {
   it("skips the review recap job as a no-op when reviewRecap is NOT enabled for the repo (default-off, #1963)", async () => {
     const env = Object.assign(createTestEnv(), { LOOPOVER_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/123/abc" }) as Env;
     // Prime an explicit, present-but-disabled manifest so loadRepoFocusManifest hits the cache instead of
-    // falling through to a live GitHub fetch for this repo's .gittensory.yml (there is none in this test env).
+    // falling through to a live GitHub fetch for this repo's .loopover.yml (there is none in this test env).
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { wantedPaths: ["src/"] });
     let fetchCalled = false;
     vi.stubGlobal("fetch", async () => {
@@ -636,7 +636,7 @@ describe("queue processors", () => {
     const env = createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc" });
     let discordFetchCalled = false;
     // The disabled-check ALSO resolves the self-repo's manifest override (#2250), which may fall through to a
-    // live GitHub fetch for its .gittensory.yml when uncached -- stub that fetch as a generic 404 so the
+    // live GitHub fetch for its .loopover.yml when uncached -- stub that fetch as a generic 404 so the
     // manifest loader degrades to "no override", and only flag a call to the Discord webhook itself.
     vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
       if (String(url).includes("discord.com")) discordFetchCalled = true;
@@ -2408,9 +2408,9 @@ describe("queue processors", () => {
     // reports between them -- exactly the two ways resolveLinkedIssueHardRule's own statelessness lets a
     // confirmed Pass-1 violation dodge the Pass-2 close.
     // `linkedIssueHardRules` (unlike most repository settings) has NO backing DB column (src/db/schema.ts) --
-    // it is exclusively a `.gittensory.yml`-driven override (settings/repository-settings.ts's default is
+    // it is exclusively a `.loopover.yml`-driven override (settings/repository-settings.ts's default is
     // always the built-in all-off DEFAULT_LINKED_ISSUE_HARD_RULES; only resolveEffectiveSettings's manifest
-    // overlay can turn a rule on). So this scaffold enables it via a stubbed `.gittensory.yml` content fetch,
+    // overlay can turn a rule on). So this scaffold enables it via a stubbed `.loopover.yml` content fetch,
     // not via upsertRepositorySettings.
     const HARD_RULE_MANIFEST = JSON.stringify({ settings: { linkedIssueHardRules: { ownerAssignedClose: "block" } } });
 
@@ -2434,7 +2434,7 @@ describe("queue processors", () => {
     // mirroring how a real GitHub repo's label state persists between two separate agent-regate-pr passes) --
     // the `/pulls/7` GET always reflects it, so Pass 2's own live re-sync of the stored PR sees the label Pass 1
     // actually applied, exactly like the real GitHub API would report it. `ruleEnabled` selects whether the
-    // stubbed `.gittensory.yml` fetch turns the owner-assigned hard rule on (the two regression tests) or
+    // stubbed `.loopover.yml` fetch turns the owner-assigned hard rule on (the two regression tests) or
     // resolves to a genuine 404 -- i.e. the rule genuinely OFF (the sanity-check test).
     function stubHardRuleFetch(liveLabels: string[], opts: { prBody: string; issueState: string; issueAssignees: string[]; ruleEnabled: boolean }) {
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2457,7 +2457,7 @@ describe("queue processors", () => {
           if (index >= 0) liveLabels.splice(index, 1);
           return new Response(null, { status: 204 });
         }
-        // The `.gittensory.yml`/`.json` content fetch (raw.githubusercontent.com) is the ONLY place
+        // The `.loopover.yml`/`.json` content fetch (raw.githubusercontent.com) is the ONLY place
         // linkedIssueHardRules can be turned on (see the comment above).
         if (url.includes("raw.githubusercontent.com")) return opts.ruleEnabled ? new Response(HARD_RULE_MANIFEST, { status: 200 }) : new Response("not found", { status: 404 });
         return Response.json({});
@@ -3417,7 +3417,7 @@ describe("queue processors", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       // The acting-autonomy fallback resolves settings via resolveRepositorySettings, which reads the repo's
       // manifest file (unlike the allowlisted common case, which never fetches at all) — a 404 here is the
-      // realistic "no .gittensory.yml override" response, not a stub gap.
+      // realistic "no .loopover.yml override" response, not a stub gap.
       if (url.includes("/contents/")) return new Response("not found", { status: 404 });
       return Response.json({});
     });
@@ -6652,7 +6652,7 @@ describe("queue processors", () => {
         expect(JSON.parse(blocker?.blockerCodesJson ?? "[]")).not.toContain("linked_issue_scope_mismatch");
       });
 
-      it("per-repo override (continuous via .gittensory.yml): a new push DOES spend a fresh main-review AI call, unlike the one_shot default", async () => {
+      it("per-repo override (continuous via .loopover.yml): a new push DOES spend a fresh main-review AI call, unlike the one_shot default", async () => {
         let aiCalls = 0;
         const env = createTestEnv({
           GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
@@ -7004,7 +7004,7 @@ describe("queue processors", () => {
         AI_DAILY_NEURON_BUDGET: "100000",
       });
       await seedRegateChurnRepo(env, { publicSurface: "comment_only" });
-      // manualReviewLabel is config-as-code only (.gittensory.yml), not a DB-backed repository setting.
+      // manualReviewLabel is config-as-code only (.loopover.yml), not a DB-backed repository setting.
       // #one-shot-review-cadence: also opts into continuous here so this test stays isolated to the
       // manualReviewLabel-disabled mechanism it's actually about.
       await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { manualReviewLabel: null }, review: { auto_review: { cadence: "continuous" } } });

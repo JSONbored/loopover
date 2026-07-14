@@ -20,7 +20,7 @@ declare global {
      *  NEVER gate-blocking (slop advisory, e2e test-gen, issue planner, AI summaries) — separate from the review
      *  chain, the embed provider, and the vision provider, since none of these need frontier-model accuracy.
      *  Built at boot from AI_ADVISORY_BASE_URL/AI_ADVISORY_MODEL. Which capability actually routes through it is
-     *  config-driven (`.gittensory.yml`, global default + per-repo override), not hardcoded here. Absent ⇒ every
+     *  config-driven (`.loopover.yml`, global default + per-repo override), not hardcoded here. Absent ⇒ every
      *  advisory capability falls back to `env.AI` (byte-identical to before this binding existed). */
     AI_ADVISORY?: Ai;
     /** Self-host RAG vector adapter. Cloudflare no longer binds Vectorize for hosted reviews; the Node runtime
@@ -153,7 +153,7 @@ declare global {
     /** Install-wide default for the per-repo contributorCapCancelCi setting (#2462): "true"/"1"/"yes"/"on"
      *  (case-insensitive) enables cancelling in-flight CI runs on a contributor_cap close for every repo that
      *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A
-     *  repo's own `contributorCapCancelCi` (DB or `.gittensory.yml`) always takes precedence over this. */
+     *  repo's own `contributorCapCancelCi` (DB or `.loopover.yml`) always takes precedence over this. */
     CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT?: string;
     /** The retired review App's webhook secret. Optional: that App has been fully deleted (its installation was
      *  suspended, then removed); GitHub can no longer deliver to POST /v1/github/webhook for it either way — the
@@ -213,7 +213,7 @@ declare global {
      *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
     SELFHOST_DEPLOYMENT_MODE?: string;
     /** Self-host container-private per-repo config dir. When set, the focus-manifest loader reads
-     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.gittensory.yml`, so review policy (gate,
+     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.loopover.yml`, so review policy (gate,
      *  autonomy, labels, model/effort) is set privately and contributors can't read or game it. Unset ⇒ public
      *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
     LOOPOVER_REPO_CONFIG_DIR?: string;
@@ -298,12 +298,12 @@ declare global {
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     LOOPOVER_REVIEW_UNIFIED_COMMENT?: string;
     /** Inline comments (#inline-comments): when truthy (AND the repo is in LOOPOVER_REVIEW_REPOS AND the repo's
-     *  `.gittensory.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
+     *  `.loopover.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
      *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
      *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
     LOOPOVER_REVIEW_INLINE_COMMENTS?: string;
     /** Fix-handoff blocks (#2176, config slice of #1962): when truthy (AND the repo is in LOOPOVER_REVIEW_REPOS
-     *  AND the repo's `.gittensory.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
+     *  AND the repo's `.loopover.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
      *  structured, machine-readable "apply this fix" block (src/review/fix-handoff-render.ts) for the
      *  contributor's OWN local agent to consume — content only, no server-side write, no execution. Default
      *  OFF — unset/false keeps the review path byte-identical (no block is ever built). */
@@ -342,7 +342,7 @@ declare global {
      *  is never active for any repo regardless of a per-repo `features.improvementSignal` override. */
     LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL?: string;
     /** #one-shot-review-cadence: the operator's FLEET-WIDE default for AI review re-trigger cadence, consulted
-     *  only when a repo's `.gittensory.yml review.auto_review.cadence` is unset (a per-repo value always wins
+     *  only when a repo's `.loopover.yml review.auto_review.cadence` is unset (a per-repo value always wins
      *  regardless of this flag — see resolveAiReviewCadence). Default OFF (unset/false) ⇒ "one_shot": the
      *  AI-generated content (main review, slop advisory, linked-issue satisfaction) freezes after its first
      *  pass for every repo, and only an explicit maintainer retrigger spends a fresh call. Truthy ⇒
@@ -387,7 +387,7 @@ declare global {
      *  the repo (a cold/missing index degrades to no context). */
     LOOPOVER_REVIEW_RAG?: string;
     /** Deterministic impact map (#2184, part of #1971): operator-level kill-switch, ANDed with the per-repo
-     *  `.gittensory.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
+     *  `.loopover.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
      *  shouldComputeImpactMap). Default OFF — unset/false performs NO symbol extraction, NO RAG query, and adds
      *  NO comment/prompt section, byte-identical to today. */
     LOOPOVER_REVIEW_IMPACT_MAP?: string;
@@ -395,12 +395,12 @@ declare global {
      *  QUALITY-CULTURE PROFILE" reference block — typical merged-PR size + common accepted labels, derived
      *  deterministically from this repo's OWN `recent_merged_pull_requests` history (see
      *  review/repo-culture-profile.ts + repo-culture-profile-wire.ts). Also requires the per-repo
-     *  `.gittensory.yml` `review.culture_profile: true` opt-in — this is the global kill-switch only. Default
+     *  `.loopover.yml` `review.culture_profile: true` opt-in — this is the global kill-switch only. Default
      *  OFF — unset/false performs NO extra D1 read and keeps the reviewer prompt byte-identical (the new branch
      *  is unreachable when off). ADVISORY GROUNDING ONLY: never a gate/scoring input. */
     LOOPOVER_REVIEW_CULTURE_PROFILE?: string;
     /** Review memory (#2179, part of #1964): operator-level kill-switch for repeat-false-positive suppression,
-     *  ANDed with the per-repo `.gittensory.yml review.memory` opt-in (see review/review-memory-wire's
+     *  ANDed with the per-repo `.loopover.yml review.memory` opt-in (see review/review-memory-wire's
      *  isReviewMemoryEnabled / shouldApplyReviewMemory). Default OFF — unset/false performs NO suppression-
      *  store read and NO matching, byte-identical to today. ADVISORY-ONLY: never applied to gate blockers. */
     LOOPOVER_REVIEW_MEMORY?: string;
@@ -438,7 +438,7 @@ declare global {
     LOOPOVER_REVIEW_SELFTUNE?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for gittensory's original subnet mining-registry/scoring integration, now opt-in rather than
-     *  a core dependency. ANDed with the per-repo `.gittensory.yml experimental.gittensor` opt-in -- neither
+     *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither
      *  alone is sufficient, and unlike `features:` there is no LOOPOVER_REVIEW_REPOS allowlist fallback.
      *  Default OFF -- flag-OFF (or every repo unset), refresh-registry is never enqueued (see src/index.ts) and
      *  a self-host box makes zero outbound contact with the gittensor subnet registry. See

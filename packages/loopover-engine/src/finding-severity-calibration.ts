@@ -1,7 +1,7 @@
 // Opt-in structured finding-severity calibration signal (#1955 calibration family).
 //
 // This module is the pure engine half of finding-severity calibration. The hosted review stack decides whether a
-// repo is currently opted in from its resolved `.gittensory.yml`/private config; the miner replay harness can then
+// repo is currently opted in from its resolved `.loopover.yml`/private config; the miner replay harness can then
 // ingest only the structured per-severity-tier finding fields exposed here — how many findings the review raised at
 // each severity tier (blocker/warning/advisory/nit) and how many of those were subsequently CONFIRMED (a true
 // positive that pointed at a real, acted-on issue). No raw review text, secrets, trust values, rewards, rankings, or
@@ -416,7 +416,7 @@ function renderRejectedRow(row: FindingSeverityCalibrationIngestion["rejected"][
 }
 
 /**
- * Resolve the explicit per-repo opt-in from a parsed `.gittensory.yml`-style object. Default is opted out. The
+ * Resolve the explicit per-repo opt-in from a parsed `.loopover.yml`-style object. Default is opted out. The
  * preferred path is `miner.calibration.shareStructuredFindingSeverity`; `calibration.shareStructuredFindingSeverity`
  * is accepted as a narrow alias so private-config surfaces can place the field at top level if needed.
  */

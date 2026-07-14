@@ -7,7 +7,7 @@ export type { ScreenshotTableGateAction, ScreenshotTableGateConfig } from "../ty
 // at a glance without before/after evidence — this is a DETERMINISTIC (no AI, zero hallucination risk) check
 // that a PR's body contains a markdown table with image markup, scoped to the repo's configured labels/paths.
 // Mirrors the shape of contributor-blacklist.ts / linked-issue-hard-rules-config.ts: a normalizer (DB JSON or
-// `.gittensory.yml` → validated config) plus a pure evaluator the trigger calls with live PR facts. Off by
+// `.loopover.yml` → validated config) plus a pure evaluator the trigger calls with live PR facts. Off by
 // default (`enabled: false`) — a self-hoster opts in per repo, never hard-coded for any one project.
 
 const MAX_LABELS = 50;
@@ -60,7 +60,7 @@ function normalizeStringList(value: unknown, field: string, max: number, maxChar
   return out;
 }
 
-/** Normalize a raw `requireScreenshotTable` value (DB JSON or `.gittensory.yml`) into a validated config. Never
+/** Normalize a raw `requireScreenshotTable` value (DB JSON or `.loopover.yml`) into a validated config. Never
  *  throws: malformed fields fall back to the default (disabled/empty), matching every other settings normalizer
  *  in this codebase. */
 export function normalizeScreenshotTableGateConfig(input: unknown, warnings: string[]): ScreenshotTableGateConfig {

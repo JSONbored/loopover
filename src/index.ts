@@ -257,7 +257,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // Maintainer recap digest (#1963, #2248/#2250; flag LOOPOVER_MAINTAINER_RECAP). Cross-repo RecapReport
   // delivered to Discord on a configurable cadence (LOOPOVER_RECAP_CADENCE=daily|weekly, default weekly) at
   // the configured hour/day-of-week (LOOPOVER_RECAP_HOUR / LOOPOVER_RECAP_DAY). Enable/cadence can ALSO be
-  // set as code via the gittensory self-repo's `.gittensory.yml maintainerRecap:` block (config-as-code parity,
+  // set as code via the gittensory self-repo's `.loopover.yml maintainerRecap:` block (config-as-code parity,
   // #2250) -- a present manifest block wins over the env vars; absent, the env vars decide exactly as before.
   // Enqueued ONLY when this tick matches the resolved cadence -- disabled (the default) this job is never
   // created, so the cron tick does ZERO new work and the enqueued set is byte-identical to today.

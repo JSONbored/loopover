@@ -5,7 +5,7 @@
 // index.ts's cron gate, which skips the registry fetch entirely when nothing is opted in).
 //
 // Mirrors impact-map-wire.ts's isImpactMapEnabled/shouldComputeImpactMap: a single GLOBAL env kill-switch the
-// operator controls, ANDed with an EXPLICIT per-repo `.gittensory.yml experimental.gittensor` manifest `true`
+// operator controls, ANDed with an EXPLICIT per-repo `.loopover.yml experimental.gittensor` manifest `true`
 // (resolveManifestOnlyFeature's shape -- no allowlist fallback, unlike the converged `features:` block). Both
 // OFF by default: with the env flag unset, no repo is ever treated as gittensor-opted-in. Cloud never consults
 // any of this -- registry/sync.ts only calls gittensorEnabledRepoFullNames on the self-host branch, so the
@@ -16,7 +16,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveManifestOnlyFeature } from "./feature-activation";
 
 /** True when the gittensor subnet-scoring plugin is enabled at the operator level. Flag-OFF (default) -> no
- *  repo is ever gittensor-opted-in regardless of what any `.gittensory.yml` says, and
+ *  repo is ever gittensor-opted-in regardless of what any `.loopover.yml` says, and
  *  {@link gittensorEnabledRepoFullNames} short-circuits before reading a single manifest. Truthy follows the
  *  codebase convention (`/^(1|true|yes|on)$/i`, same as isImpactMapEnabled / isSelfTuneEnabled). */
 export function isGittensorPluginEnabled(env: { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined }): boolean {

@@ -2,7 +2,7 @@
 // decision summary. Posts the AI reviewer's line-anchored findings as a single NON-BLOCKING review (GitHub
 // `event: COMMENT`, never REQUEST_CHANGES/APPROVE), so a contributor sees exactly what to fix on a resubmission
 // without the gate or its verdict ever changing. Default OFF: the operator flag LOOPOVER_REVIEW_INLINE_COMMENTS
-// is a master kill-switch, and the per-repo `.gittensory.yml` review.inline_comments toggle (#4099) fully
+// is a master kill-switch, and the per-repo `.loopover.yml` review.inline_comments toggle (#4099) fully
 // controls activation by itself when explicitly set — the LOOPOVER_REVIEW_REPOS cutover allowlist no longer
 // applies to this feature (an unset manifest toggle preserves the ORIGINAL always-off default; it was never
 // sufficient to be allowlisted alone). Fully FAIL-SAFE: a finding whose line is not a commentable line in the PR
@@ -37,7 +37,7 @@ export function isInlineCommentsEnabled(env: {
  *  operator's LOOPOVER_REVIEW_INLINE_COMMENTS flag is an absolute MASTER KILL-SWITCH — off ⇒ always false,
  *  regardless of the manifest, and no per-repo config can bypass it (consistent with every other converged
  *  feature — see `resolveConvergedFeature` in `feature-activation.ts`). (2) An explicit per-repo
- *  `.gittensory.yml` `review.inlineComments` override (`true`/`false`) now FULLY controls the feature by itself
+ *  `.loopover.yml` `review.inlineComments` override (`true`/`false`) now FULLY controls the feature by itself
  *  — a repo can turn this on without needing the LOOPOVER_REVIEW_REPOS cutover allowlist at all. (3)
  *  `manifestToggle` unset (`undefined`) preserves this feature's ORIGINAL design exactly: unlike
  *  rag/reputation/safety/unifiedComment/grounding (which already fall back to the cutover allowlist when their

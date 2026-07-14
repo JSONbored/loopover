@@ -23,7 +23,7 @@ function mountOverlay(target) {
   const container = document.createElement("aside");
   const host = findPullRequestSidebar();
   container.className = `gittensory-overlay ${host ? "gittensory-overlay--sidebar" : "gittensory-overlay--floating"}`;
-  container.dataset.gittensoryPrContext = "true";
+  container.dataset.loopoverPrContext = "true";
   container.innerHTML = `
     <div class="gittensory-overlay__header">
       <span class="gittensory-overlay__mark">G</span>

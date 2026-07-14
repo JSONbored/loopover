@@ -294,6 +294,6 @@ array-replace overlay semantics above) — it does not merge with it.
 
 Never commit real policy into this directory or into these example files: no maintainer usernames,
 no repo names, no thresholds beyond illustrative placeholders, no secrets or tokens. The
-`.gittensory.yml`-named template files shipped alongside this README (see the catalog in
+`.loopover.yml`-named template files shipped alongside this README (see the catalog in
 [TEMPLATES.md](./TEMPLATES.md)) are deliberately generic and inert — copy one into your own mounted
 `LOOPOVER_REPO_CONFIG_DIR`, name the copy `.loopover.yml`, and edit the copy, not this one.

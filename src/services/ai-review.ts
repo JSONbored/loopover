@@ -97,7 +97,7 @@ export type AiReviewProviderKey = {
 export type { AiContentBlock, CombineStrategy, OnMerge } from "../types";
 
 /**
- * Resolve the EFFECTIVE `onMerge` rule for a review call, enforcing that a per-repo `.gittensory.yml
+ * Resolve the EFFECTIVE `onMerge` rule for a review call, enforcing that a per-repo `.loopover.yml
  * gate.aiReview.onMerge` override (#2567) can only TIGHTEN the self-host operator's `AI_REVIEW_PLAN.onMerge`
  * floor, never loosen it. `either` is the STRICTER rule (any one reviewer's blocker blocks/holds); `both` is
  * more PERMISSIVE (requires every reviewer to agree before a blocker counts). So:
@@ -225,7 +225,7 @@ export type LoopOverAiReviewInput = {
   ragContext?: string | null | undefined;
   /**
    * Deterministic impact map (#2186, additive grounding slice of #1971), flag-gated by BOTH the operator's
-   * LOOPOVER_REVIEW_IMPACT_MAP env flag AND the per-repo `.gittensory.yml review.impact_map` opt-in (see
+   * LOOPOVER_REVIEW_IMPACT_MAP env flag AND the per-repo `.loopover.yml review.impact_map` opt-in (see
    * `shouldComputeImpactMap`, `src/review/impact-map-wire.ts`). The caller pre-formats
    * `computeImpactMap`'s (`src/review/impact-map.ts`) output into an "IMPACT MAP" block — which OTHER repo
    * files plausibly need re-checking given the PR's changed symbols — and appends it to the USER prompt as
@@ -235,7 +235,7 @@ export type LoopOverAiReviewInput = {
    */
   impactMapContext?: string | null | undefined;
   /**
-   * Repo quality-culture profile (#2995, flag-gated by LOOPOVER_REVIEW_CULTURE_PROFILE AND `.gittensory.yml`
+   * Repo quality-culture profile (#2995, flag-gated by LOOPOVER_REVIEW_CULTURE_PROFILE AND `.loopover.yml`
    * `review.culture_profile`). The caller builds this by deriving a compact profile from the repo's OWN merge
    * history — typical PR size, common accepted labels (see `review/repo-culture-profile-wire`) — and it is
    * appended to the USER prompt as additive reference context, exactly like `ragContext`. ADVISORY GROUNDING
@@ -258,14 +258,14 @@ export type LoopOverAiReviewInput = {
     | null
     | undefined;
   /**
-   * `.gittensory.yml` `review.profile` (#review-profile): adjusts how nitpicky the maintainer review write-up is.
+   * `.loopover.yml` `review.profile` (#review-profile): adjusts how nitpicky the maintainer review write-up is.
    * `chill` → surface only blocking defects; `assertive` → also raise minor improvements & nits; absent/`balanced`
    * → the reviewer prompt is byte-identical to today. PRESENTATION ONLY — it never changes the gate verdict (the
    * consensus-defect pass still runs the same), just how much advisory detail the prose carries.
    */
   profile?: ReviewProfile | null | undefined;
   /**
-   * `.gittensory.yml` `review.security_focus` (#review-security-focus): when true, instructs the reviewer to
+   * `.loopover.yml` `review.security_focus` (#review-security-focus): when true, instructs the reviewer to
    * prioritize a security-defect category — injection, authn/authz bypass, secret handling, unsafe
    * deserialization, SSRF, and path traversal — with elevated scrutiny. ORTHOGONAL to `profile`: it composes
    * with (never replaces) the chill/balanced/assertive volume tuning above — a "what to prioritize" axis, not a
@@ -273,7 +273,7 @@ export type LoopOverAiReviewInput = {
    */
   securityFocus?: boolean | undefined;
   /**
-   * `.gittensory.yml` `review.ai_model` (#selfhost-ai-model-override), resolved by the caller from the
+   * `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override), resolved by the caller from the
    * (already-cached) manifest. Self-host only — overrides that repo's claude-code/codex model+effort for THIS
    * review, taking priority over the operator's global CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/
    * CODEX_AI_EFFORT env vars. A hosted (Workers-AI) `env.AI` ignores these fields entirely. Absent/null ⇒
@@ -293,27 +293,27 @@ export type LoopOverAiReviewInput = {
   openaiCompatibleModel?: string | null | undefined;
   anthropicModel?: string | null | undefined;
   /**
-   * `.gittensory.yml` `review.path_instructions` (#review-path-instructions), pre-resolved by the caller to the
+   * `.loopover.yml` `review.path_instructions` (#review-path-instructions), pre-resolved by the caller to the
    * entries whose glob matched THIS PR's changed files (via `resolveReviewPathInstructions`) — a ready-to-append
    * prompt section. Absent / empty ⇒ the reviewer prompt is byte-identical. Public-safe by construction (the
    * instructions passed the manifest's public-safe filter at parse time).
    */
   pathGuidance?: string | null | undefined;
   /**
-   * `.gittensory.yml` `review.instructions` (#review-instructions) — a repo-level maintainer brief appended to EVERY
+   * `.loopover.yml` `review.instructions` (#review-instructions) — a repo-level maintainer brief appended to EVERY
    * review (vs the per-path pathGuidance). Bounded + public-safe at parse time, so it stays cost-cheap. Absent/null ⇒
    * the reviewer prompt is byte-identical.
    */
   repoInstructions?: string | null | undefined;
   /**
-   * `.gittensory.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
+   * `.loopover.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
    * operator flag + cutover allowlist + the per-repo manifest toggle), the reviewer is asked to ALSO emit an
    * `inlineFindings` array of line-anchored findings for quiet, non-blocking inline PR comments. Absent/false
    * (the default) ⇒ no instruction is appended, so the prompt is byte-identical and the model emits none.
    */
   inlineFindings?: boolean | undefined;
   /**
-   * `.gittensory.yml` `review.finding_categories` (#1958) — when true (the caller has already ANDed this with
+   * `.loopover.yml` `review.finding_categories` (#1958) — when true (the caller has already ANDed this with
    * `inlineFindings` being requested, since a category has nothing to categorize otherwise), the reviewer is
    * additionally asked to tag each `inlineFindings` item with a `category`. Absent/false (the default) ⇒ no
    * instruction is appended, so the prompt is byte-identical and the model emits no category.
@@ -398,7 +398,7 @@ export type InlineFinding = {
   /** Optional end line (inclusive) for a multi-line inline comment / ```suggestion block (#2141). When absent or
    *  invalid (`endLine` ≤ `line`), the finding is treated as single-line. */
   endLine?: number | undefined;
-  /** `.gittensory.yml` `review.finding_categories` (#1958): the kind of issue (security/correctness/performance/
+  /** `.loopover.yml` `review.finding_categories` (#1958): the kind of issue (security/correctness/performance/
    *  maintainability/tests/style), when the model was asked to self-categorize and emitted a value in the fixed
    *  enum. Absent when the feature is off (the model was never asked) OR the model's value didn't parse — callers
    *  that render categories fall back to `classifyFindingCategory` in that case rather than treating it as absent. */
@@ -901,7 +901,7 @@ export function buildTestEvidencePromptSection(files: ReadonlyArray<{ path: stri
   return `Test evidence (engine classifier): this PR has NO test-path changes. The following changed code file(s) have zero test-path evidence: ${codePaths.join(", ")}.`;
 }
 
-// `.gittensory.yml` review.profile → an appended tone instruction (#review-profile). `balanced`/absent appends
+// `.loopover.yml` review.profile → an appended tone instruction (#review-profile). `balanced`/absent appends
 // nothing (byte-identical). PRESENTATION ONLY: it shapes how many nits the write-up surfaces, never the verdict.
 const REVIEW_PROFILE_SUFFIX: Record<"chill" | "assertive", string> = {
   chill:
@@ -910,20 +910,20 @@ const REVIEW_PROFILE_SUFFIX: Record<"chill" | "assertive", string> = {
     "\n\nReview profile: ASSERTIVE. Beyond blocking defects, also surface minor improvements, style/consistency suggestions, and nitpicks — be thorough and exacting, clearly marking each non-blocking item as a nit.",
 };
 
-// `.gittensory.yml` review.security_focus → an appended security-prioritization instruction (#review-security-focus).
+// `.loopover.yml` review.security_focus → an appended security-prioritization instruction (#review-security-focus).
 // ORTHOGONAL to REVIEW_PROFILE_SUFFIX above — it composes with (never replaces) the chill/balanced/assertive volume
 // tuning: profile controls HOW MANY findings surface, this controls WHAT KIND the reviewer hunts for with elevated
 // scrutiny. False/absent (default) appends nothing (byte-identical).
 const SECURITY_FOCUS_SUFFIX =
   "\n\nSECURITY FOCUS: Beyond the usual review, prioritize hunting for security defects with elevated scrutiny — injection (SQL/command/template/log), authentication/authorization bypass, unsafe secret handling (hardcoded credentials, logged/leaked tokens), unsafe deserialization, server-side request forgery (SSRF), and path traversal. Treat a credible finding in any of these categories as a blocker even if it would otherwise read as a nit.";
 
-// `.gittensory.yml` review.inline_comments → an appended instruction to ALSO emit line-anchored findings for
+// `.loopover.yml` review.inline_comments → an appended instruction to ALSO emit line-anchored findings for
 // quiet inline PR comments (#inline-comments). Absent/off appends nothing (byte-identical). The model keeps the
 // existing 4-field shape and simply ADDS an `inlineFindings` array.
 const INLINE_FINDINGS_SUFFIX =
   '\n\nINLINE FINDINGS: ALSO include an additional top-level field "inlineFindings" in the SAME JSON object — an array (possibly empty) of your most important findings, each anchored to a specific changed line, for inline PR comments. Each item: {"path": the changed file path EXACTLY as shown in the diff, "line": the 1-based line number in the NEW file (count forward from the "+" start in the nearest "@@ -old +new @@" hunk header) of an ADDED ("+") line you are commenting on, "severity": "blocker" or "nit", "body": the one-sentence finding, "suggestion": optional replacement text for that line}. Include ONLY findings you can place on a specific added line; OMIT any you cannot anchor precisely (a wrong line is worse than none). If a suggestion is blank or you are not confident in an exact replacement, omit the suggestion field and keep the finding. At most ~10 items.';
 
-// `.gittensory.yml` review.finding_categories → an appended instruction that ALSO asks for a `category` on each
+// `.loopover.yml` review.finding_categories → an appended instruction that ALSO asks for a `category` on each
 // inlineFindings item (#1958). Only meaningful once INLINE_FINDINGS_SUFFIX is already appended (a category has
 // nothing to categorize otherwise) — the caller ANDs this with inlineFindings before setting the input flag.
 // Absent/off appends nothing (byte-identical); a parser-side fallback (classifyFindingCategory) covers whatever
@@ -956,10 +956,10 @@ function buildSystemPrompt(input: LoopOverAiReviewInput): string {
       ? REVIEW_PROFILE_SUFFIX[input.profile]
       : "";
   const securityFocusSuffix = input.securityFocus === true ? SECURITY_FOCUS_SUFFIX : "";
-  // `.gittensory.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
+  // `.loopover.yml` review.path_instructions (#review-path-instructions): the caller pre-resolved the entries
   // matching this PR's files into a prompt section; empty ⇒ nothing appended (byte-identical).
   const pathSuffix = input.pathGuidance?.trim() ? input.pathGuidance : "";
-  // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief appended to every
+  // `.loopover.yml` review.instructions (#review-instructions): a repo-level maintainer brief appended to every
   // review; empty ⇒ nothing appended (byte-identical).
   const repoInstructionsAppend = buildRepoInstructionsSystemAppend(input.repoInstructions);
   const repoInstructionsSuffix = repoInstructionsAppend ? ` ${repoInstructionsAppend}` : "";
@@ -2046,7 +2046,7 @@ export async function runLoopOverAiReview(
   // unchanged → the prompt is byte-identical to today. Only the title/body/diff fed to buildUserPrompt are
   // affected; this NEVER changes the verdict (a redaction is data, not a finding).
   // Per-repo feature override (phase 2): the defang activates when the global LOOPOVER_REVIEW_SAFETY kill-switch
-  // is ON and the repo's container-private `.gittensory.yml` `features.safety` opts in — falling back to the
+  // is ON and the repo's container-private `.loopover.yml` `features.safety` opts in — falling back to the
   // LOOPOVER_REVIEW_REPOS allowlist when the manifest says nothing (byte-identical default).
   const promptInput = (await convergedFeatureActive(
     env,

@@ -2623,7 +2623,7 @@ export async function fetchRequiredStatusContexts(
 
 /**
  * Merge a maintainer-configured `expectedCiContexts` allowlist (`settings.expectedCiContexts` /
- * `.gittensory.yml` `gate.expectedCiContexts`) with the live branch-protection required-status-check
+ * `.loopover.yml` `gate.expectedCiContexts`) with the live branch-protection required-status-check
  * contexts from {@link fetchRequiredStatusContexts}. Branch protection stays authoritative when
  * readable; `expectedCiContexts` is UNIONED into it when both exist, and becomes the SOLE required-context
  * source when branch protection is null/empty (unreadable, or simply not configured) — the generic config

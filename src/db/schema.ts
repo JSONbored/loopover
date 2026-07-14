@@ -167,7 +167,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   moderationWarningLabel: text("moderation_warning_label"),
   moderationBannedLabel: text("moderation_banned_label"),
   // Review-evasion protection (#review-evasion-protection). reviewEvasionLabel mirrors blacklistLabel/
-  // reviewNagLabel's shape -- NOT NULL with a string default; "no label" is a `.gittensory.yml`-only
+  // reviewNagLabel's shape -- NOT NULL with a string default; "no label" is a `.loopover.yml`-only
   // override, never persisted here.
   //
   // #4011: this raw column-level DEFAULT ('off') is intentionally left unchanged even though the actual
@@ -185,7 +185,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   mergeTrainMode: text("merge_train_mode").notNull().default("off"),
   // Config-driven before/after screenshot-table gate (#2006): off by default. whenLabels/whenPaths are JSON
   // string arrays (mirrors contributorBlacklistJson's shape); screenshotTableGateMessage is nullable ("no
-  // override" is a `.gittensory.yml`-only concept -- null here means "use the built-in default message").
+  // override" is a `.loopover.yml`-only concept -- null here means "use the built-in default message").
   screenshotTableGateEnabled: integer("screenshot_table_gate_enabled", { mode: "boolean" }).notNull().default(false),
   screenshotTableGateWhenLabelsJson: text("screenshot_table_gate_when_labels_json").notNull().default("[]"),
   screenshotTableGateWhenPathsJson: text("screenshot_table_gate_when_paths_json").notNull().default("[]"),

@@ -143,7 +143,7 @@ import {
   PR_PANEL_COMMENT_MARKER,
 } from "../github/comments";
 import {
-  gittensoryFooter,
+  loopoverFooter,
   gittensorRepoEarnUrl,
   maintainerControlPanelUrl,
 } from "../github/footer";
@@ -882,7 +882,7 @@ export async function fanOutAgentRegateSweepJobs(
       try {
         const settings = await resolveRepositorySettings(env, repoFullName);
         // #sweep-requires-installation: isAgentConfigured resolves the OPERATOR'S global-default autonomy
-        // (e.g. a self-host `.gittensory.yml` settings.autonomy block meant for the repos this instance
+        // (e.g. a self-host `.loopover.yml` settings.autonomy block meant for the repos this instance
         // actually operates on) for ANY repoFullName, regardless of whether the GitHub App is installed
         // there. A repo that merely has a local `repositories` row (a stray subnet-registry row, say) with
         // no real `installationId` would otherwise inherit that global default and look "agent-configured"
@@ -1636,7 +1636,7 @@ export async function fanOutBacklogConvergenceSweepJobs(
 }
 
 // Maintainer review recap digest (#1963): build the recap for one repo and post it to Discord, gated on
-// this repo's `.gittensory.yml reviewRecap.enabled` (default OFF, mirrors repoDocGeneration.enabled below) --
+// this repo's `.loopover.yml reviewRecap.enabled` (default OFF, mirrors repoDocGeneration.enabled below) --
 // fail-safe: a repo with no `reviewRecap:` block, or a manifest load failure, never posts. Config-gated at
 // THIS single call site (not inside generateAndSendReviewRecap itself) because this PR has no fan-out sweep
 // yet; the eventual scheduled trigger will enumerate opted-in repos the same way fanOutRepoDocRefreshSweepJobs
@@ -1651,7 +1651,7 @@ export async function runReviewRecapJob(env: Env, repoFullName: string, windowDa
 }
 
 // Repo-doc refresh sweep (#3003, part of #2993): enumerate every installed repo, bulk-load their
-// .gittensory.yml manifests, and enqueue one per-repo job for each repo that (a) has
+// .loopover.yml manifests, and enqueue one per-repo job for each repo that (a) has
 // repoDocGeneration.enabled: true and (b) is due per its own refreshIntervalDays (default weekly). No atomic
 // fan-out dedup (unlike agent-regate-sweep) -- this runs once a day, not every tick, so a burst of overlapping
 // fan-outs is not a realistic risk. Eligibility/scope/diffing itself lives entirely inside
@@ -2704,7 +2704,7 @@ async function runAgentMaintenancePlanAndExecute(
   // install-wide cap (below) and review-nag cooldown already do -- previously only the owner/admin/automation-bot
   // exemption (applied later, inside planAgentMaintenanceActions) protected an author here, so a maintainer-named
   // trusted-but-not-a-recognized-bot login (e.g. a third-party automation App like Sentry's Seer fix bot) had no
-  // way to opt out of the PER-REPO cap specifically, even though `.gittensory.yml`'s own doc comment already
+  // way to opt out of the PER-REPO cap specifically, even though `.loopover.yml`'s own doc comment already
   // promised this reuse (auto-close-exempt.ts).
   if (typeof contributorOpenPrCap === "number" && pr.authorLogin && !isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) {
     // Fixed-budget author-scoped set (the lowest-numbered sibling sample), with every counted sibling
@@ -7541,7 +7541,7 @@ async function maybePublishPrPublicSurface(
   // computed + returned for the disposition logic, the writes are just suppressed + audited. (#dry-run-chokepoint)
   const mode = await resolveRepoActionMode(env, settings);
   // Per-repo feature override (phase 2): the unified converged comment renders for THIS repo when the global
-  // LOOPOVER_REVIEW_UNIFIED_COMMENT kill-switch is ON and the repo's container-private `.gittensory.yml`
+  // LOOPOVER_REVIEW_UNIFIED_COMMENT kill-switch is ON and the repo's container-private `.loopover.yml`
   // `features.unifiedComment` opts in — falling back to the LOOPOVER_REVIEW_REPOS allowlist when the manifest
   // says nothing (byte-identical default). Computed once and used by both unified-comment sites below.
   const unifiedCommentAllowed = await convergedFeatureActive(
@@ -7561,7 +7561,7 @@ async function maybePublishPrPublicSurface(
     repoFullName,
     "improvementSignal",
   );
-  // `settings` is the EFFECTIVE config (`.gittensory.yml` > DB > defaults), resolved by the caller via
+  // `settings` is the EFFECTIVE config (`.loopover.yml` > DB > defaults), resolved by the caller via
   // resolveRepositorySettings — so gate on/off and every blocker mode already reflect the repo's config
   // file. The gate verdict is the same for every author; confirmedContributor feeds only on-chain scoring.
   const gateEnabled =
@@ -8440,7 +8440,7 @@ async function maybePublishPrPublicSurface(
       gateFiles,
       author,
     });
-    // Pre-merge checks (#review-pre-merge-checks, opt-in via .gittensory.yml review.pre_merge_checks). DETERMINISTIC
+    // Pre-merge checks (#review-pre-merge-checks, opt-in via .loopover.yml review.pre_merge_checks). DETERMINISTIC
     // content assertions (title/description must contain a phrase, a label must be present), optionally path-gated.
     // Each FAILED check appends an advisory `pre_merge_check_failed` finding — or a blocking `pre_merge_check_required`
     // one when the maintainer set enforce: true — BEFORE the gate evaluates. No AI judgment, so this can never cause
@@ -8464,7 +8464,7 @@ async function maybePublishPrPublicSurface(
         }),
       );
     }
-    // CLA / license-compatibility gate (#2564, opt-in via .gittensory.yml gate.claMode). DETERMINISTIC — a PR-body
+    // CLA / license-compatibility gate (#2564, opt-in via .loopover.yml gate.claMode). DETERMINISTIC — a PR-body
     // consent-phrase match (mirrors pre_merge_checks' descriptionContains exactly) and/or a named CLA-bot
     // check-run's conclusion; consent is satisfied when EITHER configured method holds. No AI judgment, so this
     // can never cause an AI false-close. Off by default (claGateMode undefined/"off"), so a repo that has not
@@ -8818,7 +8818,7 @@ async function maybePublishPrPublicSurface(
         },
         async () => {
           const reviewManifest = await resolveReviewManifestForAiReview(env, repoFullName, reviewManifestForAutoReview);
-          // `.gittensory.yml` review.profile + review.security_focus + review.path_instructions +
+          // `.loopover.yml` review.profile + review.security_focus + review.path_instructions +
           // review.exclude_paths + review.path_filters + review.ai_model (#review-profile / #review-security-focus /
           // #review-path-instructions / #review-exclude-paths / #2043 / #selfhost-ai-model-override): resolve from
           // the manifest (cached from settings resolution, so a cheap cache hit — no extra fetch) and thread them
@@ -10140,7 +10140,7 @@ async function maybePublishPrPublicSurface(
           e2eTestGenAvailable,
           env,
         }),
-        footerMarkdown: gittensoryFooter(env, {
+        footerMarkdown: loopoverFooter(env, {
           earnUrl: repo?.isRegistered
             ? gittensorRepoEarnUrl(repoFullName)
             : undefined,
@@ -10559,7 +10559,7 @@ async function maybeProcessGateOverrideCommand(
       `- Reason: ${safeReason}`,
       "",
       "---",
-      gittensoryFooter(env),
+      loopoverFooter(env),
     ].join("\n"),
   );
   await createOrUpdateAgentCommandComment(
@@ -10687,7 +10687,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   let recordedSuppressionCount = 0;
   if (reviewMemoryEnabled && selection.findings.length > 0) { const { fingerprint } = await import("../review/review-memory-match"); const { recordReviewSuppression } = await import("../db/repositories"); const suppressionWrites = selection.findings.map((finding) => ({ category: finding.code, pathGlob: "", patternHash: fingerprint({ category: finding.code, message: `${finding.title} ${finding.detail}` }) })); await Promise.all(suppressionWrites.map((write) => recordReviewSuppression(env, { repoFullName: req.repoFullName, category: write.category, pathGlob: write.pathGlob, patternHash: write.patternHash, createdBy: req.actor }))); recordedSuppressionCount = suppressionWrites.length; invalidateReviewSuppressionCache(req.repoFullName); /* #4508: this repo's cached suppression list is stale as of this write -- the very next render must see it, not wait out the TTL. */ await recordAuditEvent(env, { eventType: "github_app.review_memory_recorded", actor: req.actor, targetKey, outcome: "completed", detail: `Recorded ${recordedSuppressionCount} review-memory suppression signal(s).`, metadata: { deliveryId, repoFullName: req.repoFullName, recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); await recordGithubProductUsage(env, "review_memory_recorded", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { recordedSuppressionCount, scope: findingRef.scope, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); }
   const resolvedLabel = findingRef.scope === "whole_pr" ? "all current advisory findings" : `\`${findingRef.findingCode}\``;
-  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Review finding resolved by @${req.actor}**`, `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`, ...(recordedSuppressionCount > 0 ? ["", `Recorded ${recordedSuppressionCount} review-memory suppression signal(s) for future reviews.`] : []), "", "---", gittensoryFooter(env)].join("\n"));
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Review finding resolved by @${req.actor}**`, `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`, ...(recordedSuppressionCount > 0 ? ["", `Recorded ${recordedSuppressionCount} review-memory suppression signal(s) for future reviews.`] : []), "", "---", loopoverFooter(env)].join("\n"));
   await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation, mode);
   await recordAuditEvent(env, { eventType: "github_app.finding_resolved", actor: req.actor, targetKey, outcome: "completed", detail: `Marked ${resolvedLabel} as resolved.`, metadata: { deliveryId, repoFullName: req.repoFullName, scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } });
   await recordGithubProductUsage(env, "finding_resolved", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); return true; }
@@ -10737,7 +10737,7 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
     await recordReviewCommandSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, mode === "dry_run" ? "dry_run" : "agent_paused");
     return true;
   }
-  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Re-review triggered by @${req.actor}**`, "> Re-running auto-review for this PR. The Gate check-run and one-shot disposition are produced the same way a scheduled pass would.", "", "---", gittensoryFooter(env)].join("\n"));
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Re-review triggered by @${req.actor}**`, "> Re-running auto-review for this PR. The Gate check-run and one-shot disposition are produced the same way a scheduled pass would.", "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   const forceFreshReview = authorization.actorKind === "maintainer";
   await reReviewStoredPullRequest(env, deliveryId, req.installationId, req.repoFullName, req.pr.number, undefined, forceFreshReview ? { force: true } : undefined);
@@ -10787,7 +10787,7 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     return true;
   }
   const safeReason = sanitizePublicComment((command.reason ?? "").trim() || "No reason provided.");
-  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review paused by @${req.actor}**`, "> Auto-review is paused for this PR only. Gate enforcement and the one-shot disposition are unchanged; use `@loopover resume` to re-enable auto-review.", "", `- Reason: ${safeReason}`, "", "---", gittensoryFooter(env)].join("\n"));
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review paused by @${req.actor}**`, "> Auto-review is paused for this PR only. Gate enforcement and the one-shot disposition are unchanged; use `@loopover resume` to re-enable auto-review.", "", `- Reason: ${safeReason}`, "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   await recordAuditEvent(env, { eventType: "github_app.autoreview_paused", actor: req.actor, targetKey, outcome: "completed", detail: safeReason, metadata: { deliveryId, repoFullName: req.repoFullName } });
   await recordGithubProductUsage(env, "autoreview_paused", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { actorKind: authorization.actorKind } });
@@ -10829,7 +10829,7 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
     await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
     return true;
   }
-  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review resumed by @${req.actor}**`, "> Auto-review is resumed for this PR. Gate enforcement and the one-shot disposition were never affected by pause.", "", "---", gittensoryFooter(env)].join("\n"));
+  const confirmation = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **Auto-review resumed by @${req.actor}**`, "> Auto-review is resumed for this PR. Gate enforcement and the one-shot disposition were never affected by pause.", "", "---", loopoverFooter(env)].join("\n"));
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, confirmation);
   await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed", actor: req.actor, targetKey, outcome: "completed", detail: "Auto-review resumed.", metadata: { deliveryId, repoFullName: req.repoFullName } });
   await recordGithubProductUsage(env, "autoreview_resumed", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { actorKind: authorization.actorKind } });
@@ -10911,7 +10911,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") {
-    const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", gittensoryFooter(env)].join("\n"));
+    const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", loopoverFooter(env)].join("\n"));
     await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, notFound);
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "finding_not_found");
     return true;
@@ -10931,7 +10931,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
         "",
       ]),
       "---",
-      gittensoryFooter(env),
+      loopoverFooter(env),
     ].join("\n"),
   );
   await createIssueComment(env, req.installationId, req.repoFullName, req.pr.number, body);
@@ -11130,7 +11130,7 @@ async function postGenerateTestsNotEnabledComment(env: Env, installationId: numb
       "> Ask a maintainer to enable `features.e2eTests` in `.loopover.yml` (the operator's global flag must also be on).",
       "",
       "---",
-      gittensoryFooter(env),
+      loopoverFooter(env),
     ].join("\n"),
   );
   await createIssueComment(env, installationId, repoFullName, prNumber, body);
@@ -11201,7 +11201,7 @@ async function maybeProcessConfigurationCommand(
     agentDryRun: settings.agentDryRun,
   });
   const body = sanitizePublicComment(
-    [AGENT_COMMAND_COMMENT_MARKER, "", summarizeEffectiveConfig(settings, mode), "", "---", gittensoryFooter(env)].join("\n"),
+    [AGENT_COMMAND_COMMENT_MARKER, "", summarizeEffectiveConfig(settings, mode), "", "---", loopoverFooter(env)].join("\n"),
   );
   await createOrUpdateAgentCommandComment(env, req.installationId, req.repoFullName, req.issueNumber, body, mode);
   await recordAuditEvent(env, {
@@ -11617,7 +11617,7 @@ async function maybeProcessPrPanelRetrigger(
  *
  * Authorization uses the repo's OWN `settings.commandAuthorization` — same as the text-command version of
  * `generate-tests` above, and configurable like every other command (#4589 follow-up: this used to hardcode a
- * maintainer-only override here, overriding whatever `.gittensory.yml` configured; a self-hoster who wants
+ * maintainer-only override here, overriding whatever `.loopover.yml` configured; a self-hoster who wants
  * contributors/confirmed miners to trigger test generation can now widen it there instead). Out of the box —
  * no override configured — this still resolves to maintainer-only, since `DEFAULT_COMMAND_AUTHORIZATION_POLICY`
  * already restricts `generate-tests` to `["maintainer"]` and `normalizeCommandRoleList` clamps any configured
@@ -11698,7 +11698,7 @@ async function maybeProcessPrPanelGenerateTests(
     return true;
   }
 
-  // Defense in depth: re-check the feature is STILL enabled -- the repo's own .gittensory.yml could have
+  // Defense in depth: re-check the feature is STILL enabled -- the repo's own .loopover.yml could have
   // changed between when this comment was posted (checkbox rendered) and when it was actually clicked.
   const manifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
   if (!resolveConvergedFeature(env, manifest, "e2eTests", repoFullName)) {

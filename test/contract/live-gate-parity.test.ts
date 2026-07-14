@@ -17,7 +17,7 @@
  *     `packages/loopover-engine/src/predicted-gate.ts`'s own export -- there is no separate
  *     implementation here to drift. That function internally uses the ENGINE package's OWN
  *     `buildPullRequestAdvisory`/`evaluateGateCheck` (`packages/loopover-engine/src/advisory/gate-advisory.ts`)
- *     and reads gate policy directly from the manifest's public `.gittensory.yml`.
+ *     and reads gate policy directly from the manifest's public `.loopover.yml`.
  *   - LIVE: this file's own `buildLiveGateVerdict`, which mirrors predicted-gate's assembly steps (synthetic
  *     PR, advisory, pre-merge/CLA/manifest-policy findings -- reusing the SAME exported pure helpers with
  *     the SAME inputs, so no independent reimplementation risk there) but resolves the gate-check ARGS via

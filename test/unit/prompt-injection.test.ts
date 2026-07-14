@@ -117,7 +117,7 @@ describe("adversarial regression fixtures (#2998)", () => {
 
 // #3657: this repo IS an AI-review / PR-merge / prompt-engineering product, so its OWN docs, config examples,
 // and diffs routinely contain phrasing that a naive injection pattern flags at a glance -- "override the merge
-// rule" (an actual incident: PR #3635's gate blocked on this exact phrase in .gittensory.yml.example), "the
+// rule" (an actual incident: PR #3635's gate blocked on this exact phrase in .loopover.yml.example), "the
 // gate will merge the pull request", "the system prompt sent to the reviewer". Each fixture below was
 // EMPIRICALLY confirmed to false-positive against the pre-#3657 patterns before the corresponding pattern was
 // narrowed (see the numbered comments in src/review/prompt-injection.ts).

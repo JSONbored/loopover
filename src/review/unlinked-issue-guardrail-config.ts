@@ -29,7 +29,7 @@ function normalizeMinConfidence(value: unknown, warnings: string[]): number {
 }
 
 /**
- * Normalize a raw `.gittensory.yml settings.unlinkedIssueGuardrail` value into a typed config,
+ * Normalize a raw `.loopover.yml settings.unlinkedIssueGuardrail` value into a typed config,
  * fail-safe: any malformed field falls back to its own default and pushes a warning rather than
  * rejecting the whole block. Mirrors `normalizeLinkedIssueHardRulesConfig`'s per-field discipline.
  */

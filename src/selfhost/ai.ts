@@ -49,7 +49,7 @@ interface AiRunOptions {
   // Callers with no retry loop of their own (a single ai.run() call) leave this unset, so their one attempt IS
   // final and stays loud, unchanged from before this field existed.
   finalAttempt?: boolean;
-  // `.gittensory.yml` `review.ai_model` (#selfhost-ai-model-override): per-repo override for the subscription
+  // `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override): per-repo override for the subscription
   // CLI providers, resolved by the caller from the repo's manifest and forwarded here so this file makes no
   // manifest fetch of its own. Each field is read ONLY by its matching provider's `.run()` (claude-code reads
   // the claude* pair, codex reads the codex* pair) and takes priority over that provider's global env var, which
@@ -257,7 +257,7 @@ export function resolveClaudeFirstOutputTimeoutMs(env: Record<string, string | u
 }
 
 /** Read the per-call repo override matching this provider variant (#3902) -- ollama/openai/openai-compatible
- *  each have their OWN `.gittensory.yml` field, so a bare `options.model`-style single field would collide
+ *  each have their OWN `.loopover.yml` field, so a bare `options.model`-style single field would collide
  *  across variants sharing this one function. `firstConfigured` gives the repo override priority over the
  *  construction-time-resolved `opts.model` (itself already env-var > undefined), matching the same repo-override
  *  > global-env-var priority `configuredClaudeModel`/`configuredCodexModel` already enforce for the CLI providers. */
@@ -286,7 +286,7 @@ export function createOpenAiCompatibleAi(opts: {
   model?: string | undefined;
   defaultModel?: string | undefined;
   embedModel?: string | undefined;
-  /** Which `.gittensory.yml` `review.ai_model` field this instance's per-call override reads from (#3902). */
+  /** Which `.loopover.yml` `review.ai_model` field this instance's per-call override reads from (#3902). */
   providerName?: "ollama" | "openai" | "openai-compatible" | undefined;
 }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");

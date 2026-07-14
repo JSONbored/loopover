@@ -18,7 +18,7 @@ function normalizeField(value: unknown, field: keyof AdvisoryAiRoutingConfig, wa
 }
 
 /**
- * Normalize a raw `.gittensory.yml settings.advisoryAiRouting` value into a typed config, fail-safe: any
+ * Normalize a raw `.loopover.yml settings.advisoryAiRouting` value into a typed config, fail-safe: any
  * malformed field falls back to its own (false) default and pushes a warning rather than rejecting the
  * whole block. Mirrors `normalizeUnlinkedIssueGuardrailConfig`'s per-field discipline.
  */

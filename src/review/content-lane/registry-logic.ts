@@ -653,7 +653,7 @@ export function probeFunctionalSurface(
 // registry/subnets/<slug>.json::surfaces[]), optionally with one flat companion provider file. To stay MODULAR —
 // many maintainers will install gittensory over wildly different registries — the engine is parameterized by a
 // RegistryLaneSpec rather than hard-coding metagraphed's paths; metagraphed is just the FIRST spec, and a spec can
-// later be loaded from per-repo .gittensory.yml config so a new registry needs config, not a code change.
+// later be loaded from per-repo .loopover.yml config so a new registry needs config, not a code change.
 
 /** Describes where a registry keeps its community-editable entry files + allowed companions. */
 export interface RegistryLaneSpec {

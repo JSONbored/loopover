@@ -9,7 +9,7 @@
 // Config-as-code, layered the same as every other setting: a global default (the whole layer can be off,
 // which rules count, the label text, the threshold, whether a ban auto-enforces) with a PER-REPO override
 // that can turn the layer off/on for just that repo and override which rules feed IT specifically. NEVER
-// hard-coded for any one repo -- a self-hoster's own `.gittensory.yml`/dashboard settings choose everything.
+// hard-coded for any one repo -- a self-hoster's own `.loopover.yml`/dashboard settings choose everything.
 
 /** The anti-abuse mechanisms this engine can count violations from -- the three ORIGINAL mechanisms
  *  (contributor cap, blacklist, review-nag) plus review-evasion (#review-evasion-protection: a contributor
@@ -59,7 +59,7 @@ export const DEFAULT_GLOBAL_MODERATION_CONFIG: GlobalModerationConfig = {
   autoBlacklistOnBan: true,
 };
 
-/** Normalize a raw moderation-rules list (DB JSON or `.gittensory.yml`) into a validated, de-duplicated list
+/** Normalize a raw moderation-rules list (DB JSON or `.loopover.yml`) into a validated, de-duplicated list
  *  of known rule types. Never throws: an unknown/malformed entry is dropped with a warning, matching the
  *  normalize-with-warnings shape every other settings list in this codebase already uses. */
 export function normalizeModerationRules(input: unknown): { rules: ModerationRuleType[]; warnings: string[] } {

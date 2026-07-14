@@ -5,7 +5,7 @@
 // logic lands in later, separate PRs (#4191-#4197) once this flag exists for them to gate on.
 //
 // Single env switch: LOOPOVER_REVIEW_E2E_TESTS. Default OFF (unset/"false") — when OFF the feature never
-// runs anywhere, regardless of any per-repo `.gittensory.yml` override (see `resolveConvergedFeature` in
+// runs anywhere, regardless of any per-repo `.loopover.yml` override (see `resolveConvergedFeature` in
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isGroundingEnabled / isSafetyEnabled).
 

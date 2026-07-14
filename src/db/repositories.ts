@@ -711,7 +711,7 @@ export async function upsertGlobalContributorBlacklist(env: Env, input: { contri
 export async function upsertRepositorySettings(env: Env, settings: Partial<RepositorySettings> & { repoFullName: string }): Promise<RepositorySettings> {
   // `satisfies` (not a `: RepositorySettings` annotation) so the `?? default` coalescing below keeps its
   // narrower inferred type (`string`, never `null`) for blacklistLabel/contributorCapLabel/reviewNagLabel --
-  // the DB columns backing them stay NOT NULL (#label-scoping: only `.gittensory.yml`, not the dashboard/API
+  // the DB columns backing them stay NOT NULL (#label-scoping: only `.loopover.yml`, not the dashboard/API
   // write path, can express "close without any label" via an explicit null; see focus-manifest.ts).
   const resolved = {
     repoFullName: settings.repoFullName,
@@ -1084,7 +1084,7 @@ export async function getDecryptedRepositoryAiKey(env: Env, fullName: string): P
 // ─── Linear personal API key (#3186) ────────────────────────────────────────────────────────────
 // Same isolated-table, encrypted-at-rest shape as the BYOK provider keys above (reuses the same
 // TOKEN_ENCRYPTION_SECRET + encryptSecret/decryptSecret envelope) -- never serialized by the
-// repository-settings GET surface, never settable via `.gittensory.yml`, never logged in plaintext.
+// repository-settings GET surface, never settable via `.loopover.yml`, never logged in plaintext.
 
 export type RepositoryLinearKeyStatus = { configured: true; last4: string; createdBy: string | null; updatedAt: string | null } | { configured: false };
 

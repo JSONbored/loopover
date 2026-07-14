@@ -9,7 +9,7 @@ export function labelMatchesPattern(label: string, pattern: string): boolean {
 // per-call recompile inside the nested label loops in engine.ts is pure waste.
 // Keys come from a repo's registryConfig.labelMultipliers, sourced from the externally-fetched gittensor
 // registry (registry/sync.ts + registry/normalize.ts, not a value this repo's own maintainer directly controls
-// via .gittensory.yml) — so the pattern SET is small per repo, but individual pattern CONTENT is untrusted, not
+// via .loopover.yml) — so the pattern SET is small per repo, but individual pattern CONTENT is untrusted, not
 // literally attacker-supplied-per-request the way GitHub PR content is. The wildcard-count cap below (#2456)
 // bounds a single pattern's compile cost; this cache is additionally bounded to a fixed max entry count and
 // evicted LRU, so a long-running isolate that observes many distinct registry snapshots over its life still

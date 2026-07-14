@@ -108,7 +108,7 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
 
   // Re-resolve blacklist membership live at accept time (#2452). The head-SHA pin above only catches a
   // FORCE-PUSH; it says nothing about whether the contributor is STILL blacklisted, and a blacklist close is a
-  // sticky auto_with_approval row with no expiry -- a maintainer can remove the entry (or edit .gittensory.yml)
+  // sticky auto_with_approval row with no expiry -- a maintainer can remove the entry (or edit .loopover.yml)
   // at any point while it sits waiting. `settings` was fetched fresh at the top of this function, so this
   // mirrors the exact same pure check the planner uses (processors.ts), just re-run against CURRENT effective config.
   if (pending.actionClass === "close" && pending.params.closeKind === "blacklist" && pr) {

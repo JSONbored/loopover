@@ -781,7 +781,7 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
       // The converged unified-comment renderer (which folds in the "Linked issue satisfaction" section this
       // feature populates) is itself behind BOTH the global kill-switch AND the (back-compat, manifest-absent)
       // LOOPOVER_REVIEW_REPOS allowlist -- see convergedFeatureActive/resolveConvergedFeature
-      // (src/review/feature-activation.ts). Both are required for a repo with no `.gittensory.yml` manifest.
+      // (src/review/feature-activation.ts). Both are required for a repo with no `.loopover.yml` manifest.
       LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed",
     });

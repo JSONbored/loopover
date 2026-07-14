@@ -316,7 +316,7 @@ export type UnifiedCommentBridgeArgs = {
   advisoryFindings?: AdvisoryFinding[] | undefined;
   /** The legacy panel readiness signal rows (from `buildPublicPrPanelSignalRows`). */
   panelRows: PublicPrPanelSignalRow[];
-  /** Which rows the maintainer kept visible (`.gittensory.yml review.fields`); a key set to `false` is hidden. */
+  /** Which rows the maintainer kept visible (`.loopover.yml review.fields`); a key set to `false` is hidden. */
   reviewFields?: Partial<Record<PublicPrPanelSignalRow["key"], boolean>> | undefined;
   /** The loopover readiness total (0–100) → the readiness chip. */
   readinessTotal: number;
@@ -371,7 +371,7 @@ export type UnifiedCommentBridgeArgs = {
    *  `commentVerbosity`). */
   commentVerbosity?: "quiet" | "normal" | "detailed" | null | undefined;
   /** The manifest's parse `warnings[]` (#2056) — when non-empty, a "Manifest validation" collapsible listing
-   *  each grouped, deduped warning is appended, so an invalid/malformed `.gittensory.yml` value fails clearly
+   *  each grouped, deduped warning is appended, so an invalid/malformed `.loopover.yml` value fails clearly
    *  instead of silently falling back to a default. No AI, no network. Absent/empty ⇒ no section
    *  (byte-identical) — always safe to pass the manifest's raw warnings unconditionally. */
   manifestWarnings?: string[] | undefined;
@@ -601,7 +601,7 @@ export function buildChangedFilesSummaryCollapsible(
 
 /**
  * Build the "Manifest validation" collapsible from a manifest's parse `warnings[]` (#2056) — grouped,
- * deduped, so an invalid/malformed `.gittensory.yml` value fails clearly instead of silently falling back
+ * deduped, so an invalid/malformed `.loopover.yml` value fails clearly instead of silently falling back
  * to a default. Returns null when there are no warnings, so the caller can unconditionally chain this
  * alongside the other optional collapsibles (byte-identical when the manifest is fully valid).
  */
@@ -767,11 +767,11 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
         : input.reviewerCount
       : 0;
 
-  // Honor `.gittensory.yml review.fields` row visibility, exactly as the legacy panel does.
+  // Honor `.loopover.yml review.fields` row visibility, exactly as the legacy panel does.
   const visibleRows = args.panelRows.filter((row) => args.reviewFields?.[row.key] !== false);
   const signals = panelRowsToSignalRows(visibleRows);
 
-  // review-manifest validation (#2056): a broken/malformed .gittensory.yml value should fail clearly, so this
+  // review-manifest validation (#2056): a broken/malformed .loopover.yml value should fail clearly, so this
   // is unconditional (no manifest opt-in) — prepended ahead of every content-shape summary since a config
   // problem is more foundational than what changed. No warnings ⇒ extraCollapsibles is unchanged.
   const manifestValidationCollapsible =

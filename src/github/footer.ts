@@ -10,10 +10,10 @@
 
 /** The LoopOver product site (marketing on-ramp / attribution target) -- the DEFAULT only. A
  *  self-hoster with `PUBLIC_SITE_ORIGIN` set gets their own domain instead, both here and in
- *  `gittensoryFooter` below (#4613). */
+ *  `loopoverFooter` below (#4613). */
 export const LOOPOVER_SITE_URL = "https://loopover.ai";
 
-/** Minimal env slice `gittensoryFooter` needs, narrowed from the full `Env` the same way this file's
+/** Minimal env slice `loopoverFooter` needs, narrowed from the full `Env` the same way this file's
  *  `maintainerControlPanelUrl` already narrows its own `env` param inline -- so every file that renders
  *  the footer only has to thread this one field down from wherever the real `Env` is in scope, not the
  *  whole worker binding type. */
@@ -68,10 +68,10 @@ export function gittensorRepoEarnUrl(repoFullName: string): string {
  *  `env.PUBLIC_SITE_ORIGIN` (same resolution as `maintainerControlPanelUrl` above) lets a self-hoster's
  *  own domain replace `LOOPOVER_SITE_URL` in the "Checked by LoopOver" attribution link (#4613) --
  *  the Gittensor register link (`GITTENSOR_HOME_URL`) is a separate, shared network and is never rebranded. */
-export function gittensoryFooter(env: LoopOverFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
+export function loopoverFooter(env: LoopOverFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
   const siteUrl = env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL;
   const earnUrl = opts.earnUrl ?? GITTENSOR_HOME_URL;
-  // Maintainer-customized footer (via `.gittensory.yml review.footer.text`): the maintainer's public-safe
+  // Maintainer-customized footer (via `.loopover.yml review.footer.text`): the maintainer's public-safe
   // lead replaces the default CTA copy, but the Gittensor register link + LoopOver attribution are
   // ALWAYS appended — the growth surface is preserved regardless of customization.
   if (opts.customText) {

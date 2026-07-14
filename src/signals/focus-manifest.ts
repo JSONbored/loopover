@@ -507,10 +507,10 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
 }
 
 /**
- * Resolve the EFFECTIVE repository settings a webhook should act on: `.gittensory.yml` > DB settings >
+ * Resolve the EFFECTIVE repository settings a webhook should act on: `.loopover.yml` > DB settings >
  * safe defaults. The generic `settings:` override applies first; the friendly `gate:` alias then wins
  * for its fields. This single resolver makes the whole gittensory configuration — gate on/off, blocker
- * modes, comments, labels, surface, audience — controllable from the repo's `.gittensory.yml`.
+ * modes, comments, labels, surface, audience — controllable from the repo's `.loopover.yml`.
  */
 export function resolveEffectiveSettings(
   dbSettings: RepositorySettings,
@@ -521,7 +521,7 @@ export function resolveEffectiveSettings(
   // parseFocusManifest above),
   // unlike every other `manifest.settings` field, which is always a complete value ready to overlay the DB
   // value wholesale via the spread below. Pull them out of the spread and merge each field individually,
-  // manifest override > DB value > built-in default, so a `.gittensory.yml` naming only one key (e.g.
+  // manifest override > DB value > built-in default, so a `.loopover.yml` naming only one key (e.g.
   // `typeLabels.priority`) can never silently reset the others back to the built-in default and discard a
   // DB-customized value (#priority-linked-issue-gate), and an arbitrary custom category (e.g. `security`)
   // layers in alongside the DB value rather than requiring it too (#label-modularity).

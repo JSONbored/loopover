@@ -5,7 +5,7 @@
 // verdict → GateCheckEvaluation conversion.
 //
 // FLAG-GATED + DEFAULT-OFF: LOOPOVER_REVIEW_CONTENT_LANE must be truthy, AND `resolveRegistryLaneSpec`
-// (content-lane/spec-resolver.ts) must resolve a spec for this repo — either an explicit per-repo `.gittensory.yml`
+// (content-lane/spec-resolver.ts) must resolve a spec for this repo — either an explicit per-repo `.loopover.yml`
 // `contentLane:` config, or (today's zero-config default) the repo being in the LOOPOVER_REVIEW_REPOS cutover
 // allowlist, which resolves to METAGRAPHED_LANE_SPEC. When off / unresolved (the default for any repo that hasn't
 // opted in) the caller takes no new branch, runs no fetch, and `gateEvaluation` is byte-identical to today. The
@@ -57,7 +57,7 @@ function surfaceFinding(code: string, severity: AdvisorySeverity, summary: strin
   return { code, title: SURFACE_TITLE, severity, detail: summary, publicText: summary };
 }
 
-/** A diagnostic (non-blocking) finding for a `.gittensory.yml` `contentLane.validatorId` that doesn't match any
+/** A diagnostic (non-blocking) finding for a `.loopover.yml` `contentLane.validatorId` that doesn't match any
  *  code-registered validator — most likely an operator typo. Without this, `buildRegistryLaneSpecFromConfig`
  *  degrades silently to structural-only gating (a legitimate mode for a registry with no validator yet), which
  *  makes a typo indistinguishable from a deliberate choice. Surfaced the SAME way a surface verdict is (pushed
@@ -102,7 +102,7 @@ export function surfaceVerdictToGate(result: SurfaceReviewResult): {
  *  result rather than silently dropped — see `evaluateWithSurfaceLane` for the companion `advisory.findings`
  *  cleanup that keeps the public comment from re-surfacing the overridden AI defect via a separate path.
  *
- *  `opts.aiJudgmentBlockersMode` (#3907): a per-repo `.gittensory.yml` `gate.aiJudgmentBlockers` opt-in that
+ *  `opts.aiJudgmentBlockersMode` (#3907): a per-repo `.loopover.yml` `gate.aiJudgmentBlockers` opt-in that
  *  SKIPS this exception when set to `"gate"` — an AI-judgment-only failure then falls through to the union
  *  below like any other blocker, letting a confidently-flagged content-correctness defect actually gate the
  *  merge. Default (`null`/`undefined`/`"advisory"`) preserves this exception exactly as documented above,
@@ -224,7 +224,7 @@ export function resolveSurfaceRefs(
 }
 
 /** The processor SEAM in one testable call: when a RegistryLaneSpec resolves for this repo (see
- *  `resolveRegistryLaneSpec` — an explicit per-repo `.gittensory.yml` `contentLane:` config, or the
+ *  `resolveRegistryLaneSpec` — an explicit per-repo `.loopover.yml` `contentLane:` config, or the
  *  LOOPOVER_REVIEW_REPOS allowlist default), run the surface lane against it and merge its verdict onto the
  *  generic gate (preserving generic hard blockers); otherwise return the generic evaluation unchanged.
  *  `getChangedFiles` is a thunk so an unresolved repo resolves no files (no extra diff load). The env kill-switch
@@ -268,7 +268,7 @@ export async function evaluateWithSurfaceLane(
   // loadRepoFocusManifest itself already degrades a fetch/parse blip to an EMPTY manifest (a legitimate "no
   // config" signal) internally, so this catch only fires for a rarer failure outside that (e.g. the cache
   // read/write layer). Track that distinctly from a genuinely-empty manifest: for a repo NOT on the
-  // isConvergenceRepoAllowed cutover list, `contentLane:` in its own `.gittensory.yml` is the ONLY way to
+  // isConvergenceRepoAllowed cutover list, `contentLane:` in its own `.loopover.yml` is the ONLY way to
   // resolve a spec (#2435) -- so `manifest` reading as absent here is indistinguishable, downstream, from
   // "this repo never configured content-lane at all", and would silently skip the registry gate on nothing
   // more than a transient read failure for exactly the self-hosted-maintainer use case this PR exists to
@@ -294,7 +294,7 @@ export async function evaluateWithSurfaceLane(
       enabled: true,
       conclusion: "neutral",
       title: `${LOOPOVER_GATE_CHECK_NAME} — held for human review`,
-      summary: "The repo's .gittensory.yml could not be read, so LoopOver cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
+      summary: "The repo's .loopover.yml could not be read, so LoopOver cannot confirm whether a registry content-lane is configured for this repo. The gate is held for a human reviewer rather than silently skipping the registry check. It re-evaluates on the next update.",
       blockers: [],
       warnings: gateEvaluation?.warnings ?? [],
     };

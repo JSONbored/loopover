@@ -556,6 +556,80 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 
+  it("#5016 audit: includes an installed-but-not-subnet-registered repo's PRs in cross-repo scoping", () => {
+    const installedNotRegistered: RepositoryRecord = { ...repo, fullName: "we-promise/sure", owner: "we-promise", name: "sure", isRegistered: false };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 60, sourceLines: 42 },
+      },
+      repo,
+      repositories: [repo, installedNotRegistered],
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache edge", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        {
+          repoFullName: installedNotRegistered.fullName,
+          number: 2,
+          title: "Installed-but-unregistered branch",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          reviewDecision: "APPROVED",
+          labels: [],
+          linkedIssues: [],
+        },
+      ],
+      profile,
+      outcomeHistory: { ...outcomeHistory, totals: { ...outcomeHistory.totals, openPullRequests: 1 } },
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.observedPullRequestScenarios.approvedOrMergeable).toBe(1);
+  });
+
+  it("#5016 audit: excludes a subnet-registered-but-not-installed repo's PRs from cross-repo scoping", () => {
+    const registeredNotInstalled: RepositoryRecord = { ...repo, fullName: "acme/other", owner: "acme", name: "other", isInstalled: false };
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 12, deletions: 1, status: "modified" }],
+        validation: [{ command: "npm test -- cache", status: "passed" }],
+        localScorer: { mode: "external_command", sourceTokenScore: 42, totalTokenScore: 60, sourceLines: 42 },
+      },
+      repo,
+      repositories: [repo, registeredNotInstalled],
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache edge", state: "open", labels: ["bug"], linkedPrs: [] }],
+      pullRequests: [],
+      contributorPullRequests: [
+        {
+          repoFullName: registeredNotInstalled.fullName,
+          number: 3,
+          title: "Registered-but-uninstalled branch",
+          state: "open",
+          authorLogin: "oktofeesh1",
+          authorAssociation: "CONTRIBUTOR",
+          reviewDecision: "APPROVED",
+          labels: [],
+          linkedIssues: [],
+        },
+      ],
+      profile,
+      outcomeHistory: { ...outcomeHistory, totals: { ...outcomeHistory.totals, openPullRequests: 1 } },
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.observedPullRequestScenarios.approvedOrMergeable).toBe(0);
+  });
+
   it("falls back to same-repo observed PR scenarios when the registered repo list is unavailable", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

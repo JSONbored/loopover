@@ -619,10 +619,13 @@ function buildObservedPullRequestScenarios(args: {
   nowMs?: number | undefined;
 }): ObservedPullRequestScenarios {
   const repoByName = new Map((args.repositories ?? []).map((repo) => [repo.fullName.toLowerCase(), repo]));
-  const registeredRepos = new Set((args.repositories ?? []).filter((repo) => repo.isRegistered).map((repo) => repo.fullName.toLowerCase()));
+  // Cross-repo PR-pressure scoping is generic PR-hygiene, unrelated to gittensor-subnet membership: an
+  // installed-but-not-registered repo's own open PRs must not be silently excluded just because some
+  // unrelated repo elsewhere in the instance happens to be subnet-registered.
+  const installedRepos = new Set((args.repositories ?? []).filter((repo) => repo.isInstalled).map((repo) => repo.fullName.toLowerCase()));
   const scopedPullRequests = args.pullRequests.filter((pr) => {
     if (!sameLogin(pr.authorLogin, args.login)) return false;
-    if (registeredRepos.size > 0) return registeredRepos.has(pr.repoFullName.toLowerCase());
+    if (installedRepos.size > 0) return installedRepos.has(pr.repoFullName.toLowerCase());
     return sameRepo(pr.repoFullName, args.repoFullName);
   });
   let approvedOrMergeable = 0;

@@ -8,8 +8,8 @@ export type AutomationBotSkipMode = "inherit" | "off" | "enabled";
  *  on PRs from known, maintainer-owned automation (release-please's github-actions[bot], Renovate,
  *  Dependabot) is safe and low-risk enough to be the sensible default -- it should not require every
  *  self-host operator to discover and separately opt into this. */
-export function isSkipAutomationBotPullRequestsEnabledGlobally(env: { GITTENSORY_SKIP_AUTOMATION_BOT_PRS?: string | undefined }): boolean {
-  return !/^(0|false|no|off)$/i.test((env.GITTENSORY_SKIP_AUTOMATION_BOT_PRS ?? "").trim());
+export function isSkipAutomationBotPullRequestsEnabledGlobally(env: { LOOPOVER_SKIP_AUTOMATION_BOT_PRS?: string | undefined }): boolean {
+  return !/^(0|false|no|off)$/i.test((env.LOOPOVER_SKIP_AUTOMATION_BOT_PRS ?? "").trim());
 }
 
 /** Per-repo override resolved against the global default. Mirrors `ModerationGateMode`'s inherit/off/enabled

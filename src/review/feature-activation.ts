@@ -9,7 +9,7 @@
 // inlineComments, fixHandoff, …) each re-implementing their OWN hand-rolled version of the same boolean
 // arithmetic outside this file, with at least four subtly different precedence shapes and no single place
 // documenting which feature uses which (#4616's config-sprawl audit finding — already the root cause of one
-// production incident, see GITTENSORY_PUBLIC_STATS_REPOS's doc comment in env.d.ts).
+// production incident, see LOOPOVER_PUBLIC_STATS_REPOS's doc comment in env.d.ts).
 //
 // `resolveFeatureActivation` below is now the ONE pure core every one of those precedence shapes reduces to.
 // `resolveConvergedFeature` and `resolveManifestOnlyFeature` are the two thin adapters over it in actual use:

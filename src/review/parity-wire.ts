@@ -69,7 +69,7 @@ export function isParityAuditEnabled(env: {
 
 /** The `source` discriminator this writer stamps on every row — the SHADOW side computeGateParity compares
  *  against the authoritative 'reviewbot' rows. */
-export const GITTENSORY_NATIVE_SOURCE = "gittensory-native";
+export const LOOPOVER_NATIVE_SOURCE = "gittensory-native";
 
 /** Cutover-readiness defaults the endpoint applies before computing parity: a 90-day window (the parity
  *  read's own default) over all recorded sources. The agreement FLOOR (0.98) + MIN sample (30) live in
@@ -172,7 +172,7 @@ export async function recordNativeGateDecision(
        VALUES (?, ?, ?, 'gate_decision', ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET decision = excluded.decision, summary = excluded.summary, miner_authored = excluded.miner_authored, created_at = excluded.created_at`,
     )
-      .bind(`gate:${GITTENSORY_NATIVE_SOURCE}:${targetId}@${input.headSha}`, project, targetId, action, GITTENSORY_NATIVE_SOURCE, input.headSha, summary, minerAuthored, nowIso())
+      .bind(`gate:${LOOPOVER_NATIVE_SOURCE}:${targetId}@${input.headSha}`, project, targetId, action, LOOPOVER_NATIVE_SOURCE, input.headSha, summary, minerAuthored, nowIso())
       .run();
   } catch (error) {
     // Telemetry must never break finalization.
@@ -217,7 +217,7 @@ export async function computeParityReadiness(
     // The shadow source MUST match what recordNativeGateDecision stamps ('gittensory-native'); computeGateParity
     // defaults `shadow` to 'gittensory', so pass it explicitly or the self-join would find no shadow rows. The
     // authoritative side stays the default 'reviewbot' (the deploy-time dual-run writer).
-    shadow: GITTENSORY_NATIVE_SOURCE,
+    shadow: LOOPOVER_NATIVE_SOURCE,
     ...(opts.project ? { project: opts.project } : {}),
   });
   return {

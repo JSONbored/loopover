@@ -20,7 +20,7 @@ async function connect() {
     args: [bin, "--stdio"],
     env: {
       ...process.env,
-      GITTENSORY_CONFIG_DIR: configDir,
+      LOOPOVER_CONFIG_DIR: configDir,
     },
   });
   client = new Client({ name: "feasibility-gate-test", version: "0.0.1" });
@@ -108,7 +108,7 @@ describe("loopover_feasibility_gate: local claim-ledger sourcing (#5157)", () =>
 
   async function connectWithLedgerDb(dbPath: string | undefined) {
     ledgerConfigDir = mkdtempSync(join(tmpdir(), "gittensory-feasibility-gate-ledger-"));
-    const env: Record<string, string> = { ...(process.env as Record<string, string>), GITTENSORY_CONFIG_DIR: ledgerConfigDir };
+    const env: Record<string, string> = { ...(process.env as Record<string, string>), LOOPOVER_CONFIG_DIR: ledgerConfigDir };
     if (dbPath !== undefined) env.LOOPOVER_MINER_CLAIM_LEDGER_DB = dbPath;
     else delete env.LOOPOVER_MINER_CLAIM_LEDGER_DB;
     ledgerTransport = new StdioClientTransport({ command: "node", args: [bin, "--stdio"], env });

@@ -2,7 +2,7 @@ import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
 import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
-import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
+import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML, resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import type { LocalManifestLoadResult } from "../selfhost/private-config";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
@@ -159,7 +159,7 @@ async function loadRepoFocusManifestWithCachePolicy(
     let content = await fetcher(repoFullName);
     if (content !== null && typeof content === "object") content = content.content;
     if ((content === null || content === undefined) && isLoopOverSelfRepo(repoFullName, env)) {
-      content = GITTENSORY_REPO_FOCUS_MANIFEST_YAML;
+      content = LOOPOVER_REPO_FOCUS_MANIFEST_YAML;
     }
     manifest = content === null || content === undefined ? parseFocusManifest(null) : parseFocusManifestContent(content, "repo_file");
   } catch {

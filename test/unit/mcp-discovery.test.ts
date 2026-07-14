@@ -23,8 +23,8 @@ async function connect() {
     args: [bin, "--stdio"],
     env: {
       ...process.env,
-      GITTENSORY_CONFIG_DIR: configDir,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
+      LOOPOVER_CONFIG_DIR: configDir,
+      LOOPOVER_API_TIMEOUT_MS: "1000",
     },
   });
   client = new Client({ name: "discovery-test", version: "0.0.1" });
@@ -55,8 +55,8 @@ describe("MCP workspace root boundaries", () => {
       args: [bin, "--stdio"],
       env: {
         ...process.env,
-        GITTENSORY_CONFIG_DIR: localConfigDir,
-        GITTENSORY_API_TIMEOUT_MS: "1000",
+        LOOPOVER_CONFIG_DIR: localConfigDir,
+        LOOPOVER_API_TIMEOUT_MS: "1000",
       },
     });
     const rootedClient = new Client({ name: "roots-boundary-test", version: "0.0.1" }, { capabilities: { roots: {} } });

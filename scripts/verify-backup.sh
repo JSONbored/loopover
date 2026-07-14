@@ -10,7 +10,7 @@
 set -eu
 
 OUT=${BACKUP_OUT_DIR:-/backups}
-PG_DB="${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
+PG_DB="${LOOPOVER_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 TARGET="${1:-}"
 PG_PASSFILES=""
 cleanup() {
@@ -184,11 +184,11 @@ verify_postgres() {
   # 2) Optional scratch restore smoke (opt-in, guarded): restore into a THROWAWAY database and sanity-check.
   #    Never runs against the live database — the scratch URL must be set explicitly and differ from the source.
   [ "${VERIFY_RESTORE_SCRATCH:-}" = "1" ] || return 0
-  scratch="${GITTENSORY_VERIFY_SCRATCH_DATABASE_URL:-}"
+  scratch="${LOOPOVER_VERIFY_SCRATCH_DATABASE_URL:-}"
   case "$scratch" in
     postgres://* | postgresql://*) : ;;
     *)
-      echo "[verify] VERIFY_RESTORE_SCRATCH=1 needs GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://… (a dedicated scratch database, never the live one)" >&2
+      echo "[verify] VERIFY_RESTORE_SCRATCH=1 needs LOOPOVER_VERIFY_SCRATCH_DATABASE_URL=postgres://… (a dedicated scratch database, never the live one)" >&2
       return 1
       ;;
   esac

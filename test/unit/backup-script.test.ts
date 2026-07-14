@@ -116,7 +116,7 @@ function runBackup(
       STUB_SQLITE_MODE: mode,
       // Keep ambient test env from selecting a different backup branch or Qdrant target.
       DATABASE_URL: options.databaseUrl ?? "",
-      GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "",
+      LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "",
       QDRANT_URL: options.qdrant ? "http://qdrant.test" : "",
     },
   });

@@ -4365,7 +4365,7 @@ export function buildPublicPrIntelligenceComment(args: {
    *  text is added, matching this epic's "degrade cleanly, never fabricate a reading" convention. */
   slopBand?: SlopBand | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` so a self-hoster's own domain reaches the
-   *  always-on footer's attribution link instead of `GITTENSORY_SITE_URL` (#4613). */
+   *  always-on footer's attribution link instead of `LOOPOVER_SITE_URL` (#4613). */
   env: LoopOverFooterEnv;
 }): string {
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);

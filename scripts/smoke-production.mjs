@@ -1,5 +1,5 @@
-const siteOrigin = normalizeOrigin(process.env.GITTENSORY_SITE_ORIGIN ?? "https://loopover.ai");
-const apiOrigin = normalizeOrigin(process.env.GITTENSORY_API_ORIGIN ?? "https://api.loopover.ai");
+const siteOrigin = normalizeOrigin(process.env.LOOPOVER_SITE_ORIGIN ?? "https://loopover.ai");
+const apiOrigin = normalizeOrigin(process.env.LOOPOVER_API_ORIGIN ?? "https://api.loopover.ai");
 
 const siteRoutes = [
   "/",

@@ -8,7 +8,7 @@
 #
 # Pin production rollouts to a release tag or digest:
 #   ./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
-#   GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh
+#   LOOPOVER_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh
 #
 # The image itself carries official release metadata. Set SENTRY_RELEASE only for custom images whose
 # source maps were uploaded under that exact id.
@@ -31,8 +31,8 @@ resolve_image() {
     exit 1
   fi
 
-  env_file_image="$(env_get GITTENSORY_IMAGE || true)"
-  printf '%s' "${1:-${GITTENSORY_IMAGE:-${env_file_image:-$DEFAULT_IMAGE}}}"
+  env_file_image="$(env_get LOOPOVER_IMAGE || true)"
+  printf '%s' "${1:-${LOOPOVER_IMAGE:-${env_file_image:-$DEFAULT_IMAGE}}}"
 }
 
 validate_inputs() {
@@ -118,6 +118,6 @@ echo "selfhost image deploy: restarting $SERVICE"
 docker compose "${compose_args[@]}" up -d --no-build --no-deps "$SERVICE"
 
 wait_for_healthy
-env_put GITTENSORY_IMAGE "$IMAGE"
+env_put LOOPOVER_IMAGE "$IMAGE"
 
 echo "selfhost image deploy: complete ($IMAGE)"

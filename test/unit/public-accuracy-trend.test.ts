@@ -89,7 +89,7 @@ describe("buildPublicAccuracyTrend", () => {
 
 describe("loadPublicAccuracyTrend — end-to-end over the real live tables", () => {
   it("combines own-ledger merged/closed/reversed and Orb-fleet merged/closed into a consistent weekly trend", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
     const laterInWeekIso = new Date(Date.parse(thisWeekIso) + 86_400_000).toISOString();
@@ -130,8 +130,8 @@ describe("loadPublicAccuracyTrend — end-to-end over the real live tables", () 
     expect(currentWeek?.reversed).toBe(1);
   });
 
-  it("redacts a sparse Orb-fleet week when GITTENSORY_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "" });
+  it("redacts a sparse Orb-fleet week when LOOPOVER_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
     await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, registered) VALUES (?, 1)").bind(9002).run();

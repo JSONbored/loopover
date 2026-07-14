@@ -10,7 +10,7 @@ import {
   detectGittensorContributor,
 } from "../../src/signals/engine";
 import { buildUnifiedCommentBody } from "../../src/review/unified-comment-bridge";
-import { GITTENSORY_SITE_URL } from "../../src/github/footer";
+import { LOOPOVER_SITE_URL } from "../../src/github/footer";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
 import type { IssueRecord, PullRequestRecord, RepositoryRecord, RepositorySettings } from "../../src/types";
 
@@ -254,7 +254,7 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
       });
       const beta = collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver");
       expect(beta?.body).toContain("routed to the closest matching read-only command");
-      expect(beta?.body).toContain(GITTENSORY_SITE_URL);
+      expect(beta?.body).toContain(LOOPOVER_SITE_URL);
     });
   });
 });

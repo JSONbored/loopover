@@ -12,9 +12,9 @@ import {
   parseLoopOverMentionCommand,
   sanitizePublicComment,
   suggestCommand,
-  GITTENSORY_ACTION_COMMAND_CATALOG,
-  GITTENSORY_ACTION_COMMANDS,
-  GITTENSORY_MENTION_COMMAND_CATALOG,
+  LOOPOVER_ACTION_COMMAND_CATALOG,
+  LOOPOVER_ACTION_COMMANDS,
+  LOOPOVER_MENTION_COMMAND_CATALOG,
   INTENT_ROUTABLE_COMMANDS,
   githubCommandsInternals,
 } from "../../src/github/commands";
@@ -85,12 +85,12 @@ describe("GitHub mention commands", () => {
     }
     // Every action command (the actual write-capable surface a prompt-injection attempt would target) is
     // rejected — this is the exact adversarial case req 3 calls out.
-    for (const actionCommand of GITTENSORY_ACTION_COMMANDS) {
+    for (const actionCommand of LOOPOVER_ACTION_COMMANDS) {
       expect(isIntentRoutableCommand(actionCommand)).toBe(false);
     }
     // Every OTHER cataloged Q&A command not in the closed set (help/miner-context/every maintainer-queue-digest
     // command) is also rejected — the closed set is a strict subset of the full Q&A catalog, not the whole thing.
-    const nonRoutableCatalogNames = GITTENSORY_MENTION_COMMAND_CATALOG.map((c) => c.id).filter((id) => !(INTENT_ROUTABLE_COMMANDS as readonly string[]).includes(id));
+    const nonRoutableCatalogNames = LOOPOVER_MENTION_COMMAND_CATALOG.map((c) => c.id).filter((id) => !(INTENT_ROUTABLE_COMMANDS as readonly string[]).includes(id));
     expect(nonRoutableCatalogNames).toEqual(expect.arrayContaining(["help", "miner-context", "queue-summary", "confirmed-miners"]));
     for (const name of nonRoutableCatalogNames) {
       expect(isIntentRoutableCommand(name)).toBe(false);
@@ -195,10 +195,10 @@ describe("GitHub mention commands", () => {
     expect(bare.join("\n")).toContain("**Commands**");
   });
 
-  it("keeps GITTENSORY_ACTION_COMMAND_CATALOG in sync with GITTENSORY_ACTION_COMMANDS (#2167)", () => {
-    expect(GITTENSORY_ACTION_COMMAND_CATALOG.map((command) => command.id)).toEqual([...GITTENSORY_ACTION_COMMANDS]);
-    expect(GITTENSORY_ACTION_COMMAND_CATALOG).toHaveLength(GITTENSORY_ACTION_COMMANDS.length);
-    for (const command of GITTENSORY_ACTION_COMMAND_CATALOG) {
+  it("keeps LOOPOVER_ACTION_COMMAND_CATALOG in sync with LOOPOVER_ACTION_COMMANDS (#2167)", () => {
+    expect(LOOPOVER_ACTION_COMMAND_CATALOG.map((command) => command.id)).toEqual([...LOOPOVER_ACTION_COMMANDS]);
+    expect(LOOPOVER_ACTION_COMMAND_CATALOG).toHaveLength(LOOPOVER_ACTION_COMMANDS.length);
+    for (const command of LOOPOVER_ACTION_COMMAND_CATALOG) {
       expect(command.title.trim().length).toBeGreaterThan(0);
       expect(command.description.trim().length).toBeGreaterThan(0);
     }
@@ -209,7 +209,7 @@ describe("GitHub mention commands", () => {
     expect(body).toContain("**PR action commands**");
     expect(body).toContain("maintainer or collaborator authorization");
     expect(body).toContain("pause` and `resume` affect only auto-review");
-    for (const action of GITTENSORY_ACTION_COMMANDS) {
+    for (const action of LOOPOVER_ACTION_COMMANDS) {
       expect(body).toContain(`@loopover ${action}`);
     }
     const rendered = githubCommandsInternals.actionCommandHelpSections().join("\n");

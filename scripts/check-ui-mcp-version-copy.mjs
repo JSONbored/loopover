@@ -14,9 +14,9 @@ const targets = [
 ].map((target) => join(root, target));
 
 // The live npm-registry check is BEST-EFFORT: a transient registry blip must not fail CI, because a red
-// required check one-shot-closes a contributor PR. Set GITTENSORY_MCP_LATEST_VERSION to make it fully
+// required check one-shot-closes a contributor PR. Set LOOPOVER_MCP_LATEST_VERSION to make it fully
 // offline/deterministic. The deterministic stale-version-string scan below always runs regardless.
-let latest = process.env.GITTENSORY_MCP_LATEST_VERSION ?? null;
+let latest = process.env.LOOPOVER_MCP_LATEST_VERSION ?? null;
 let latestSkipReason = null;
 if (!latest) {
   try {
@@ -34,7 +34,7 @@ if (latest && sourceLatest !== latest) {
   );
 } else if (!latest) {
   console.warn(
-    `::warning::skipped the npm dist-tag drift check (registry unavailable: ${latestSkipReason}); set GITTENSORY_MCP_LATEST_VERSION to enforce it offline`,
+    `::warning::skipped the npm dist-tag drift check (registry unavailable: ${latestSkipReason}); set LOOPOVER_MCP_LATEST_VERSION to enforce it offline`,
   );
 }
 

@@ -160,8 +160,8 @@ describe("selfhost-docker-prune.sh", () => {
     expect(calls).not.toContain("container prune");
   });
 
-  it("honors GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS to widen or narrow the safety window", () => {
-    const calls = runPruneScript(tmpRoot(), { GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS: "24" });
+  it("honors LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS to widen or narrow the safety window", () => {
+    const calls = runPruneScript(tmpRoot(), { LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS: "24" });
 
     expect(calls).toContain("image prune -af --filter until=24h");
     expect(calls).toContain("builder prune -af --filter until=24h");
@@ -190,12 +190,12 @@ describe("selfhost-docker-prune.sh", () => {
     expect(calls).not.toMatch(/\bvolume\b/);
   });
 
-  it("--dry-run still honors GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS in its preview output", () => {
+  it("--dry-run still honors LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS in its preview output", () => {
     const root = tmpRoot();
     const { binDir } = stubDocker(root);
     const stdout = execFileSync("sh", ["scripts/selfhost-docker-prune.sh", "--dry-run"], {
       cwd: process.cwd(),
-      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS: "48" },
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}`, LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS: "48" },
     }).toString();
 
     expect(stdout).toContain("until=48h");
@@ -242,7 +242,7 @@ describe("selfhost-docker-prune.sh", () => {
       const root = tmpRoot();
       const calls = runPruneScript(
         root,
-        { GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS: "24" },
+        { LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS: "24" },
         [],
         [
           { id: "just-under", finishedAt: isoHoursAgo(23) },

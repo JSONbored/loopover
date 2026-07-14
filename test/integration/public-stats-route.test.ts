@@ -43,7 +43,7 @@ async function seed(env: Env) {
 }
 
 describe("GET /v1/public/stats (#1059)", () => {
-  it("404s when GITTENSORY_PUBLIC_STATS is off (default)", async () => {
+  it("404s when LOOPOVER_PUBLIC_STATS is off (default)", async () => {
     const env = createTestEnv();
     const res = await createApp().request("/v1/public/stats", {}, env);
     expect(res.status).toBe(404);
@@ -51,8 +51,8 @@ describe("GET /v1/public/stats (#1059)", () => {
 
   it("serves public-safe aggregates with no auth + a cache header when enabled", async () => {
     const env = createTestEnv({
-      GITTENSORY_PUBLIC_STATS: "1",
-      GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory,JSONbored/awesome-claude",
+      LOOPOVER_PUBLIC_STATS: "1",
+      LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory,JSONbored/awesome-claude",
     });
     await seed(env);
     const res = await createApp().request("/v1/public/stats", {}, env);

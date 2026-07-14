@@ -14,7 +14,7 @@ import {
 } from "@/components/site/proof-of-power-stats-model";
 
 // Proof of Power (#1059): the above-the-fold homepage stats band. Polls the public, unauthenticated
-// /v1/public/stats endpoint every 60s. The endpoint 404s until GITTENSORY_PUBLIC_STATS is enabled, so until then
+// /v1/public/stats endpoint every 60s. The endpoint 404s until LOOPOVER_PUBLIC_STATS is enabled, so until then
 // (or on any failure) this renders NOTHING — the homepage is byte-identical to today. Counts only; no PR content.
 
 const intFmt = new Intl.NumberFormat("en");

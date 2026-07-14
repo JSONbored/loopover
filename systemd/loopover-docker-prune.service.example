@@ -24,4 +24,4 @@ WorkingDirectory=/opt/loopover
 ExecStart=/bin/sh /opt/loopover/scripts/selfhost-docker-prune.sh
 # Optional: override the default 7-day (168h) safety window before an unused image/build-cache entry is
 # eligible for removal.
-# Environment=GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS=168
+# Environment=LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS=168

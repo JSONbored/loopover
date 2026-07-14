@@ -553,7 +553,7 @@ async function loadContributorIssueDraftQueueCounts(env: Env, repoFullName: stri
 }
 
 async function createGitHubContributorIssue(env: Env, repoFullName: string, draft: ContributorIssueDraft): Promise<{ number: number; url: string } | null> {
-  const token = env.GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN ?? env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
+  const token = env.LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN ?? env.LOOPOVER_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return null;
   const { owner, name } = repoParts(repoFullName);
   if (!owner || !name) return null;

@@ -342,7 +342,7 @@ export type FocusManifestReviewRecapConfig = {
 /**
  * Config-as-code override for the CROSS-repo maintainer recap digest's cron knobs (#1963, #2250), declared
  * under `maintainerRecap:`. Distinct from `reviewRecap:` above (that is the single-repo digest's own window/
- * enable knob); this instead overrides the GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars
+ * enable knob); this instead overrides the LOOPOVER_MAINTAINER_RECAP / LOOPOVER_RECAP_CADENCE env vars
  * that gate the cron-scheduled cross-repo digest (buildMaintainerRecap, #2239 / #2248) — read from the
  * gittensory self-repo's manifest (resolveLoopOverSelfRepoFullName), since the digest is an operator-level
  * setting, not a per-contributor-repo one. Mirrors `reviewRecap:` exactly: no DB-backed counterpart, so the

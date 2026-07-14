@@ -22,7 +22,7 @@
 ### ⚠ BREAKING CHANGES
 
 * **miner:** the miner's default config directory and every gittensory_miner_* Prometheus metric name changed; no dual-read/alias, per the epic's full-cutover mandate ([#5705](https://github.com/JSONbored/gittensory/issues/5705)). A self-hoster's existing ~/.config/gittensory-miner state does not migrate automatically.
-* **miner:** every GITTENSORY_MINER_*/GITTENSORY_API_TOKEN_FILE/ GITTENSORY_MCP_TOKEN_FILE/GITTENSORY_MEM_LIMIT/GITTENSORY_REPORTING_* env var an existing self-hosted AMS/miner deployment sets must be renamed to its LOOPOVER_ equivalent -- the old names are no longer read.
+* **miner:** every LOOPOVER_MINER_*/LOOPOVER_API_TOKEN_FILE/ LOOPOVER_MCP_TOKEN_FILE/LOOPOVER_MEM_LIMIT/LOOPOVER_REPORTING_* env var an existing self-hosted AMS/miner deployment sets must be renamed to its LOOPOVER_ equivalent -- the old names are no longer read.
 
 ### Features
 
@@ -96,7 +96,7 @@
 * **miner:** persist ranked-candidates snapshots and serve them locally ([#5619](https://github.com/JSONbored/gittensory/issues/5619)) ([6553b54](https://github.com/JSONbored/gittensory/commit/6553b54d34ce005e4120e040e96e0b62119ac439))
 * **miner:** persist resolved policy verdicts across discover runs ([#5516](https://github.com/JSONbored/gittensory/issues/5516)) ([0d5c340](https://github.com/JSONbored/gittensory/commit/0d5c3402a3899fcb9f8658a21472b3b0c1be8d01))
 * **miner:** read loop-cli convergence history from the persisted portfolio queue ([#5679](https://github.com/JSONbored/gittensory/issues/5679)) ([66e927e](https://github.com/JSONbored/gittensory/commit/66e927e95bfbb7135494a4000a42372b336cbb86)), closes [#5677](https://github.com/JSONbored/gittensory/issues/5677)
-* **miner:** rename GITTENSORY_MINER_*/GITTENSORY_* env vars to LOOPOVER_MINER_*/LOOPOVER_* ([#5707](https://github.com/JSONbored/gittensory/issues/5707)) ([6714f0c](https://github.com/JSONbored/gittensory/commit/6714f0cac5ab37477c7f56332cde969788c7996e)), closes [#5705](https://github.com/JSONbored/gittensory/issues/5705)
+* **miner:** rename LOOPOVER_MINER_*/LOOPOVER_* env vars to LOOPOVER_MINER_*/LOOPOVER_* ([#5707](https://github.com/JSONbored/gittensory/issues/5707)) ([6714f0c](https://github.com/JSONbored/gittensory/commit/6714f0cac5ab37477c7f56332cde969788c7996e)), closes [#5705](https://github.com/JSONbored/gittensory/issues/5705)
 * **miner:** resolve rejectionSignaled's AI-usage-policy-ban trigger ([#5132](https://github.com/JSONbored/gittensory/issues/5132)) ([#5241](https://github.com/JSONbored/gittensory/issues/5241)) ([e6adb43](https://github.com/JSONbored/gittensory/commit/e6adb4396f236200ca116fbb59a2c144e9053902))
 * **miner:** resolve the real per-repo MinerGoalSpec from a cloned worktree ([#5255](https://github.com/JSONbored/gittensory/issues/5255)) ([28949be](https://github.com/JSONbored/gittensory/commit/28949be13b97f4eaa0d013e7b37317790833c13f))
 * **miner:** respect --json on CLI error paths ([#5543](https://github.com/JSONbored/gittensory/issues/5543)) ([7cffca2](https://github.com/JSONbored/gittensory/commit/7cffca2c8893a4a7a98c79618ee635a531b6e40b))

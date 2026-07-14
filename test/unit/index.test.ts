@@ -590,7 +590,7 @@ describe("worker entrypoint", () => {
   it("re-includes refresh-registry once a repo opts into the experimental gittensor plugin", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_EXPERIMENTAL_GITTENSOR: "true",
+      LOOPOVER_EXPERIMENTAL_GITTENSOR: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -798,11 +798,11 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "sync-brokered-installed-repos")).toBe(false);
   });
 
-  it("enqueues the sweep-liveness-watchdog job hourly ONLY when GITTENSORY_SWEEP_WATCHDOG is ON (flag-OFF is byte-identical)", async () => {
+  it("enqueues the sweep-liveness-watchdog job hourly ONLY when LOOPOVER_SWEEP_WATCHDOG is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (watchdogFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(watchdogFlag === undefined ? {} : { GITTENSORY_SWEEP_WATCHDOG: watchdogFlag }),
+        ...(watchdogFlag === undefined ? {} : { LOOPOVER_SWEEP_WATCHDOG: watchdogFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -823,10 +823,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "sweep-liveness-watchdog")).toEqual([{ type: "sweep-liveness-watchdog", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when GITTENSORY_SWEEP_WATCHDOG is ON", async () => {
+  it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when LOOPOVER_SWEEP_WATCHDOG is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_SWEEP_WATCHDOG: "true",
+      LOOPOVER_SWEEP_WATCHDOG: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -839,11 +839,11 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
   });
 
-  it("enqueues the reconcile-open-prs job every 10 minutes ONLY when GITTENSORY_PR_RECONCILIATION is ON (flag-OFF is byte-identical)", async () => {
+  it("enqueues the reconcile-open-prs job every 10 minutes ONLY when LOOPOVER_PR_RECONCILIATION is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (flag?: string, isoTime = "2026-05-25T05:10:00.000Z"): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(flag === undefined ? {} : { GITTENSORY_PR_RECONCILIATION: flag }),
+        ...(flag === undefined ? {} : { LOOPOVER_PR_RECONCILIATION: flag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -864,10 +864,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "reconcile-open-prs")).toEqual([{ type: "reconcile-open-prs", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue reconcile-open-prs outside the 10-minute window even when GITTENSORY_PR_RECONCILIATION is ON", async () => {
+  it("does NOT enqueue reconcile-open-prs outside the 10-minute window even when LOOPOVER_PR_RECONCILIATION is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_PR_RECONCILIATION: "true",
+      LOOPOVER_PR_RECONCILIATION: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -1011,11 +1011,11 @@ describe("worker entrypoint", () => {
     );
   });
 
-  it("enqueues the maintainer recap digest on the default weekly cadence (Monday 14:00 UTC) ONLY when GITTENSORY_MAINTAINER_RECAP is ON (#2248, flag-OFF is byte-identical)", async () => {
+  it("enqueues the maintainer recap digest on the default weekly cadence (Monday 14:00 UTC) ONLY when LOOPOVER_MAINTAINER_RECAP is ON (#2248, flag-OFF is byte-identical)", async () => {
     const sentFor = async (recapFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(recapFlag === undefined ? {} : { GITTENSORY_MAINTAINER_RECAP: recapFlag }),
+        ...(recapFlag === undefined ? {} : { LOOPOVER_MAINTAINER_RECAP: recapFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -1036,10 +1036,10 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "generate-maintainer-recap")).toEqual([{ type: "generate-maintainer-recap", requestedBy: "schedule" }]);
   });
 
-  it("does NOT enqueue the maintainer recap digest outside its configured cadence even when GITTENSORY_MAINTAINER_RECAP is ON", async () => {
+  it("does NOT enqueue the maintainer recap digest outside its configured cadence even when LOOPOVER_MAINTAINER_RECAP is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_MAINTAINER_RECAP: "true",
+      LOOPOVER_MAINTAINER_RECAP: "true",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);
@@ -1052,11 +1052,11 @@ describe("worker entrypoint", () => {
     expect(sent.some((m) => m.type === "generate-maintainer-recap")).toBe(false);
   });
 
-  it("honors a custom GITTENSORY_RECAP_CADENCE=daily, firing every day at the configured hour", async () => {
+  it("honors a custom LOOPOVER_RECAP_CADENCE=daily, firing every day at the configured hour", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      GITTENSORY_MAINTAINER_RECAP: "true",
-      GITTENSORY_RECAP_CADENCE: "daily",
+      LOOPOVER_MAINTAINER_RECAP: "true",
+      LOOPOVER_RECAP_CADENCE: "daily",
       JOBS: {
         async send(message: import("../../src/types").JobMessage) {
           sent.push(message);

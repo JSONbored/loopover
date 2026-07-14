@@ -65,7 +65,7 @@
 
 - Render the public PR feedback as one unified review comment
 
-- Gate per-PR review capabilities behind per-repo activation (GITTENSORY_REVIEW_* flags)
+- Gate per-PR review capabilities behind per-repo activation (LOOPOVER_REVIEW_* flags)
 
 
 

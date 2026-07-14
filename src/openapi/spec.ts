@@ -176,7 +176,7 @@ export function buildOpenApiSpec() {
     path: "/v1/public/stats",
     responses: {
       200: { description: "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.", content: { "application/json": { schema: PublicStatsSchema } } },
-      404: { description: "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)" },
+      404: { description: "Public stats are disabled (LOOPOVER_PUBLIC_STATS off)" },
       503: { description: "Public stats are temporarily unavailable" },
     },
   });

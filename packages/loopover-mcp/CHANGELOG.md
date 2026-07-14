@@ -232,7 +232,7 @@
 - Mark gate.firstTimeContributorGrace as reserved/inert (#2411)
 - Distinguish an executor error from a clean accept (#2428)
 - Honor settings.commandAuthorization in .gittensory.yml (#2385)
-- Scope GITTENSORY_MCP_TOKEN read access to an operator allowlist (#2464)
+- Scope LOOPOVER_MCP_TOKEN read access to an operator allowlist (#2464)
 - Cap labelPatternToRegExp wildcard groups to prevent ReDoS (#2482)
 - Bound label pattern cache (#2513)
 - Match label history against config labels case-insensitively (#2580)

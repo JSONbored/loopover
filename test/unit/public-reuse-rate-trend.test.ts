@@ -70,7 +70,7 @@ describe("buildPublicReuseRateTrend", () => {
 
 describe("loadPublicReuseRateTrend — end-to-end over the real live audit_events ledger", () => {
   it("counts every github_app.*_cache_hit / *_cache_miss event, plus ai_review's three non-suffix reuse variants, as hits/misses", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "owner/repo" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "owner/repo" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
 
@@ -94,13 +94,13 @@ describe("loadPublicReuseRateTrend — end-to-end over the real live audit_event
   });
 
   it("returns all-zero buckets when no instrumented events exist yet", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "owner/repo" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "owner/repo" });
     const trend = await loadPublicReuseRateTrend(env, NOW);
     for (const week of trend) expect(week).toMatchObject({ hits: 0, misses: 0, reuseRatePct: null });
   });
 
   it("REGRESSION: excludes cache activity outside the public stats repo allowlist", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "owner/repo" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "owner/repo" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
 

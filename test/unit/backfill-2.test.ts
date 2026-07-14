@@ -2196,7 +2196,7 @@ describe("GitHub backfill", () => {
 
     it("returns null when the live read fails, even if a stale global fallback is configured (conservative fold-all)", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
-      (env as Env & { GITTENSORY_REQUIRED_CI_CONTEXTS?: string }).GITTENSORY_REQUIRED_CI_CONTEXTS = "stale-required-context";
+      (env as Env & { LOOPOVER_REQUIRED_CI_CONTEXTS?: string }).LOOPOVER_REQUIRED_CI_CONTEXTS = "stale-required-context";
       vi.stubGlobal("fetch", async () => new Response("forbidden", { status: 403 }));
       expect(await fetchRequiredStatusContexts(env, "JSONbored/gittensory", "main", "public-token")).toBeNull();
     });

@@ -1654,7 +1654,7 @@ describe("self-host queue common helpers", () => {
 });
 
 describe("parsePositiveIntEnv", () => {
-  const KNOB = "GITTENSORY_TEST_ENV_KNOB";
+  const KNOB = "LOOPOVER_TEST_ENV_KNOB";
   const saved = process.env[KNOB];
 
   afterEach(() => {

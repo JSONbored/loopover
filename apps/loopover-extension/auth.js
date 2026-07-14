@@ -20,7 +20,7 @@ const LOCAL_SESSION_KEYS = [
 ];
 
 const GITHUB_TOKEN_PREFIX_PATTERN = /^(ghp|gho|ghu|ghs|ghr|github_pat)_/i;
-const GITTENSORY_SESSION_PATTERN = /^gts_[a-f0-9]{64}$/i;
+const LOOPOVER_SESSION_PATTERN = /^gts_[a-f0-9]{64}$/i;
 
 export function extensionStorage(chromeLike = globalThis.chrome) {
   if (!chromeLike?.storage?.local || !chromeLike?.storage?.sync) {
@@ -52,7 +52,7 @@ export function validateExtensionSessionToken(value) {
   if (looksLikeGitHubPersonalAccessToken(token)) {
     throw new Error("GitHub personal access tokens are not accepted. Create a LoopOver extension token instead.");
   }
-  if (!GITTENSORY_SESSION_PATTERN.test(token)) {
+  if (!LOOPOVER_SESSION_PATTERN.test(token)) {
     throw new Error("Extension tokens must be LoopOver session tokens that start with gts_.");
   }
   return token;

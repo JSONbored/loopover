@@ -1,4 +1,4 @@
--- Convergence (RAG / codebase index — Layer C, flag GITTENSORY_REVIEW_RAG): the chunk-text STORE that backs
+-- Convergence (RAG / codebase index — Layer C, flag LOOPOVER_REVIEW_RAG): the chunk-text STORE that backs
 -- vector retrieval. This is the missing storage half of RAG: src/review/rag.ts already reads/writes this table
 -- (the retrieval path was wired in the rag-wire chunk) but no migration created it, so the index was unbacked.
 -- This migration creates it so the index-population job (src/review/rag-index.ts → upsertChunks) has somewhere
@@ -22,7 +22,7 @@
 --
 -- Kept raw-SQL-only (matching the 0046–0050 convergence parity-store convention); deliberately NOT added to the
 -- Drizzle schema. Additive + idempotent (IF NOT EXISTS): the table is only ever read/written when the
--- GITTENSORY_REVIEW_RAG flag is ON AND a Vectorize/AI binding is present, so a deploy without RAG is unaffected.
+-- LOOPOVER_REVIEW_RAG flag is ON AND a Vectorize/AI binding is present, so a deploy without RAG is unaffected.
 --
 -- Privacy: indexes a repo's CODE/docs for code-review context only (isIndexablePath skips the content/data
 -- corpus). Internal review infrastructure — never surfaced publicly beyond the prompt the reviewer sees.

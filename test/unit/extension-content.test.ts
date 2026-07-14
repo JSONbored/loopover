@@ -74,7 +74,7 @@ describe("extension content script", () => {
 
 function loadContentInternals() {
   const context: Record<string, unknown> = {
-    __GITTENSORY_EXTENSION_TEST__: true,
+    __LOOPOVER_EXTENSION_TEST__: true,
     location: { pathname: "/JSONbored/gittensory/issues/146" },
     document: {
       querySelector: vi.fn(() => null),

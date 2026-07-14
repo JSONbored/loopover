@@ -200,7 +200,7 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // follow-up). Nullable, same "no override configured" shape as screenshotTableGateMessage above.
   screenshotTableGateSkillFileUrl: text("screenshot_table_gate_skill_file_url"),
   // Waste elimination for known automation authors (settings/automation-bot-skip.ts). 'inherit' (default)
-  // defers to the GITTENSORY_SKIP_AUTOMATION_BOT_PRS global default; 'off'/'enabled' force this repo
+  // defers to the LOOPOVER_SKIP_AUTOMATION_BOT_PRS global default; 'off'/'enabled' force this repo
   // regardless of it -- mirrors moderationGateMode's shape above.
   skipAutomationBotAuthors: text("skip_automation_bot_authors").notNull().default("inherit"),
   createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),

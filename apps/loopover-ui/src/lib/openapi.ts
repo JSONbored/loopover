@@ -185,7 +185,7 @@ export function generateCurl(op: OpenApiOperation, server: string, token?: strin
   const url = server.replace(/\/$/, "") + op.path;
   const lines = [`curl -X ${op.method.toUpperCase()} '${url}' \\`];
   if (op.requiresAuth) {
-    lines.push(`  -H 'Authorization: Bearer ${token ? token : "$GITTENSORY_TOKEN"}' \\`);
+    lines.push(`  -H 'Authorization: Bearer ${token ? token : "$LOOPOVER_TOKEN"}' \\`);
   }
   lines.push(`  -H 'Accept: application/json'`);
   if (op.method !== "get" && op.method !== "delete") {

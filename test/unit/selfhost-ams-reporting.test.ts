@@ -39,10 +39,10 @@ function runExporter(
     cwd: process.cwd(),
     env: {
       ...process.env,
-      GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB: overrides.attemptLogSource ?? join(root, "attempt-log.sqlite3"),
-      GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB: overrides.predictionLedgerSource ?? join(root, "prediction-ledger.sqlite3"),
+      LOOPOVER_AMS_ATTEMPT_LOG_SOURCE_DB: overrides.attemptLogSource ?? join(root, "attempt-log.sqlite3"),
+      LOOPOVER_AMS_PREDICTION_LEDGER_SOURCE_DB: overrides.predictionLedgerSource ?? join(root, "prediction-ledger.sqlite3"),
       LOOPOVER_REPORTING_DIR: reportingDir,
-      ...(overrides.scriptVersion ? { GITTENSORY_AMS_REPORTING_SCRIPT_VERSION: overrides.scriptVersion } : {}),
+      ...(overrides.scriptVersion ? { LOOPOVER_AMS_REPORTING_SCRIPT_VERSION: overrides.scriptVersion } : {}),
     },
     stdio: "pipe",
     encoding: "utf8",

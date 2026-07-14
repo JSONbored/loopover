@@ -198,7 +198,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
       }
     }
   }
-  // Self-heal (flag GITTENSORY_PR_RECONCILIATION). Every 10 minutes — see isReconciliationWindow above.
+  // Self-heal (flag LOOPOVER_PR_RECONCILIATION). Every 10 minutes — see isReconciliationWindow above.
   // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
   // ZERO new work and the enqueued set is byte-identical to today.
   if (selfHostedReviews && isReconciliationWindow && isPrReconciliationEnabled(env)) jobs.push({ type: "reconcile-open-prs", requestedBy: "schedule" });
@@ -228,7 +228,7 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // review-outcome data. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
     // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isOpsEnabled(env)) jobs.push({ type: "ops-alerts", requestedBy: "schedule" });
-    // Self-heal (flag GITTENSORY_SWEEP_WATCHDOG). Hourly liveness check over the same repo set the scheduled
+    // Self-heal (flag LOOPOVER_SWEEP_WATCHDOG). Hourly liveness check over the same repo set the scheduled
     // regate sweep covers — re-enqueues a targeted sweep for any repo whose sweep marker has gone stale despite
     // having open PRs to regate. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never
     // created, so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
@@ -254,9 +254,9 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (isHourly && hour === 9 && selfHostedReviews) {
     jobs.push({ type: "repo-doc-refresh-sweep", requestedBy: "schedule" });
   }
-  // Maintainer recap digest (#1963, #2248/#2250; flag GITTENSORY_MAINTAINER_RECAP). Cross-repo RecapReport
-  // delivered to Discord on a configurable cadence (GITTENSORY_RECAP_CADENCE=daily|weekly, default weekly) at
-  // the configured hour/day-of-week (GITTENSORY_RECAP_HOUR / GITTENSORY_RECAP_DAY). Enable/cadence can ALSO be
+  // Maintainer recap digest (#1963, #2248/#2250; flag LOOPOVER_MAINTAINER_RECAP). Cross-repo RecapReport
+  // delivered to Discord on a configurable cadence (LOOPOVER_RECAP_CADENCE=daily|weekly, default weekly) at
+  // the configured hour/day-of-week (LOOPOVER_RECAP_HOUR / LOOPOVER_RECAP_DAY). Enable/cadence can ALSO be
   // set as code via the gittensory self-repo's `.gittensory.yml maintainerRecap:` block (config-as-code parity,
   // #2250) -- a present manifest block wins over the env vars; absent, the env vars decide exactly as before.
   // Enqueued ONLY when this tick matches the resolved cadence -- disabled (the default) this job is never

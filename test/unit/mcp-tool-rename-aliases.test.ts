@@ -24,9 +24,9 @@ async function connect(apiUrl: string) {
     args: [bin, "--stdio"],
     env: {
       ...process.env,
-      GITTENSORY_CONFIG_DIR: configDir,
-      GITTENSORY_API_URL: apiUrl,
-      GITTENSORY_API_TIMEOUT_MS: "5000",
+      LOOPOVER_CONFIG_DIR: configDir,
+      LOOPOVER_API_URL: apiUrl,
+      LOOPOVER_API_TIMEOUT_MS: "5000",
     },
   });
   client = new Client({ name: "rename-alias-test", version: "0.0.1" });

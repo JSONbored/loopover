@@ -138,7 +138,7 @@ export function buildPullRequestAdvisory(
     /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest
      *  open sibling number), the `duplicate_pr_risk` finding is suppressed so the winner is not gate-blocked /
      *  closed as a duplicate. Default/false ⇒ every duplicate sibling keeps the finding (byte-identical). The
-     *  caller sets this to `env.GITTENSORY_DUPLICATE_WINNER === "true"`. */
+     *  caller sets this to `env.LOOPOVER_DUPLICATE_WINNER === "true"`. */
     duplicateWinnerEnabled?: boolean;
     /** Author logins of the linked issues (one entry per resolved issue, may be null when unknown). Used to
      *  surface a `self_authored_linked_issue` finding when the PR author also opened the linked issue. Absent

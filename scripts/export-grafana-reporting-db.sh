@@ -7,10 +7,10 @@ set -eu
 # would otherwise serve the previous run's output forever -- this constant, folded into the fingerprint,
 # forces a full rebuild the next time this script runs after such an edit ships. Overridable via env var
 # purely so a test can simulate "the script logic changed" without editing this file.
-SCRIPT_VERSION="${GITTENSORY_REPORTING_SCRIPT_VERSION:-2}"
+SCRIPT_VERSION="${LOOPOVER_REPORTING_SCRIPT_VERSION:-2}"
 
 APP_DB="${LOOPOVER_REPORTING_SOURCE_DB:-/appdb/loopover.sqlite}"
-PG_DB="${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
+PG_DB="${LOOPOVER_REPORTING_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT_DIR="${LOOPOVER_REPORTING_DIR:-/reporting}"
 OUT_DB="${LOOPOVER_REPORTING_DB:-$OUT_DIR/loopover-reporting.sqlite}"
 TMP_DB="${OUT_DB}.tmp"

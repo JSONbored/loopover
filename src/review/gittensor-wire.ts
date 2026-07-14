@@ -19,15 +19,15 @@ import { resolveManifestOnlyFeature } from "./feature-activation";
  *  repo is ever gittensor-opted-in regardless of what any `.gittensory.yml` says, and
  *  {@link gittensorEnabledRepoFullNames} short-circuits before reading a single manifest. Truthy follows the
  *  codebase convention (`/^(1|true|yes|on)$/i`, same as isImpactMapEnabled / isSelfTuneEnabled). */
-export function isGittensorPluginEnabled(env: { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_EXPERIMENTAL_GITTENSOR ?? "");
+export function isGittensorPluginEnabled(env: { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_EXPERIMENTAL_GITTENSOR ?? "");
 }
 
 /** Resolve whether the gittensor plugin is active for THIS repo: the operator's global env kill-switch AND an
  *  explicit per-repo manifest opt-in. Neither alone is sufficient -- mirrors every other manifestOnly feature
  *  gate in this codebase (env kill-switch first, then the manifest narrows it further). */
 export function shouldEnableGittensorForRepo(
-  env: { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined },
+  env: { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined },
   manifestGittensorEnabled: boolean | null | undefined,
 ): boolean {
   return resolveManifestOnlyFeature(isGittensorPluginEnabled(env), manifestGittensorEnabled);
@@ -45,7 +45,7 @@ export function shouldEnableGittensorForRepo(
  * Flag-OFF (default) short-circuits before listing repos or loading a single manifest, so a plain self-host
  * instance makes zero local reads for this and zero outbound gittensor-registry requests (see index.ts).
  */
-export async function gittensorEnabledRepoFullNames(env: Env & { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined }): Promise<Set<string>> {
+export async function gittensorEnabledRepoFullNames(env: Env & { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined }): Promise<Set<string>> {
   if (!isGittensorPluginEnabled(env)) return new Set();
   const repos = await listRepositories(env);
   const enabled = new Set<string>();

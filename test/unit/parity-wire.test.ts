@@ -12,7 +12,7 @@ import {
 } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import {
-  GITTENSORY_NATIVE_SOURCE,
+  LOOPOVER_NATIVE_SOURCE,
   computeParityReadiness,
   isParityAuditEnabled,
   nativeGateActionFromConclusion,
@@ -111,7 +111,7 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
       target_id: "owner/repo#7",
       event_type: "gate_decision",
       decision: "merge", // success → merge
-      source: GITTENSORY_NATIVE_SOURCE,
+      source: LOOPOVER_NATIVE_SOURCE,
       head_sha: "abc123",
       summary: "all_clear",
     });
@@ -163,7 +163,7 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
 
     const rows = await rawAll(env, "SELECT * FROM review_audit");
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ decision: "close", summary: "ci_failed", source: GITTENSORY_NATIVE_SOURCE });
+    expect(rows[0]).toMatchObject({ decision: "close", summary: "ci_failed", source: LOOPOVER_NATIVE_SOURCE });
   });
 
   it("a new commit gets its OWN row", async () => {
@@ -212,14 +212,14 @@ describe("recordNativeGateDecision — flag-gated SHADOW recording into review_a
     await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: 7, headSha: "abc123", conclusion: "success", reasonCode: "all_clear" });
     const rows = await rawAll(env, "SELECT * FROM review_audit");
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ decision: "merge", source: GITTENSORY_NATIVE_SOURCE, summary: "all_clear" });
+    expect(rows[0]).toMatchObject({ decision: "merge", source: LOOPOVER_NATIVE_SOURCE, summary: "all_clear" });
 
     // ...and an explicit "false" flag value doesn't override the self-host signal either.
     const envFalse = createTestEnv({ LOOPOVER_REVIEW_PARITY_AUDIT: "false" });
     await recordNativeGateDecision(envFalse, { project: "owner/repo", pullNumber: 8, headSha: "def456", conclusion: "failure", reasonCode: "slop_risk" });
     const falseRows = await rawAll(envFalse, "SELECT * FROM review_audit");
     expect(falseRows.length).toBe(1);
-    expect(falseRows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE, summary: "slop_risk" });
+    expect(falseRows[0]).toMatchObject({ decision: "hold", source: LOOPOVER_NATIVE_SOURCE, summary: "slop_risk" });
   });
 
   it("fails safe: a D1 write error is swallowed + logged (telemetry never breaks finalization)", async () => {
@@ -250,7 +250,7 @@ describe("computeParityReadiness — runs computeGateParity / isParityCutoverRea
       await recordNativeGateDecision(env, { project: "owner/repo", pullNumber: i, headSha: `sha${i}`, conclusion: "success" });
     }
     const report = await computeParityReadiness(env, { nowMs: Date.now() });
-    expect(report.shadow).toBe(GITTENSORY_NATIVE_SOURCE);
+    expect(report.shadow).toBe(LOOPOVER_NATIVE_SOURCE);
     expect(report.authoritative).toBe("reviewbot");
     expect(report.rows).toEqual([]); // nothing to pair against → no rows
     expect(report.hasSignal).toBe(false);
@@ -326,7 +326,7 @@ describe("GET /v1/internal/parity — bearer-gated, flag-gated endpoint", () => 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { authoritative: string; shadow: string; hasSignal: boolean; rows: Array<{ project: string; pairedSamples: number; cutoverReady: boolean }> };
     expect(body.authoritative).toBe("reviewbot");
-    expect(body.shadow).toBe(GITTENSORY_NATIVE_SOURCE);
+    expect(body.shadow).toBe(LOOPOVER_NATIVE_SOURCE);
     const row = body.rows.find((r) => r.project === "owner/repo");
     expect(row?.pairedSamples).toBe(35);
     expect(row?.cutoverReady).toBe(true);
@@ -433,7 +433,7 @@ function prWebhook(deliveryId: string, author: string) {
 }
 
 async function nativeRows(env: Env): Promise<Array<{ decision: string; summary: string; source: string; miner_authored: number }>> {
-  const res = await env.DB.prepare("SELECT decision, summary, source, miner_authored FROM review_audit WHERE source = ? AND event_type = 'gate_decision'").bind(GITTENSORY_NATIVE_SOURCE).all<{ decision: string; summary: string; source: string; miner_authored: number }>();
+  const res = await env.DB.prepare("SELECT decision, summary, source, miner_authored FROM review_audit WHERE source = ? AND event_type = 'gate_decision'").bind(LOOPOVER_NATIVE_SOURCE).all<{ decision: string; summary: string; source: string; miner_authored: number }>();
   return res.results;
 }
 
@@ -451,7 +451,7 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (LOOPOVER
     const rows = await nativeRows(env);
     // gateEvaluation.conclusion === "failure" → native action "hold"; reasonCode = blockers[0].code.
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE });
+    expect(rows[0]).toMatchObject({ decision: "hold", source: LOOPOVER_NATIVE_SOURCE });
     expect(rows[0]!.summary).toBe("missing_linked_issue");
   });
 
@@ -468,7 +468,7 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (LOOPOVER
     // "hold", which IS comparable → recordNativeGateDecision writes one row with the blocker code as the reason.
     const rows = await nativeRows(env);
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE });
+    expect(rows[0]).toMatchObject({ decision: "hold", source: LOOPOVER_NATIVE_SOURCE });
     expect(rows[0]!.summary).toBe("missing_linked_issue");
   });
 
@@ -500,7 +500,7 @@ describe("recordNativeGateDecision wired into the review FINALIZE path (LOOPOVER
     }
     const rows = await nativeRows(env);
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ decision: "hold", source: GITTENSORY_NATIVE_SOURCE, summary: "missing_linked_issue" });
+    expect(rows[0]).toMatchObject({ decision: "hold", source: LOOPOVER_NATIVE_SOURCE, summary: "missing_linked_issue" });
   });
 
   it("#2352: a confirmed-miner author's gate decision is recorded with miner_authored = 1", async () => {

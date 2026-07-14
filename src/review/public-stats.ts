@@ -1,5 +1,5 @@
 // Public "proof of power" stats (#1059) — a small, public-safe aggregate of what gittensory's REVIEW SYSTEM has
-// done, powering the above-the-fold homepage counter. Flag-gated by GITTENSORY_PUBLIC_STATS (default OFF): when
+// done, powering the above-the-fold homepage counter. Flag-gated by LOOPOVER_PUBLIC_STATS (default OFF): when
 // off the public endpoint 404s, so the deploy is byte-identical to today until the flag is deliberately set.
 //
 // REALTIME: queries the live ledger directly (no rollup/cron) so a new review shows up within the 60s HTTP cache
@@ -45,9 +45,9 @@ export const MINUTES_SAVED_PER_PR = 20;
 
 /** Truthy-string flag check, matching ops-wire / selftune-wire. */
 export function isPublicStatsEnabled(env: {
-  GITTENSORY_PUBLIC_STATS?: string | undefined;
+  LOOPOVER_PUBLIC_STATS?: string | undefined;
 }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_PUBLIC_STATS ?? "");
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_PUBLIC_STATS ?? "");
 }
 
 /** Storage seam: gittensory's `Env` is a global ambient interface with `DB` (mirrors src/review/stats.ts). */
@@ -103,18 +103,18 @@ function accuracyPct(
 }
 
 /** The own-ledger side of public stats is intentionally constrained to an explicit allowlist (privacy: publish
- *  only what's deliberately opted in). Deliberately reads GITTENSORY_PUBLIC_STATS_REPOS, NOT
+ *  only what's deliberately opted in). Deliberately reads LOOPOVER_PUBLIC_STATS_REPOS, NOT
  *  LOOPOVER_REVIEW_REPOS (the live per-PR-feature cutover allowlist) -- the two once held the same value, but
  *  diverged once gittensory/awesome-claude/metagraphed moved their LIVE processing to self-host: the cutover
  *  allowlist correctly went empty, while the historical rows this worker already wrote for them remain real and
  *  safe to publish. Empty allowlist => the own-ledger side reports zero (still fails safe), but does NOT
  *  suppress the separately-gated Orb cross-fleet aggregate (see getPublicStats below). */
 export function publicStatsProjects(env: {
-  GITTENSORY_PUBLIC_STATS_REPOS?: string | undefined;
+  LOOPOVER_PUBLIC_STATS_REPOS?: string | undefined;
 }): string[] {
   const seen = new Set<string>();
   const projects: string[] = [];
-  for (const entry of (env.GITTENSORY_PUBLIC_STATS_REPOS ?? "").split(",")) {
+  for (const entry of (env.LOOPOVER_PUBLIC_STATS_REPOS ?? "").split(",")) {
     const project = entry.trim().toLowerCase();
     if (!project || seen.has(project)) continue;
     seen.add(project);

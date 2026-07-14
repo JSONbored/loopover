@@ -165,7 +165,7 @@ export type JobMessage =
       // Cross-repo maintainer recap digest (#1963, #2248): folds gate-precision + outcome-calibration across
       // every scanned repo into ONE RecapReport (buildMaintainerRecap, #2239) and delivers it to Discord --
       // distinct from "generate-review-recap" above, which is single-repo. No `repoFullName`: this is always
-      // a global job, enqueued by the cron on a configurable daily/weekly cadence (GITTENSORY_RECAP_CADENCE).
+      // a global job, enqueued by the cron on a configurable daily/weekly cadence (LOOPOVER_RECAP_CADENCE).
       type: "generate-maintainer-recap";
       requestedBy: "schedule" | "api" | "test";
       windowDays?: number;
@@ -205,7 +205,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Self-heal (flag-gated by GITTENSORY_SWEEP_WATCHDOG). Scan the SAME acting-autonomy repo set the
+      // Self-heal (flag-gated by LOOPOVER_SWEEP_WATCHDOG). Scan the SAME acting-autonomy repo set the
       // scheduled regate sweep covers for a stalled per-repo sweep (open PRs present, but none regated within
       // the staleness window) — emit a structured `sweep_liveness_stale` log AND re-enqueue a targeted
       // `agent-regate-sweep` for just that repo. Enqueued hourly by the cron ONLY when the flag is ON
@@ -214,7 +214,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Self-heal (flag-gated by GITTENSORY_PR_RECONCILIATION). List-diff GitHub's open PR numbers against the
+      // Self-heal (flag-gated by LOOPOVER_PR_RECONCILIATION). List-diff GitHub's open PR numbers against the
       // local table for every acting-autonomy repo — a much tighter cadence than backfillRegisteredRepositories's
       // 6-hour freshness window — and catch up (fetch + upsert + regate) any PR number GitHub has that the local
       // table doesn't (a silently-lost "opened" webhook). Enqueued on a short interval ONLY when the flag is ON
@@ -1160,7 +1160,7 @@ export type RepositorySettings = {
    *  Dependabot -- settings/agent-actions.ts's PROTECTED_AUTOCLOSE_AUTHORS): skip AI review, gate evaluation,
    *  and public-surface publish entirely for a PR/event genuinely triggered by one of these -- not just
    *  suppress output like {@link "./review-eligibility".ignoreAuthors}. `"inherit"` (the DB default) defers
-   *  to the `GITTENSORY_SKIP_AUTOMATION_BOT_PRS` global default (itself default-ON, unlike most feature
+   *  to the `LOOPOVER_SKIP_AUTOMATION_BOT_PRS` global default (itself default-ON, unlike most feature
    *  flags -- see settings/automation-bot-skip.ts's own doc comment for why); `"off"`/`"enabled"` fully
    *  override the global default in either direction for this repo. Always populated by the DB layer;
    *  optional so existing settings fixtures/callers need not be touched. */

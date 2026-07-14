@@ -68,7 +68,7 @@ if [ "$1" = "compose" ]; then
 fi
 
 if [ "$1" = "inspect" ]; then
-  if grep -q '^GITTENSORY_IMAGE=' "$SELFHOST_ENV_FILE" 2>/dev/null; then
+  if grep -q '^LOOPOVER_IMAGE=' "$SELFHOST_ENV_FILE" 2>/dev/null; then
     printf '%s\\n' persisted-before-health >> "$DOCKER_CALLS"
   else
     printf '%s\\n' not-persisted-before-health >> "$DOCKER_CALLS"
@@ -129,19 +129,19 @@ describe("self-host image deploy script", () => {
     {
       name: "CLI argument",
       args: ["ghcr.io/jsonbored/gittensory-selfhost:cli"],
-      env: { GITTENSORY_IMAGE: "ghcr.io/jsonbored/gittensory-selfhost:env" },
-      envFile: "GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
+      env: { LOOPOVER_IMAGE: "ghcr.io/jsonbored/gittensory-selfhost:env" },
+      envFile: "LOOPOVER_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
       expected: "ghcr.io/jsonbored/gittensory-selfhost:cli",
     },
     {
       name: "environment variable",
-      env: { GITTENSORY_IMAGE: "ghcr.io/jsonbored/gittensory-selfhost:env" },
-      envFile: "GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
+      env: { LOOPOVER_IMAGE: "ghcr.io/jsonbored/gittensory-selfhost:env" },
+      envFile: "LOOPOVER_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
       expected: "ghcr.io/jsonbored/gittensory-selfhost:env",
     },
     {
       name: ".env value",
-      envFile: "GITTENSORY_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
+      envFile: "LOOPOVER_IMAGE=ghcr.io/jsonbored/gittensory-selfhost:file\n",
       expected: "ghcr.io/jsonbored/gittensory-selfhost:file",
     },
     {
@@ -156,7 +156,7 @@ describe("self-host image deploy script", () => {
     const { harness, result } = runHarness(options);
     try {
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(harness.envPath, "utf8")).toContain(`GITTENSORY_IMAGE=${expected}`);
+      expect(readFileSync(harness.envPath, "utf8")).toContain(`LOOPOVER_IMAGE=${expected}`);
       expect(harness.readImages()).toContain(`image: "${expected}"`);
       // REGRESSION: without this reset, an operator's own docker-compose.override.yml build: block for this
       // service silently wins over the pulled image at `up --no-build` time (found deploying live).
@@ -169,7 +169,7 @@ describe("self-host image deploy script", () => {
   });
 
   // REGRESSION (#4777): DEFAULT_IMAGE moved to the new "loopover-selfhost" name, but a self-hoster who
-  // explicitly pinned the pre-rename "gittensory-selfhost" image (as a CLI argument, GITTENSORY_IMAGE env
+  // explicitly pinned the pre-rename "gittensory-selfhost" image (as a CLI argument, LOOPOVER_IMAGE env
   // var, or .env value) must keep resolving to that exact string, unmodified -- GHCR keeps already-published
   // tags/digests resolving forever with no server-side alias needed, and this script must not rewrite an
   // operator's existing pin either way.
@@ -177,7 +177,7 @@ describe("self-host image deploy script", () => {
     const { harness, result } = runHarness({ args: [legacyPinnedImage] });
     try {
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(harness.envPath, "utf8")).toContain(`GITTENSORY_IMAGE=${legacyPinnedImage}`);
+      expect(readFileSync(harness.envPath, "utf8")).toContain(`LOOPOVER_IMAGE=${legacyPinnedImage}`);
       expect(harness.readImages()).toContain(`image: "${legacyPinnedImage}"`);
     } finally {
       harness.cleanup();
@@ -192,7 +192,7 @@ describe("self-host image deploy script", () => {
       const calls = harness.readCalls().trim().split("\n");
       expect(calls).toContain("not-persisted-before-health");
       expect(calls).not.toContain("persisted-before-health");
-      expect(readFileSync(harness.envPath, "utf8")).toContain(`GITTENSORY_IMAGE=${image}`);
+      expect(readFileSync(harness.envPath, "utf8")).toContain(`LOOPOVER_IMAGE=${image}`);
     } finally {
       harness.cleanup();
     }

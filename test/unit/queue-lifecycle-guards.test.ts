@@ -3675,7 +3675,7 @@ describe("installation app_id capture + dual-app webhook filter (#selfhost-app-i
     });
 
     it("REGRESSION (#2537, gate-flagged): reconcileLiveDuplicateSiblings must NOT serve a warm durable PR-state cache row — a cached 'open' read up to PR_STATE_CACHE_MAX_AGE_MS stale after a missed closed webhook would keep an already-closed sibling eligible as the duplicate-cluster winner, wrongly closing the CURRENT PR as the loser", async () => {
-      const env = createTestEnv({ GITTENSORY_DUPLICATE_WINNER: "true" });
+      const env = createTestEnv({ LOOPOVER_DUPLICATE_WINNER: "true" });
       // Seed a WARM cache row claiming the sibling is still open, but the live GitHub state below says CLOSED —
       // proving the cache is never consulted: only a genuine live read can discover this and correctly reconcile it.
       await seedWarmPrStateCache(env, "owner/repo", 5);
@@ -4830,7 +4830,7 @@ describe("automation-bot-skip: end-to-end webhook + re-entry wiring (#automation
   });
 
   it("a per-repo 'enabled' override skips a genuine bot-triggered PR even when the global default is OFF", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "false" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "false" });
     const calls = await fetchCallTracker();
     await upsertRepositorySettings(env, { repoFullName: "owner/bot-skip-repo", skipAutomationBotAuthors: "enabled" });
 

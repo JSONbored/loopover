@@ -18,8 +18,8 @@ export function run(args: string[], env: Record<string, string> = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
-      GITTENSORY_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+      LOOPOVER_API_TIMEOUT_MS: "1000",
+      LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -35,8 +35,8 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
         encoding: "utf8",
         env: {
           ...process.env,
-          GITTENSORY_API_TIMEOUT_MS: "1000",
-          GITTENSORY_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+          LOOPOVER_API_TIMEOUT_MS: "1000",
+          LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
           ...env,
         },
       },
@@ -74,9 +74,9 @@ export async function capturePacketValidation(tempDir: string, validationArgs: s
   await runAsync(
     ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD", ...validationArgs, "--json"],
     {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     },
   );
   return (requests[0] as { validation: Array<{ command: string; status: string; exitCode?: number; summary?: string }> }).validation;

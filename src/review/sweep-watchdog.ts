@@ -1,4 +1,4 @@
-// Self-heal (flag-gated by GITTENSORY_SWEEP_WATCHDOG). The scheduled regate sweep (fanOutAgentRegateSweepJobs /
+// Self-heal (flag-gated by LOOPOVER_SWEEP_WATCHDOG). The scheduled regate sweep (fanOutAgentRegateSweepJobs /
 // sweepRepoRegate, src/queue/processors.ts) advances every acting-autonomy repo's `last_regated_at` marker on
 // every successful sweep tick. When the sweep stops advancing that marker for a repo — a stalled cron, a wedged
 // per-repo failure that keeps recurring, a rate-limit floor that never clears — nothing in the system previously
@@ -21,8 +21,8 @@ import { isConvergenceRepoAllowed, listConvergenceRepos } from "./cutover-gate";
 /** True when the sweep-liveness watchdog is enabled. Flag-OFF (default) → the caller never invokes it, so the
  *  cron enqueues no watchdog job and the queue processor no-ops on a stale in-flight one (defense-in-depth,
  *  mirrors isOpsEnabled). */
-export function isSweepWatchdogEnabled(env: { GITTENSORY_SWEEP_WATCHDOG?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_SWEEP_WATCHDOG ?? "");
+export function isSweepWatchdogEnabled(env: { LOOPOVER_SWEEP_WATCHDOG?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_SWEEP_WATCHDOG ?? "");
 }
 
 /** A repo's sweep is stale when it has open PRs to regate but its last-regated marker either never advanced or

@@ -36,8 +36,8 @@
     // hyperparameters (registry scoring.time_decay overlaid on the upstream defaults). A fresh PR is
     // unaffected (decay 1.0); only aged-PR projections decay. Owner-reviewed; this is the go-live switch.
     "SCORING_TIME_DECAY_ENABLED": "true",
-    "GITTENSORY_AUTO_FILE_DRIFT_ISSUES": "false",
-    "GITTENSORY_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
+    "LOOPOVER_AUTO_FILE_DRIFT_ISSUES": "false",
+    "LOOPOVER_DRIFT_ISSUE_REPO": "JSONbored/gittensory",
     // LoopOver rebrand (issue #4765, domain flip): loopover.ai is now the canonical site origin. The old
     // gittensory.aethereal.dev domain stays live (still resolves, still valid as a post-OAuth-login redirect
     // target via PUBLIC_SITE_ORIGIN_ALIASES below) -- no redirect rule, no sunset date, both domains keep
@@ -107,13 +107,13 @@
     // targeted `agent-regate-sweep` re-enqueue for just that repo, so a stalled sweep recovers on its own instead
     // of requiring a human to notice and manually trigger it. Default OFF — flag-OFF the cron enqueues no
     // watchdog job, byte-identical to today.
-    "GITTENSORY_SWEEP_WATCHDOG": "false",
+    "LOOPOVER_SWEEP_WATCHDOG": "false",
     // Self-heal: a short-interval cron list-diffs GitHub's open PR numbers against the local table for every
     // acting-autonomy repo, and catches up (fetch + upsert + regate) any PR number GitHub has that the local
     // table doesn't — a silently-lost "opened" webhook, caught within minutes instead of the 6-hour
     // backfillRegisteredRepositories freshness window. Default OFF — flag-OFF the cron enqueues no
     // reconciliation job, byte-identical to today.
-    "GITTENSORY_PR_RECONCILIATION": "false",
+    "LOOPOVER_PR_RECONCILIATION": "false",
     // Convergence (RAG retrieval): at review time, query the codebase vector index for code/docs semantically
     // related to the PR's changed files and append a RELEVANT EXISTING CODE / DOCS section to the reviewer
     // prompt — additive reference context (callers, related modules, conventions), exactly like grounding.
@@ -162,12 +162,12 @@
     // Default OFF — flag-OFF (or every repo unset), refresh-registry is never enqueued (see src/index.ts),
     // registry/sync.ts persists nothing for this instance, and a self-host box makes zero outbound contact
     // with the gittensor subnet registry. See src/review/gittensor-wire.ts.
-    "GITTENSORY_EXPERIMENTAL_GITTENSOR": "false",
+    "LOOPOVER_EXPERIMENTAL_GITTENSOR": "false",
     // Maintainer recap digest (#1963, #2248): deliver a cross-repo RecapReport -- gittensory's own gate-
     // precision + outcome-calibration data folded across every scanned repo -- to Discord on a cron cadence
-    // (GITTENSORY_RECAP_CADENCE=daily|weekly, default weekly; GITTENSORY_RECAP_HOUR / GITTENSORY_RECAP_DAY
+    // (LOOPOVER_RECAP_CADENCE=daily|weekly, default weekly; LOOPOVER_RECAP_HOUR / LOOPOVER_RECAP_DAY
     // pick when). Default OFF — flag-OFF the cron enqueues no recap job, byte-identical to today.
-    "GITTENSORY_MAINTAINER_RECAP": "false",
+    "LOOPOVER_MAINTAINER_RECAP": "false",
     // #1941: route the live CI aggregate (the gate's check/status read) through ONE GraphQL statusCheckRollup query
     // instead of the paginated /check-runs + /status + /check-suites REST reads — moving that hot path onto the
     // SEPARATE GraphQL rate-limit bucket. Default OFF: the gate uses the proven REST aggregate, byte-identical. When
@@ -200,12 +200,12 @@
     // shows PRs reviewed / filtered-without-merge % / maintainer time saved / decision accuracy for the
     // reviewed repos. Flag-OFF the endpoint 404s and the homepage band renders nothing (counts only, no PR
     // content/authors/scores/rewards). See src/review/public-stats.ts.
-    "GITTENSORY_PUBLIC_STATS": "true",
+    "LOOPOVER_PUBLIC_STATS": "true",
     // Proof of Power (#1059): the own-ledger allowlist for the public stats counter (DELIBERATELY separate from
     // LOOPOVER_REVIEW_REPOS above, which went empty when these repos' LIVE processing moved to self-host — see
     // src/env.d.ts for the full split rationale). These three repos' historical audit_events rows remain real and
     // safe to publish even though the cutover allowlist above no longer lists them.
-    "GITTENSORY_PUBLIC_STATS_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
+    "LOOPOVER_PUBLIC_STATS_REPOS": "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
     // Website chrome repo stats are public and proxied through the server-side GitHub token, so require
     // an explicit narrow allowlist instead of letting unset config proxy arbitrary owner/repo pairs.
     "PUBLIC_REPO_STATS_ALLOWLIST": "JSONbored/gittensory",
@@ -216,7 +216,7 @@
     // dry-run audit found the flag-OFF behavior closing EVERY sibling of a duplicate cluster (e.g. #1648 AND
     // #1695 both closed) — the opposite of "spare one good PR". With it ON, the earliest open PR in a cluster
     // is judged on its merits and only the true duplicates close.
-    "GITTENSORY_DUPLICATE_WINNER": "true",
+    "LOOPOVER_DUPLICATE_WINNER": "true",
     // Open-PR file-path collision (#2653): enrich changedFiles on the reviewed PR and its open siblings from
     // the pull_request_files cache before building the collision report, so two independently-open PRs on the
     // same file get flagged the way two title-similar PRs already are. ENABLED: a repo-wide shadow test against
@@ -225,13 +225,13 @@
     // fixed by requiring an actual shared, non-lockfile file path before a path-driven match clusters (see the
     // sharesMeaningfulFile guard in buildCollisionReport). Re-validated post-fix: every remaining flagged pair is
     // backed by a real shared file.
-    "GITTENSORY_OPEN_PR_FILE_COLLISION": "true",
+    "LOOPOVER_OPEN_PR_FILE_COLLISION": "true",
     // Waste elimination for known automation authors (settings/automation-bot-skip.ts): skip AI review, gate
     // evaluation, and public-surface publish entirely for a PR/event genuinely triggered by github-actions[bot]
     // (release-please), Renovate, or Dependabot. Default-ON, unlike most flags above -- see that module's own
     // doc comment for why. A repo can override via its own repository_settings.skip_automation_bot_authors
     // column ("off"/"enabled"), independent of this global default.
-    "GITTENSORY_SKIP_AUTOMATION_BOT_PRS": "true",
+    "LOOPOVER_SKIP_AUTOMATION_BOT_PRS": "true",
   },
   "routes": [
     {

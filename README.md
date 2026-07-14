@@ -31,20 +31,20 @@ See [Privacy and security](https://gittensory.aethereal.dev/docs/privacy-securit
 
 ## Review Capabilities
 
-LoopOver CI and LoopOver review score, gate, and comment on pull requests. The review algorithm is open-source; operators tune behavior through per-repo settings and the `GITTENSORY_REVIEW_*` feature flags, every one of which ships **OFF** and is opt-in per repo.
+LoopOver CI and LoopOver review score, gate, and comment on pull requests. The review algorithm is open-source; operators tune behavior through per-repo settings and the `LOOPOVER_REVIEW_*` feature flags, every one of which ships **OFF** and is opt-in per repo.
 
 - **Safety scan** — defangs untrusted PR title/body/diff (prompt-injection neutralization) before the AI reviewer reads them, and scans the diff for leaked secrets, surfacing a `secret_leak` blocker.
 - **CI + full-file grounding** — grounds the AI reviewer with the PR's finished CI status and the full post-change content of the changed files, so claims are verified against reality instead of predicted.
 - **Codebase RAG** — retrieval-augmented context that queries the codebase vector index for related callers, modules, and conventions and appends them to the reviewer prompt (additive only; inert until an index exists).
 - **Submitter-reputation gating** — an internal-only spend control that downgrades new / burst / low-reputation submitters to a deterministic-only review, never surfaced on any public comment, label, or check.
 - **Unified review comment** — renders the public PR feedback as one in-place comment instead of multiple panels. With `.loopover.yml`'s `review.changed_files_summary` also on (off by default), it gains a deterministic, no-AI "Changed files" collapsible: one row per file category (source/test/docs/config/generated), with file counts and +/- totals.
-- **Per-repo activation** — capabilities roll forward (and back) one flag and one repo at a time via the `GITTENSORY_REVIEW_REPOS` allowlist.
+- **Per-repo activation** — capabilities roll forward (and back) one flag and one repo at a time via the `LOOPOVER_REVIEW_REPOS` allowlist.
 
 **Check-run and comment surfaces, disambiguated** (a common point of confusion — these are three independent, separately-configured things, not layers of the same feature):
 
 - **`LoopOver Orb Review Agent`** (`gate.*` / `settings.reviewCheckMode`, off by default) — the authoritative GitHub Check Run carrying the gate's pass/fail verdict. This is the one worth making a required status check.
 - **`LoopOver Context`** (`settings.checkRunMode` / `settings.checkRunDetailLevel`, off by default) — a separate, purely advisory Check Run. At its default `checkRunDetailLevel: minimal` it publishes no findings at all; even at `standard`/`deep` it only re-renders content already shown elsewhere. Never make this one required.
-- **Inline review comments** (`GITTENSORY_REVIEW_INLINE_COMMENTS` + `.loopover.yml`'s `review.inline_comments`, off by both by default) — real, reply-able line-anchored PR review comment threads (CodeRabbit-style). This is the ONLY one of the three that posts an interactive per-line thread; the two check runs above never do. With `.loopover.yml`'s `review.suggestions` also on, a precise line-anchored fix is additionally rendered as a one-click, committable GitHub suggested-change block. With `review.finding_categories` also on (off by default), each finding is additionally tagged with a category — security/correctness/performance/maintainability/tests/style — in both the inline comment label and the unified comment's "Finding categories" collapsible; a deterministic path/keyword fallback covers whatever the model omits.
+- **Inline review comments** (`LOOPOVER_REVIEW_INLINE_COMMENTS` + `.loopover.yml`'s `review.inline_comments`, off by both by default) — real, reply-able line-anchored PR review comment threads (CodeRabbit-style). This is the ONLY one of the three that posts an interactive per-line thread; the two check runs above never do. With `.loopover.yml`'s `review.suggestions` also on, a precise line-anchored fix is additionally rendered as a one-click, committable GitHub suggested-change block. With `review.finding_categories` also on (off by default), each finding is additionally tagged with a category — security/correctness/performance/maintainability/tests/style — in both the inline comment label and the unified comment's "Finding categories" collapsible; a deterministic path/keyword fallback covers whatever the model omits.
 
 See [Tuning your reviews](https://gittensory.aethereal.dev/docs/tuning) for the full flag, setting, and `.loopover.yml` reference.
 

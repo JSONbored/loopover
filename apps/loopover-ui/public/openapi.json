@@ -13955,7 +13955,7 @@
             }
           },
           "404": {
-            "description": "Public stats are disabled (GITTENSORY_PUBLIC_STATS off)"
+            "description": "Public stats are disabled (LOOPOVER_PUBLIC_STATS off)"
           },
           "503": {
             "description": "Public stats are temporarily unavailable"

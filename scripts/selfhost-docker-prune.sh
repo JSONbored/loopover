@@ -30,7 +30,7 @@
 #   sh scripts/selfhost-docker-prune.sh --dry-run     # preview only: report disk usage, delete nothing
 set -eu
 
-RETAIN_HOURS=${GITTENSORY_DOCKER_PRUNE_RETAIN_HOURS:-168} # 7 days
+RETAIN_HOURS=${LOOPOVER_DOCKER_PRUNE_RETAIN_HOURS:-168} # 7 days
 
 DRY_RUN=0
 for arg in "$@"; do

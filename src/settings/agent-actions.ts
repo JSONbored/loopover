@@ -145,7 +145,7 @@ export type PlannedAgentAction = {
   closeRequiresDuplicateStillOpen?: boolean;
   // The specific sibling PR number this close named as the duplicate-cluster winner (dupWinnerLinkedDuplicateWinnerNumber),
   // persisted so the recheck above can re-verify THAT PR specifically instead of re-running the full election.
-  // Absent when the election named no specific winner (GITTENSORY_DUPLICATE_WINNER off, or an ambiguous
+  // Absent when the election named no specific winner (LOOPOVER_DUPLICATE_WINNER off, or an ambiguous
   // election) even though closeRequiresDuplicateStillOpen is true -- the recheck has no cheap single-PR signal
   // in that case and is a no-op, matching the legacy (pre-dup-winner) behavior for that configuration.
   duplicateWinnerPrNumber?: number;

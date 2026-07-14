@@ -20,7 +20,7 @@ function stubEnv(handler: (sql: string, args: unknown[]) => Row[]): Env {
   });
   return {
     DB: { prepare: (sql: string) => make(sql, []) },
-    GITTENSORY_PUBLIC_STATS_REPOS:
+    LOOPOVER_PUBLIC_STATS_REPOS:
       "JSONbored/gittensory,JSONbored/awesome-claude,JSONbored/metagraphed",
   } as unknown as Env;
 }
@@ -56,9 +56,9 @@ function isReversal(sql: string): boolean {
 describe("isPublicStatsEnabled", () => {
   it("is truthy only for 1/true/yes/on (case-insensitive)", () => {
     for (const v of ["1", "true", "TRUE", "yes", "on"])
-      expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(true);
+      expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: v })).toBe(true);
     for (const v of ["", "0", "false", "off", "no", undefined])
-      expect(isPublicStatsEnabled({ GITTENSORY_PUBLIC_STATS: v })).toBe(false);
+      expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: v })).toBe(false);
   });
 });
 
@@ -154,7 +154,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   // #2070: mixed ledgers must COALESCE missing per-PR estimates to MINUTES_SAVED_PER_PR, not AVG-skip them.
   it("sums mixed per-PR effort with fallback when one published PR lacks reviewEffortMinutes", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const db = env.DB;
 
     await db
@@ -329,7 +329,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 
   it("excludes dry-run terminal actions from live reversal counts", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const db = env.DB;
 
     await db
@@ -392,7 +392,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   // #1955/#2070: end-to-end over REAL D1/SQLite — published reviewEffortMinutes round-trip through
   // json_extract/SUM(COALESCE(...)) into minutesSaved.
   it("averages a real reviewEffortMinutes value out of metadata_json via json_extract (real D1)", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const db = env.DB;
 
     await db
@@ -443,7 +443,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   });
 
   it("deduplicates repeated public-surface publishes before averaging reviewEffortMinutes (real D1)", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const db = env.DB;
 
     await db
@@ -515,7 +515,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
           throw new Error("public stats must not query an unscoped own-ledger");
         },
       },
-      GITTENSORY_PUBLIC_STATS_REPOS: "",
+      LOOPOVER_PUBLIC_STATS_REPOS: "",
     } as unknown as Env;
     const out = await getPublicStats(env, NOW);
     expect(out.totals.handled).toBe(0);
@@ -536,7 +536,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
           throw new Error("public stats must not query an unscoped own-ledger");
         },
       },
-      GITTENSORY_PUBLIC_STATS_REPOS: "",
+      LOOPOVER_PUBLIC_STATS_REPOS: "",
     } as unknown as Env;
     const out = await getPublicStats(env, NOW);
     expect(out.totals.merged).toBe(12);

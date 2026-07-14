@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkManifestDrift } from "../../scripts/check-manifest-drift.mjs";
-import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML } from "../../src/config/gittensory-repo-focus-manifest";
+import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../../src/config/gittensory-repo-focus-manifest";
 
 // The script imports src/config/gittensory-repo-focus-manifest.ts (a .ts module), so -- like
 // check-schema-drift.mjs, check-migrations.mjs, and check-openapi-settings-parity.mjs -- it must run via
@@ -51,7 +51,7 @@ describe("check-manifest-drift script", () => {
 
     expect(result.failures).toHaveLength(1);
     expect(result.failures[0]).toContain(".loopover.yml");
-    expect(result.failures[0]).toContain("GITTENSORY_REPO_FOCUS_MANIFEST_YAML");
+    expect(result.failures[0]).toContain("LOOPOVER_REPO_FOCUS_MANIFEST_YAML");
     expect(result.failures[0]).toContain("linkedIssuePolicy");
   });
 
@@ -70,7 +70,7 @@ describe("check-manifest-drift script", () => {
   });
 
   // Most important regression test in this file: proves the REAL current repo state (root .loopover.yml
-  // vs. the real bundled GITTENSORY_REPO_FOCUS_MANIFEST_YAML constant) agrees, using the real filesystem
+  // vs. the real bundled LOOPOVER_REPO_FOCUS_MANIFEST_YAML constant) agrees, using the real filesystem
   // reader against the real repo root. If this fails, the two have genuinely drifted apart -- either way,
   // the check must not be weakened to make this test pass.
   it("the real repo's root .loopover.yml and the bundled fallback agree (regression guard)", () => {
@@ -83,13 +83,13 @@ describe("check-manifest-drift script", () => {
     // A structural guard on the constant itself: an accidental empty-string or truncated bundle would
     // otherwise parse to `undefined`/{} and could pass a deep-equal check against an equally-broken root
     // read, so assert the constant looks like real manifest YAML independent of the comparison above.
-    expect(GITTENSORY_REPO_FOCUS_MANIFEST_YAML.length).toBeGreaterThan(100);
-    expect(GITTENSORY_REPO_FOCUS_MANIFEST_YAML).toContain("source: repo_file");
+    expect(LOOPOVER_REPO_FOCUS_MANIFEST_YAML.length).toBeGreaterThan(100);
+    expect(LOOPOVER_REPO_FOCUS_MANIFEST_YAML).toContain("source: repo_file");
   });
 
   it("prints a clean summary and exits 0 for the real repo state when run as a subprocess", () => {
     const output = execFileSync(TSX_BIN, ["scripts/check-manifest-drift.mjs"], { encoding: "utf8" });
 
-    expect(output).toMatch(/Manifest-drift check ok: \.loopover\.yml and GITTENSORY_REPO_FOCUS_MANIFEST_YAML agree\./);
+    expect(output).toMatch(/Manifest-drift check ok: \.loopover\.yml and LOOPOVER_REPO_FOCUS_MANIFEST_YAML agree\./);
   });
 });

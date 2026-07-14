@@ -1456,7 +1456,7 @@ export async function sweepRepoRegate(
   const verdicts: Record<string, string> = {};
   const flaggedPulls: number[] = [];
   const sweepInstallationId = repo?.installationId ?? null;
-  const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+  const duplicateWinnerEnabled = env.LOOPOVER_DUPLICATE_WINNER === "true";
   // #selfhost-queue-liveness: priorityPullNumbers (surfaceRepairPriorityPullNumbers, above) are OUTAGE REPAIR --
   // a PR with no current-head Gate check or an unpublished current-head surface -- not routine staleness. A
   // repair candidate's fanned-out job must NOT carry the "regate-sweep:" deliveryId prefix, or
@@ -2789,7 +2789,7 @@ async function runAgentMaintenancePlanAndExecute(
   const approvalsSatisfied =
     autoMaintain.requireApprovals === 0 ||
     (liveReviewDecision ?? pr.reviewDecision) === "APPROVED";
-  const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+  const duplicateWinnerEnabled = env.LOOPOVER_DUPLICATE_WINNER === "true";
   const openDuplicateSiblings = linkedIssueDuplicatePullRequestRecordsForGate(pr, otherOpenPullRequests);
   // AI-review low-confidence guardrail (#4603): resolved PURELY from this pass's own gate evaluation + settings
   // (no extra network/DB call, unlike migrationCollisionHold/unlinkedIssueMatchHold above) -- undefined unless the
@@ -3218,7 +3218,7 @@ export async function reReviewStoredPullRequest(
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-    duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+    duplicateWinnerEnabled: env.LOOPOVER_DUPLICATE_WINNER === "true",
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
   });
@@ -5594,7 +5594,7 @@ async function handlePullRequestWebhookEvent(
     const advisory = buildPullRequestAdvisory(repo, pr, {
       otherOpenPullRequests,
       requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-      duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+      duplicateWinnerEnabled: env.LOOPOVER_DUPLICATE_WINNER === "true",
       confirmedNoOpenLinkedIssue,
       linkedIssueAuthorLogins,
     });
@@ -8208,7 +8208,7 @@ async function maybePublishPrPublicSurface(
     // Scoped to collision/preflight/queue-health inputs only — every OTHER use of repoPullRequests below (e.g. the
     // duplicate-winner adjudication, which is same-linked-issue-based, not path-based) keeps reading the un-enriched array.
     const collisionPullRequests =
-      env.GITTENSORY_OPEN_PR_FILE_COLLISION === "true"
+      env.LOOPOVER_OPEN_PR_FILE_COLLISION === "true"
         ? await enrichOpenPullRequestsWithChangedFiles(env, repoFullName, repoPullRequests)
         : repoPullRequests;
     collisions = buildCollisionReport(
@@ -8251,7 +8251,7 @@ async function maybePublishPrPublicSurface(
       pr,
       otherOpenPullRequests,
     );
-    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    const duplicateWinnerEnabled = env.LOOPOVER_DUPLICATE_WINNER === "true";
     const isDupWinner =
       duplicateWinnerEnabled &&
       isDuplicateClusterWinnerByClaim(pr, linkedDuplicatePrsForGate);
@@ -9740,7 +9740,7 @@ async function maybePublishPrPublicSurface(
     // Duplicate-winner adjudication (#dup-winner): thread the flag into the public panel builders so the
     // winner's hard-duplicate block is suppressed (they recompute the winner from their own open-only sibling
     // list). Flag-OFF (default) ⇒ false ⇒ the panels are byte-identical to today.
-    const duplicateWinnerEnabled = env.GITTENSORY_DUPLICATE_WINNER === "true";
+    const duplicateWinnerEnabled = env.LOOPOVER_DUPLICATE_WINNER === "true";
     // improvementSignal deterministic tier (#4742/#4744): pure/sync, no AI dependency, so it is computed
     // independent of aiReview's own eligibility gates above (a paused repo, non-reviewable author, or
     // aiReviewMode: "off" still gets this tier -- the two tiers are deliberately independent, epic #4737).
@@ -11875,7 +11875,7 @@ export async function buildAuthorizedPrActionAdvisory(
   const advisory = buildPullRequestAdvisory(repo, pr, {
     otherOpenPullRequests,
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
-    duplicateWinnerEnabled: env.GITTENSORY_DUPLICATE_WINNER === "true",
+    duplicateWinnerEnabled: env.LOOPOVER_DUPLICATE_WINNER === "true",
     confirmedNoOpenLinkedIssue,
     linkedIssueAuthorLogins,
   });

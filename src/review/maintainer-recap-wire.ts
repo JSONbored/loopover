@@ -1,4 +1,4 @@
-// Maintainer recap digest scheduling (#1963, #2248; flag GITTENSORY_MAINTAINER_RECAP). The cron-driven trigger
+// Maintainer recap digest scheduling (#1963, #2248; flag LOOPOVER_MAINTAINER_RECAP). The cron-driven trigger
 // for the CROSS-repo RecapReport digest (buildMaintainerRecap, #2239) -- distinct from generate-review-recap's
 // single-repo ReviewRecap job, which is manually-triggerable only (review-recap.ts). Flag-gated and OFF by
 // default, mirroring isOpsEnabled: flag-OFF, the cron enqueues no job and this module's exports are never
@@ -21,14 +21,14 @@ export type MaintainerRecapManifestOverride = { present: boolean; enabled: boole
 
 /** True when the cross-repo maintainer recap digest is enabled. Config-as-code (#2250): a present
  *  `maintainerRecap` manifest block on the gittensory self-repo wins outright; otherwise falls back to the
- *  GITTENSORY_MAINTAINER_RECAP env flag (default OFF -- the cron enqueues no job and runMaintainerRecapJob is
+ *  LOOPOVER_MAINTAINER_RECAP env flag (default OFF -- the cron enqueues no job and runMaintainerRecapJob is
  *  never invoked). Truthy env convention matches isOpsEnabled. */
 export function isRecapEnabled(
-  env: { GITTENSORY_MAINTAINER_RECAP?: string | undefined },
+  env: { LOOPOVER_MAINTAINER_RECAP?: string | undefined },
   manifestOverride?: MaintainerRecapManifestOverride | undefined,
 ): boolean {
   if (manifestOverride?.present) return manifestOverride.enabled;
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_MAINTAINER_RECAP ?? "");
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_MAINTAINER_RECAP ?? "");
 }
 
 export type RecapCadence = "daily" | "weekly";
@@ -64,10 +64,10 @@ function normalizeRecapDayOfWeek(value: string | undefined): number {
  *  Shared by shouldFireMaintainerRecap (gating) and runMaintainerRecapJob (audit-event metadata only, #2251)
  *  so there is exactly one place that resolves "what cadence is configured right now". */
 function resolveRecapCadence(
-  env: { GITTENSORY_RECAP_CADENCE?: string | undefined },
+  env: { LOOPOVER_RECAP_CADENCE?: string | undefined },
   manifestOverride?: MaintainerRecapManifestOverride | undefined,
 ): RecapCadence {
-  return manifestOverride?.present ? manifestOverride.cadence : normalizeRecapCadence(env.GITTENSORY_RECAP_CADENCE);
+  return manifestOverride?.present ? manifestOverride.cadence : normalizeRecapCadence(env.LOOPOVER_RECAP_CADENCE);
 }
 
 /**
@@ -76,23 +76,23 @@ function resolveRecapCadence(
  * once per period. Caller passes the SAME `hour` / `dayOfWeek` enqueueScheduledJobs already derived from
  * `scheduledAt` (src/index.ts) -- no new Date parsing here. The hour/day-of-week knobs are env-only (not
  * manifest-overridable); ONLY the cadence itself (daily vs weekly) honors a present manifest override (#2250),
- * mirroring isRecapEnabled. An invalid GITTENSORY_RECAP_CADENCE value falls back to the "weekly" default
+ * mirroring isRecapEnabled. An invalid LOOPOVER_RECAP_CADENCE value falls back to the "weekly" default
  * rather than silently firing daily, so a typo'd env var can't quietly spam the digest more often than
  * intended.
  */
 export function shouldFireMaintainerRecap(
   env: {
-    GITTENSORY_RECAP_CADENCE?: string | undefined;
-    GITTENSORY_RECAP_HOUR?: string | undefined;
-    GITTENSORY_RECAP_DAY?: string | undefined;
+    LOOPOVER_RECAP_CADENCE?: string | undefined;
+    LOOPOVER_RECAP_HOUR?: string | undefined;
+    LOOPOVER_RECAP_DAY?: string | undefined;
   },
   hour: number,
   dayOfWeek: number,
   manifestOverride?: MaintainerRecapManifestOverride | undefined,
 ): boolean {
-  if (hour !== normalizeRecapHour(env.GITTENSORY_RECAP_HOUR)) return false;
+  if (hour !== normalizeRecapHour(env.LOOPOVER_RECAP_HOUR)) return false;
   const cadence = resolveRecapCadence(env, manifestOverride);
-  return cadence === "daily" || dayOfWeek === normalizeRecapDayOfWeek(env.GITTENSORY_RECAP_DAY);
+  return cadence === "daily" || dayOfWeek === normalizeRecapDayOfWeek(env.LOOPOVER_RECAP_DAY);
 }
 
 /** The repos this recap scans. Mirrors ops-wire.ts's opsScanRepos / pr-reconciliation.ts's watchedRepos: prefer

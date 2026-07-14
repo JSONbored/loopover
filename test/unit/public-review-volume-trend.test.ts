@@ -82,7 +82,7 @@ describe("buildPublicReviewVolumeTrend", () => {
 
 describe("loadPublicReviewVolumeTrend — end-to-end over the real live tables", () => {
   it("credits a PR's week by its FIRST-PUBLISHED day, not its (possibly later) merge day, and folds in the Orb fleet", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
     const laterInWeekIso = new Date(Date.parse(thisWeekIso) + 86_400_000).toISOString();
@@ -133,7 +133,7 @@ describe("loadPublicReviewVolumeTrend — end-to-end over the real live tables",
     // trend's own window, so the PR must be excluded entirely, not misattributed to the recent event's week.
     // A naive single-pass query that filtered raw events by `created_at >= sinceIso` BEFORE taking MIN() would
     // get this wrong: it would see only the recent event and wrongly count the PR in the current week.
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/gittensory" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
     // 20 weeks ago: well outside the 8-week trend window, but still a real, storable timestamp.
@@ -155,8 +155,8 @@ describe("loadPublicReviewVolumeTrend — end-to-end over the real live tables",
     expect(trend.every((week) => week.reviewed === 0)).toBe(true);
   });
 
-  it("still reports the Orb-fleet side when GITTENSORY_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS_REPOS: "" });
+  it("still reports the Orb-fleet side when LOOPOVER_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
     const thisMonday = isoWeekStart(NOW);
     const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
     await env.DB.prepare("INSERT INTO orb_github_installations (installation_id, registered) VALUES (?, 1)").bind(9102).run();

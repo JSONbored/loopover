@@ -6,8 +6,8 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("isSweepWatchdogEnabled — default OFF, truthy convention", () => {
   it("matches the codebase's shared truthy-string convention", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSweepWatchdogEnabled({ GITTENSORY_SWEEP_WATCHDOG: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSweepWatchdogEnabled({ GITTENSORY_SWEEP_WATCHDOG: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isSweepWatchdogEnabled({ LOOPOVER_SWEEP_WATCHDOG: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isSweepWatchdogEnabled({ LOOPOVER_SWEEP_WATCHDOG: on })).toBe(true);
   });
 });
 

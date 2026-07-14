@@ -8,7 +8,7 @@
 // is already durable, so a live weekly re-bucketing of the SAME rows can recompute any historical week correctly
 // on every request -- no cron-miss gap risk, and no second copy of the number to keep in sync.
 //
-// PUBLIC-SAFE SCOPE: only events whose target_key maps to GITTENSORY_PUBLIC_STATS_REPOS are included. Most
+// PUBLIC-SAFE SCOPE: only events whose target_key maps to LOOPOVER_PUBLIC_STATS_REPOS are included. Most
 // cache keys are either a bare repoFullName or repoFullName#prNumber; anything outside that allowlist is treated
 // as private operational telemetry and deliberately excluded from this unauthenticated payload.
 //

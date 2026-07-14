@@ -226,15 +226,15 @@ function packFromRepo(
 describe("resolveSelfDogfoodRepoFullName", () => {
   it("defaults to the LoopOver repo when drift issue repo is unset", () => {
     expect(resolveSelfDogfoodRepoFullName({})).toBe(DEFAULT_SELF_DOGFOOD_REPO);
-    expect(resolveSelfDogfoodRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "" })).toBe(DEFAULT_SELF_DOGFOOD_REPO);
+    expect(resolveSelfDogfoodRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "" })).toBe(DEFAULT_SELF_DOGFOOD_REPO);
   });
 
   it("uses the configured drift issue repo when valid", () => {
-    expect(resolveSelfDogfoodRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
+    expect(resolveSelfDogfoodRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
   });
 
   it("falls back when drift issue repo is missing a slash", () => {
-    expect(resolveSelfDogfoodRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "invalid" })).toBe(DEFAULT_SELF_DOGFOOD_REPO);
+    expect(resolveSelfDogfoodRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "invalid" })).toBe(DEFAULT_SELF_DOGFOOD_REPO);
   });
 });
 

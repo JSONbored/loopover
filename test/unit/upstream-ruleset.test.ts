@@ -844,7 +844,7 @@ describe("upstream ruleset drift tracking", () => {
 
   it("REGRESSION (#audit-rawfetch-pause): the global agent brake / freeze halts drift-issue filing (raw PAT writes outside the chokepoint)", async () => {
     // DB freeze arm: enabled + token + a real report, but a global freeze must skip ALL GitHub writes.
-    const frozenEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const frozenEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(frozenEnv, driftReport("frozen-fingerprint"));
     await repositories.setGlobalAgentFrozen(frozenEnv, true);
     const calls: string[] = [];
@@ -856,26 +856,26 @@ describe("upstream ruleset drift tracking", () => {
     expect(calls.some((c) => c.startsWith("POST") || c.startsWith("PATCH"))).toBe(false); // no GitHub issue write reached the network
 
     // env brake arm: AGENT_ACTIONS_PAUSED short-circuits before the DB freeze read.
-    const pausedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
+    const pausedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
     await upsertUpstreamDriftReport(pausedEnv, driftReport("paused-fingerprint"));
     await expect(fileUpstreamDriftIssues(pausedEnv)).resolves.toMatchObject({ status: "paused", created: 0, updated: 0, skipped: 0 });
   });
 
   it("files or reuses upstream drift issues only when explicitly enabled", async () => {
-    const missingTokenEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true" });
+    const missingTokenEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true" });
     await expect(fileUpstreamDriftIssues(missingTokenEnv)).resolves.toMatchObject({ status: "skipped", reason: "missing_issue_token" });
 
-    const invalidRepoEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "bad-repo-name" });
+    const invalidRepoEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", LOOPOVER_DRIFT_ISSUE_REPO: "bad-repo-name" });
     await upsertUpstreamDriftReport(invalidRepoEnv, driftReport("invalid-repo"));
     await expect(fileUpstreamDriftIssues(invalidRepoEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
-    const createEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const createEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(createEnv, driftReport("create-fingerprint"));
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 77, url: "https://github.com/JSONbored/gittensory/issues/77" } }));
     await expect(fileUpstreamDriftIssues(createEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
     await expect(listUpstreamDriftReports(createEnv)).resolves.toEqual([expect.objectContaining({ issueNumber: 77 })]);
 
-    const updateEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "yes", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const updateEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "yes", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(updateEnv, driftReport("existing-fingerprint"));
     const updateCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal(
@@ -904,14 +904,14 @@ describe("upstream ruleset drift tracking", () => {
     expect(String(updateBody?.body)).toContain("gittensor/constants.py");
     expect(String(updateBody?.body)).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
 
-    const failingEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "on", GITHUB_PUBLIC_TOKEN: "token" });
+    const failingEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "on", GITHUB_PUBLIC_TOKEN: "token" });
     await upsertUpstreamDriftReport(failingEnv, driftReport("failing-fingerprint"));
     vi.stubGlobal("fetch", githubIssueFetch({ createStatus: 500, listStatus: 500 }));
     await expect(fileUpstreamDriftIssues(failingEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
   });
 
   it("INVARIANT (#4503): a second run against an UNCHANGED open drift issue makes zero PATCH calls", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("stable-fingerprint"));
     const createCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 101, url: "https://github.com/JSONbored/gittensory/issues/101" }, calls: createCalls }));
@@ -939,7 +939,7 @@ describe("upstream ruleset drift tracking", () => {
   });
 
   it("REGRESSION (#4503): two consecutive cycles against an unchanged report only PATCH on the first", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("cycle-fingerprint", { issueNumber: 202, issueUrl: "https://github.com/JSONbored/gittensory/issues/202" }));
 
     // Cycle 1: the recorded issue's live body/labels are STALE (drift from before the report's current content) --
@@ -976,7 +976,7 @@ describe("upstream ruleset drift tracking", () => {
   });
 
   it("negative-path (#4503): a genuinely changed report (severity escalation) still triggers a fresh PATCH", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("escalating-fingerprint", { severity: "low" }));
     const createCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 303, url: "https://github.com/JSONbored/gittensory/issues/303" }, calls: createCalls }));
@@ -1007,7 +1007,7 @@ describe("upstream ruleset drift tracking", () => {
   });
 
   it("REGRESSION (#4503): the list-search fallback tolerates malformed label/assignee shapes (missing name/login) without crashing", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("malformed-shape-fingerprint"));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = input.toString();
@@ -1034,7 +1034,7 @@ describe("upstream ruleset drift tracking", () => {
   });
 
   it("REGRESSION (#4503): validateRecordedGitHubIssue's fast path tolerates a malformed (loginless) assignee without crashing", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("malformed-assignee-fingerprint", { issueNumber: 505, issueUrl: "https://github.com/JSONbored/gittensory/issues/505" }));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = input.toString();
@@ -1060,7 +1060,7 @@ describe("upstream ruleset drift tracking", () => {
   });
 
   it("REGRESSION (#4503): validateRecordedGitHubIssue tolerates an issue response with the assignees field entirely absent", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("no-assignees-field-fingerprint", { issueNumber: 606, issueUrl: "https://github.com/JSONbored/gittensory/issues/606" }));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = input.toString();
@@ -1076,8 +1076,8 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
   });
 
-  it("assigns filed drift issues to GITTENSORY_DRIFT_ISSUE_ASSIGNEES when a self-host operator sets it", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "alice, ,bob" });
+  it("assigns filed drift issues to LOOPOVER_DRIFT_ISSUE_ASSIGNEES when a self-host operator sets it", async () => {
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", LOOPOVER_DRIFT_ISSUE_ASSIGNEES: "alice, ,bob" });
     await upsertUpstreamDriftReport(env, driftReport("assignee-override"));
     const calls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 70, url: "https://github.com/acme/widgets/issues/70" }, calls }));
@@ -1090,12 +1090,12 @@ describe("upstream ruleset drift tracking", () => {
   // under heavy parallel contention with no assertion failure). An explicit timeout says so instead of
   // relying on ambient headroom.
   it("handles edge cases while filing upstream drift issues", async () => {
-    const defaultRepoEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "1", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "" });
+    const defaultRepoEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "1", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", LOOPOVER_DRIFT_ISSUE_REPO: "" });
     await upsertUpstreamDriftReport(defaultRepoEnv, driftReport("source-fingerprint", { severity: "medium", affectedAreas: [] }));
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 91, url: "https://github.com/JSONbored/gittensory/issues/91" } }));
     await expect(fileUpstreamDriftIssues(defaultRepoEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
 
-    const areaSourceEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const areaSourceEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(
       areaSourceEnv,
       driftReport("area-source-paths", { severity: "medium", affectedAreas: ["registry", "issue_discovery", "mirror_linkage", "language_weights"] }),
@@ -1109,17 +1109,17 @@ describe("upstream ruleset drift tracking", () => {
     expect(areaSourceBody).toContain("gittensor/utils/mirror/models.py");
     expect(areaSourceBody).toContain("gittensor/validator/weights/programming_languages.json");
 
-    const missingPayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const missingPayloadEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingPayloadEnv, driftReport("missing-payload", { currentRulesetId: null, previousRulesetId: null }));
     vi.stubGlobal("fetch", githubIssueFetch({ createPayload: {} }));
     await expect(fileUpstreamDriftIssues(missingPayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
-    const throwingListEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const throwingListEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(throwingListEnv, driftReport("throwing-list"));
     vi.stubGlobal("fetch", githubIssueFetch({ throwOnList: true, create: { number: 92, url: "https://github.com/JSONbored/gittensory/issues/92" } }));
     await expect(fileUpstreamDriftIssues(throwingListEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
 
-    const linkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const linkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(linkedEnv, driftReport("linked-fingerprint", { issueNumber: 93, issueUrl: "https://github.com/JSONbored/gittensory/issues/93" }));
     const linkedCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal(
@@ -1136,7 +1136,7 @@ describe("upstream ruleset drift tracking", () => {
       expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/93" }),
     ]);
 
-    const objectLabelLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const objectLabelLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(objectLabelLinkedEnv, driftReport("object-label-linked", { issueNumber: 129, issueUrl: "https://github.com/JSONbored/gittensory/issues/129" }));
     vi.stubGlobal(
       "fetch",
@@ -1149,7 +1149,7 @@ describe("upstream ruleset drift tracking", () => {
 
     // GitHub labels are case-insensitive: a repo whose "signals" label is stored with different casing
     // (e.g. "Signals") must still be recognized as the recorded drift issue, so it is updated, not duplicated.
-    const caseVariantLabelEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const caseVariantLabelEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(caseVariantLabelEnv, driftReport("case-variant-label-linked", { issueNumber: 139, issueUrl: "https://github.com/JSONbored/gittensory/issues/139" }));
     vi.stubGlobal(
       "fetch",
@@ -1160,7 +1160,7 @@ describe("upstream ruleset drift tracking", () => {
     );
     await expect(fileUpstreamDriftIssues(caseVariantLabelEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
 
-    const staleLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token", GITTENSORY_DRIFT_ISSUE_REPO: "victim/current-repo" });
+    const staleLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", LOOPOVER_DRIFT_ISSUE_REPO: "victim/current-repo" });
     await upsertUpstreamDriftReport(staleLinkedEnv, driftReport("stale-linked", { issueNumber: 123, issueUrl: "https://github.com/other-owner/old-repo/issues/123" }));
     const staleLinkedCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 124, url: "https://github.com/victim/current-repo/issues/124" }, calls: staleLinkedCalls }));
@@ -1169,7 +1169,7 @@ describe("upstream ruleset drift tracking", () => {
       expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/victim/current-repo/issues/123" })]),
     );
 
-    const invalidLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const invalidLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(invalidLinkedEnv, driftReport("invalid-linked", { issueNumber: 125, issueUrl: "not a github issue url" }));
     const invalidLinkedCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 126, url: "https://github.com/JSONbored/gittensory/issues/126" }, calls: invalidLinkedCalls }));
@@ -1178,7 +1178,7 @@ describe("upstream ruleset drift tracking", () => {
       expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/125" })]),
     );
 
-    const throwingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const throwingLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(throwingLinkedEnv, driftReport("throwing-linked", { issueNumber: 127, issueUrl: "https://github.com/JSONbored/gittensory/issues/127" }));
     const throwingLinkedCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ throwOnIssueGet: true, create: { number: 128, url: "https://github.com/JSONbored/gittensory/issues/128" }, calls: throwingLinkedCalls }));
@@ -1198,7 +1198,7 @@ describe("upstream ruleset drift tracking", () => {
       { fingerprint: "nameless-label-linked", issueNumber: 141, issueUrl: "https://github.com/JSONbored/gittensory/issues/141", issue: { number: 141, url: "https://github.com/JSONbored/gittensory/issues/141", fingerprint: "nameless-label-linked", labels: [{}] } },
       { fingerprint: "returned-url-linked", issueNumber: 138, issueUrl: "https://github.com/JSONbored/gittensory/issues/138", issue: { number: 138, url: "https://github.com/other/repo/issues/138", fingerprint: "returned-url-linked" } },
     ]) {
-      const rejectedLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+      const rejectedLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
       await upsertUpstreamDriftReport(rejectedLinkedEnv, driftReport(scenario.fingerprint, { issueNumber: scenario.issueNumber, issueUrl: scenario.issueUrl }));
       const rejectedLinkedCalls: GitHubIssueFetchCall[] = [];
       vi.stubGlobal(
@@ -1216,23 +1216,23 @@ describe("upstream ruleset drift tracking", () => {
       );
     }
 
-    const failingLinkedEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const failingLinkedEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(failingLinkedEnv, driftReport("failing-linked", { issueNumber: 94, issueUrl: "https://github.com/JSONbored/gittensory/issues/94" }));
     vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 94, url: "https://github.com/JSONbored/gittensory/issues/94", fingerprint: "failing-linked" }, updateStatus: 500 }));
     await expect(fileUpstreamDriftIssues(failingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
-    const missingUpdatePayloadEnv = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const missingUpdatePayloadEnv = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(missingUpdatePayloadEnv, driftReport("missing-update-payload", { issueNumber: 96, issueUrl: "https://github.com/JSONbored/gittensory/issues/96" }));
     vi.stubGlobal("fetch", githubIssueFetch({ issue: { number: 96, url: "https://github.com/JSONbored/gittensory/issues/96", fingerprint: "missing-update-payload" }, updatePayload: {} }));
     await expect(fileUpstreamDriftIssues(missingUpdatePayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
     const disabledEnv = createTestEnv();
-    delete (disabledEnv as Partial<Env>).GITTENSORY_AUTO_FILE_DRIFT_ISSUES;
+    delete (disabledEnv as Partial<Env>).LOOPOVER_AUTO_FILE_DRIFT_ISSUES;
     await expect(fileUpstreamDriftIssues(disabledEnv)).resolves.toMatchObject({ status: "disabled" });
   }, 45000);
 
   it("finds the existing drift issue on page 2 when the repo has more than 100 open signals issues", async () => {
-    const env = createTestEnv({ GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "true", GITTENSORY_DRIFT_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(env, driftReport("page-2-fingerprint"));
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1703,12 +1703,12 @@ function driftReport(
 describe("resolveDriftAssignees", () => {
   it("defaults to the gittensory maintainer when unset, empty, or whitespace-only", () => {
     expect(resolveDriftAssignees(createTestEnv())).toEqual(["jsonbored"]);
-    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "" }))).toEqual(["jsonbored"]);
-    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "   " }))).toEqual(["jsonbored"]);
+    expect(resolveDriftAssignees(createTestEnv({ LOOPOVER_DRIFT_ISSUE_ASSIGNEES: "" }))).toEqual(["jsonbored"]);
+    expect(resolveDriftAssignees(createTestEnv({ LOOPOVER_DRIFT_ISSUE_ASSIGNEES: "   " }))).toEqual(["jsonbored"]);
   });
 
   it("parses a comma-separated list, trimming and dropping empty segments", () => {
-    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: "alice" }))).toEqual(["alice"]);
-    expect(resolveDriftAssignees(createTestEnv({ GITTENSORY_DRIFT_ISSUE_ASSIGNEES: " alice , ,bob " }))).toEqual(["alice", "bob"]);
+    expect(resolveDriftAssignees(createTestEnv({ LOOPOVER_DRIFT_ISSUE_ASSIGNEES: "alice" }))).toEqual(["alice"]);
+    expect(resolveDriftAssignees(createTestEnv({ LOOPOVER_DRIFT_ISSUE_ASSIGNEES: " alice , ,bob " }))).toEqual(["alice", "bob"]);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildE2eTestGenCommentBody } from "../../src/review/e2e-test-gen-render";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
-import { GITTENSORY_SITE_URL } from "../../src/github/footer";
+import { LOOPOVER_SITE_URL } from "../../src/github/footer";
 
 describe("buildE2eTestGenCommentBody", () => {
   it("renders the generated test source in a fenced code block, defaulting the framework to Playwright", () => {
@@ -88,15 +88,15 @@ describe("buildE2eTestGenCommentBody", () => {
   });
 
   // #4613: the footer's attribution link honors a self-hoster's PUBLIC_SITE_ORIGIN instead of always
-  // pointing at GITTENSORY_SITE_URL.
+  // pointing at LOOPOVER_SITE_URL.
   it("#4613: honors env.PUBLIC_SITE_ORIGIN in the footer attribution link", () => {
     const selfHosted = buildE2eTestGenCommentBody({ env: { PUBLIC_SITE_ORIGIN: "https://gittensory.example.org" }, actor: "maintainer", testSource: "test('x', () => {});" });
     expect(selfHosted).toContain("Checked by [LoopOver](https://gittensory.example.org)");
-    expect(selfHosted).not.toContain(GITTENSORY_SITE_URL);
+    expect(selfHosted).not.toContain(LOOPOVER_SITE_URL);
   });
 
-  it("#4613: falls back to GITTENSORY_SITE_URL when PUBLIC_SITE_ORIGIN is unset", () => {
+  it("#4613: falls back to LOOPOVER_SITE_URL when PUBLIC_SITE_ORIGIN is unset", () => {
     const defaultHosted = buildE2eTestGenCommentBody({ env: {}, actor: "maintainer", testSource: "test('x', () => {});" });
-    expect(defaultHosted).toContain(`Checked by [LoopOver](${GITTENSORY_SITE_URL})`);
+    expect(defaultHosted).toContain(`Checked by [LoopOver](${LOOPOVER_SITE_URL})`);
   });
 });

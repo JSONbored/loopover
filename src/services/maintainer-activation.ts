@@ -52,7 +52,7 @@ export function buildMaintainerActivationPreview(args: {
   pullRequests: PullRequestRecord[];
   generatedAt: string;
   sampleSize?: number;
-  /** GITTENSORY_DUPLICATE_WINNER (#dup-winner): mirror the live pipeline so the demo's duplicate findings
+  /** LOOPOVER_DUPLICATE_WINNER (#dup-winner): mirror the live pipeline so the demo's duplicate findings
    *  match the real gate — when ON, the cluster winner is spared. Defaults to off (byte-identical preview). */
   duplicateWinnerEnabled?: boolean;
 }): MaintainerActivationPreview {

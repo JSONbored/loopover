@@ -64,18 +64,18 @@ afterEach(() => {
 
 describe("isRecapEnabled — default OFF, truthy convention", () => {
   it("is OFF for unset / false / empty, ON for 1/true/yes/on", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: on })).toBe(true);
   });
 
   it("a present manifest override wins outright over the env flag, in both directions (#2250)", () => {
-    expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: "false" }, { present: true, enabled: true, cadence: "weekly" })).toBe(true);
-    expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: "true" }, { present: true, enabled: false, cadence: "weekly" })).toBe(false);
+    expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: "false" }, { present: true, enabled: true, cadence: "weekly" })).toBe(true);
+    expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: "true" }, { present: true, enabled: false, cadence: "weekly" })).toBe(false);
   });
 
   it("falls back to the env flag when the manifest override is not present", () => {
-    expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: "true" }, { present: false, enabled: false, cadence: "weekly" })).toBe(true);
-    expect(isRecapEnabled({ GITTENSORY_MAINTAINER_RECAP: "false" }, undefined)).toBe(false);
+    expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: "true" }, { present: false, enabled: false, cadence: "weekly" })).toBe(true);
+    expect(isRecapEnabled({ LOOPOVER_MAINTAINER_RECAP: "false" }, undefined)).toBe(false);
   });
 });
 
@@ -87,12 +87,12 @@ describe("shouldFireMaintainerRecap — cadence gate (#2248)", () => {
   });
 
   it("an explicit weekly cadence behaves exactly like the default", () => {
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "weekly" }, 14, 1)).toBe(true);
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "weekly" }, 14, 2)).toBe(false);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "weekly" }, 14, 1)).toBe(true);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "weekly" }, 14, 2)).toBe(false);
   });
 
   it("daily cadence fires every day at the configured hour, ignoring day-of-week", () => {
-    const env = { GITTENSORY_RECAP_CADENCE: "daily" };
+    const env = { LOOPOVER_RECAP_CADENCE: "daily" };
     expect(shouldFireMaintainerRecap(env, 14, 1)).toBe(true);
     expect(shouldFireMaintainerRecap(env, 14, 3)).toBe(true);
     expect(shouldFireMaintainerRecap(env, 14, 6)).toBe(true);
@@ -100,42 +100,42 @@ describe("shouldFireMaintainerRecap — cadence gate (#2248)", () => {
   });
 
   it("an invalid cadence value falls back to weekly (not daily), so a typo can't quietly fire more often", () => {
-    const env = { GITTENSORY_RECAP_CADENCE: "biweekly" };
+    const env = { LOOPOVER_RECAP_CADENCE: "biweekly" };
     expect(shouldFireMaintainerRecap(env, 14, 1)).toBe(true); // Monday still fires (weekly default)
     expect(shouldFireMaintainerRecap(env, 14, 2)).toBe(false); // Tuesday does not — proves it is NOT daily
   });
 
   it("respects a custom configured hour and day-of-week", () => {
-    const env = { GITTENSORY_RECAP_CADENCE: "weekly", GITTENSORY_RECAP_HOUR: "3", GITTENSORY_RECAP_DAY: "5" };
+    const env = { LOOPOVER_RECAP_CADENCE: "weekly", LOOPOVER_RECAP_HOUR: "3", LOOPOVER_RECAP_DAY: "5" };
     expect(shouldFireMaintainerRecap(env, 3, 5)).toBe(true);
     expect(shouldFireMaintainerRecap(env, 3, 1)).toBe(false); // the default Monday no longer applies
     expect(shouldFireMaintainerRecap(env, 14, 5)).toBe(false); // the default hour no longer applies
   });
 
   it("clamps an out-of-range (but finite) hour/day to the nearest bound", () => {
-    const env = { GITTENSORY_RECAP_HOUR: "99", GITTENSORY_RECAP_DAY: "-3" };
+    const env = { LOOPOVER_RECAP_HOUR: "99", LOOPOVER_RECAP_DAY: "-3" };
     expect(shouldFireMaintainerRecap(env, 23, 0)).toBe(true); // 99 → 23 (MAX_HOUR), -3 → 0 (MIN_DAY_OF_WEEK)
     expect(shouldFireMaintainerRecap(env, 14, 1)).toBe(false); // the (unclamped) default no longer matches
   });
 
   it("falls back to the default hour/day on a non-finite value", () => {
-    const env = { GITTENSORY_RECAP_HOUR: "not-a-number", GITTENSORY_RECAP_DAY: "nope" };
+    const env = { LOOPOVER_RECAP_HOUR: "not-a-number", LOOPOVER_RECAP_DAY: "nope" };
     expect(shouldFireMaintainerRecap(env, 14, 1)).toBe(true); // falls back to 14 / Monday
   });
 
   it("a present manifest override's cadence wins over the env cadence, in both directions (#2250)", () => {
     const dailyOverride = { present: true, enabled: true, cadence: "daily" } as const;
     // env says weekly, manifest says daily -> fires on a non-Monday too (hour still gates).
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "weekly" }, 14, 3, dailyOverride)).toBe(true);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "weekly" }, 14, 3, dailyOverride)).toBe(true);
     const weeklyOverride = { present: true, enabled: true, cadence: "weekly" } as const;
     // env says daily, manifest says weekly -> does NOT fire on a non-Monday.
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "daily" }, 14, 3, weeklyOverride)).toBe(false);
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "daily" }, 14, 1, weeklyOverride)).toBe(true);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "daily" }, 14, 3, weeklyOverride)).toBe(false);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "daily" }, 14, 1, weeklyOverride)).toBe(true);
   });
 
   it("falls back to the env cadence when the manifest override is not present", () => {
     const notPresent = { present: false, enabled: false, cadence: "daily" } as const;
-    expect(shouldFireMaintainerRecap({ GITTENSORY_RECAP_CADENCE: "weekly" }, 14, 3, notPresent)).toBe(false);
+    expect(shouldFireMaintainerRecap({ LOOPOVER_RECAP_CADENCE: "weekly" }, 14, 3, notPresent)).toBe(false);
   });
 });
 
@@ -353,7 +353,7 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
   it("records a maintainer_recap_generated audit event with cadence/windowDays/repoCount/sectionCount/channelsAttempted metadata (#2251)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T14:00:00.000Z"));
-    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK, GITTENSORY_RECAP_CADENCE: "daily" });
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK, LOOPOVER_RECAP_CADENCE: "daily" });
     await seedRegisteredRepo(env, "owner/alpha");
     await seedMergedPr(env, "owner/alpha", 1);
     stubDiscordFetch();
@@ -373,7 +373,7 @@ describe("runMaintainerRecapJob — cross-repo digest (#1963, #2248)", () => {
   it("a present manifest override's cadence is reflected in the maintainer_recap_generated audit metadata, not the env value", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-09T14:00:00.000Z"));
-    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK, GITTENSORY_RECAP_CADENCE: "weekly" });
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: HOOK, LOOPOVER_RECAP_CADENCE: "weekly" });
     stubDiscordFetch();
 
     await runMaintainerRecapJob(env, undefined, { present: true, enabled: true, cadence: "daily" });

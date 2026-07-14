@@ -184,7 +184,7 @@ describe("buildMaintainerActivationPreview", () => {
     expect(undatedPreview.evaluatedCount).toBe(2);
   });
 
-  it("spares the duplicate-cluster winner when GITTENSORY_DUPLICATE_WINNER is on, flagging only the losers", () => {
+  it("spares the duplicate-cluster winner when LOOPOVER_DUPLICATE_WINNER is on, flagging only the losers", () => {
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,
@@ -203,7 +203,7 @@ describe("buildMaintainerActivationPreview", () => {
     expect(loser.findings.map((finding) => finding.code)).toContain("duplicate_pr_risk");
   });
 
-  it("flags every duplicate-cluster member when GITTENSORY_DUPLICATE_WINNER is off (default)", () => {
+  it("flags every duplicate-cluster member when LOOPOVER_DUPLICATE_WINNER is off (default)", () => {
     const preview = buildMaintainerActivationPreview({
       repoFullName: repo.fullName,
       repo,

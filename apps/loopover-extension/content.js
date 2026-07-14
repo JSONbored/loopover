@@ -181,7 +181,7 @@ function renderActions(body, actions) {
   body.appendChild(container);
 }
 
-if (globalThis.__GITTENSORY_EXTENSION_TEST__) {
+if (globalThis.__LOOPOVER_EXTENSION_TEST__) {
   globalThis.__gittensoryContentInternals = {
     matchGitHubPageTarget,
     matchPullRequestTarget,

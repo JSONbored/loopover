@@ -456,10 +456,10 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).not.toContain("is reviewing");
   });
 
-  it("flags an open-PR file-path collision against a sibling PR when GITTENSORY_OPEN_PR_FILE_COLLISION is on (#2653)", async () => {
+  it("flags an open-PR file-path collision against a sibling PR when LOOPOVER_OPEN_PR_FILE_COLLISION is on (#2653)", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      GITTENSORY_OPEN_PR_FILE_COLLISION: "true",
+      LOOPOVER_OPEN_PR_FILE_COLLISION: "true",
     });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, {
@@ -528,7 +528,7 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).toContain("#8");
   });
 
-  it("does NOT flag an open-PR file-path collision when GITTENSORY_OPEN_PR_FILE_COLLISION is unset (byte-identical default)", async () => {
+  it("does NOT flag an open-PR file-path collision when LOOPOVER_OPEN_PR_FILE_COLLISION is unset (byte-identical default)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, {

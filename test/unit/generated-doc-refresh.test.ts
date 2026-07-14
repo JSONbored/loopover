@@ -3,7 +3,7 @@ import { refreshGeneratedDoc } from "../../src/review/generated-doc-refresh";
 import { REPO_DOC_MARKERS, renderRepoDocContent } from "../../src/review/repo-doc-render";
 import { REPO_PROFILE_SCHEMA_VERSION } from "../../src/review/repo-profile";
 import type { RepoProfile } from "../../src/review/repo-profile";
-import { GITTENSORY_SITE_URL } from "../../src/github/footer";
+import { LOOPOVER_SITE_URL } from "../../src/github/footer";
 
 const MARKERS = { start: "<!-- start -->", end: "<!-- end -->" };
 const SECTION = `${MARKERS.start}\ngenerated body v1\n${MARKERS.end}\n`;
@@ -114,7 +114,7 @@ describe("refreshGeneratedDoc (#3004)", () => {
   });
 
   it("REGRESSION: a real renderRepoDocContent() output round-trips as no-change against itself, with or without surrounding manual content", () => {
-    const rendered = renderRepoDocContent(fixtureProfile(), GITTENSORY_SITE_URL)!;
+    const rendered = renderRepoDocContent(fixtureProfile(), LOOPOVER_SITE_URL)!;
     expect(refreshGeneratedDoc(rendered, rendered, REPO_DOC_MARKERS)).toEqual({ action: "no-change" });
 
     const withManualContent = `<!-- Keep this intro. -->\n\n${rendered}\n<!-- Keep this appendix too. -->\n`;

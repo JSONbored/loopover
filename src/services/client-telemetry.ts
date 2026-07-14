@@ -1,6 +1,6 @@
 import {
   classifyMcpClientVersion,
-  GITTENSORY_MCP_PACKAGE_NAME,
+  LOOPOVER_MCP_PACKAGE_NAME,
   LATEST_RECOMMENDED_MCP_VERSION,
   MINIMUM_SUPPORTED_MCP_VERSION,
   type McpCompatibilityStatus,
@@ -53,7 +53,7 @@ export function buildMcpClientTelemetry(headers: Headers, options: ClientTelemet
 
 function clientNameFromPackage(packageName: string | undefined): string | undefined {
   if (!packageName) return undefined;
-  if (packageName === GITTENSORY_MCP_PACKAGE_NAME) return "loopover-mcp";
+  if (packageName === LOOPOVER_MCP_PACKAGE_NAME) return "loopover-mcp";
   const tail = packageName.split("/").at(-1);
   return safeClientHeader(tail);
 }

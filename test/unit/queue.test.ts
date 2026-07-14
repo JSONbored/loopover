@@ -620,8 +620,8 @@ describe("queue processors", () => {
     vi.unstubAllGlobals();
   });
 
-  it("runs the maintainer recap job through the queue processor when GITTENSORY_MAINTAINER_RECAP is ON (#1963, #2248)", async () => {
-    const env = createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc", GITTENSORY_MAINTAINER_RECAP: "true" });
+  it("runs the maintainer recap job through the queue processor when LOOPOVER_MAINTAINER_RECAP is ON (#1963, #2248)", async () => {
+    const env = createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc", LOOPOVER_MAINTAINER_RECAP: "true" });
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 1)").bind("JSONbored/gittensory", "JSONbored", "gittensory").run();
     vi.stubGlobal("fetch", async () => new Response(null, { status: 204 }));
 
@@ -632,7 +632,7 @@ describe("queue processors", () => {
     vi.unstubAllGlobals();
   });
 
-  it("skips the maintainer recap job as a no-op when GITTENSORY_MAINTAINER_RECAP is OFF (default, #2248)", async () => {
+  it("skips the maintainer recap job as a no-op when LOOPOVER_MAINTAINER_RECAP is OFF (default, #2248)", async () => {
     const env = createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc" });
     let discordFetchCalled = false;
     // The disabled-check ALSO resolves the self-repo's manifest override (#2250), which may fall through to a

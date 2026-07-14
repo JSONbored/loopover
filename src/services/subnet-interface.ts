@@ -1,5 +1,5 @@
-import { GITTENSOR_HOME_URL, GITTENSORY_SITE_URL } from "../github/footer";
-import { GITTENSORY_MCP_PACKAGE_NAME, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "./mcp-compatibility";
+import { GITTENSOR_HOME_URL, LOOPOVER_SITE_URL } from "../github/footer";
+import { LOOPOVER_MCP_PACKAGE_NAME, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "./mcp-compatibility";
 
 // Gittensor is Bittensor subnet 74 (the code subnet). LoopOver is its contribution interface.
 export const GITTENSOR_NETUID = 74;
@@ -70,7 +70,7 @@ export function buildSubnetInterfaceDescriptor(args: { origin: string; generated
     provider: {
       name: "LoopOver",
       role: "contribution_interface",
-      site: GITTENSORY_SITE_URL,
+      site: LOOPOVER_SITE_URL,
       summary: "Gittensor-native contribution planning layer: MCP guidance for contributors and a free anti-slop + AI second-opinion gate for maintainers.",
     },
     interfaces: {
@@ -78,7 +78,7 @@ export function buildSubnetInterfaceDescriptor(args: { origin: string; generated
         kind: "mcp",
         transport: "http",
         endpoint: `${origin}/mcp`,
-        package: GITTENSORY_MCP_PACKAGE_NAME,
+        package: LOOPOVER_MCP_PACKAGE_NAME,
         minimumVersion: MINIMUM_SUPPORTED_MCP_VERSION,
         recommendedVersion: LATEST_RECOMMENDED_MCP_VERSION,
         tools: CONTRIBUTION_MCP_TOOLS.map((tool) => ({ ...tool })),
@@ -90,7 +90,7 @@ export function buildSubnetInterfaceDescriptor(args: { origin: string; generated
       },
     },
     onboarding: {
-      docs: GITTENSORY_SITE_URL,
+      docs: LOOPOVER_SITE_URL,
       steps: [...ONBOARDING_STEPS],
     },
   };

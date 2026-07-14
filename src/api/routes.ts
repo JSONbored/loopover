@@ -129,7 +129,7 @@ import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/p
 import {
   buildPublicAgentCommandComment,
   buildMaintainerQueueDigest,
-  GITTENSORY_MENTION_COMMAND_CATALOG,
+  LOOPOVER_MENTION_COMMAND_CATALOG,
   isAuthorizedCommandActor,
   isMaintainerOnlyCommand,
   sanitizePublicComment,
@@ -960,7 +960,7 @@ export function createApp() {
 
   // Proof of Power (#1059): unauthenticated homepage stats counter — lifetime PRs handled / merged / closed,
   // gate + slop blocks, and a reversal-grounded accuracy %. Aggregate counts only (no PR content, authors,
-  // scores, or reward internals). Flag-gated: 404s when GITTENSORY_PUBLIC_STATS is off so the worker is
+  // scores, or reward internals). Flag-gated: 404s when LOOPOVER_PUBLIC_STATS is off so the worker is
   // byte-identical to today. Excluded from requiresApiToken below.
   app.get("/v1/public/stats", async (c) => {
     if (!isPublicStatsEnabled(c.env)) return c.json({ error: "not_found" }, 404);
@@ -2528,7 +2528,7 @@ export function createApp() {
       getRepositorySettings(c.env, fullName),
       listPullRequests(c.env, fullName),
     ]);
-    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso(), duplicateWinnerEnabled: c.env.GITTENSORY_DUPLICATE_WINNER === "true" }));
+    return c.json(buildMaintainerActivationPreview({ repoFullName: fullName, repo, settings, pullRequests, generatedAt: nowIso(), duplicateWinnerEnabled: c.env.LOOPOVER_DUPLICATE_WINNER === "true" }));
   });
 
   // #543 outcome-learning loop: is the slop score predictive, and are recommendations panning out? Read-only
@@ -4154,7 +4154,7 @@ const APP_COMMANDS = [
     description: "Preview the public-safe summary that may be posted to a PR thread.",
     endpoint: "/v1/app/commands/preview",
   },
-  ...GITTENSORY_MENTION_COMMAND_CATALOG.filter(
+  ...LOOPOVER_MENTION_COMMAND_CATALOG.filter(
     (command) =>
       ![
         "preflight",
@@ -4328,7 +4328,7 @@ function buildMaintainerSettingsPreview() {
   };
 }
 
-const PREVIEWABLE_MENTION_COMMANDS = new Set<LoopOverMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
+const PREVIEWABLE_MENTION_COMMANDS = new Set<LoopOverMentionCommandName>(LOOPOVER_MENTION_COMMAND_CATALOG.map((command) => command.id));
 
 type CommandPreviewDecision = {
   status: "ready" | "skipped" | "missing_permission" | "private_api";

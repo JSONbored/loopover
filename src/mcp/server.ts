@@ -155,7 +155,7 @@ import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/f
 import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
-import { validateIdeaSubmission, buildTaskGraph } from "../idea-intake";
+import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -947,6 +947,15 @@ const intakeIdeaOutputSchema = {
   errors: z.array(z.string()).optional(),
 };
 
+// Claim-plan hand-off (#4799): same idea input, but the output is the loop disposition — which constituent
+// issues the claim/code/submit loop can claim now vs. must defer or skip.
+const planIdeaClaimsOutputSchema = {
+  ok: z.boolean(),
+  verdict: z.enum(["go", "raise", "avoid"]).optional(),
+  claimPlan: z.unknown().optional(),
+  errors: z.array(z.string()).optional(),
+};
+
 // Deterministic structural-improvement counterpart to checkSlopRiskShape (#4746, sub-issue I of epic #4737):
 // the positive-axis mirror of checkSlopRisk, same pure local-metadata contract. changedFiles/tests/testFiles
 // are reused verbatim (same shape as checkSlopRiskShape) so the two signals never disagree about what counts
@@ -1706,6 +1715,17 @@ export class LoopoverMcp {
         outputSchema: intakeIdeaOutputSchema,
       },
       async (input) => this.toolResult(await this.intakeIdea(input)),
+    );
+
+    server.registerTool(
+      "loopover_plan_idea_claims",
+      {
+        description:
+          "Route a freeform idea through the intake bridge (#4798) into a claim/code/submit-loop plan (#4799): validates the submission, builds the scored task-graph, and returns which constituent issues the loop can claim now vs. defer (held on a prerequisite) vs. skip (unshippable) — dependency-ordered so a prerequisite is always claimed before its dependents. Deterministic and source-free; it decides what to claim, it does not claim or run anything. A malformed/empty submission returns an actionable error list.",
+        inputSchema: intakeIdeaShape,
+        outputSchema: planIdeaClaimsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.planIdeaClaims(input)),
     );
 
     server.registerTool(
@@ -2992,6 +3012,23 @@ export class LoopoverMcp {
     return {
       summary: `Task-graph verdict: ${taskGraph.rubric.verdict} across ${taskGraph.issues.length} issue(s).`,
       data: { ok: true, verdict: taskGraph.rubric.verdict, taskGraph } as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async planIdeaClaims(input: z.infer<z.ZodObject<typeof intakeIdeaShape>>): Promise<ToolPayload> {
+    await this.enforceToolRateLimit("loopover_plan_idea_claims");
+    const validated = validateIdeaSubmission(input);
+    if (!validated.ok) {
+      return {
+        summary: `Invalid idea submission: ${validated.errors.join(", ")}.`,
+        data: { ok: false, errors: validated.errors } as unknown as Record<string, unknown>,
+      };
+    }
+    const graph = buildTaskGraph(validated.idea, input.decomposition);
+    const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+    return {
+      summary: `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
+      data: { ok: true, verdict: claimPlan.graphVerdict, claimPlan } as unknown as Record<string, unknown>,
     };
   }
 

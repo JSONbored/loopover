@@ -62,3 +62,34 @@ describe("MCP loopover_intake_idea", () => {
     expect(data.errors).toEqual(expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]));
   });
 });
+
+describe("MCP loopover_plan_idea_claims", () => {
+  it("routes an idea into a loop claim plan (claimable / deferred / skipped)", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_plan_idea_claims",
+      arguments: {
+        id: "idea-P", title: "Add API key auth", body: "Authenticate the read API with a key.", targetRepo: "acme/widgets",
+        decomposition: [
+          { key: "issue-1", title: "Introduce API-key store", body: "validate keys" },
+          { key: "issue-2", title: "Gate the read endpoints", body: "require a key", dependsOn: ["issue-1"] },
+        ],
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { ok: boolean; verdict: string; claimPlan: { targetRepo: string; claimable: unknown[]; deferred: unknown[] } };
+    expect(data.ok).toBe(true);
+    expect(data.verdict).toBe("raise");
+    expect(data.claimPlan.targetRepo).toBe("acme/widgets");
+    expect(data.claimPlan.claimable).toHaveLength(1); // issue-1
+    expect(data.claimPlan.deferred).toHaveLength(1); // issue-2 held on its prerequisite
+  });
+
+  it("returns an actionable error for a malformed/empty submission", async () => {
+    const client = await connect();
+    const result = await client.callTool({ name: "loopover_plan_idea_claims", arguments: { title: "no id/body", targetRepo: "not-a-slug" } });
+    const data = result.structuredContent as { ok: boolean; errors: string[] };
+    expect(data.ok).toBe(false);
+    expect(data.errors).toEqual(expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]));
+  });
+});

@@ -123,21 +123,23 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
   };
 }
 
-/** Score ONE task-graph against the feasibility gate (spec §3). An issue whose `dependsOn` prerequisite is
- *  not itself a `go` in this same graph is held (`raise`) rather than claimed ahead of its prerequisite —
- *  layered ON TOP of `buildFeasibilityVerdict` so this bridge adds no second decision surface. */
+// Score ONE issue against the feasibility gate. Rule 5 (spec §2): an issue with an unlanded prerequisite is
+// held until that prerequisite MERGES. Every issue in a freshly-built graph is new, so any issue that carries
+// a `dependsOn` is held (`raise`) now and re-scores to `go` once its prerequisite lands — never claimed ahead
+// of its prerequisite. Layered only over a `go` base, so an already-`avoid`/`raise` issue keeps its verdict.
+function scoreIssue(issue: ConstituentIssue): TaskGraphIssueScore {
+  const base = buildFeasibilityVerdict(issue.feasibility);
+  if (base.verdict === "go" && issue.dependsOn.length > 0) {
+    return { key: issue.key, verdict: "raise", reasons: ["dependency_not_landed"] };
+  }
+  return { key: issue.key, verdict: base.verdict, reasons: [...base.avoidReasons, ...base.raiseReasons] };
+}
+
+/** Score a task-graph against the feasibility gate (spec §3): the graph verdict is the least-favorable
+ *  per-issue verdict (`avoid` > `raise` > `go`), so a renter is never told "go" while any constituent is
+ *  unshippable. Adds no second decision surface beyond `buildFeasibilityVerdict` + the rule-5 dependency hold. */
 export function scoreTaskGraph(graph: TaskGraph): TaskGraphScore {
-  const perIssue: TaskGraphIssueScore[] = graph.issues.map((issue) => {
-    const base = buildFeasibilityVerdict(issue.feasibility);
-    // Rule 5 (spec §2): an issue with an unlanded prerequisite is held until that prerequisite MERGES. Every
-    // issue in a freshly-built graph is new, so any issue that carries a `dependsOn` is held (`raise`) now
-    // and re-scores to `go` once its prerequisite lands — it is never claimed ahead of its prerequisite.
-    // Layered only over a `go` base, so an already-`avoid`/`raise` issue keeps its own (worse) verdict.
-    if (base.verdict === "go" && issue.dependsOn.length > 0) {
-      return { key: issue.key, verdict: "raise", reasons: ["dependency_not_landed"] };
-    }
-    return { key: issue.key, verdict: base.verdict, reasons: [...base.avoidReasons, ...base.raiseReasons] };
-  });
+  const perIssue: TaskGraphIssueScore[] = graph.issues.map(scoreIssue);
 
   const verdict: FeasibilityVerdict = perIssue.some((s) => s.verdict === "avoid")
     ? "avoid"
@@ -221,4 +223,46 @@ export function buildTaskGraph(idea: IdeaSubmission, drafts?: ConstituentIssueDr
   const graph: TaskGraph = { ideaId: idea.id, issues, rubric: { verdict: "go", perIssue: [] } };
   graph.rubric = scoreTaskGraph(graph);
   return graph;
+}
+
+/** One constituent issue routed to a loop disposition, carrying the target repo the loop will act on. */
+export type ClaimStep = {
+  key: string;
+  title: string;
+  targetRepo: string;
+  verdict: FeasibilityVerdict;
+  reasons: readonly string[];
+};
+
+/** The claim/code/submit-loop hand-off for one idea (#4799): a task-graph, scored, split into what the loop
+ *  can claim NOW versus what it must hold or skip. Deterministic and side-effect-free — it decides *what* to
+ *  claim and in what order; actually claiming/running is the loop's job. */
+export type ClaimPlan = {
+  ideaId: string;
+  targetRepo: string;
+  graphVerdict: FeasibilityVerdict;
+  /** `go` issues with no unlanded prerequisite — ready to claim now, in dependency-respecting graph order. */
+  claimable: ClaimStep[];
+  /** `raise` issues — held until a prerequisite lands or their own quality clears; re-plan after each merge. */
+  deferred: ClaimStep[];
+  /** `avoid` issues — not claimable as stated (solved, duplicate, or invalid). */
+  skipped: ClaimStep[];
+};
+
+/** Route a scored task-graph into a loop claim plan (#4799): the deterministic hand-off from idea intake
+ *  (#4798) to the claim/code/submit loop. Each issue is dispositioned by its already-computed feasibility
+ *  verdict — `go` → claimable, `raise` → deferred, `avoid` → skipped — preserving the graph's own
+ *  dependency-respecting order so a prerequisite is always claimed before its dependents. No IO, no claiming. */
+export function buildClaimPlan(graph: TaskGraph, targetRepo: string): ClaimPlan {
+  const claimable: ClaimStep[] = [];
+  const deferred: ClaimStep[] = [];
+  const skipped: ClaimStep[] = [];
+  for (const issue of graph.issues) {
+    const scored = scoreIssue(issue);
+    const step: ClaimStep = { key: issue.key, title: issue.title, targetRepo, verdict: scored.verdict, reasons: scored.reasons };
+    if (scored.verdict === "go") claimable.push(step);
+    else if (scored.verdict === "raise") deferred.push(step);
+    else skipped.push(step);
+  }
+  return { ideaId: graph.ideaId, targetRepo, graphVerdict: graph.rubric.verdict, claimable, deferred, skipped };
 }

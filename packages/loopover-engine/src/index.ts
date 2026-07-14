@@ -564,6 +564,7 @@ export {
   type FeasibilityVerdict,
 } from "./feasibility.js";
 export {
+  buildClaimPlan,
   buildTaskGraph,
   scoreTaskGraph,
   validateIdeaSubmission,
@@ -571,6 +572,8 @@ export {
   IDEA_BODY_MAX_CHARS,
   IDEA_CONSTRAINT_MAX_CHARS,
   type AcceptanceCriterion,
+  type ClaimPlan,
+  type ClaimStep,
   type AcceptanceCriterionKind,
   type ConstituentIssue,
   type ConstituentIssueDraft,

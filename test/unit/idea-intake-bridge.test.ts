@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildClaimPlan,
   buildTaskGraph,
   scoreTaskGraph,
   validateIdeaSubmission,
@@ -196,5 +197,34 @@ describe("scoreTaskGraph — graph verdict is the least-favorable across issues"
       { key: "issue-2", title: "t2", body: "b2", dependsOn: ["issue-1"], feasibility: { issueStatus: "invalid" } },
     );
     expect(scoreTaskGraph(g).perIssue.find((x) => x.key === "issue-2")?.verdict).toBe("avoid");
+  });
+});
+
+describe("buildClaimPlan — routes a scored task-graph into a loop claim plan (#4799)", () => {
+  const idea = validIdea({ id: "idea-C", targetRepo: "acme/widgets" });
+
+  it("puts a lone go issue in claimable, carrying the target repo", () => {
+    const plan = buildClaimPlan(buildTaskGraph(idea, [{ key: "issue-1", title: "Add widget", body: "new" }]), idea.targetRepo);
+    expect(plan.ideaId).toBe("idea-C");
+    expect(plan.targetRepo).toBe("acme/widgets");
+    expect(plan.graphVerdict).toBe("go");
+    expect(plan.claimable.map((s) => s.key)).toEqual(["issue-1"]);
+    expect(plan.claimable[0]?.targetRepo).toBe("acme/widgets");
+    expect(plan.deferred).toHaveLength(0);
+    expect(plan.skipped).toHaveLength(0);
+  });
+
+  it("splits go/raise/avoid across claimable/deferred/skipped in dependency order", () => {
+    const graph = buildTaskGraph(idea, [
+      { key: "issue-1", title: "Ready", body: "b" }, // go -> claimable
+      { key: "issue-2", title: "Held", body: "b", dependsOn: ["issue-1"] }, // raise (dep not landed) -> deferred
+      { key: "issue-3", title: "Unshippable", body: "b", feasibility: { issueStatus: "invalid" } }, // avoid -> skipped
+    ]);
+    const plan = buildClaimPlan(graph, idea.targetRepo);
+    expect(plan.claimable.map((s) => s.key)).toEqual(["issue-1"]);
+    expect(plan.deferred.map((s) => s.key)).toEqual(["issue-2"]);
+    expect(plan.deferred[0]?.reasons).toContain("dependency_not_landed");
+    expect(plan.skipped.map((s) => s.key)).toEqual(["issue-3"]);
+    expect(plan.graphVerdict).toBe("avoid"); // least-favorable across the graph
   });
 });

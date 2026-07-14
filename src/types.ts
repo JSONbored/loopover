@@ -1132,11 +1132,6 @@ export type RepositorySettings = {
    *  `agentPaused`, never this field). Default false. Independent of the gate check's own {@link gateDryRun}
    *  preview -- the two "dry run" fields gate entirely disjoint layers with no shared code path. */
   agentDryRun?: boolean | undefined;
-  /** Per-repo override of the global DB-backed agent freeze (#4372): when true, this repo's actions execute
-   *  even while `global_agent_controls.frozen` is set, so an operator can re-activate one repo at a time
-   *  without lifting the fleet-wide brake. Never overrides the `AGENT_ACTIONS_PAUSED` env var, and
-   *  {@link agentPaused} on this same repo still wins over it. Default false. */
-  agentGlobalFreezeOverride?: boolean | undefined;
   /** Moderation-rules engine (#selfhost-mod-engine): gates ONLY the single shared, cross-repo violation
    *  tally across the anti-abuse mechanisms that already short-circuit a PR/issue's disposition on their
    *  own independent settings (contributor cap, blacklist, review-nag, review-evasion) -- it does NOT

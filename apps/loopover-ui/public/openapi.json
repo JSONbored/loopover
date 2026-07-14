@@ -9399,9 +9399,6 @@
           "agentDryRun": {
             "type": "boolean"
           },
-          "agentGlobalFreezeOverride": {
-            "type": "boolean"
-          },
           "contributorOpenPrCap": {
             "type": "integer",
             "nullable": true,

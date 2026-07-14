@@ -91,20 +91,20 @@ describe("check-docs-drift script", () => {
       const fixture = `
         export type RepositorySettings = {
           repoFullName: string;
-          agentGlobalFreezeOverride?: boolean | undefined;
+          agentPaused?: boolean | undefined;
           linkedIssueGateMode: GateRuleMode;
         };
       `;
 
       // The OLD, narrow check: invisible to a plain boolean field with no "GateMode" in its name -- this is
-      // exactly the shape of gap #4617 was filed over (agentGlobalFreezeOverride was live in source code but
+      // exactly the shape of gap #4617 was filed over (a plain settable boolean was live in source code but
       // had zero automated documentation guarantee, because it isn't a *GateMode field).
       expect(extractGateModeFields(fixture)).toEqual(["linkedIssueGateMode"]);
-      expect(extractGateModeFields(fixture)).not.toContain("agentGlobalFreezeOverride");
+      expect(extractGateModeFields(fixture)).not.toContain("agentPaused");
 
       // The WIDENED check: sees every field on the type, regardless of shape.
       const fields = extractRepositorySettingsFields(fixture);
-      expect(fields).toEqual(["repoFullName", "agentGlobalFreezeOverride", "linkedIssueGateMode"]);
+      expect(fields).toEqual(["repoFullName", "agentPaused", "linkedIssueGateMode"]);
     });
 
     it("is anchored on the RepositorySettings type's own brace boundary, not a bare name match elsewhere in the file", () => {
@@ -485,15 +485,15 @@ describe("check-docs-drift script", () => {
       }
     });
 
-    it("treats NOT_YML_CONFIGURABLE_SETTINGS_FIELDS members as excluded even with zero yml mention (repoFullName, createdAt, updatedAt, agentGlobalFreezeOverride)", () => {
+    it("treats NOT_YML_CONFIGURABLE_SETTINGS_FIELDS members as excluded even with zero yml mention (repoFullName, createdAt, updatedAt, skipAutomationBotAuthors)", () => {
       const files = baseFixtures();
       files["src/types.ts"] = files["src/types.ts"]!.replace(
         "};",
-        "  repoFullName: string;\n  createdAt?: string | null | undefined;\n  updatedAt?: string | null | undefined;\n  agentGlobalFreezeOverride?: boolean | undefined;\n};",
+        "  repoFullName: string;\n  createdAt?: string | null | undefined;\n  updatedAt?: string | null | undefined;\n  skipAutomationBotAuthors?: \"inherit\" | \"off\" | \"enabled\" | undefined;\n};",
       );
       const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
 
-      for (const field of ["repoFullName", "createdAt", "updatedAt", "agentGlobalFreezeOverride"]) {
+      for (const field of ["repoFullName", "createdAt", "updatedAt", "skipAutomationBotAuthors"]) {
         expect(result.failures.find((failure) => failure.includes(field))).toBeUndefined();
       }
     });

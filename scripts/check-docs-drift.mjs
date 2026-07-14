@@ -7,8 +7,8 @@
 // against .loopover.yml.example. Nothing else in CI catches a docs page/example silently falling behind when
 // a new flag/command/gate-mode/settings/manifest field is added to source but the place documenting that
 // surface is never updated -- a reviewer has to notice by eye, and often doesn't (#4617's own audit found
-// `agentGlobalFreezeOverride` and `review.visual.production_url` this way: both fully live in code, neither
-// mentioned anywhere a maintainer would think to look).
+// `review.visual.production_url` this way: fully live in code, but not mentioned anywhere a maintainer would
+// think to look).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,20 +90,11 @@ export function extractRepositorySettingsFields(typesText) {
 }
 
 /** RepositorySettings fields deliberately excluded from the "every field must have SOME
- *  `.loopover.yml.example` mention" check below, for three distinct reasons -- flagging any as "undocumented"
+ *  `.loopover.yml.example` mention" check below, for two distinct reasons -- flagging any as "undocumented"
  *  would be a false drift signal, not a real gap:
  *   - Not a maintainer-settable knob at all: `repoFullName` is the row's own identity key (set once at
  *     creation, the opposite of something a maintainer overrides via config); `createdAt`/`updatedAt` are
  *     DB-row bookkeeping timestamps.
- *   - `agentGlobalFreezeOverride`: genuinely settable, but DELIBERATELY never documented in the PUBLIC
- *     `.loopover.yml.example` -- it is settable only from the self-host operator's own PRIVATE config
- *     (`source: "api_record"` in `parseSettingsOverride`, packages/loopover-engine/src/focus-manifest.ts),
- *     never from a repo's own committed, maintainer-owned manifest (#4391's scope-leak fix). Documenting it in
- *     the public example would misleadingly suggest a repo maintainer can set it themselves -- see the same
- *     exclusion, with the same rationale, in `SETTINGS_OPERATOR_ONLY_FIELDS` in
- *     test/unit/focus-manifest.test.ts's `.loopover.yml.example field-exhaustiveness` suite. (An #4617 audit
- *     pass first flagged this field as an undocumented gap without that context; cross-checking the existing
- *     exhaustiveness suite before "fixing" it here caught the false positive.)
  *   - `skipAutomationBotAuthors`: genuinely settable (global env default + per-repo `inherit`/`off`/`enabled`
  *     override, mirroring `moderationGateMode`'s shape), but DELIBERATELY not wired into the
  *     FocusManifest/`.loopover.yml` parsing path -- DB-only for now, confirmed as an intentional scope choice
@@ -113,7 +104,6 @@ const NOT_YML_CONFIGURABLE_SETTINGS_FIELDS = new Set([
   "repoFullName",
   "createdAt",
   "updatedAt",
-  "agentGlobalFreezeOverride",
   "skipAutomationBotAuthors",
 ]);
 

@@ -2386,7 +2386,7 @@ export function createApp() {
     if (gate instanceof Response) return gate;
     const body = await c.req.json().catch(() => null);
     if (body === null) return c.json({ error: "invalid_json" }, 400);
-    const manifest = await upsertRepoFocusManifest(c.env, fullName, stripMaintainerFocusManifestSettings(body), "api_record");
+    const manifest = await upsertRepoFocusManifest(c.env, fullName, body, "api_record");
     return c.json({ repoFullName: fullName, manifest, policy: compileFocusManifestPolicy(manifest) });
   });
 
@@ -5431,20 +5431,6 @@ const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
 const VALIDATE_FOCUS_MANIFEST_PATH = "/v1/validate/focus-manifest";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
 const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
-function stripMaintainerFocusManifestSettings(raw: unknown): unknown {
-  // Split out from the rest of the guard below: this call site's only caller already 400s on a null body
-  // before ever reaching here, so this specific arm is unreachable in practice -- kept as defense-in-depth
-  // (typeof null === "object" in JS, so without it a null raw would fall through to the property access
-  // below and throw) for any future caller of this currently-unexported function.
-  /* v8 ignore next */
-  if (raw === null) return raw;
-  if (typeof raw !== "object" || Array.isArray(raw)) return raw;
-  const record = raw as Record<string, JsonValue>;
-  const settings = record.settings;
-  if (settings === null || typeof settings !== "object" || Array.isArray(settings) || !("agentGlobalFreezeOverride" in settings)) return raw;
-  const { agentGlobalFreezeOverride: _agentGlobalFreezeOverride, ...safeSettings } = settings;
-  return { ...record, settings: safeSettings };
-}
 // Contributor (miner) side of the extension (#556). Minted for NON-maintainer sign-ins; strictly
 // self-only — a token may only reach `/v1/extension/contributors/<self>/*`, enforced by the coarse
 // path check below plus `requireContributorAccess` (actor === login) in every handler.

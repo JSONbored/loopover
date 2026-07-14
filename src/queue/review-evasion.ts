@@ -10,7 +10,7 @@ import {
   getGateBlockOutcome,
   getInstallation,
   hasActiveReviewForHeadSha,
-  isDbFrozenForRepo,
+  isGlobalAgentFrozen,
   recordAuditEvent,
   terminalizeActiveReviewTracking,
 } from "../db/repositories";
@@ -109,7 +109,7 @@ async function evaluateCloseEnforcementGate(args: {
 }): Promise<CloseEnforcementGateResult> {
   const { env, installationId, repoFullName, pr, settings, eventType, targetKey } = args;
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

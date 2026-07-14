@@ -10,7 +10,7 @@ import {
   countOpenIssues,
   countOpenPullRequests,
   getLatestRepoGithubTotalsSnapshot,
-  isDbFrozenForRepo,
+  isGlobalAgentFrozen,
   listUpstreamDriftReports,
   recordAuditEvent,
 } from "../db/repositories";
@@ -261,9 +261,9 @@ export async function generateContributorIssueDrafts(
   // The caller's dryRun flag, OVERLAID with the global agent kill-switch: a paused/frozen agent must not file
   // contributor issues even when a caller passes {dryRun:false}. These POSTs use a raw token outside the
   // installation-Octokit dry-run chokepoint (#dry-run-chokepoint), so the brake is applied here. (#audit-rawfetch-pause)
-  // isDbFrozenForRepo (#4372) lets THIS repo's agentGlobalFreezeOverride bypass the DB freeze while other
-  // repos stay frozen -- the env-var hard stop (isGlobalAgentPause) is never overridable.
-  const dryRun = options.dryRun !== false || isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, context.settings.agentGlobalFreezeOverride));
+  // isGlobalAgentFrozen is an absolute fleet-wide brake with no per-repo bypass, same tier as the env-var
+  // hard stop (isGlobalAgentPause); day-to-day per-repo enable/disable is settings.agentPaused instead.
+  const dryRun = options.dryRun !== false || isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env));
   const createRequested = options.create === true;
   const limit = Math.min(MAX_LIMIT, Math.max(1, options.limit ?? DEFAULT_LIMIT));
   const candidates = buildContributorIssueDraftCandidates(context).slice(0, limit);

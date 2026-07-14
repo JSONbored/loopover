@@ -1,0 +1,11 @@
+-- Dead-column cleanup: removes the per-repo escape hatch from the global DB kill-switch (#4372/#4391).
+-- global_agent_controls.frozen (isGlobalAgentFrozen) is now an absolute fleet-wide brake with no per-repo
+-- bypass, same tier as the AGENT_ACTIONS_PAUSED env var -- day-to-day repo enable/disable is
+-- repository_settings.agent_paused instead, which is already resolved through the normal global-default +
+-- per-repo-override .loopover.yml config layering (settings.agentPaused). This column let one repo opt out of
+-- a fleet-wide freeze while every other repo stayed frozen, but that required either a raw DB write or a
+-- container-private config edit gated to source: "api_record" -- an operator-only lever with no real config-
+-- as-code parity with every other repository_settings field, and the exact kind of DB-controlled behavior
+-- this project's config-as-code convention rules out. SQLite 3.35+ / D1 supports DROP COLUMN directly (same
+-- precedent as 0122_drop_private_trust_enabled.sql / 0146_drop_gate_check_mode.sql).
+ALTER TABLE repository_settings DROP COLUMN agent_global_freeze_override;

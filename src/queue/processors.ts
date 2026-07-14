@@ -67,7 +67,7 @@ import {
   hasAuditEventForHeadSha,
   recordGateBlockOutcome,
   getActiveReviewStartedAt,
-  isDbFrozenForRepo,
+  isGlobalAgentFrozen,
   markGateOutcomeOverridden,
   markPullRequestLinkedIssueHardRuleViolated,
   startActiveReviewTracking,
@@ -1334,7 +1334,7 @@ export async function sweepRepoRegate(
   )
     return;
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), // env brake OR DB kill-switch (#audit-§5.2)
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), // env brake OR DB kill-switch (#audit-§5.2)
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -1707,7 +1707,7 @@ export async function sweepRepoBacklogConvergence(
   const settings = await resolveRepositorySettings(env, repoFullName);
   if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return;
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -2752,7 +2752,7 @@ async function runAgentMaintenancePlanAndExecute(
     }
     if (isNewAccount && resolveAutonomy(settings.autonomy, "review_state_label") === "auto") {
       const newAccountMode = resolveAgentActionMode({
-        globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+        globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
       });
@@ -3106,7 +3106,6 @@ async function runAgentMaintenancePlanAndExecute(
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
-      agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
       installationPermissions,
       authorLogin: pr.authorLogin,
       mergeTrainMode: settings.mergeTrainMode,
@@ -3453,7 +3452,6 @@ async function prReadyForReview(
         autonomy: settings.autonomy,
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
-        agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
         installationPermissions: installation?.permissions ?? null,
         authorLogin: pr.authorLogin,
       },
@@ -3762,7 +3760,6 @@ async function maybeForceFreshRebase(
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
-      agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
       /* v8 ignore next -- an installed-App PR webhook always carries an installation record; the null is defensive (mirrors runAgentMaintenancePlanAndExecute's own identical merge-time read). */
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
@@ -5031,7 +5028,6 @@ async function maybeCloseIssueOverContributorCap(
               autonomy: settings.autonomy,
               agentPaused: settings.agentPaused,
               agentDryRun: settings.agentDryRun,
-              agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
               authorLogin,
               moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
             },
@@ -5115,7 +5111,6 @@ async function maybeCloseIssueOverContributorCap(
         autonomy: settings.autonomy,
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
-        agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
         authorLogin,
         moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
       },
@@ -6063,7 +6058,7 @@ async function handleIssueWebhookEvent(
         if (await isBelowAccountAgeThreshold(env, installationId, authorLogin, accountAgeThresholdDays)) {
           if (resolveAutonomy(issueSettings.autonomy, "review_state_label") === "auto") {
             const newAccountMode = resolveAgentActionMode({
-              globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, issueSettings.agentGlobalFreezeOverride)),
+              globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
               agentPaused: issueSettings.agentPaused,
               agentDryRun: issueSettings.agentDryRun,
             });
@@ -7518,7 +7513,7 @@ async function maybeApplyManifestPolicyGate(
       // the cost of a maintainer choosing to ask twice).
       const alreadyTriggered = await hasAuditEventForHeadSha(env, "github_app.e2e_tests_generation", e2eTargetKey, args.pr.headSha);
       if (!alreadyTriggered) {
-        const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, args.settings.agentGlobalFreezeOverride)), agentPaused: args.settings.agentPaused, agentDryRun: args.settings.agentDryRun });
+        const e2eMode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: args.settings.agentPaused, agentDryRun: args.settings.agentDryRun });
         if (e2eMode === "live") {
           await runE2eTestGenerationAndDeliver(env, {
             repoFullName: args.repoFullName,
@@ -10549,7 +10544,7 @@ async function maybeProcessGateOverrideCommand(
   // an operator's pause or the DB kill-switch does not stop a maintainer's @loopover gate-override from
   // flipping the live Gate check-run to neutral and posting a real confirmation comment.
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -10715,7 +10710,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") { const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused"; await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: skipReason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: skipReason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: skipReason } }); return true; }
   const reviewManifest = await loadRepoFocusManifest(env, req.repoFullName).catch(() => null);
   const reviewMemoryEnabled = shouldApplyReviewMemory(env, resolveReviewMemoryManifestToggle(reviewManifest));
@@ -10767,7 +10762,7 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
   }
   // Same dry-run/paused gate every other action command respects (pause/resolve/explain/gate-override/
   // generate-tests) -- a paused or dry-run repo must not dispatch a live re-review or post a confirmation.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     await recordReviewCommandSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, mode === "dry_run" ? "dry_run" : "agent_paused");
     return true;
@@ -11020,7 +11015,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
   }
   // Same dry-run/paused gate every other action command respects (mirrors maybeProcessResolveCommand's own
   // resolveAgentActionMode check) — an agent-paused or dry-run repo gets no generated content posted at all.
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, skipReason);
@@ -11231,7 +11226,7 @@ async function maybeProcessConfigurationCommand(
     return true;
   }
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -11354,7 +11349,7 @@ async function maybeProcessPlanCommand(
   // incurs the AI cost speculatively — mirroring how the reopen-reclose handler skips its write uniformly for
   // both dry_run and paused, not just paused.
   const planMode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -11740,7 +11735,7 @@ async function maybeProcessPrPanelGenerateTests(
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, "feature_disabled");
     return true;
   }
-  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
+  const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
   if (mode !== "live") {
     const skipReason = mode === "dry_run" ? "dry_run" : "agent_paused";
     await recordGenerateTestsSkip(env, deliveryId, repoFullName, `${repoFullName}#${pr.number}`, actor, skipReason);
@@ -12074,7 +12069,7 @@ async function maybeThrottleReviewNagPing(
   if (pingCount <= maxPings) return false; // under threshold — normal command processing proceeds unchanged
 
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -12156,7 +12151,6 @@ async function maybeThrottleReviewNagPing(
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
-      agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
@@ -12267,7 +12261,7 @@ async function maybeThrottleMonitoredMentions(
   if (pingCount <= maxPings) return false;
 
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
@@ -12342,7 +12336,6 @@ async function maybeThrottleMonitoredMentions(
       autonomy: settings.autonomy,
       agentPaused: settings.agentPaused,
       agentDryRun: settings.agentDryRun,
-      agentGlobalFreezeOverride: settings.agentGlobalFreezeOverride,
       installationPermissions: installation?.permissions ?? null,
       authorLogin: pr.authorLogin,
       moderationSettings: { moderationGateMode: settings.moderationGateMode, moderationRules: settings.moderationRules, moderationWarningLabel: settings.moderationWarningLabel, moderationBannedLabel: settings.moderationBannedLabel },
@@ -12718,7 +12711,7 @@ async function maybeProcessLoopOverMentionCommand(
   // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2258) — the answer
   // card is a live public comment post, same as gate-override's confirmation comment.
   const mentionMode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isDbFrozenForRepo(env, settings.agentGlobalFreezeOverride)),
+    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });

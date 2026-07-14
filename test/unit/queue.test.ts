@@ -59,7 +59,7 @@ import {
   listReviewSuppressions,
   setGlobalAgentFrozen,
 } from "../../src/db/repositories";
-import { agentMaintenanceHeadMatchesGate, buildBurdenForecasts, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
+import { agentMaintenanceHeadMatchesGate, buildBurdenForecasts, changedPathsForGuardrail, claimAiReviewLock, claimPrActuationLock, contributorEvidenceBatchSize, enrichOpenPullRequestsWithChangedFiles, fanOutRepoSignalSnapshotJobs, processJob, reconcileLiveDuplicateSiblings, releaseAiReviewLock, releasePrActuationLock, reviewDurationMsSince, SWEEP_FANOUT_RESOLUTION_CONCURRENCY } from "../../src/queue/processors";
 import type { PullRequestRecord } from "../../src/types";
 import { aiReviewCacheInputFingerprint } from "../../src/review/ai-review-cache-input";
 import { fingerprint as reviewMemoryFingerprint } from "../../src/review/review-memory-match";
@@ -483,6 +483,29 @@ describe("queue processors", () => {
     await expect(getBurdenForecast(env, "acme/registered-not-installed")).resolves.toBeNull();
   });
 
+  it("fans out signal-snapshot jobs by isInstalled, not isRegistered (#5019 regression)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    vi.spyOn(repositoriesModule, "listRepositories").mockResolvedValue([
+      // Installed but not gittensor-subnet-registered: signal-snapshot generation is generic repo-health
+      // tracking (queue-health, config-quality, label-audit, contributor-intake-health, issue-quality,
+      // repo-outcome-patterns), unrelated to subnet economics, so this repo MUST still be covered.
+      { fullName: "acme/installed-not-registered", owner: "acme", name: "installed-not-registered", isInstalled: true, isRegistered: false, isPrivate: false },
+      // Subnet-registered but not installed on this instance: this repo must NOT be covered.
+      { fullName: "acme/registered-not-installed", owner: "acme", name: "registered-not-installed", isInstalled: false, isRegistered: true, isPrivate: false },
+    ]);
+
+    await fanOutRepoSignalSnapshotJobs(env, "test");
+
+    expect(sent).toEqual([expect.objectContaining({ type: "generate-signal-snapshots", repoFullName: "acme/installed-not-registered" })]);
+  });
+
   it("runs queued agent jobs through the queue processor", async () => {
     const queued: unknown[] = [];
     const env = createTestEnv({
@@ -893,9 +916,12 @@ describe("queue processors", () => {
           "we-promise/sure": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
         },
         { kind: "raw-github", url: "fixture://registry" },
-        "2026-05-25T00:00:00.000Z",
+        "2026-05-23T00:00:00.000Z",
       ),
     );
+    // fanOutRepoSignalSnapshotJobs now gates on isInstalled, not isRegistered (#5019).
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 9403);
+    await upsertRepositoryFromGitHub(env, { name: "sure", full_name: "we-promise/sure", private: true, owner: { login: "we-promise" } }, 9404);
 
     await processJob(env, { type: "generate-signal-snapshots", requestedBy: "schedule" });
 

@@ -791,8 +791,12 @@ export async function fanOutRepoSignalSnapshotJobs(
   env: Env,
   requestedBy: "schedule" | "api" | "test",
 ): Promise<void> {
+  // #5019: most of what generateSignalSnapshots produces (queue-health, config-quality, label-audit,
+  // contributor-intake-health, issue-quality, repo-outcome-patterns) is generic repo health, unrelated to
+  // gittensor-subnet membership. The gittensor-specific pieces (maintainer-lane/maintainer-cut-readiness)
+  // already degrade gracefully for !isRegistered internally, so no other change is needed here.
   const repositories = (await listRepositories(env)).filter(
-    (repo) => repo.isRegistered,
+    (repo) => repo.isInstalled,
   );
   await Promise.all(
     repositories.map((repo, index) => {

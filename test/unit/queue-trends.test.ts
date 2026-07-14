@@ -171,7 +171,8 @@ describe("queue trend windows", () => {
 
   it("persists a compact trend snapshot during signal generation", async () => {
     const env = createTestEnv();
-    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" }, default_branch: "main" });
+    // generateSignalSnapshots now gates on isInstalled, not isRegistered (#5019).
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" }, default_branch: "main" }, 601);
     await env.DB.prepare("update repositories set is_registered = 1 where full_name = ?").bind("owner/repo").run();
     await persistRepoGithubTotalsSnapshot(env, totals(30, { openIssues: 10, openPrs: 2, merged: 5, closed: 1 }));
     await persistRepoGithubTotalsSnapshot(env, totals(0, { openIssues: 16, openPrs: 8, merged: 9, closed: 3 }));
@@ -196,6 +197,28 @@ describe("queue trend windows", () => {
       source: "snapshot",
       windows: expect.arrayContaining([expect.objectContaining({ windowDays: 30, status: "ready", pullRequestGrowth: 6 })]),
     });
+  });
+
+  it("#5019: still generates a snapshot for an installed-but-not-registered repo (the enqueued job's own re-filter must not silently no-op)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "acme/installed-only", private: false, owner: { login: "acme" }, default_branch: "main" }, 602);
+
+    await generateSignalSnapshots(env, "acme/installed-only");
+
+    // A repo this instance never processed would have no snapshot row at all; getting a real (non-null)
+    // snapshot back proves the inner isInstalled filter actually let this repo through, not just the
+    // outer fan-out filter fixed by the same issue.
+    await expect(getRepoQueueTrendSnapshot(env, "acme/installed-only")).resolves.not.toBeNull();
+  });
+
+  it("#5019: does not generate a snapshot for a registered-but-not-installed repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "acme/registered-only", private: false, owner: { login: "acme" } });
+    await env.DB.prepare("update repositories set is_registered = 1 where full_name = ?").bind("acme/registered-only").run();
+
+    await generateSignalSnapshots(env, "acme/registered-only");
+
+    await expect(getRepoQueueTrendSnapshot(env, "acme/registered-only")).resolves.toBeNull();
   });
 });
 

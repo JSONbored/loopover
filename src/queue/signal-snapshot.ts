@@ -54,9 +54,13 @@ export async function generateSignalSnapshots(
   env: Env,
   repoFullName?: string,
 ): Promise<void> {
+  // #5019: this is the function the enqueued generate-signal-snapshots job actually calls, and it
+  // independently re-filters by the same field fanOutRepoSignalSnapshotJobs already checked -- both
+  // filters must move to isInstalled together, or a job enqueued for an installed-but-not-registered
+  // repo would reach here and silently no-op (repositories would come back empty).
   const repositories = (await listRepositories(env)).filter(
     (repo) =>
-      repo.isRegistered && (!repoFullName || repo.fullName === repoFullName),
+      repo.isInstalled && (!repoFullName || repo.fullName === repoFullName),
   );
   for (const repo of repositories) {
     const trendSince = new Date(

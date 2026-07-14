@@ -44,7 +44,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
   it("a maintainer reads their OWN repo's settings but NOT another maintainer's repo", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
     expect((await app.request(SETTINGS_A, { headers: { cookie } }, env)).status).toBe(200);
     const other = await app.request(SETTINGS_B, { headers: { cookie } }, env);
     expect(other.status).toBe(403); // maintainer of A cannot reach B's maintainer data
@@ -54,7 +54,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
   it("a maintainer can REACH validate-linked-issue on their OWN repo, scoped per-repo (allowlist parity with check-before-start)", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
     // Before the fix this returned 403 insufficient_role at the session allowlist (the route was omitted),
     // even though the handler's requireSessionRepoAccess guard would admit a maintainer of their own repo.
     const own = await app.request(
@@ -76,7 +76,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
   it("a maintainer can REACH agent pending-actions on their OWN repo (allowlist parity with audit-feed)", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
     const own = await app.request("/v1/repos/alice/repo-a/agent/pending-actions", { headers: { cookie } }, env);
     expect(own.status).toBe(200);
     await expect(own.json()).resolves.toMatchObject({ repoFullName: "alice/repo-a", pendingActions: [] });
@@ -85,7 +85,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
   it("a pure miner (no maintainer role on any repo) cannot read ANY repo's maintainer settings", async () => {
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "miner-only", id: 900 });
-    const res = await app.request(SETTINGS_A, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request(SETTINGS_A, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "insufficient_role" });
   });
@@ -93,7 +93,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
   it("an operator bypasses per-repo scope (can read any repo's settings)", async () => {
     const { app, env } = await setup({ ADMIN_GITHUB_LOGINS: "ops-admin" });
     const { token } = await createSessionForGitHubUser(env, { login: "ops-admin", id: 9 });
-    expect((await app.request(SETTINGS_B, { headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(200);
+    expect((await app.request(SETTINGS_B, { headers: { cookie: `loopover_session=${token}` } }, env)).status).toBe(200);
   });
 
   it("a server-to-server token reads settings without per-repo session scope", async () => {
@@ -112,7 +112,7 @@ describe("access boundary: per-repo maintainer data is repo-scoped", () => {
     // grants no access to repo-b — the two scopes are independent and per-repo.
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
     expect((await app.request(SETTINGS_A, { headers: { cookie } }, env)).status).toBe(200);
     expect((await app.request(SETTINGS_B, { headers: { cookie } }, env)).status).toBe(403);
   });
@@ -127,7 +127,7 @@ describe("access boundary: contributor (miner) data is self-scoped", () => {
     // contributor data through the per-user MCP, never another miner's via the HTTP surface.
     const { app, env } = await setup();
     const { token } = await createSessionForGitHubUser(env, { login: "miner-only", id: 900 });
-    const res = await app.request("/v1/contributors/alice/profile", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/contributors/alice/profile", { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(403);
   });
 });

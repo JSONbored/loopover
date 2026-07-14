@@ -1,4 +1,4 @@
-# Gittensory Miner Extension
+# LoopOver Miner Extension
 
 Contributor-facing browser extension for GitHub **issue** pages. It is intentionally separate from
 [`apps/gittensory-extension/`](../gittensory-extension/) (the **Maintainer Overlay**), which injects private PR/issue

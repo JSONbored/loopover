@@ -5,7 +5,7 @@ import { PublicRepoQualityPage } from "@/components/site/public-repo-quality-pag
 export const Route = createFileRoute("/repos/$owner/$repo/quality")({
   head: ({ params }) => ({
     meta: [
-      { title: `${params.owner}/${params.repo} review quality — Gittensory` },
+      { title: `${params.owner}/${params.repo} review quality — LoopOver` },
       {
         name: "description",
         content:

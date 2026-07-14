@@ -1,4 +1,4 @@
-# Gittensory review config templates
+# LoopOver review config templates
 
 Copy-paste templates for the per-repo review manifest. Every file in this directory uses the
 **same schema** whether it lives in a public repo root or a self-host private mount

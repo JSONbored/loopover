@@ -31,7 +31,7 @@ function IconFor({ severity, connection }: { severity: Severity; connection: str
 }
 
 /**
- * Sticky API status banner that shows under the header when the Gittensory API
+ * Sticky API status banner that shows under the header when the LoopOver API
  * is anything other than fully healthy, or when the browser is offline.
  */
 export function ApiStatusBanner() {

@@ -297,6 +297,6 @@ describe("loopover_feasibility_gate: local claim-ledger sourcing (#5157)", () =>
     const { tools } = await ledgerClient.listTools();
     const tool = tools.find((t) => t.name === "loopover_feasibility_gate");
     expect(tool?.description).toContain("Advisory-only");
-    expect(tool?.description).toContain("local gittensory-miner install's claim ledger");
+    expect(tool?.description).toContain("local loopover-miner install's claim ledger");
   });
 });

@@ -44,7 +44,7 @@ function advisory(over: Partial<Advisory> = {}): Advisory {
     headSha: "sha3",
     conclusion: "neutral",
     severity: "info",
-    title: "Gittensory advisory available",
+    title: "LoopOver advisory available",
     summary: "ok",
     findings: [],
     generatedAt: "2026-06-13T00:00:00.000Z",
@@ -361,7 +361,7 @@ describe("runAiReviewForAdvisory", () => {
 
   it("threads settings.aiReviewCombine/aiReviewOnMerge/aiReviewReviewers (#2567) into the AI review call", async () => {
     // settings.aiReviewCombine/OnMerge/Reviewers are resolved from `.gittensory.yml gate.aiReview.*` upstream by
-    // resolveEffectiveSettings; runAiReviewForAdvisory must forward them into runGittensoryAiReview's input so a
+    // resolveEffectiveSettings; runAiReviewForAdvisory must forward them into runLoopOverAiReview's input so a
     // per-repo override actually reaches the reviewer selection (in place of any env.AI_REVIEW_PLAN default).
     const adv = advisory();
     const seen: string[] = [];
@@ -701,7 +701,7 @@ describe("runAiReviewForAdvisory", () => {
       author: "alice",
       confirmedContributor: true,
       // improvementSignal omitted (the default, and every caller until this PR) -- the prompt never asked for
-      // the field, so runGittensoryAiReview never composes it regardless of what the raw model JSON contains.
+      // the field, so runLoopOverAiReview never composes it regardless of what the raw model JSON contains.
     });
     expect(result?.valueAssessment).toBeUndefined();
   });

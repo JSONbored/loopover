@@ -6,10 +6,10 @@ import {
   callAiProvider,
   resolveEffectiveAiReviewOnMerge,
   resolveEffectiveAiReviewPlan,
-  runGittensoryAiReview,
+  runLoopOverAiReview,
   type AiContentBlock,
   type AiReviewDiagnostic,
-  type GittensoryAiReviewInput,
+  type LoopOverAiReviewInput,
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -106,7 +106,7 @@ function reviewJson(
   });
 }
 
-const baseInput: GittensoryAiReviewInput = {
+const baseInput: LoopOverAiReviewInput = {
   repoFullName: "acme/widgets",
   prNumber: 7,
   title: "Fix null deref",
@@ -121,14 +121,14 @@ afterEach(() => {
   resetMetrics();
 });
 
-describe("runGittensoryAiReview gating", () => {
+describe("runLoopOverAiReview gating", () => {
   it("is disabled until both AI flags are on", async () => {
     const run = vi.fn();
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
       AI_SUMMARIES_ENABLED: "true",
     });
-    await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({
+    await expect(runLoopOverAiReview(env, baseInput)).resolves.toMatchObject({
       status: "disabled",
     });
     expect(run).not.toHaveBeenCalled();
@@ -139,7 +139,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
     });
-    await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({
+    await expect(runLoopOverAiReview(env, baseInput)).resolves.toMatchObject({
       status: "unavailable",
     });
   });
@@ -152,7 +152,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "1",
     });
-    await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({
+    await expect(runLoopOverAiReview(env, baseInput)).resolves.toMatchObject({
       status: "quota_exceeded",
     });
     expect(run).not.toHaveBeenCalled();
@@ -167,7 +167,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_DAILY_NEURON_BUDGET: "600",
     });
     await expect(
-      runGittensoryAiReview(env, { ...baseInput, mode: "block" }),
+      runLoopOverAiReview(env, { ...baseInput, mode: "block" }),
     ).resolves.toMatchObject({
       status: "quota_exceeded",
     });
@@ -186,7 +186,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_DAILY_NEURON_BUDGET: "600",
     });
     await expect(
-      runGittensoryAiReview(env, { ...baseInput, mode: "block", reviewers: [{ model: "claude-code" }, { model: "codex" }] }),
+      runLoopOverAiReview(env, { ...baseInput, mode: "block", reviewers: [{ model: "claude-code" }, { model: "codex" }] }),
     ).resolves.toMatchObject({
       status: "quota_exceeded",
     });
@@ -202,7 +202,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_DAILY_NEURON_BUDGET: "100000",
       AI_MAX_OUTPUT_TOKENS: "not-a-number",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status).toBe("ok"); // NaN → clamped to the 256 floor, review still runs
   });
 
@@ -232,7 +232,7 @@ describe("runGittensoryAiReview gating", () => {
       AI_DAILY_NEURON_BUDGET: "1",
       AI_BYOK_DAILY_REPO_LIMIT: "1",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -275,10 +275,10 @@ describe("runGittensoryAiReview gating", () => {
     };
 
     await expect(
-      runGittensoryAiReview(env, { ...baseInput, providerKey }),
+      runLoopOverAiReview(env, { ...baseInput, providerKey }),
     ).resolves.toMatchObject({ status: "ok" });
     await expect(
-      runGittensoryAiReview(env, { ...baseInput, prNumber: 8, providerKey }),
+      runLoopOverAiReview(env, { ...baseInput, prNumber: 8, providerKey }),
     ).resolves.toMatchObject({ status: "quota_exceeded" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -296,7 +296,7 @@ describe("AI Gateway routing for free Workers-AI calls", () => {
       AI_DAILY_NEURON_BUDGET: "100000",
       AI_GATEWAY_ID: "gtsy-gw",
     });
-    await runGittensoryAiReview(env, baseInput);
+    await runLoopOverAiReview(env, baseInput);
     expect(run).toHaveBeenCalled();
     expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toEqual({
       gateway: { id: "gtsy-gw" },
@@ -311,12 +311,12 @@ describe("AI Gateway routing for free Workers-AI calls", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    await runGittensoryAiReview(env, baseInput);
+    await runLoopOverAiReview(env, baseInput);
     expect((run.mock.calls[0] as unknown[] | undefined)?.[2]).toBeUndefined();
   });
 });
 
-describe("runGittensoryAiReview advisory mode", () => {
+describe("runLoopOverAiReview advisory mode", () => {
   it("produces public-safe advisory notes from one Workers-AI opinion and no defect", async () => {
     const run = vi.fn(async (_model: string) => ({ response: reviewJson() }));
     const env = createTestEnv({
@@ -325,7 +325,7 @@ describe("runGittensoryAiReview advisory mode", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") return;
     expect(result.consensusDefect).toBeNull();
@@ -341,7 +341,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
   const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
     (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
       ?.messages?.[0]?.content ?? "";
-  const runProfile = async (profile: GittensoryAiReviewInput["profile"]) => {
+  const runProfile = async (profile: LoopOverAiReviewInput["profile"]) => {
     const run = vi.fn(async () => ({ response: reviewJson() }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -349,7 +349,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    await runGittensoryAiReview(env, { ...baseInput, profile });
+    await runLoopOverAiReview(env, { ...baseInput, profile });
     return systemPromptOf(run);
   };
 
@@ -385,7 +385,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, { ...baseInput, pathGuidance });
+      await runLoopOverAiReview(env, { ...baseInput, pathGuidance });
       return systemPromptOf(run);
     };
     expect(
@@ -405,7 +405,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
   it("review.ai_model (#selfhost-ai-model-override) threads claudeModel/claudeEffort/codexModel/codexEffort through to ai.run's options", async () => {
     const optionsOf = (run: ReturnType<typeof vi.fn>): Record<string, unknown> =>
       (run.mock.calls[0]?.[1] as Record<string, unknown>) ?? {};
-    const runWithOverride = async (over: Partial<GittensoryAiReviewInput>) => {
+    const runWithOverride = async (over: Partial<LoopOverAiReviewInput>) => {
       const run = vi.fn(async () => ({ response: reviewJson() }));
       const env = createTestEnv({
         AI: { run } as unknown as Ai,
@@ -413,7 +413,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, { ...baseInput, ...over });
+      await runLoopOverAiReview(env, { ...baseInput, ...over });
       return optionsOf(run);
     };
     const options = await runWithOverride({
@@ -452,7 +452,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, { ...baseInput, repoInstructions });
+      await runLoopOverAiReview(env, { ...baseInput, repoInstructions });
       return { system: systemPromptOf(run), options: optionsOf(run) };
     };
     const withInstr = await runInstr("Follow our async-error conventions.");
@@ -477,7 +477,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, {
+      await runLoopOverAiReview(env, {
         ...baseInput,
         reviewers: [{ model }],
         combine: "single",
@@ -509,7 +509,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, { ...baseInput, inlineFindings });
+      await runLoopOverAiReview(env, { ...baseInput, inlineFindings });
       return systemPromptOf(run);
     };
     const withInline = await runInline(true);
@@ -532,7 +532,7 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      await runGittensoryAiReview(env, { ...baseInput, inlineFindings, findingCategories });
+      await runLoopOverAiReview(env, { ...baseInput, inlineFindings, findingCategories });
       return systemPromptOf(run);
     };
     const withBoth = await runWith(true, true);
@@ -553,8 +553,8 @@ describe("review.security_focus shapes the reviewer system prompt (#review-secur
     (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
       ?.messages?.[0]?.content ?? "";
   const runSecurityFocus = async (
-    securityFocus: GittensoryAiReviewInput["securityFocus"],
-    profile?: GittensoryAiReviewInput["profile"],
+    securityFocus: LoopOverAiReviewInput["securityFocus"],
+    profile?: LoopOverAiReviewInput["profile"],
   ) => {
     const run = vi.fn(async () => ({ response: reviewJson() }));
     const env = createTestEnv({
@@ -563,7 +563,7 @@ describe("review.security_focus shapes the reviewer system prompt (#review-secur
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    await runGittensoryAiReview(env, { ...baseInput, securityFocus, profile });
+    await runLoopOverAiReview(env, { ...baseInput, securityFocus, profile });
     return systemPromptOf(run);
   };
 
@@ -614,7 +614,7 @@ describe("review.improvement_signal shapes the reviewer system prompt (#4743)", 
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    await runGittensoryAiReview(env, { ...baseInput, improvementSignal });
+    await runLoopOverAiReview(env, { ...baseInput, improvementSignal });
     return systemPromptOf(run);
   };
 
@@ -650,7 +650,7 @@ describe("review.improvement_signal shapes the reviewer system prompt (#4743)", 
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    await runGittensoryAiReview(env, {
+    await runLoopOverAiReview(env, {
       ...baseInput,
       improvementSignal: true,
       inlineFindings: true,
@@ -665,7 +665,7 @@ describe("review.improvement_signal shapes the reviewer system prompt (#4743)", 
   });
 });
 
-describe("runGittensoryAiReview block mode (consensus)", () => {
+describe("runLoopOverAiReview block mode (consensus)", () => {
   function envWith(run: (model: string) => Promise<unknown>) {
     return createTestEnv({
       AI: { run: vi.fn(run) } as unknown as Ai,
@@ -684,7 +684,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
         detail: "Crashes on empty list.",
       }),
     }));
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -707,7 +707,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
             }),
           },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -722,7 +722,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
         nits: ["Consider renaming the helper."],
       }),
     }));
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -743,7 +743,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
           }
         : { response: "garbage" },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       actor: undefined,
@@ -761,7 +761,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
     const env = envWith(async () => ({
       response: reviewJson({ present: false }),
     }));
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -803,7 +803,7 @@ describe("runGittensoryAiReview block mode (consensus)", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       providerKey: { provider: "anthropic", key: "sk-ant" },
@@ -840,7 +840,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -881,7 +881,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -913,7 +913,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -938,7 +938,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "openai", key: "sk-secret" },
     });
@@ -971,7 +971,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -997,7 +997,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: {
         provider: "anthropic",
@@ -1036,7 +1036,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret", model: "claude-sonnet-5" },
     });
@@ -1093,7 +1093,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "openai", key: "sk-secret", model: "gpt-5.4" },
     });
@@ -1132,7 +1132,7 @@ describe("BYOK provider dispatch", () => {
       AI_DAILY_NEURON_BUDGET: "100000",
     });
     // No `model` override — falls back to the provider default, which this pricing table doesn't cover.
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -1168,7 +1168,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "openai", key: "sk-secret", model: "gpt-5.4" },
     });
@@ -1197,7 +1197,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -1228,7 +1228,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -1259,7 +1259,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "openai", key: "sk-secret", model: "gpt-5.4" },
     });
@@ -1285,7 +1285,7 @@ describe("BYOK provider dispatch", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-secret" },
     });
@@ -1359,7 +1359,7 @@ describe("Workers AI fallback + degraded output", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status === "ok" && result.advisoryNotes).toBeNull();
     expect(result.status === "ok" && result.inconclusive).toBe(true);
     // primary 3× + fallback 3× retries, all unparseable.
@@ -1367,7 +1367,7 @@ describe("Workers AI fallback + degraded output", () => {
   });
 });
 
-describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () => {
+describe("runLoopOverAiReview self-host dual-AI plan (#dual-ai-combiner)", () => {
   const planEnv = (
     plan: {
       reviewers: Array<{ model: string; fallback?: string | null | undefined }>;
@@ -1399,7 +1399,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         },
       }),
     );
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     if (result.status !== "ok") throw new Error("expected ok");
     expect(result.reviewDiagnostics).toEqual([
       expect.objectContaining({
@@ -1553,7 +1553,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         };
       },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -1578,7 +1578,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         };
       },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -1610,7 +1610,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
           : { response: reviewJson({ present: false }) };
       },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
     });
@@ -1648,7 +1648,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         };
       },
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       providerKey: { provider: "anthropic", key: "sk-ant" },
@@ -1682,7 +1682,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         response: "Reviewer could not emit JSON, but recommends manual review.",
       }),
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       providerKey: { provider: "anthropic", key: "sk-ant" },
@@ -1718,7 +1718,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
         return { response: reviewJson({ present: false }) };
       },
     );
-    await runGittensoryAiReview(env, {
+    await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       reviewers: [{ model: "ollama" }, { model: "groq" }],
@@ -1745,7 +1745,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
             : { response: reviewJson({ present: false }) };
         },
       );
-      const result = await runGittensoryAiReview(env, {
+      const result = await runLoopOverAiReview(env, {
         ...baseInput,
         mode: "block",
         // No per-repo combine/onMerge/reviewers override at all.
@@ -1763,7 +1763,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
             ? { response: reviewJson({ present: true, title: "Lone blocker" }) }
             : { response: reviewJson({ present: false }) },
       );
-      const result = await runGittensoryAiReview(env, {
+      const result = await runLoopOverAiReview(env, {
         ...baseInput,
         mode: "block",
         combine: "synthesis",
@@ -1786,7 +1786,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
             : { response: reviewJson({ present: false }) };
         },
       );
-      const result = await runGittensoryAiReview(env, {
+      const result = await runLoopOverAiReview(env, {
         ...baseInput,
         mode: "block",
         combine: "synthesis",
@@ -1808,7 +1808,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
             ? { response: reviewJson({ present: true, title: "Lone blocker" }) }
             : { response: reviewJson({ present: false }) },
       );
-      const result = await runGittensoryAiReview(env, {
+      const result = await runLoopOverAiReview(env, {
         ...baseInput,
         mode: "block",
         combine: "synthesis",
@@ -1828,7 +1828,7 @@ describe("runGittensoryAiReview self-host dual-AI plan (#dual-ai-combiner)", () 
             ? { response: reviewJson({ present: true, title: "Lone blocker" }) }
             : { response: reviewJson({ present: false }) },
       );
-      const result = await runGittensoryAiReview(env, {
+      const result = await runLoopOverAiReview(env, {
         ...baseInput,
         mode: "block",
         combine: "synthesis",
@@ -2421,7 +2421,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.consensusDefect?.title).toContain("Null deref");
@@ -2552,7 +2552,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.split).toBe(true);
@@ -2588,7 +2588,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.split).toBe(false);
@@ -2619,7 +2619,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.split).toBe(true);
@@ -2758,7 +2758,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(result.split).toBe(true);
@@ -2795,7 +2795,7 @@ describe("pure helpers", () => {
           combine: "synthesis",
         } as never,
       });
-      const result = await runGittensoryAiReview(env, { ...baseInput, mode: "block" });
+      const result = await runLoopOverAiReview(env, { ...baseInput, mode: "block" });
       expect(result.status).toBe("ok");
       if (result.status !== "ok") throw new Error("expected ok");
       expect(judgeCalls).toBe(0);
@@ -3159,7 +3159,7 @@ describe("pure helpers", () => {
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status).toBe("ok");
   });
 
@@ -3488,7 +3488,7 @@ describe("pure helpers", () => {
     expect(composeInlineFindings([])).toEqual([]);
   });
 
-  it("runGittensoryAiReview emits composed inline findings only when the caller asks for them (#inline-comments)", async () => {
+  it("runLoopOverAiReview emits composed inline findings only when the caller asks for them (#inline-comments)", async () => {
     const json = JSON.stringify({
       assessment: "Looks fine.",
       blockers: [],
@@ -3511,7 +3511,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       inlineFindings: true,
     });
@@ -3528,7 +3528,7 @@ describe("pure helpers", () => {
       ]);
   });
 
-  it("runGittensoryAiReview drops unexpected inline findings when the caller did not ask for them (#inline-comments)", async () => {
+  it("runLoopOverAiReview drops unexpected inline findings when the caller did not ask for them (#inline-comments)", async () => {
     const json = JSON.stringify({
       assessment: "Looks fine.",
       blockers: [],
@@ -3550,7 +3550,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       inlineFindings: false,
     });
@@ -3711,7 +3711,7 @@ describe("pure helpers", () => {
     });
   });
 
-  it("runGittensoryAiReview surfaces the composed valueAssessment only when improvementSignal was resolved on (#4743)", async () => {
+  it("runLoopOverAiReview surfaces the composed valueAssessment only when improvementSignal was resolved on (#4743)", async () => {
     const json = JSON.stringify({
       assessment: "Looks fine.",
       blockers: [],
@@ -3729,7 +3729,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       improvementSignal: true,
     });
@@ -3741,7 +3741,7 @@ describe("pure helpers", () => {
       });
   });
 
-  it("runGittensoryAiReview never surfaces a valueAssessment when improvementSignal is off, even if the model emitted one anyway (#4743)", async () => {
+  it("runLoopOverAiReview never surfaces a valueAssessment when improvementSignal is off, even if the model emitted one anyway (#4743)", async () => {
     const json = JSON.stringify({
       assessment: "Looks fine.",
       blockers: [],
@@ -3760,7 +3760,7 @@ describe("pure helpers", () => {
         AI_PUBLIC_COMMENTS_ENABLED: "true",
         AI_DAILY_NEURON_BUDGET: "100000",
       });
-      return runGittensoryAiReview(env, { ...baseInput, improvementSignal });
+      return runLoopOverAiReview(env, { ...baseInput, improvementSignal });
     };
     const withFalse = await runFor(false);
     const withUndefined = await runFor(undefined);
@@ -3770,7 +3770,7 @@ describe("pure helpers", () => {
     if (withUndefined.status === "ok") expect(withUndefined.valueAssessment).toBeNull();
   });
 
-  it("runGittensoryAiReview leaves valueAssessment null when improvementSignal is on but the model omitted the field", async () => {
+  it("runLoopOverAiReview leaves valueAssessment null when improvementSignal is on but the model omitted the field", async () => {
     const run = vi.fn(async () => ({ response: reviewJson() }));
     const env = createTestEnv({
       AI: { run } as unknown as Ai,
@@ -3778,7 +3778,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       improvementSignal: true,
     });
@@ -3786,7 +3786,7 @@ describe("pure helpers", () => {
     if (result.status === "ok") expect(result.valueAssessment).toBeNull();
   });
 
-  it("runGittensoryAiReview dual-review (block mode) combines two valueAssessments into the more conservative band end-to-end (#4743, #dual-ai-combiner)", async () => {
+  it("runLoopOverAiReview dual-review (block mode) combines two valueAssessments into the more conservative band end-to-end (#4743, #dual-ai-combiner)", async () => {
     const responseFor = (magnitude: string, rationale: string) => ({
       response: JSON.stringify({
         assessment: "ok",
@@ -3807,7 +3807,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       mode: "block",
       improvementSignal: true,
@@ -3936,9 +3936,9 @@ describe("pure helpers", () => {
     expect(out.match(/Rename x\./g)?.length).toBe(1);
   });
 
-  it("runGittensoryAiReview is disabled when neither flag is set", async () => {
+  it("runLoopOverAiReview is disabled when neither flag is set", async () => {
     const env = createTestEnv({ AI: { run: vi.fn() } as unknown as Ai });
-    await expect(runGittensoryAiReview(env, baseInput)).resolves.toMatchObject({
+    await expect(runLoopOverAiReview(env, baseInput)).resolves.toMatchObject({
       status: "disabled",
       reason: "AI summaries are disabled.",
     });
@@ -3957,7 +3957,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       body: undefined,
     });
@@ -3984,7 +3984,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       enrichment: {
         promptSection: "## EXTERNAL REVIEW BRIEF\n- CVE-1 in lodash",
@@ -4019,7 +4019,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       changedFiles: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
     });
@@ -4048,7 +4048,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       ...baseInput,
       changedFiles: [{ path: "src/a.ts" }, { path: "test/unit/a.test.ts" }],
     });
@@ -4075,7 +4075,7 @@ describe("pure helpers", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status).toBe("ok");
     const opts = run.mock.calls[0]?.[1] as {
       messages: Array<{ role?: string; content: string }>;
@@ -4178,7 +4178,7 @@ describe("selectContextSectionsWithinBudget (#3900)", () => {
 });
 
 describe("buildUserPrompt aggregate context budget (#3900)", () => {
-  const budgetBaseInput: GittensoryAiReviewInput = {
+  const budgetBaseInput: LoopOverAiReviewInput = {
     repoFullName: "owner/repo",
     prNumber: 1,
     title: "PR",
@@ -4253,7 +4253,7 @@ describe("REVIEW_SYSTEM_PROMPT performance-regression instruction (#2559)", () =
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiReview(env, baseInput);
+    const result = await runLoopOverAiReview(env, baseInput);
     expect(result.status).toBe("ok");
     const opts = run.mock.calls[0]?.[1] as {
       messages: Array<{ role?: string; content: string }>;

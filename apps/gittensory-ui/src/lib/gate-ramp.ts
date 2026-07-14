@@ -53,7 +53,7 @@ const PHASE_DESCRIPTION: Record<GateRampPhase, string> = {
     "Linked-issue, duplicate-PR, and quality gates can block merges when findings fire. Re-tune individual gates in repository settings below.",
 };
 
-/** Whether the Gittensory review-agent check is actively publishing at all. */
+/** Whether the LoopOver review-agent check is actively publishing at all. */
 export function isGateRampActive(settings: GateRampSettingsSlice): boolean {
   return settings.reviewCheckMode !== "disabled";
 }

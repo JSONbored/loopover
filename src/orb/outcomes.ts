@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — terminal PR-outcome capture + the global aggregate.
+// LoopOver Orb central GitHub App (#1255) — terminal PR-outcome capture + the global aggregate.
 //
 // recordOrbPrOutcome runs synchronously from the verified webhook receiver: a `pull_request` `closed` event
 // records whether the PR was merged or closed (no merge) into orb_pr_outcomes, keyed on (repo, pr_number) so a

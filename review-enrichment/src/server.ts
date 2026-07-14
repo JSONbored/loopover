@@ -1,4 +1,4 @@
-// Gittensory review-enrichment service (REES).
+// LoopOver review-enrichment service (REES).
 //
 // Given a PR (repo, number, headSha, diff, files, optional GitHub token), this service runs the
 // heavy/external analysis the no-checkout reviewer is blind to, and returns a pre-rendered, public-safe

@@ -52,7 +52,7 @@ function stringChoice(value: unknown, maxLength: number): string | undefined {
 export function buildMcpPlanningElicitationRequest(): ElicitRequestFormParams {
   return {
     mode: "form",
-    message: "Choose optional public planning preferences for ranking Gittensory contribution work.",
+    message: "Choose optional public planning preferences for ranking LoopOver contribution work.",
     requestedSchema: {
       type: "object",
       properties: {

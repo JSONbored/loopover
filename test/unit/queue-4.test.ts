@@ -4138,7 +4138,7 @@ describe("queue processors", () => {
   // #2044: `.loopover.yml` `review.tone` is folded into the AI reviewer's system prompt by
   // composeManifestReviewInstructions (src/signals/focus-manifest.ts), consumed by
   // src/queue/processors.ts's aiReviewCacheReadDecideAndRun. That composition is unit-tested in isolation
-  // (focus-manifest.test.ts), but nothing previously drove the full webhook -> processJob -> runGittensoryAiReview
+  // (focus-manifest.test.ts), but nothing previously drove the full webhook -> processJob -> runLoopOverAiReview
   // pipeline to confirm the resolved tone text actually reaches env.AI.run's system message. Mirrors the
   // changed_files_summary/effort_score tests above but captures the AI system prompt instead of the posted body.
   it("threads review.tone from .loopover.yml into the AI reviewer's system prompt (#2044)", async () => {

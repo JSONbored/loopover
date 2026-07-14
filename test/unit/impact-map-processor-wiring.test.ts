@@ -53,7 +53,7 @@ const advisory: Advisory = {
   headSha: "sha3",
   conclusion: "neutral",
   severity: "info",
-  title: "Gittensory advisory available",
+  title: "LoopOver advisory available",
   summary: "ok",
   findings: [],
   generatedAt: "2026-06-20T00:00:00.000Z",

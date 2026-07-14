@@ -77,12 +77,12 @@ function seedEvents(eventLedger: ReturnType<typeof initEventLedger>) {
   });
 }
 
-describe("gittensory_miner_get_audit_feed (#5158)", () => {
+describe("loopover_miner_get_audit_feed (#5158)", () => {
   it("is registered on the miner MCP server", async () => {
     const ledger = tempLedger();
     const client = await connectedClient(ledger);
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toContain("gittensory_miner_get_audit_feed");
+    expect(tools.map((tool) => tool.name)).toContain("loopover_miner_get_audit_feed");
   });
 
   it("returns metadata-only audit rows with repo, since, and type filters", async () => {
@@ -90,7 +90,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     seedEvents(ledger);
     const client = await connectedClient(ledger);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: { repoFullName: "acme/widgets", since: 1, type: "manage_pr_update" },
     })) as Content;
     const payload = JSON.parse(toolText(result));
@@ -111,7 +111,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     const ledger = tempLedger();
     const client = await connectedClient(ledger);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: {},
     })) as Content;
     expect(JSON.parse(toolText(result))).toEqual({ events: [] });
@@ -123,7 +123,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     const filter = normalizeAuditFeedMcpFilter({ repoFullName: "acme/widgets" });
     const client = await connectedClient(ledger);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: { repoFullName: "acme/widgets" },
     })) as Content;
     expect(JSON.parse(toolText(result))).toEqual(collectEventLedgerAuditFeed(ledger, filter));
@@ -134,7 +134,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     seedEvents(ledger);
     const client = await connectedClient(ledger);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: {},
     })) as Content;
     const payload = JSON.parse(toolText(result));
@@ -153,7 +153,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     const readEvents = vi.spyOn(ledger, "readEvents");
     const client = await connectedClient(ledger);
     await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: { type: "manage_pr_update" },
     });
     expect(readEvents).toHaveBeenCalled();
@@ -164,7 +164,7 @@ describe("gittensory_miner_get_audit_feed (#5158)", () => {
     const ledger = tempLedger();
     const client = await connectedClient(ledger);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_audit_feed",
+      name: "loopover_miner_get_audit_feed",
       arguments: { since: -1 },
     })) as Content;
     expect(result.isError).toBe(true);

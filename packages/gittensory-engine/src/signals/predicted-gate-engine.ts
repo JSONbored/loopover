@@ -60,9 +60,9 @@ export function buildLaneAdvice(repo: RepositoryRecord | null, fullName: string)
     return {
       lane: "unknown",
       repoFullName: fullName,
-      summary: "Repository registration is not available in the local Gittensory cache.",
+      summary: "Repository registration is not available in the local LoopOver cache.",
       contributorGuidance: "Do not assume this repo is ready for Gittensor-specific contribution guidance yet.",
-      maintainerGuidance: "Refresh the registry snapshot or install the GitHub App so Gittensory can evaluate the repo.",
+      maintainerGuidance: "Refresh the registry snapshot or install the GitHub App so LoopOver can evaluate the repo.",
     };
   }
   if (config.emissionShare <= 0) {

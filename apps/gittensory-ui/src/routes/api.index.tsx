@@ -24,7 +24,7 @@ function ApiOverview() {
     <div className="mx-auto w-full max-w-3xl px-6 py-10 lg:px-10">
       <Eyebrow>API reference</Eyebrow>
       <h1 className="mt-3 text-token-2xl font-medium tracking-tight text-foreground">
-        Gittensory API
+        LoopOver API
       </h1>
       <p className="mt-3 max-w-2xl text-muted-foreground">{openapi.description.split("\n\n")[0]}</p>
 
@@ -40,7 +40,7 @@ function ApiOverview() {
 
       <div className="mt-8 space-y-5">
         <Callout variant="safety">
-          <strong>Auth.</strong> Use a Gittensory session token from{" "}
+          <strong>Auth.</strong> Use a LoopOver session token from{" "}
           <code>gittensory-mcp login</code>. Never paste a GitHub PAT. Tokens you use in this
           reference live only in <code>localStorage</code> on this device and can be cleared
           instantly.

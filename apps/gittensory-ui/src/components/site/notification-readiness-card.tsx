@@ -32,7 +32,7 @@ export function NotificationReadinessCard() {
   const [optIn, setOptIn] = useLocalStorage<boolean>(
     "loopover_notification_opt_in",
     false,
-    "gittensory_notification_opt_in",
+    "loopover_notification_opt_in",
   );
   const [busy, setBusy] = useState(false);
 

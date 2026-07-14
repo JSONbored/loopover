@@ -1,4 +1,4 @@
-import { parseGittensoryMentionCommand } from "./commands";
+import { parseLoopOverMentionCommand } from "./commands";
 import type { GitHubWebhookPayload } from "../types";
 
 /** The validated request for a `@loopover configuration` command, `null` when the comment is not that command,
@@ -14,7 +14,7 @@ export function classifyConfigurationCommandRequest(
   installationId: number | null,
 ): ConfigurationCommandRequest | null {
   const comment = payload.comment;
-  const command = parseGittensoryMentionCommand(comment?.body);
+  const command = parseLoopOverMentionCommand(comment?.body);
   if (!command || command.name !== "configuration") return null; // not our command — fall through to other handlers
   const repoFullName = payload.repository?.full_name ?? null;
   const issue = payload.issue ?? null;

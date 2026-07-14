@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGittensoryLinkedIssueSatisfaction, type LinkedIssueSatisfactionRunInput } from "../../src/services/linked-issue-satisfaction-run";
+import { runLoopOverLinkedIssueSatisfaction, type LinkedIssueSatisfactionRunInput } from "../../src/services/linked-issue-satisfaction-run";
 import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS } from "../../src/services/ai-review";
 import { buildAiReviewDiff, processJob, runLinkedIssueSatisfactionForAdvisory } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
@@ -68,30 +68,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
+describe("runLoopOverLinkedIssueSatisfaction gating + fail-safe", () => {
   it("is disabled when AI_SUMMARIES_ENABLED itself is unset (the FIRST gate, not just the second)", async () => {
     const run = vi.fn();
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_PUBLIC_COMMENTS_ENABLED: "true" });
-    await expect(runGittensoryLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "disabled", reason: "AI summaries are disabled." });
+    await expect(runLoopOverLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "disabled", reason: "AI summaries are disabled." });
     expect(run).not.toHaveBeenCalled();
   });
 
   it("is disabled until both AI flags are on, and never calls the model", async () => {
     const run = vi.fn();
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true" });
-    await expect(runGittensoryLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "disabled" });
+    await expect(runLoopOverLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "disabled" });
     expect(run).not.toHaveBeenCalled();
   });
 
   it("reports unavailable when the Workers AI binding is missing", async () => {
     const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
-    await expect(runGittensoryLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "unavailable" });
+    await expect(runLoopOverLinkedIssueSatisfaction(env, baseInput)).resolves.toMatchObject({ status: "unavailable" });
   });
 
   it("short-circuits to ok/null with zero spend when there is no issue text (fail-safe, mirrors the pure module's own contract)", async () => {
     const run = vi.fn();
     const env = enabledEnv(run);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, { ...baseInput, issueText: "   " });
+    const result = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, issueText: "   " });
     expect(result).toEqual({ status: "ok", result: null, estimatedNeurons: 0 });
     expect(run).not.toHaveBeenCalled();
   });
@@ -99,7 +99,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("treats an absent issueText (undefined) the same as blank", async () => {
     const run = vi.fn();
     const env = enabledEnv(run);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, { ...baseInput, issueText: undefined });
+    const result = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, issueText: undefined });
     expect(result).toEqual({ status: "ok", result: null, estimatedNeurons: 0 });
     expect(run).not.toHaveBeenCalled();
   });
@@ -107,7 +107,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("enforces the shared daily neuron budget before calling the model", async () => {
     const run = vi.fn();
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result).toMatchObject({ status: "quota_exceeded" });
     expect(run).not.toHaveBeenCalled();
   });
@@ -116,20 +116,20 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     const run = vi.fn(async () => ({ response: satisfactionJson() }));
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "2000000" });
     await recordAiUsageEvent(env, { feature: "ai_slop_pr", model: "m", status: "ok", estimatedNeurons: 1_999_999 });
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).toBe("quota_exceeded");
     expect(run).not.toHaveBeenCalled();
   });
 
   it("degrades to no result when env.AI is present but not a valid runner (no .run function)", async () => {
     const env = createTestEnv({ AI: {} as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result).toMatchObject({ status: "ok", result: null });
   });
 
   it("returns the parsed, public-safe result when the model responds well", async () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toMatchObject({ status: "addressed" });
@@ -139,7 +139,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("records the pre-budgeted retry/fallback estimate under the linked_issue_satisfaction feature", async () => {
     const run = vi.fn(async () => ({ response: "not json" }));
     const env = enabledEnv(run);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(run).toHaveBeenCalledTimes(6);
@@ -152,7 +152,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
 
   it("CONFIDENCE FLOOR: a below-floor 'unaddressed' on every attempt degrades to no result, never a shaky block signal", async () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.2 }) }));
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toBeNull();
@@ -165,7 +165,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
       call += 1;
       return { response: call < 3 ? satisfactionJson({ status: "unaddressed", confidence: 0.1 }) : satisfactionJson({ status: "unaddressed", confidence: 0.9 }) };
     });
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toMatchObject({ status: "unaddressed", confidence: 0.9 });
@@ -173,7 +173,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
 
   it("addressed/partial verdicts are never floor-gated, even at zero confidence", async () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "partial", confidence: 0 }) }));
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toMatchObject({ status: "partial" });
@@ -184,7 +184,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     const run = vi.fn(async () => {
       throw new Error("model exploded");
     });
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toBeNull();
@@ -195,7 +195,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     const run = vi.fn(async () => {
       throw new Error("claude_code_error_429");
     });
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toBeNull();
@@ -204,7 +204,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
 
   it("falls back to the reliable model when the primary keeps returning garbage", async () => {
     const run = vi.fn(async (model: string) => ({ response: model.includes("gpt-oss") ? "not json" : satisfactionJson({ status: "partial" }) }));
-    const result = await runGittensoryLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toMatchObject({ status: "partial" });
@@ -216,7 +216,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     await recordAiUsageEvent(env, { feature: "ai_review_pr", actor: null, route: "x", model: "byok:anthropic", status: "ok", estimatedNeurons: 1, detail: "seed", metadata: { repoFullName: baseInput.repoFullName } });
     const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
+    const result = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
     expect(result.status).toBe("quota_exceeded");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
@@ -228,7 +228,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
       vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: satisfactionJson({ status: "addressed" }) }], usage: { input_tokens: 400, output_tokens: 40 } }), { status: 200 })),
     );
     const env = enabledEnv(vi.fn());
-    const result = await runGittensoryLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x", model: "claude-sonnet-5" } });
+    const result = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x", model: "claude-sonnet-5" } });
     expect(result.status).toBe("ok");
     const row = await env.DB.prepare(`select provider, input_tokens, output_tokens, total_tokens from ai_usage_events where feature = ? order by rowid desc limit 1`)
       .bind("linked_issue_satisfaction")
@@ -241,7 +241,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "" });
     // 2M prior spend — over any tiny fallback but well under the 10M default the fix uses.
     await recordAiUsageEvent(env, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 2_000_000 });
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).not.toBe("quota_exceeded");
     expect(run).toHaveBeenCalled();
   });
@@ -252,7 +252,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
       return { response: satisfactionJson({ status: "addressed" }) };
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000", AI_GATEWAY_ID: "my-gateway" });
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).toBe("ok");
     expect(run).toHaveBeenCalledTimes(1);
   });
@@ -260,7 +260,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("degrades to no result when the BYOK provider returns no usable text (empty/falsy)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ content: [{ type: "text", text: "" }] }), { status: 200 })));
     const env = enabledEnv(vi.fn());
-    const result = await runGittensoryLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
+    const result = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toBeNull();
@@ -269,7 +269,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("records the REAL reported model, not the hardcoded fallback label, when the provider reports one (2026-07 fix)", async () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }), usage: { provider: "ollama", model: "qwen3:8b" } }));
     const env = enabledEnv(run);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).toBe("ok");
     const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
       .bind("linked_issue_satisfaction")
@@ -280,7 +280,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
   it("falls back to the hardcoded model label when the provider reports no usage/model at all", async () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
     const env = enabledEnv(run);
-    const result = await runGittensoryLinkedIssueSatisfaction(env, baseInput);
+    const result = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
     expect(result.status).toBe("ok");
     const row = await env.DB.prepare("select model from ai_usage_events where feature = ? order by rowid desc limit 1")
       .bind("linked_issue_satisfaction")
@@ -292,7 +292,7 @@ describe("runGittensoryLinkedIssueSatisfaction gating + fail-safe", () => {
     const run = vi.fn(async () => ({ response: satisfactionJson({ status: "addressed" }) }));
     const env = enabledEnv(run);
     const { actor: _omit, ...withoutActor } = baseInput;
-    await runGittensoryLinkedIssueSatisfaction(env, withoutActor);
+    await runLoopOverLinkedIssueSatisfaction(env, withoutActor);
     const row = await env.DB.prepare("select actor from ai_usage_events where feature = ? order by rowid desc limit 1")
       .bind("linked_issue_satisfaction")
       .first<{ actor: string | null }>();
@@ -316,7 +316,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       headSha: "sha7",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "ok",
       findings: [],
       generatedAt: "2026-07-07T00:00:00.000Z",

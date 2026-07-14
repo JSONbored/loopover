@@ -24,7 +24,7 @@ export const scenarioSignalSources = [
   "user_supplied",
   "local_metadata",
   "registry",
-  "gittensory_projection",
+  "loopover_projection",
   "missing",
 ] as const;
 export type ScenarioSignalSource = (typeof scenarioSignalSources)[number];

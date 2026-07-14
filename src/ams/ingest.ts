@@ -1,4 +1,4 @@
-// Gittensory AMS (#5681) — central telemetry collector receiver, mirroring Orb's own (`src/orb/ingest.ts`)
+// LoopOver AMS (#5681) — central telemetry collector receiver, mirroring Orb's own (`src/orb/ingest.ts`)
 // registration-gate + best-effort-upsert pattern. Accepts anonymized PR-outcome batches from opt-in AMS
 // instances (packages/gittensory-miner/lib/orb-export.js). No raw repo names, owner identifiers, or PR
 // content — only HMAC-anonymized hashes + a decision + a low-cardinality reason bucket.

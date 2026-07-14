@@ -39,7 +39,7 @@ export interface AppCredentials {
 export function buildManifest(origin: string, state: string): Record<string, unknown> {
   const base = origin.replace(/\/+$/, "");
   return {
-    name: "Gittensory Self-Host",
+    name: "LoopOver Self-Host",
     url: base,
     hook_attributes: { url: `${base}/v1/github/webhook` },
     redirect_url: `${base}/setup/callback?state=${encodeURIComponent(state)}`,
@@ -67,9 +67,9 @@ export function buildManifest(origin: string, state: string): Record<string, unk
  *  `state` is a random CSRF nonce tied to the session via an HttpOnly cookie in the caller. */
 export function renderSetupPage(origin: string, state: string): string {
   const manifest = JSON.stringify(buildManifest(origin, state)).replace(/'/g, "&#39;");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gittensory self-host setup</title></head>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LoopOver self-host setup</title></head>
 <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
-<h1>Gittensory self-host setup</h1>
+<h1>LoopOver self-host setup</h1>
 <p>This creates a GitHub App for your self-host instance. GitHub will redirect back here with the credentials,
 which are written to a file for you to load — then restart the container.</p>
 <form action="https://github.com/settings/apps/new" method="post">
@@ -80,13 +80,13 @@ which are written to a file for you to load — then restart the container.</p>
 }
 
 /** Setup page shown in BROKERED mode (ORB_ENROLLMENT_SECRET is set): there is no own GitHub App to create —
- *  the central Gittensory Orb App provides installation tokens on demand via the enrollment secret. */
+ *  the central LoopOver Orb App provides installation tokens on demand via the enrollment secret. */
 export function renderBrokeredSetupPage(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gittensory self-host setup</title></head>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LoopOver self-host setup</title></head>
 <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
-<h1>Gittensory self-host — brokered mode</h1>
-<p>This instance is configured for the <strong>central Gittensory Orb App</strong> (<code>ORB_ENROLLMENT_SECRET</code> is set), so there is <strong>no GitHub App to create here</strong> — installation tokens are brokered from the Orb on demand.</p>
-<p>To onboard: install the Gittensory Orb App on your repositories and complete enrollment to obtain your <code>ORB_ENROLLMENT_SECRET</code>. No further setup is needed on this page.</p>
+<h1>LoopOver self-host — brokered mode</h1>
+<p>This instance is configured for the <strong>central LoopOver Orb App</strong> (<code>ORB_ENROLLMENT_SECRET</code> is set), so there is <strong>no GitHub App to create here</strong> — installation tokens are brokered from the Orb on demand.</p>
+<p>To onboard: install the LoopOver Orb App on your repositories and complete enrollment to obtain your <code>ORB_ENROLLMENT_SECRET</code>. No further setup is needed on this page.</p>
 </body></html>`;
 }
 
@@ -118,9 +118,9 @@ export function isValidSetupAuthCookie(secret: string, state: string, cookie: st
  *  The token is never put in the URL — a query-string secret leaks to access logs, proxies, and history. */
 export function renderTokenEntryPage(invalid = false): string {
   const error = invalid ? `<p style="color:#b00">Invalid setup token.</p>\n` : "";
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gittensory self-host setup</title></head>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LoopOver self-host setup</title></head>
 <body style="font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem">
-<h1>Gittensory self-host setup</h1>
+<h1>LoopOver self-host setup</h1>
 <p>Enter your <code>SELFHOST_SETUP_TOKEN</code> to continue.</p>
 ${error}<form action="/setup" method="post">
   <input type="password" name="token" autocomplete="off" autofocus aria-label="Setup token" style="padding:.5rem;font-size:1rem;width:20rem">

@@ -53,7 +53,7 @@ describe("MCP compatibility telemetry", () => {
         "x-loopover-mcp-client": "loopover-mcp-cli",
         "mcp-protocol-version": "2025-03-26",
       }),
-      { requireGittensoryHeader: true },
+      { requireLoopOverHeader: true },
     );
 
     expect(telemetry).toMatchObject({
@@ -74,7 +74,7 @@ describe("MCP compatibility telemetry", () => {
         "x-loopover-mcp-package": "@example/custom-mcp",
         "x-loopover-mcp-version": "0.5.0",
       }),
-      { requireGittensoryHeader: true },
+      { requireLoopOverHeader: true },
     );
 
     expect(telemetry).toMatchObject({
@@ -93,7 +93,7 @@ describe("MCP compatibility telemetry", () => {
         "x-loopover-mcp-package": "@loopover/mcp",
         "x-loopover-mcp-version": "0.4.0",
       }),
-      { requireGittensoryHeader: true },
+      { requireLoopOverHeader: true },
     );
     expect(canonical).toMatchObject({ clientName: "loopover-mcp", clientVersion: "0.4.0" });
 
@@ -115,7 +115,7 @@ describe("MCP compatibility telemetry", () => {
         "x-loopover-mcp-client": "node /tmp/client.js",
         "mcp-protocol-version": "Bearer secret-token-value",
       }),
-      { requireGittensoryHeader: true },
+      { requireLoopOverHeader: true },
     );
 
     expect(telemetry).toBeNull();

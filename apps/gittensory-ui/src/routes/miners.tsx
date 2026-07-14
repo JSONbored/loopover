@@ -20,13 +20,13 @@ import {
 export const Route = createFileRoute("/miners")({
   head: () => ({
     meta: [
-      { title: "Miners — Gittensory" },
+      { title: "Miners — LoopOver" },
       {
         name: "description",
         content:
           "Plan repo-specific next actions, preflight branches with metadata only, understand scoreability blockers, and prepare public-safe PR packets.",
       },
-      { property: "og:title", content: "Miners — Gittensory" },
+      { property: "og:title", content: "Miners — LoopOver" },
       {
         property: "og:description",
         content:
@@ -49,7 +49,7 @@ function MinersPage() {
             Pick better work. Preflight branches. Ship cleanly.
           </h1>
           <p className="mt-4 text-token-lg text-muted-foreground">
-            Gittensory's MCP and CLI give you private, deterministic context for every contribution:
+            LoopOver's MCP and CLI give you private, deterministic context for every contribution:
             lane fit, blockers, scoreability scenarios, and the next actions most likely to clear
             the gate.
           </p>
@@ -101,7 +101,7 @@ function MinersPage() {
               icon: <ShieldCheck className="size-4" />,
               title: "Zero PAT",
               description:
-                "Sign in via GitHub Device Flow. Session tokens are Gittensory-issued, not your personal access tokens.",
+                "Sign in via GitHub Device Flow. Session tokens are LoopOver-issued, not your personal access tokens.",
             },
             {
               icon: <Compass className="size-4" />,
@@ -120,7 +120,7 @@ function MinersPage() {
             <div className="text-token-xs text-muted-foreground">1 · Sign in</div>
             <h3 className="mt-2 font-display text-token-lg font-semibold">GitHub Device Flow</h3>
             <p className="mt-1 text-token-sm text-muted-foreground">
-              Authorize the CLI without ever pasting a PAT. The session token is a Gittensory token
+              Authorize the CLI without ever pasting a PAT. The session token is a LoopOver token
               backed by your GitHub identity.
             </p>
             <div className="mt-4">
@@ -175,7 +175,7 @@ function MinersPage() {
         <SectionTitle
           eyebrow="How it fits your day"
           title="A calm contributor loop."
-          description="Three small moments where Gittensory removes guesswork without getting in your way."
+          description="Three small moments where LoopOver removes guesswork without getting in your way."
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {[

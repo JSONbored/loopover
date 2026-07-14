@@ -97,7 +97,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${ownerToken}`, "content-type": "application/json" },
         body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: VALID_TITLE }),
       },
       env,
@@ -113,7 +113,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${minerToken}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${minerToken}`, "content-type": "application/json" },
         body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: VALID_TITLE }),
       },
       env,
@@ -126,7 +126,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       ISSUE_RAG_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${otherOwnerToken}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${otherOwnerToken}`, "content-type": "application/json" },
         body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: VALID_TITLE }),
       },
       env,

@@ -77,7 +77,7 @@ describe("extension packet helper internals", () => {
       env,
       req: {
         header(name: string) {
-          if (name.toLowerCase() === "cookie") return `gittensory_session=${token}`;
+          if (name.toLowerCase() === "cookie") return `loopover_session=${token}`;
           return undefined;
         },
       },

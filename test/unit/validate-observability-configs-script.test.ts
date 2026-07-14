@@ -177,8 +177,8 @@ describe("validate-observability-configs (#1943)", () => {
     it("passes well-formed real-shaped PromQL expressions", () => {
       for (const expr of [
         "up == 0",
-        "sum(rate(gittensory_jobs_total[5m])) by (status) > 10",
-        'histogram_quantile(0.95, rate(gittensory_http_duration_seconds_bucket{route="/health"}[5m]))',
+        "sum(rate(loopover_jobs_total[5m])) by (status) > 10",
+        'histogram_quantile(0.95, rate(loopover_http_duration_seconds_bucket{route="/health"}[5m]))',
         "(a + b) / c",
       ]) {
         expect(validateAlertRules(ruleFile(expr))).toEqual([]);

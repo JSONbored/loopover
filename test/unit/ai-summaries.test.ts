@@ -288,7 +288,7 @@ describe("Workers AI summaries", () => {
 });
 
 describe("optional deterministic-summary rewrite layer", () => {
-  const DETERMINISTIC_BODY = "<!-- gittensory-pr-intelligence -->\n## Gittensory contribution context\n- Queue level: steady";
+  const DETERMINISTIC_BODY = "<!-- gittensory-pr-intelligence -->\n## LoopOver contribution context\n- Queue level: steady";
   const signalBundle = () => ({ queueLevel: "steady", confirmedMiner: true, collisionClusters: 0 });
 
   function publicEnv(overrides: Partial<Env> = {}, run: (model: string, options: unknown) => Promise<unknown> = async () => ({ response: "Clear, friendly summary." })) {

@@ -57,7 +57,7 @@ function repoApiBase(repoFullName: string): string | null {
 
 /**
  * One-step maintainer activation demo (#701): loads GET /activation-preview for a repo (deterministic,
- * no AI run) so a newly-installed maintainer sees concrete "here's what Gittensory would have surfaced"
+ * no AI run) so a newly-installed maintainer sees concrete "here's what LoopOver would have surfaced"
  * evidence, then a single action button posts /activation to turn on advisory mode. Mirrors the
  * AiReviewSettings / MaintainerSettings repo-picker + load/save shape in this same file group.
  */
@@ -116,7 +116,7 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
       await load();
       setMessage({
         kind: "ok",
-        text: "Advisory mode enabled. Gittensory will now surface guidance on new PRs.",
+        text: "Advisory mode enabled. LoopOver will now surface guidance on new PRs.",
       });
     } else {
       setMessage({ kind: "err", text: result.message });
@@ -134,7 +134,7 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
             Instant activation preview
           </h2>
           <p className="mt-1 text-token-xs text-muted-foreground">
-            See what Gittensory would have surfaced on this repo's recent pull requests, then enable
+            See what LoopOver would have surfaced on this repo's recent pull requests, then enable
             advisory mode in one step. Deterministic — never runs AI, never blocks a merge.
           </p>
         </div>
@@ -180,7 +180,7 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
           errorTitle="Couldn't load the activation preview"
           errorDescription={loadError ?? undefined}
           emptyTitle="No recent pull requests yet"
-          emptyDescription="Gittensory will start surfacing guidance once this repo has pull requests cached."
+          emptyDescription="LoopOver will start surfacing guidance once this repo has pull requests cached."
         >
           {!base ? (
             <p className="text-token-sm text-muted-foreground">

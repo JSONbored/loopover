@@ -66,7 +66,7 @@ describe("contributor-issue-drafts route auth", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "new-user", id: 2468 });
     const response = await app.request(
       DRAFTS_PATH,
-      { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: "{}" },
+      { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: "{}" },
       env,
     );
     expect(response.status).toBe(403);
@@ -82,7 +82,7 @@ describe("contributor-issue-drafts route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ dryRun: true, limit: 1 }),
       },
       env,
@@ -117,7 +117,7 @@ describe("contributor-issue-drafts route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ dryRun: false, create: true, limit: 1 }),
       },
       env,
@@ -138,7 +138,7 @@ describe("contributor-issue-drafts route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ dryRun: true, limit: 1 }),
       },
       env,

@@ -1,4 +1,4 @@
-# Gittensory repo focus manifest — machine-readable contributor policy for this project.
+# LoopOver repo focus manifest — machine-readable contributor policy for this project.
 # Private maintainerNotes stay in authenticated API surfaces only.
 
 source: repo_file
@@ -106,12 +106,12 @@ settings:
         trustMaintainerAuthoredIssueForReward: true
   reviewEvasionProtection: close
 
-# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a
+# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let LoopOver open a
 # PR generating AGENTS.md/CLAUDE.md from this repo's own profile.
 # repoDocGeneration:
 #   enabled: true                   # default false — must be explicitly turned on per repo
 #   scope: [agents]                 # agents | skills — which generated file types are in play
-#   allowOverwriteExisting: false   # required before Gittensory will touch an existing hand-maintained file
+#   allowOverwriteExisting: false   # required before LoopOver will touch an existing hand-maintained file
 
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.

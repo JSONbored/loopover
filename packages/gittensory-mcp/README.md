@@ -1,12 +1,12 @@
 # @loopover/mcp
 
-Local stdio MCP wrapper for the Gittensory base-agent layer.
+Local stdio MCP wrapper for the LoopOver base-agent layer.
 
-It inspects local git metadata and calls the Gittensory API for branch preflight, score blockers, reward/risk reasoning, contributor decision packs, deterministic next-action planning, and public-safe PR packets. It does not upload source contents in v1.
+It inspects local git metadata and calls the LoopOver API for branch preflight, score blockers, reward/risk reasoning, contributor decision packs, deterministic next-action planning, and public-safe PR packets. It does not upload source contents in v1.
 
 ## Status
 
-The package is public. Gittensory keeps sensitive score, trust, wallet, and maintainer context out of public PR comments.
+The package is public. LoopOver keeps sensitive score, trust, wallet, and maintainer context out of public PR comments.
 
 ## Install
 
@@ -152,7 +152,7 @@ The same composed check is exposed to MCP clients as `loopover_review_pr_before_
 loopover-mcp login --github-token "$(gh auth token)"
 ```
 
-The wrapper stores a Gittensory session token, not a GitHub token.
+The wrapper stores a LoopOver session token, not a GitHub token.
 
 The default profile keeps normal single-account usage simple. For multiple identities, use named profiles:
 
@@ -208,7 +208,7 @@ Profiles are prompt instructions for the coding-agent environment, not autonomou
 - `maintainer-triage` uses queue triage, review prep, and public-guidance prompts for maintainer review preparation.
 - `repo-owner-intake` uses intake-readiness, focus-manifest, and onboarding-pack prompts for repository owner setup planning.
 
-Use them when an agent should plan, explain, draft, or prepare packets from Gittensory MCP outputs. Do not use them to open PRs, post comments, label, close, merge, publish public GitHub output, ask for wallets/hotkeys/coldkeys/private keys/tokens, or upload local source contents. Public snippets must stay separated from authenticated private context.
+Use them when an agent should plan, explain, draft, or prepare packets from LoopOver MCP outputs. Do not use them to open PRs, post comments, label, close, merge, publish public GitHub output, ask for wallets/hotkeys/coldkeys/private keys/tokens, or upload local source contents. Public snippets must stay separated from authenticated private context.
 
 ## Environment
 
@@ -227,7 +227,7 @@ Use them when an agent should plan, explain, draft, or prepare packets from Gitt
 
 ### Local score preview adapter
 
-Branch analysis can call a local scorer command that reads branch metadata JSON from stdin and prints one JSON object to stdout. Gittensory never uploads source contents; the scorer runs on your machine.
+Branch analysis can call a local scorer command that reads branch metadata JSON from stdin and prints one JSON object to stdout. LoopOver never uploads source contents; the scorer runs on your machine.
 
 Metadata-only fallback is used when the command is missing or fails. Run `loopover-mcp doctor` for setup diagnostics.
 

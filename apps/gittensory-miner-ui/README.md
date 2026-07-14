@@ -1,4 +1,4 @@
-# Gittensory Miner UI
+# LoopOver Miner UI
 
 Local, read-only dashboard shell for a laptop or fleet miner instance. It mirrors the main
 `apps/gittensory-ui/` tooling versions (React 19, TanStack Router, Vite, Tailwind v4) but intentionally

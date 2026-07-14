@@ -189,7 +189,7 @@ export async function resolveLinkedIssueHardRule(args: {
   if (extractLinkedIssueNumbersWithOverflow(args.body ?? "", args.repoFullName).overflow) {
     return {
       violated: true,
-      reason: "PR body links more issues than Gittensory can safely verify automatically; please reduce linked closing references or request maintainer review.",
+      reason: "PR body links more issues than LoopOver can safely verify automatically; please reduce linked closing references or request maintainer review.",
     };
   }
   if (args.linkedIssues.length === 0) return undefined;

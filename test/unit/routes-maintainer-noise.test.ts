@@ -37,7 +37,7 @@ describe("maintainer-noise route (#2228)", () => {
     stubMinerDetection();
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 101 });
 
-    const res = await app.request("/v1/repos/owner/repo/maintainer-noise", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/repos/owner/repo/maintainer-noise", { headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
@@ -71,7 +71,7 @@ describe("maintainer-noise route (#2228)", () => {
     stubMinerDetection();
     const { token } = await createSessionForGitHubUser(env, { login: "alice", id: 101 });
 
-    const res = await app.request("/v1/repos/bob/repo-b/maintainer-noise", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/repos/bob/repo-b/maintainer-noise", { headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({ error: "forbidden_repo" });

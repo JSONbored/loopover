@@ -37,8 +37,8 @@
 ## mcp-v0.7.0 - 2026-07-08
 
 ### Features
-- Gittensory_explain_score_breakdown (#649)
-- Gittensory_remediation_plan (#650)
+- LoopOver_explain_score_breakdown (#649)
+- LoopOver_remediation_plan (#650)
 - Expose gate.mergeReadiness + gate.firstTimeContributorGrace in .gittensory.yml (#822) (#826)
 - Focus-manifest policy as enforceable gate input (#555) (#827)
 - Autonomy-levels framework (#773) (#840)
@@ -303,8 +303,8 @@
 
 ### Features
 - Add missing test evidence slop signal (#616)
-- Gittensory_validate_linked_issue linked-issue multiplier validator (#622)
-- Gittensory_check_before_start pre-start duplicate/solvability check (#621)
+- LoopOver_validate_linked_issue linked-issue multiplier validator (#622)
+- LoopOver_check_before_start pre-start duplicate/solvability check (#621)
 - Authoritative .gittensory.yml gate config (config-as-code) (#647)
 - Dual-AI maintainer review + BYOK (Phase C) (#652)
 - Config-as-code provider/model + maintainer self-serve BYOK routes (#664)
@@ -317,7 +317,7 @@
 - AI-assisted advisory slop layer (advisory-only, never blocks) (#724)
 - Issue-side slop triage (#533) (#729)
 - Model upstream time-decay, applied behind a default-off flag (#703) (#731)
-- Gittensory_lint_pr_text commit/PR-body rubric linter (#634)
+- LoopOver_lint_pr_text commit/PR-body rubric linter (#634)
 - Per-repo time-decay hyperparameters + go live (#703) (#733)
 - Active issue-watch monitor — gittensory_watch_issues (#699 path B) (#735)
 - Slop self-check tools + release @jsonbored/gittensory-mcp v0.6.0 (#745)
@@ -365,7 +365,7 @@
 - Derive contribution lanes from focus manifests (#337)
 - Wire policy compiler into registration readiness (#350)
 - Add contribution policy snapshot API (#369)
-- Add Gittensory repo focus manifest (#118) (#389)
+- Add LoopOver repo focus manifest (#118) (#389)
 - Render public-safe scenario summaries (#416)
 - Require 0.5.0 as the current supported client
 

@@ -123,7 +123,7 @@ import {
   refreshInstallationHealthForInstallation,
 } from "../github/backfill";
 import { getRepositoryCollaboratorPermission } from "../github/app";
-import type { GittensoryFooterEnv } from "../github/footer";
+import type { LoopOverFooterEnv } from "../github/footer";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
 import {
@@ -133,7 +133,7 @@ import {
   isAuthorizedCommandActor,
   isMaintainerOnlyCommand,
   sanitizePublicComment,
-  type GittensoryMentionCommandName,
+  type LoopOverMentionCommandName,
 } from "../github/commands";
 import { handleGitHubWebhook, handleOrbRelay } from "../github/webhook";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
@@ -357,7 +357,7 @@ async function recordRouteProductUsage(
     metadata?: Record<string, unknown> | null | undefined;
   },
 ): Promise<void> {
-  const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { requireGittensoryHeader: true });
+  const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { requireLoopOverHeader: true });
   await recordProductUsageEvent(c.env, {
     surface: event.surface,
     eventName: event.eventName,
@@ -4328,7 +4328,7 @@ function buildMaintainerSettingsPreview() {
   };
 }
 
-const PREVIEWABLE_MENTION_COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
+const PREVIEWABLE_MENTION_COMMANDS = new Set<LoopOverMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
 
 type CommandPreviewDecision = {
   status: "ready" | "skipped" | "missing_permission" | "private_api";
@@ -4344,7 +4344,7 @@ type CommandPreviewDecision = {
 function buildCommandPreview(
   command: (typeof APP_COMMANDS)[number],
   request: z.infer<typeof commandPreviewSchema>,
-  context: { repo: RepositoryRecord | null; installation: InstallationHealthRecord | null; pullRequest: PullRequestRecord | null; env: GittensoryFooterEnv },
+  context: { repo: RepositoryRecord | null; installation: InstallationHealthRecord | null; pullRequest: PullRequestRecord | null; env: LoopOverFooterEnv },
 ) {
   const target = request.repoFullName ? `${request.repoFullName}${request.pullNumber ? `#${request.pullNumber}` : ""}` : "selected target";
   const mentionCommandName = previewableMentionCommandName(command.id);
@@ -4496,8 +4496,8 @@ function buildPrivateApiCommandPreview(command: (typeof APP_COMMANDS)[number], r
   };
 }
 
-function previewableMentionCommandName(commandId: string): GittensoryMentionCommandName | null {
-  if (PREVIEWABLE_MENTION_COMMANDS.has(commandId as GittensoryMentionCommandName)) return commandId as GittensoryMentionCommandName;
+function previewableMentionCommandName(commandId: string): LoopOverMentionCommandName | null {
+  if (PREVIEWABLE_MENTION_COMMANDS.has(commandId as LoopOverMentionCommandName)) return commandId as LoopOverMentionCommandName;
   if (commandId === "public-summary") return "help";
   return null;
 }
@@ -5385,11 +5385,11 @@ function issueQualityMap(repoFullName: string, report: IssueQualityReport | unde
 // ─── Authorization model (the miner ⊕ maintainer boundary) ──────────────────────────────────────
 // Identity is per-LOGIN; authority is per-REPO. Two independent axes a single session can hold at once:
 //   • MINER (gittensor contributor): may read ONLY its own contributor/miner data — enforced by
-//     `requireContributorAccess` (HTTP) and `GittensoryMcp.requireContributorAccess` (MCP), which 403/throw
+//     `requireContributorAccess` (HTTP) and `LoopoverMcp.requireContributorAccess` (MCP), which 403/throw
 //     unless `session.actor === requestedLogin`. Being a miner grants ZERO maintainer visibility.
 //   • MAINTAINER OF A SPECIFIC REPO: may read/write maintainer data ONLY for repos it is a verified
 //     maintainer of — enforced by `requireSessionRepoAccess` / `requireRepoMaintainer` (HTTP) and
-//     `GittensoryMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
+//     `LoopoverMcp.canAccessRepo` (MCP). Maintainer-of-repo-A grants ZERO access to repo B.
 // Two maintainer tiers: (a) affiliation (owns/installed the repo, or authored a PR there with a
 // maintainer association) gates maintainer-DATA reads; (b) verified write/admin/maintain permission,
 // resolved live via the installation, additionally gates repo-visible settings writes and SECRET BYOK key
@@ -5530,7 +5530,7 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
   if (identity.kind === "session" && identity.actor.toLowerCase() !== login.toLowerCase()) return c.json({ error: "forbidden_contributor" }, 403);
   // The shared, end-user-obtainable LOOPOVER_MCP_TOKEN (static `mcp` identity) must NOT read an ARBITRARY
   // contributor's private decision pack / profile / notifications over HTTP either — this mirrors the MCP tool
-  // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455). Without this, the
+  // surface's guard for the identical data (LoopoverMcp.requireContributorAccess, #2455). Without this, the
   // HTTP surface silently grants what the MCP surface explicitly denies for the very same token. Only the full
   // MCP_READ_REPO_ALLOWLIST wildcard opt-in unlocks it; operator-only `api`/`internal` tokens stay trusted by design.
   if (identity.kind === "static" && identity.actor === "mcp" && !isMcpReadUnscoped(c.env.MCP_READ_REPO_ALLOWLIST)) {

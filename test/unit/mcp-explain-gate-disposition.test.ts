@@ -1,14 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { GittensoryMcp, buildGateDispositions } from "../../src/mcp/server";
+import { LoopoverMcp, buildGateDispositions } from "../../src/mcp/server";
 import { type AuthIdentity } from "../../src/auth/security";
 import { setLocalManifestReader, upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-explain-gate-test", version: "0.1.0" }, { capabilities: {} });
@@ -41,7 +41,7 @@ describe("buildGateDispositions (#2234)", () => {
   });
 });
 
-describe("MCP gittensory_explain_gate_disposition (#2234)", () => {
+describe("MCP loopover_explain_gate_disposition (#2234)", () => {
   afterEach(() => setLocalManifestReader(null));
 
   it("itemizes the blocking disposition when a gate rule blocks", async () => {
@@ -51,7 +51,7 @@ describe("MCP gittensory_explain_gate_disposition (#2234)", () => {
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_explain_gate_disposition",
+      name: "loopover_explain_gate_disposition",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
     });
     expect(result.isError).toBeFalsy();
@@ -74,7 +74,7 @@ describe("MCP gittensory_explain_gate_disposition (#2234)", () => {
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_explain_gate_disposition",
+      name: "loopover_explain_gate_disposition",
       arguments: { login: "miner1", owner: "acme", repo: "clean", title: "Minimal self-check" },
     });
     expect(result.isError).toBeFalsy();

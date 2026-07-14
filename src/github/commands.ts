@@ -4,7 +4,7 @@ import {
   suggestCommand as suggestCommandFromCatalog,
   type CommandSuggestCatalog,
 } from "./command-suggest";
-import { commandReferenceUrl, gittensoryFooter, type GittensoryFooterEnv } from "./footer";
+import { commandReferenceUrl, gittensoryFooter, type LoopOverFooterEnv } from "./footer";
 import type { AgentRunBundle } from "../services/agent-orchestrator";
 import type { ChatQaResult } from "../services/ai-chat-qa";
 import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } from "../gittensor/api";
@@ -54,11 +54,11 @@ const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [
 
 export const GITTENSORY_MENTION_COMMAND_CATALOG = [...PUBLIC_MENTION_COMMAND_CATALOG, ...MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG] as const;
 
-export type GittensoryMentionCommandName = (typeof GITTENSORY_MENTION_COMMAND_CATALOG)[number]["id"];
+export type LoopOverMentionCommandName = (typeof GITTENSORY_MENTION_COMMAND_CATALOG)[number]["id"];
 export type MaintainerQueueDigestCommandName = (typeof MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG)[number]["id"];
 // `chat` (#4595) is excluded like help/miner-context: it renders a bespoke LLM-answer card (buildChatPublicAnswerCard),
 // not the deterministic snapshot-section path, so it needs no REFRESH_/EMPTY_SECTION_TITLES entry.
-type SnapshotCommandName = Exclude<GittensoryMentionCommandName, "help" | "miner-context" | "chat" | MaintainerQueueDigestCommandName>;
+type SnapshotCommandName = Exclude<LoopOverMentionCommandName, "help" | "miner-context" | "chat" | MaintainerQueueDigestCommandName>;
 
 // Closed set the intent-classification router (#4596) may EVER route to: existing Q&A commands with real,
 // already-tested answer content. Deliberately excludes help (that IS the fallback this replaces),
@@ -80,7 +80,7 @@ export function isIntentRoutableCommand(value: unknown): value is IntentRoutable
 
 // Action commands are NOT Q&A: they perform a side effect (handled before the mention-command path) rather
 // than producing a public answer card. They are intentionally kept OUT of the Q&A catalog/unions so the
-// exhaustive Q&A switches stay total, but parseGittensoryMentionCommand still recognizes them (so a bare
+// exhaustive Q&A switches stay total, but parseLoopOverMentionCommand still recognizes them (so a bare
 // @loopover gate-override is not silently downgraded to "help"). #1960 adds the PR control-surface verbs
 // (review, pause, resume, resolve, configuration, explain) as pure parse targets; per-command dispatch is
 // wired incrementally in follow-up bounties, each mirroring maybeProcessGateOverrideCommand.
@@ -127,20 +127,20 @@ export const GITTENSORY_ACTION_COMMAND_CATALOG = [
   },
 ] as const;
 
-export type GittensoryActionCommandName = (typeof GITTENSORY_ACTION_COMMAND_CATALOG)[number]["id"];
+export type LoopOverActionCommandName = (typeof GITTENSORY_ACTION_COMMAND_CATALOG)[number]["id"];
 
 export const GITTENSORY_ACTION_COMMANDS = GITTENSORY_ACTION_COMMAND_CATALOG.map(
   (command) => command.id,
-) as readonly GittensoryActionCommandName[];
+) as readonly LoopOverActionCommandName[];
 
 // Alternate spellings that resolve to a canonical action command name so both forms dispatch to the same
 // handler. Only "re-review" exists today (#1960); the map stays a single source of truth for any future alias.
-const GITTENSORY_ACTION_COMMAND_ALIASES: Record<string, GittensoryActionCommandName> = {
+const GITTENSORY_ACTION_COMMAND_ALIASES: Record<string, LoopOverActionCommandName> = {
   "re-review": "review",
 };
 
-export type GittensoryMentionCommand = {
-  name: GittensoryMentionCommandName | GittensoryActionCommandName;
+export type LoopOverMentionCommand = {
+  name: LoopOverMentionCommandName | LoopOverActionCommandName;
   raw: string;
   question?: string | undefined;
   reason?: string | undefined;
@@ -169,16 +169,16 @@ type PublicAnswerCard = {
 
 export type AgentCommandFeedbackContext = {
   answerId: string;
-  command: GittensoryMentionCommandName | null;
+  command: LoopOverMentionCommandName | null;
 };
 
-const COMMANDS = new Set<GittensoryMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
-const ACTION_COMMANDS = new Set<GittensoryActionCommandName>(GITTENSORY_ACTION_COMMANDS);
+const COMMANDS = new Set<LoopOverMentionCommandName>(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => command.id));
+const ACTION_COMMANDS = new Set<LoopOverActionCommandName>(GITTENSORY_ACTION_COMMANDS);
 const MAINTAINER_QUEUE_DIGEST_COMMANDS = new Set<MaintainerQueueDigestCommandName>(MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG.map((command) => command.id));
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const AGENT_COMMAND_FEEDBACK_MARKER = "gittensory-agent-command-answer";
 
-const COMMAND_TITLES = Object.fromEntries(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => [command.id, command.title])) as Record<GittensoryMentionCommandName, string>;
+const COMMAND_TITLES = Object.fromEntries(GITTENSORY_MENTION_COMMAND_CATALOG.map((command) => [command.id, command.title])) as Record<LoopOverMentionCommandName, string>;
 
 const REFRESH_SECTION_TITLES: Record<SnapshotCommandName, string> = {
   ask: "Contribution context snapshot refresh",
@@ -256,7 +256,7 @@ export type MaintainerQueueDigest = {
 // Verbs whose trailing free text is a lookup key (e.g. `explain <finding-id>`) rather than free-form prose —
 // exposed as `argument` instead of `reason` so a handler can tell "no target supplied" apart from "no reason
 // supplied" (#1960). Every other action command (gate-override, pause, resolve) keeps the existing `reason` shape.
-const ARGUMENT_ACTION_COMMANDS = new Set<GittensoryActionCommandName>(["explain"]);
+const ARGUMENT_ACTION_COMMANDS = new Set<LoopOverActionCommandName>(["explain"]);
 
 function commandSuggestCatalog(): CommandSuggestCatalog {
   return {
@@ -271,7 +271,7 @@ export function suggestCommand(rawVerb: string): string | null {
   return suggestCommandFromCatalog(rawVerb, commandSuggestCatalog());
 }
 
-export function parseGittensoryMentionCommand(body: string | null | undefined): GittensoryMentionCommand | null {
+export function parseLoopOverMentionCommand(body: string | null | undefined): LoopOverMentionCommand | null {
   if (!body) return null;
   // `(?![\w-])` requires the mention to end at a non-identifier char, so other usernames that merely
   // start with "@loopover" — `@loopover-bot`, `@loopoverbot`, `@loopover2` — are not misread as a
@@ -287,20 +287,20 @@ export function parseGittensoryMentionCommand(body: string | null | undefined): 
     const bareTrailing = (match[2] ?? "").trim();
     return { name: "help", raw: match[0].trim(), unrecognizedText: bareTrailing.length > 0 ? bareTrailing : undefined };
   }
-  const requested = (GITTENSORY_ACTION_COMMAND_ALIASES[rawVerbToken] ?? rawVerbToken) as GittensoryMentionCommandName | GittensoryActionCommandName;
-  if (ACTION_COMMANDS.has(requested as GittensoryActionCommandName)) {
+  const requested = (GITTENSORY_ACTION_COMMAND_ALIASES[rawVerbToken] ?? rawVerbToken) as LoopOverMentionCommandName | LoopOverActionCommandName;
+  if (ACTION_COMMANDS.has(requested as LoopOverActionCommandName)) {
     // match[2] is captured by a `*`-quantified group outside any optional wrapper, so it always matches
     // (possibly empty) and is never actually undefined; the ?? below is a noUncheckedIndexedAccess guard only.
     /* v8 ignore next */
     const trailing = (match[2] ?? "").trim();
     const tail = trailing.length > 0 ? trailing : undefined;
-    const name = requested as GittensoryActionCommandName;
+    const name = requested as LoopOverActionCommandName;
     return ARGUMENT_ACTION_COMMANDS.has(name)
       ? { name, raw: match[0].trim(), argument: tail }
       : { name, raw: match[0].trim(), reason: tail };
   }
-  if (COMMANDS.has(requested as GittensoryMentionCommandName)) {
-    const name = requested as GittensoryMentionCommandName;
+  if (COMMANDS.has(requested as LoopOverMentionCommandName)) {
+    const name = requested as LoopOverMentionCommandName;
     // match[2] is always defined for the same reason as the action-command path above.
     /* v8 ignore next */
     const question = name === "ask" || name === "chat" ? (match[2] ?? "").trim() : undefined;
@@ -332,26 +332,26 @@ export function parseAgentCommandFeedbackContext(body: string | null | undefined
   const answerMatch = body.match(/<!--\s*gittensory-agent-command-answer:([A-Za-z0-9_.:-]{8,120})\s*-->/);
   if (!answerMatch?.[1]) return null;
   const commandMatch = body.match(/Command:\s*`@loopover\s+([a-z-]+)`/i);
-  const requestedCommand = commandMatch?.[1]?.toLowerCase() as GittensoryMentionCommandName | undefined;
+  const requestedCommand = commandMatch?.[1]?.toLowerCase() as LoopOverMentionCommandName | undefined;
   const command = requestedCommand && COMMANDS.has(requestedCommand) ? requestedCommand : null;
   return { answerId: answerMatch[1], command };
 }
 
-export function isMaintainerQueueDigestCommand(command: GittensoryMentionCommandName): command is MaintainerQueueDigestCommandName {
+export function isMaintainerQueueDigestCommand(command: LoopOverMentionCommandName): command is MaintainerQueueDigestCommandName {
   return MAINTAINER_QUEUE_DIGEST_COMMANDS.has(command as MaintainerQueueDigestCommandName);
 }
 
-export function isMaintainerOnlyCommand(command: GittensoryMentionCommandName): boolean {
+export function isMaintainerOnlyCommand(command: LoopOverMentionCommandName): boolean {
   return isMaintainerQueueDigestCommand(command);
 }
 
 /** True for gate-override and every #1960 PR control-surface verb (review/pause/resume/resolve/configuration/
  *  explain) — the action commands that perform a side effect via their own dispatch rather than the Q&A answer-
- *  card path. The Q&A mention-command handler (maybeProcessGittensoryMentionCommand) uses this to bail before
- *  narrowing to a GittensoryMentionCommandName, so a newly-registered action verb is never misrendered as a
+ *  card path. The Q&A mention-command handler (maybeProcessLoopOverMentionCommand) uses this to bail before
+ *  narrowing to a LoopOverMentionCommandName, so a newly-registered action verb is never misrendered as a
  *  Q&A card while its own dispatch handler has not landed yet (or has, and already claimed the event). */
-export function isGittensoryActionCommand(name: GittensoryMentionCommandName | GittensoryActionCommandName): name is GittensoryActionCommandName {
-  return ACTION_COMMANDS.has(name as GittensoryActionCommandName);
+export function isLoopOverActionCommand(name: LoopOverMentionCommandName | LoopOverActionCommandName): name is LoopOverActionCommandName {
+  return ACTION_COMMANDS.has(name as LoopOverActionCommandName);
 }
 
 // Commands that dispatch to a real AI orchestrator call (planNextWork / explainBlockersWithAgent /
@@ -359,7 +359,7 @@ export function isGittensoryActionCommand(name: GittensoryMentionCommandName | G
 // `miner-context` (both no-op), and every maintainer queue-digest command (cache-only DB reads via
 // buildMaintainerQueueDigestForCommand, no AI call at all) (#2560). Used to apply a tighter per-command rate
 // limit to the AI-cost-bearing surface than the cheap one.
-const AI_COST_BEARING_COMMANDS = new Set<GittensoryMentionCommandName>([
+const AI_COST_BEARING_COMMANDS = new Set<LoopOverMentionCommandName>([
   "ask",
   "chat",
   "blockers",
@@ -371,12 +371,12 @@ const AI_COST_BEARING_COMMANDS = new Set<GittensoryMentionCommandName>([
   "repo-fit",
 ]);
 
-export function isAiCostBearingCommand(command: GittensoryMentionCommandName): boolean {
+export function isAiCostBearingCommand(command: LoopOverMentionCommandName): boolean {
   return AI_COST_BEARING_COMMANDS.has(command);
 }
 
 export function isAuthorizedCommandActor(args: {
-  commandName?: GittensoryMentionCommandName | undefined;
+  commandName?: LoopOverMentionCommandName | undefined;
   commenterLogin?: string | null | undefined;
   commenterAssociation?: string | null | undefined;
   pullRequestAuthorLogin?: string | null | undefined;
@@ -409,7 +409,7 @@ export const CHAT_QA_DISCLAIMER =
   "Read-only informational reply — cannot change review outcomes, gate state, or trigger a re-review. To retrigger a review, comment `@loopover review`.";
 
 export function buildPublicAgentCommandComment(args: {
-  command: GittensoryMentionCommand;
+  command: LoopOverMentionCommand;
   repo: RepositoryRecord | null;
   issue: GitHubIssuePayload;
   pullRequest: PullRequestRecord | null;
@@ -424,19 +424,19 @@ export function buildPublicAgentCommandComment(args: {
   /** Set by the dispatcher when the intent-classification router (#4596) re-routed an unrecognized-verb
    *  mention to `matchedCommand` -- shown as a visible "interpreted as" note (req 6) so a wrong match is
    *  immediately correctable, rather than silently answering a different question than the one asked. */
-  interpretedFrom?: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
+  interpretedFrom?: { question: string; matchedCommand: LoopOverMentionCommandName } | undefined;
   /** GitHub's own `html_url` for the triggering comment (from the webhook payload), set by the dispatcher only
    *  for ask/chat -- these two post a FRESH reply per invocation instead of updating the shared PR panel in
    *  place, so this renders a visible "replying to" link back to the specific question being answered. Every
    *  other command still shares the panel slot and has no single triggering comment to point back at. */
   replyingToUrl?: string | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
-  env: GittensoryFooterEnv;
+  env: LoopOverFooterEnv;
 }): string {
   const repoFullName = args.repo?.fullName ?? args.pullRequest?.repoFullName ?? "this repository";
   // Action commands (e.g. gate-override) never reach this Q&A renderer — they are handled and short-circuited
   // earlier — so narrow the widened parse name back to a Q&A command name for the answer-card helpers.
-  const commandName = args.command.name as GittensoryMentionCommandName;
+  const commandName = args.command.name as LoopOverMentionCommandName;
   const sections = commandSections(
     commandName,
     args.env,
@@ -493,7 +493,7 @@ export function buildPublicAgentCommandComment(args: {
 }
 
 function buildPublicAnswerCard(args: {
-  command: GittensoryMentionCommandName;
+  command: LoopOverMentionCommandName;
   sections: string[];
   bundle: AgentRunBundle | null | undefined;
   officialMiner: GittensorContributorSnapshot | null | undefined;
@@ -695,7 +695,7 @@ function renderPublicAnswerCard(card: PublicAnswerCard): string[] {
   return lines;
 }
 
-function commandSummary(command: GittensoryMentionCommandName): string {
+function commandSummary(command: LoopOverMentionCommandName): string {
   switch (command) {
     case "help":
       return "Available public commands and their safest use on a PR thread.";
@@ -741,7 +741,7 @@ function commandSummary(command: GittensoryMentionCommandName): string {
 }
 
 function commandEvidence(
-  command: GittensoryMentionCommandName,
+  command: LoopOverMentionCommandName,
   bundle: AgentRunBundle | null | undefined,
   officialMiner: GittensorContributorSnapshot | null | undefined,
   actorKind: "maintainer" | "author",
@@ -768,7 +768,7 @@ function commandEvidence(
   return evidence;
 }
 
-function commandNextActions(command: GittensoryMentionCommandName, bundle: AgentRunBundle | null | undefined): string[] {
+function commandNextActions(command: LoopOverMentionCommandName, bundle: AgentRunBundle | null | undefined): string[] {
   if (bundle?.run.status === "needs_snapshot_refresh") {
     return command === "ask"
       ? ["Retry @loopover ask after the contribution context snapshot refresh completes."]
@@ -819,7 +819,7 @@ function commandNextActions(command: GittensoryMentionCommandName, bundle: Agent
 }
 
 function commandSourceNotes(
-  command: GittensoryMentionCommandName,
+  command: LoopOverMentionCommandName,
   bundle: AgentRunBundle | null | undefined,
   officialMiner: GittensorContributorSnapshot | null | undefined,
 ): string[] {
@@ -844,7 +844,7 @@ function commandSourceNotes(
   ];
 }
 
-function publicFreshness(bundle: AgentRunBundle | null | undefined, command: GittensoryMentionCommandName): string {
+function publicFreshness(bundle: AgentRunBundle | null | undefined, command: LoopOverMentionCommandName): string {
   if (command === "help") return "shipped command list";
   if (isMaintainerQueueDigestCommand(command)) return "cached queue digest generated at invocation time";
   if (!bundle) return "no agent run was required or available";
@@ -878,8 +878,8 @@ function feedbackPromptSections(answerId: string | null | undefined): string[] {
 }
 
 function commandSections(
-  command: GittensoryMentionCommandName,
-  env: GittensoryFooterEnv,
+  command: LoopOverMentionCommandName,
+  env: LoopOverFooterEnv,
   bundle: AgentRunBundle | null | undefined,
   officialMiner: GittensorContributorSnapshot | null | undefined,
   maintainerDigest: MaintainerQueueDigest | null | undefined,
@@ -938,7 +938,7 @@ function actionCommandHelpSections(): string[] {
   ];
 }
 
-function helpSections(env: GittensoryFooterEnv, unknownVerb?: string | undefined): string[] {
+function helpSections(env: LoopOverFooterEnv, unknownVerb?: string | undefined): string[] {
   return [
     "**Commands**",
     "",

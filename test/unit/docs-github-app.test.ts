@@ -20,9 +20,9 @@ describe("docs GitHub App setup page", () => {
   });
 
   it("keeps Context advisory and Gate opt-in before branch protection", () => {
-    expect(source).toMatch(/Gittensory Context<\/strong> is advisory/);
-    expect(source).toMatch(/Gittensory Orb Review Agent<\/strong> is opt-in/);
-    expect(source).toMatch(/should require <strong>Gittensory Orb Review Agent<\/strong> only after/);
-    expect(source).toMatch(/Do not require <strong>Gittensory Context<\/strong>/);
+    expect(source).toMatch(/LoopOver Context<\/strong> is advisory/);
+    expect(source).toMatch(/LoopOver Orb Review Agent<\/strong> is opt-in/);
+    expect(source).toMatch(/should require <strong>LoopOver Orb Review Agent<\/strong> only after/);
+    expect(source).toMatch(/Do not require <strong>LoopOver Context<\/strong>/);
   });
 });

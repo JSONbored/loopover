@@ -94,7 +94,7 @@ export const IMPROVEMENT_WEIGHTS = {
 } as const;
 
 export const IMPROVEMENT_RUBRIC_MARKDOWN = [
-  "# Gittensory structural-improvement rubric",
+  "# LoopOver structural-improvement rubric",
   "",
   "- `insufficient-signal`: none of the four inputs had anything to measure",
   "- `none`: 0",

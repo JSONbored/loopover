@@ -1,4 +1,4 @@
-// Hosted `gittensory_retrieve_issue_context` (#4293): metadata-only issue-centric RAG retrieval for the
+// Hosted `loopover_retrieve_issue_context` (#4293): metadata-only issue-centric RAG retrieval for the
 // miner analyze phase. Composes `buildIssueRagQuery` and runs `retrieveContextWithMetrics` server-side
 // via a hosted API round-trip (stdio MCP proxies to `/v1/issue-rag/retrieve`). Returns retrieved paths
 // and scores only — never chunk bodies or source text.

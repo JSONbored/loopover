@@ -148,7 +148,7 @@ describe("agent approval-queue routes (#779)", () => {
     await seedPending(env);
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 1 });
 
-    const list = await app.request("/v1/repos/owner/repo/agent/pending-actions", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const list = await app.request("/v1/repos/owner/repo/agent/pending-actions", { headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(list.status).toBe(200);
     await expect(list.json()).resolves.toMatchObject({ repoFullName: "owner/repo", pendingActions: [{ actionClass: "merge", status: "pending" }] });
@@ -164,7 +164,7 @@ describe("agent approval-queue routes (#779)", () => {
     const action = await seedPending(env);
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 1 });
 
-    const res = await app.request(`/v1/repos/owner/repo/agent/pending-actions/${action.id}/accept`, { method: "POST", headers: { cookie: `gittensory_session=${token}`, origin: "https://preview.example" } }, env);
+    const res = await app.request(`/v1/repos/owner/repo/agent/pending-actions/${action.id}/accept`, { method: "POST", headers: { cookie: `loopover_session=${token}`, origin: "https://preview.example" } }, env);
 
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toMatchObject({ error: "insufficient_role" });

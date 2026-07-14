@@ -20,7 +20,7 @@ import type {
   ScoringModelSnapshotRecord,
 } from "../types";
 import type { PublicContributorProfile } from "../github/public";
-import { commandReferenceUrl, gittensoryFooter, gittensorRepoEarnUrl, type GittensoryFooterEnv } from "../github/footer";
+import { commandReferenceUrl, gittensoryFooter, gittensorRepoEarnUrl, type LoopOverFooterEnv } from "../github/footer";
 import type { FocusManifestReviewConfig, ReviewFieldKey } from "./focus-manifest";
 import type { GittensorContributorSnapshot } from "../gittensor/api";
 import { nowIso } from "../utils/json";
@@ -4180,7 +4180,7 @@ type PublicSafeCollapsibleArgs = {
   /** #5078: resolved by the caller from `env.PUBLIC_SITE_ORIGIN`, same as `buildPublicPrIntelligenceComment`'s
    *  own `env` param -- lets the "[BETA] Chat with LoopOver" collapsible link to a self-hoster's own
    *  command-reference doc page instead of always the canonical loopover.ai. */
-  env: GittensoryFooterEnv;
+  env: LoopOverFooterEnv;
 };
 
 /** "Signal definitions" body — a static legend for the readiness signals. No inputs. */
@@ -4366,7 +4366,7 @@ export function buildPublicPrIntelligenceComment(args: {
   slopBand?: SlopBand | undefined;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` so a self-hoster's own domain reaches the
    *  always-on footer's attribution link instead of `GITTENSORY_SITE_URL` (#4613). */
-  env: GittensoryFooterEnv;
+  env: LoopOverFooterEnv;
 }): string {
   const publicFindings = publicSafePreflightFindings(args.preflight, args.settings);
   const relatedWork = buildDuplicateWinnerRelatedWorkView({
@@ -4587,7 +4587,7 @@ export function buildPublicPrIntelligenceComment(args: {
  *  analysis is for registered Gittensor contributors, so we skip the panel and post a brief welcome
  *  + earn invite; the always-on footer CTA does the conversion. Carries the same panel marker so it
  *  updates in place if the author later registers (the full panel then replaces it). */
-function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: PullRequestRecord; review?: FocusManifestReviewConfig | undefined; env: GittensoryFooterEnv }): string {
+function buildMinimalInviteComment(args: { repo: RepositoryRecord | null; pr: PullRequestRecord; review?: FocusManifestReviewConfig | undefined; env: LoopOverFooterEnv }): string {
   return [
     "<!-- gittensory-pr-panel:v1 -->",
     "",

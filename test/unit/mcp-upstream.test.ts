@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { authenticatePrivateToken, createSessionForGitHubUser } from "../../src/auth/security";
 import { persistSignalSnapshot, persistUpstreamRulesetSnapshot, upsertBounty, upsertRepositoryFromGitHub, upsertUpstreamDriftReport } from "../../src/db/repositories";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import type { UpstreamDriftReportRecord, UpstreamRulesetSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -11,7 +11,7 @@ describe("MCP contributor access", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
     const identity = await authenticatePrivateToken(env, token);
     if (!identity || identity.kind !== "session") throw new Error("expected session identity");
-    const mcp = new GittensoryMcp(env, identity);
+    const mcp = new LoopoverMcp(env, identity);
     await expect((mcp as unknown as { monitorOpenPullRequests(login: string): Promise<unknown> }).monitorOpenPullRequests("victim")).rejects.toThrow(
       /Forbidden: session can only access the authenticated GitHub login/,
     );
@@ -38,7 +38,7 @@ describe("MCP contributor access", () => {
     const identity = await authenticatePrivateToken(env, token);
     if (!identity || identity.kind !== "session") throw new Error("expected session identity");
 
-    const payload = await (new GittensoryMcp(env, identity) as unknown as { getIssueQuality(input: { owner: string; repo: string }): Promise<{ data: Record<string, unknown> }> }).getIssueQuality({ owner: "victim", repo: "private-repo" });
+    const payload = await (new LoopoverMcp(env, identity) as unknown as { getIssueQuality(input: { owner: string; repo: string }): Promise<{ data: Record<string, unknown> }> }).getIssueQuality({ owner: "victim", repo: "private-repo" });
 
     expect(payload.data).toEqual({ status: "forbidden", repoFullName: "victim/private-repo" });
     expect(JSON.stringify(payload)).not.toContain("SECRET private issue");
@@ -52,7 +52,7 @@ describe("MCP contributor access", () => {
     if (!identity || identity.kind !== "session") throw new Error("expected session identity");
 
     const payload = await (
-      new GittensoryMcp(env, identity) as unknown as {
+      new LoopoverMcp(env, identity) as unknown as {
         checkBeforeStart(input: { owner: string; repo: string; issueNumber?: number }): Promise<{ data: Record<string, unknown> }>;
       }
     ).checkBeforeStart({ owner: "victim", repo: "private-repo", issueNumber: 1 });
@@ -75,7 +75,7 @@ describe("MCP contributor access", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "attacker", id: 7 });
     const identity = await authenticatePrivateToken(env, token);
     if (!identity || identity.kind !== "session") throw new Error("expected session identity");
-    const mcp = new GittensoryMcp(env, identity) as unknown as { getBountyAdvisory(id: string): Promise<unknown> };
+    const mcp = new LoopoverMcp(env, identity) as unknown as { getBountyAdvisory(id: string): Promise<unknown> };
 
     await expect(mcp.getBountyAdvisory("missing-bounty")).rejects.toThrow("Bounty not found.");
     await expect(mcp.getBountyAdvisory("secret-bounty")).rejects.toThrow("Bounty not found.");
@@ -105,7 +105,7 @@ describe("MCP upstream drift tool", () => {
 });
 
 async function getUpstreamDriftSummary(env: Env): Promise<string> {
-  const payload = await (new GittensoryMcp(env) as unknown as { getUpstreamDrift(): Promise<{ summary: string }> }).getUpstreamDrift();
+  const payload = await (new LoopoverMcp(env) as unknown as { getUpstreamDrift(): Promise<{ summary: string }> }).getUpstreamDrift();
   return payload.summary;
 }
 

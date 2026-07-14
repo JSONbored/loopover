@@ -2,11 +2,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity): Promise<Client> {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "fleet-test", version: "0.1.0" }, { capabilities: {} });
@@ -26,11 +26,11 @@ async function seedMergeSignals(env: Env, instance: string, n: number): Promise<
   await env.DB.prepare(`INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1) ON CONFLICT(instance_id) DO UPDATE SET registered=1`).bind(instance).run();
 }
 
-describe("gittensory_get_fleet_analytics MCP tool", () => {
+describe("loopover_get_fleet_analytics MCP tool", () => {
   it("returns fleet analytics for a trusted (non-session) identity, honoring windowDays", async () => {
     const env = createTestEnv();
     await seedMergeSignals(env, "inst1", 5); // ≥ MIN_DECIDED → counts toward the fleet
-    const result = await (await connect(env)).callTool({ name: "gittensory_get_fleet_analytics", arguments: { windowDays: 30 } });
+    const result = await (await connect(env)).callTool({ name: "loopover_get_fleet_analytics", arguments: { windowDays: 30 } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { windowDays: number; instanceCount: number; fleet: { mergePrecision: number } };
     expect(data.windowDays).toBe(30);
@@ -39,7 +39,7 @@ describe("gittensory_get_fleet_analytics MCP tool", () => {
   });
 
   it("returns an empty report (n/a summary) when there is no data and no windowDays", async () => {
-    const result = await (await connect(createTestEnv())).callTool({ name: "gittensory_get_fleet_analytics", arguments: {} });
+    const result = await (await connect(createTestEnv())).callTool({ name: "loopover_get_fleet_analytics", arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { instanceCount: number };
     expect(data.instanceCount).toBe(0);
@@ -48,14 +48,14 @@ describe("gittensory_get_fleet_analytics MCP tool", () => {
   it("allows an operator session", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "boss" });
     const { session } = await createSessionForGitHubUser(env, { login: "boss", id: 1 });
-    const result = await (await connect(env, { kind: "session", actor: "boss", session })).callTool({ name: "gittensory_get_fleet_analytics", arguments: {} });
+    const result = await (await connect(env, { kind: "session", actor: "boss", session })).callTool({ name: "loopover_get_fleet_analytics", arguments: {} });
     expect(result.isError).toBeFalsy();
   });
 
   it("forbids a non-operator session", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "boss" });
     const { session } = await createSessionForGitHubUser(env, { login: "rando", id: 2 });
-    const result = await (await connect(env, { kind: "session", actor: "rando", session })).callTool({ name: "gittensory_get_fleet_analytics", arguments: {} });
+    const result = await (await connect(env, { kind: "session", actor: "rando", session })).callTool({ name: "loopover_get_fleet_analytics", arguments: {} });
     expect(result.isError).toBeTruthy();
     expect(JSON.stringify(result.content)).toMatch(/operator authority/i);
   });
@@ -64,13 +64,13 @@ describe("gittensory_get_fleet_analytics MCP tool", () => {
   // cross-instance operator-only reports by default. "" overrides createTestEnv's own
   // MCP_READ_REPO_ALLOWLIST: "*" default back to unset, exercising the real deny-by-default behavior.
   it("forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard opt-in (#2455)", async () => {
-    const result = await (await connect(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }))).callTool({ name: "gittensory_get_fleet_analytics", arguments: {} });
+    const result = await (await connect(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }))).callTool({ name: "loopover_get_fleet_analytics", arguments: {} });
     expect(result.isError).toBeTruthy();
     expect(JSON.stringify(result.content)).toMatch(/not authorized for operator-only cross-repo tools/i);
   });
 
   it("forbids the static mcp identity when MCP_READ_REPO_ALLOWLIST is scoped to specific repos, not the wildcard (#2455)", async () => {
-    const result = await (await connect(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "acme/widgets" }))).callTool({ name: "gittensory_get_fleet_analytics", arguments: {} });
+    const result = await (await connect(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "acme/widgets" }))).callTool({ name: "loopover_get_fleet_analytics", arguments: {} });
     expect(result.isError).toBeTruthy();
     expect(JSON.stringify(result.content)).toMatch(/not authorized for operator-only cross-repo tools/i);
   });

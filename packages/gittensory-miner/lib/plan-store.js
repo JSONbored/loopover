@@ -4,12 +4,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applySchemaMigrations } from "./schema-version.js";
 
-// Local SQLite persistence for the stateless MCP plan DAG (#2318). `gittensory_build_plan`/`plan_status`/
+// Local SQLite persistence for the stateless MCP plan DAG (#2318). `loopover_build_plan`/`plan_status`/
 // `record_step_result` are stateless — the caller holds the plan and passes it back each call — so a miner running
 // unattended across process restarts needs somewhere to persist the plan object between calls. This is local-only
 // bookkeeping (no plan logic, no network), 100% client-side, mirroring the package's other local stores. Every
 // plan is validated against the `planDagSchema` shape (src/mcp/server.ts) on BOTH save and load, so a corrupted
-// local row fails loudly instead of feeding a malformed plan back into `gittensory_plan_status`.
+// local row fails loudly instead of feeding a malformed plan back into `loopover_plan_status`.
 
 const PLAN_STEP_STATUSES = Object.freeze(["pending", "running", "completed", "failed", "skipped"]);
 /** Derived plan-level status used for `listPlans({ status })`. */

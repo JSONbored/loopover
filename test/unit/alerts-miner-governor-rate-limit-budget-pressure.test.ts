@@ -6,7 +6,7 @@ import {
   GOVERNOR_RATE_LIMIT_REMAINING_RATIO,
 } from "../../packages/gittensory-miner/lib/governor-metrics-cli.js";
 
-// Fixture for the GittensoryMinerGovernorRateLimitPressureHigh / GittensoryMinerGovernorCapUsageHigh alerts
+// Fixture for the LoopOverMinerGovernorRateLimitPressureHigh / LoopOverMinerGovernorCapUsageHigh alerts
 // (#5187). This is the config-side equivalent of a `promtool test rules` harness (the repo ships no promtool
 // dependency): it pins each rule's formula, threshold, and metric names to the real renderer surface so the
 // alerts can't silently drift away from the metrics they consume. Mirrors
@@ -42,8 +42,8 @@ function findAlert(name: string): AlertRule {
   throw new Error(`alert ${name} not found in prometheus/rules/alerts.yml`);
 }
 
-describe("GittensoryMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
-  const rule = findAlert("GittensoryMinerGovernorRateLimitPressureHigh");
+describe("LoopOverMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
+  const rule = findAlert("LoopOverMinerGovernorRateLimitPressureHigh");
   const flat = rule.expr.replace(/\s+/g, " ").trim();
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {
@@ -78,8 +78,8 @@ describe("GittensoryMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
   });
 });
 
-describe("GittensoryMinerGovernorCapUsageHigh alert (#5187)", () => {
-  const rule = findAlert("GittensoryMinerGovernorCapUsageHigh");
+describe("LoopOverMinerGovernorCapUsageHigh alert (#5187)", () => {
+  const rule = findAlert("LoopOverMinerGovernorCapUsageHigh");
   const flat = rule.expr.replace(/\s+/g, " ").trim();
 
   it("lives in the same miner-scoped governor rule group", () => {

@@ -43,15 +43,15 @@ describe("gittensory public-comment footer", () => {
 
   it("preserves maintainer custom lead text while appending the Gittensor CTA", () => {
     const earnUrl = gittensorRepoEarnUrl("JSONbored/gittensory");
-    const footer = gittensoryFooter({}, { customText: "Thanks for contributing to Gittensory!", earnUrl });
-    expect(footer.startsWith("Thanks for contributing to Gittensory!")).toBe(true);
+    const footer = gittensoryFooter({}, { customText: "Thanks for contributing to LoopOver!", earnUrl });
+    expect(footer.startsWith("Thanks for contributing to LoopOver!")).toBe(true);
     expect(footer).toContain("register to start earning");
     expect(footer).toContain(earnUrl);
     expect(footer).toContain(GITTENSORY_SITE_URL);
     expect(footer.toLowerCase()).not.toMatch(/reward|payout|score/);
   });
 
-  // #4613: a self-hoster's PUBLIC_SITE_ORIGIN replaces GITTENSORY_SITE_URL in the "Checked by Gittensory"
+  // #4613: a self-hoster's PUBLIC_SITE_ORIGIN replaces GITTENSORY_SITE_URL in the "Checked by LoopOver"
   // attribution link -- both the default-copy branch and the maintainer-customText branch splice it in,
   // and the Gittensor register link (a separate, shared network) is never rebranded.
   it("#4613: uses PUBLIC_SITE_ORIGIN in the attribution link when configured", () => {

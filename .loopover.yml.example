@@ -104,7 +104,7 @@ publicNotes:
 # Most gate dimensions are tri-state modes:
 #   off      — the dimension is not evaluated.
 #   advisory — the finding is surfaced (comment/context) but never blocks.
-#   block    — the finding can become a hard `Gittensory Gate` blocker
+#   block    — the finding can become a hard `LoopOver Gate` blocker
 #              (always confirmed-contributor-gated).
 gate:
   # Legacy check-run publish switch (#5355) — despite the name, this does NOT turn the deterministic
@@ -116,7 +116,7 @@ gate:
   # Bool. Default: unset (falls through to `checkMode`, then to the dashboard `reviewCheckMode` setting).
   enabled: true
 
-  # Review-CHECK publish mode (#2852) — controls ONLY whether/how the "Gittensory Orb Review Agent"
+  # Review-CHECK publish mode (#2852) — controls ONLY whether/how the "LoopOver Orb Review Agent"
   # check-run is created/updated on GitHub. Never affects gate evaluation, comments, labels, audit
   # records, or autonomous merge/close — all of those run identically in every mode (the autonomous
   # decision engine already excludes the bot's own check-run from the live CI it merges/closes against,
@@ -131,14 +131,14 @@ gate:
   #   disabled — never create/update the check-run at all. RECOMMENDED for high-volume autonomous
   #              self-hosting: avoids GitHub showing "Expected — Waiting for status to be reported"
   #              under review-queue pressure, and reduces GitHub API calls (no check-run create/update).
-  #              Before switching to `disabled`, remove "Gittensory Orb Review Agent" from this repo's
-  #              branch-protection / ruleset required-status-checks list — Gittensory cannot do this on
+  #              Before switching to `disabled`, remove "LoopOver Orb Review Agent" from this repo's
+  #              branch-protection / ruleset required-status-checks list — LoopOver cannot do this on
   #              your behalf (it is a GitHub branch-protection setting), and leaving it required with
   #              nothing to satisfy it means GitHub will show a pending status forever. Keep your real
-  #              CI/codecov/security checks required — this only ever affects Gittensory's own check.
+  #              CI/codecov/security checks required — this only ever affects LoopOver's own check.
   # required | visible | disabled. Default: disabled for a never-configured repo (matches the existing
   # opt-in default); an already-configured repo keeps its current effective behavior. RECOMMENDED for
-  # high-volume autonomous self-hosting: `visible` or `disabled`, not `required` — Gittensory's own
+  # high-volume autonomous self-hosting: `visible` or `disabled`, not `required` — LoopOver's own
   # merge/close decisions never depend on this check either way.
   checkMode: visible
 
@@ -564,7 +564,7 @@ settings:
 
   # Publish a GitHub check-run. off | enabled. Default: off.
   # Independent, legacy advisory surface (#2691) -- separate from, and not gated
-  # by, the required `Gittensory Orb Review Agent` gate check under `gate:`
+  # by, the required `LoopOver Orb Review Agent` gate check under `gate:`
   # above. At the default `checkRunDetailLevel: minimal` below it posts no
   # findings at all; at standard/deep it only re-renders findings already shown
   # in the gate check and the PR comment. One-shot self-host installs should
@@ -1181,7 +1181,7 @@ settings:
 #   duplicateKeyFields: [slug]          # Field name(s) used to detect a duplicate entry. Default: [] (no dedup check).
 #   validatorId: my-registry-validator  # Optional identifier for a custom per-entry validator. Default: none.
 
-# Repo-doc generation (#2993/#3002): opt-in only, off by default. Uncomment to let Gittensory open a PR
+# Repo-doc generation (#2993/#3002): opt-in only, off by default. Uncomment to let LoopOver open a PR
 # generating/refreshing AGENTS.md/CLAUDE.md (and later, skill files) from this repo's own profile. There
 # is no DB-backed dashboard counterpart -- precedence is simply this manifest value, or fully disabled
 # when the block (or `enabled`) is absent.
@@ -1192,7 +1192,7 @@ settings:
 #                                   # AGENTS.md/CLAUDE.md. Default: false (left alone if not recognizably generated).
 #   refreshIntervalDays: 7   # Positive integer. Minimum days between scheduled refresh attempts. Default: 7.
 
-# Maintainer review recap digest (#1963): opt-in only, off by default. Uncomment to let Gittensory build a
+# Maintainer review recap digest (#1963): opt-in only, off by default. Uncomment to let LoopOver build a
 # periodic summary of recent review activity (PRs merged/closed, gate merge precision) for this repo. Discord
 # delivery only for now (reuses the same per-repo webhook resolution as the per-PR notifier); Slack is a
 # follow-up. There is no DB-backed dashboard counterpart -- precedence is simply this manifest value, or

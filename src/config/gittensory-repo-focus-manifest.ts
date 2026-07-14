@@ -2,7 +2,7 @@
  * Bundled fallback for JSONbored/gittensory when the repo file is not yet reachable
  * (local dev, pre-merge branches). Keep aligned with `.loopover.yml` at repo root.
  */
-export const GITTENSORY_REPO_FOCUS_MANIFEST_YAML = `# Gittensory repo focus manifest — machine-readable contributor policy for this project.
+export const GITTENSORY_REPO_FOCUS_MANIFEST_YAML = `# LoopOver repo focus manifest — machine-readable contributor policy for this project.
 # Private maintainerNotes stay in authenticated API surfaces only.
 
 source: repo_file
@@ -110,12 +110,12 @@ settings:
         trustMaintainerAuthoredIssueForReward: true
   reviewEvasionProtection: close
 
-# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let Gittensory open a
+# Repo-doc generation roadmap (#2993/#3002) — opt-in only, off by default. Uncomment to let LoopOver open a
 # PR generating AGENTS.md/CLAUDE.md from this repo's own profile.
 # repoDocGeneration:
 #   enabled: true                   # default false — must be explicitly turned on per repo
 #   scope: [agents]                 # agents | skills — which generated file types are in play
-#   allowOverwriteExisting: false   # required before Gittensory will touch an existing hand-maintained file
+#   allowOverwriteExisting: false   # required before LoopOver will touch an existing hand-maintained file
 
 publicNotes:
   - Prefer backend Workers, MCP, GitHub App, registry, and scoring work when scope allows.
@@ -129,7 +129,7 @@ maintainerNotes:
 
 export const GITTENSOR_SELF_REPO_DEFAULT = "JSONbored/gittensory";
 
-export function resolveGittensorySelfRepoFullName(env: { GITTENSORY_DRIFT_ISSUE_REPO?: string }): string {
+export function resolveLoopOverSelfRepoFullName(env: { GITTENSORY_DRIFT_ISSUE_REPO?: string }): string {
   const configured = env.GITTENSORY_DRIFT_ISSUE_REPO?.trim();
   if (configured && configured.includes("/")) return configured;
   return GITTENSOR_SELF_REPO_DEFAULT;

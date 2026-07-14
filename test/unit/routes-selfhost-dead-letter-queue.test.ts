@@ -48,7 +48,7 @@ describe("dead-letter-queue table route (#2214)", () => {
     const app = createApp();
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
-    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(403);
   });
 
@@ -56,7 +56,7 @@ describe("dead-letter-queue table route (#2214)", () => {
     const app = createApp();
     const env = createTestEnv(); // default JOBS stub is Cloudflare-shaped: no listDeadLetterJobs/deadCount
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
-    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(501);
     await expect(res.json()).resolves.toMatchObject({ error: "dead_letter_admin_unavailable" });
   });
@@ -70,7 +70,7 @@ describe("dead-letter-queue table route (#2214)", () => {
     const env = createTestEnv({ JOBS: selfhostJobsStub({ listDeadLetterJobs: () => items, deadCount: () => 2 }) });
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
 
-    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ limit: 25, offset: 0, total: 2, items });
@@ -81,7 +81,7 @@ describe("dead-letter-queue table route (#2214)", () => {
     const env = createTestEnv({ JOBS: selfhostJobsStub() });
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
 
-    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/app/selfhost/queue/dead", { headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ total: 0, items: [] });
@@ -104,7 +104,7 @@ describe("dead-letter-queue table route (#2214)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead?limit=500&offset=-5",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -120,7 +120,7 @@ describe("dead-letter-queue table route (#2214)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead?limit=not-a-number",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -146,7 +146,7 @@ describe("dead-letter-queue replay route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/1/replay",
-      { method: "POST", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(403);
@@ -158,7 +158,7 @@ describe("dead-letter-queue replay route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       `/v1/app/selfhost/queue/dead/${badId}/replay`,
-      { method: "POST", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(400);
@@ -171,7 +171,7 @@ describe("dead-letter-queue replay route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/1/replay",
-      { method: "POST", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(501);
@@ -184,7 +184,7 @@ describe("dead-letter-queue replay route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/99/replay",
-      { method: "POST", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(404);
@@ -206,7 +206,7 @@ describe("dead-letter-queue replay route (#2215)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/7/replay",
-      { method: "POST", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -235,7 +235,7 @@ describe("dead-letter-queue delete route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/1",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(403);
@@ -247,7 +247,7 @@ describe("dead-letter-queue delete route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       `/v1/app/selfhost/queue/dead/${badId}`,
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(400);
@@ -260,7 +260,7 @@ describe("dead-letter-queue delete route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/1",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(501);
@@ -273,7 +273,7 @@ describe("dead-letter-queue delete route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/99",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(404);
@@ -295,7 +295,7 @@ describe("dead-letter-queue delete route (#2215)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead/7",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -324,7 +324,7 @@ describe("dead-letter-queue purge route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(403);
@@ -336,7 +336,7 @@ describe("dead-letter-queue purge route (#2215)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const res = await app.request(
       "/v1/app/selfhost/queue/dead",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(res.status).toBe(501);
@@ -350,7 +350,7 @@ describe("dead-letter-queue purge route (#2215)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -370,7 +370,7 @@ describe("dead-letter-queue purge route (#2215)", () => {
 
     const res = await app.request(
       "/v1/app/selfhost/queue/dead",
-      { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } },
+      { method: "DELETE", headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 

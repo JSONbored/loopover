@@ -25,7 +25,7 @@ function gate(over: Partial<GateCheckEvaluation> = {}): GateCheckEvaluation {
   return {
     enabled: true,
     conclusion: "success",
-    title: "Gittensory Orb Review Agent passed",
+    title: "LoopOver Orb Review Agent passed",
     summary: "No configured hard blocker was found.",
     blockers: [],
     warnings: [],
@@ -45,7 +45,7 @@ const panelRows: PublicPrPanelSignalRow[] = [
   { key: "gateResult", cells: ["Gate result", "✅ Passing", "No configured blocker found.", "No action."] },
 ];
 
-const footer = "💰 **Earn for open-source contributions like this.** Checked by Gittensory.";
+const footer = "💰 **Earn for open-source contributions like this.** Checked by LoopOver.";
 
 describe("gateConclusionToVerdict", () => {
   it("maps every gate conclusion to its authoritative verdict", () => {
@@ -234,7 +234,7 @@ describe("buildDualReviewNotes", () => {
       aiReview: { notes: "Looks fine." },
       warnings: [
         { code: "missing_linked_issue", severity: "warning", title: "No linked issue detected", detail: "...", action: "Link it." },
-        { code: "repo_not_registered", severity: "warning", title: "Registration is not available in the local Gittensory cache", detail: "..." },
+        { code: "repo_not_registered", severity: "warning", title: "Registration is not available in the local LoopOver cache", detail: "..." },
         { code: "real_code_nit", severity: "warning", title: "Missing test", detail: "...", action: "Add a test." },
       ],
       recommendation: "merge",
@@ -282,7 +282,7 @@ describe("splitAiReviewNits", () => {
 describe("isBoilerplateNit", () => {
   it("flags environmental/process findings by code or title, never real code nits", () => {
     expect(isBoilerplateNit({ code: "missing_linked_issue", severity: "warning", title: "No linked issue detected", detail: "" })).toBe(true); // code match
-    expect(isBoilerplateNit({ code: "x", severity: "warning", title: "Repository registration is not available in the local Gittensory cache", detail: "" })).toBe(true); // title match
+    expect(isBoilerplateNit({ code: "x", severity: "warning", title: "Repository registration is not available in the local LoopOver cache", detail: "" })).toBe(true); // title match
     expect(isBoilerplateNit({ code: "real_nit", severity: "warning", title: "Missing test", detail: "" })).toBe(false); // real code nit
   });
 });
@@ -470,7 +470,7 @@ describe("buildUnifiedCommentBody", () => {
     const failing = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "failure",
-        title: "Gittensory Orb Review Agent: blocked",
+        title: "LoopOver Orb Review Agent: blocked",
         summary: "A hard blocker was found.",
         blockers: [{ code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "..." }],
       }),
@@ -513,14 +513,14 @@ describe("buildUnifiedCommentBody", () => {
       changedFiles: 4,
       mergeReadiness,
       merged: true,
-      reRunLabel: "Re-run Gittensory review",
+      reRunLabel: "Re-run LoopOver review",
       extraCollapsibles: extra,
       footerMarkdown: footer,
     });
     expect(body).toContain("`CI green`"); // mergeReadiness ciState → chip
     expect(body).toContain("`clean`"); // mergeStateLabel → chip
     expect(body).toContain("auto-merged"); // merged → ready wording
-    expect(body).toContain("- [ ] Re-run Gittensory review"); // reRunLabel
+    expect(body).toContain("- [ ] Re-run LoopOver review"); // reRunLabel
     expect(body).toContain("<details><summary><b>Signal definitions</b></summary>"); // extraCollapsibles
   });
 
@@ -534,11 +534,11 @@ describe("buildUnifiedCommentBody", () => {
       panelRows,
       readinessTotal: 80,
       changedFiles: 2,
-      reRunLabel: "Re-run Gittensory review",
+      reRunLabel: "Re-run LoopOver review",
       generateTestsLabel: "Generate an AI Playwright test for this PR",
       footerMarkdown: footer,
     });
-    expect(bothLabels).toContain("- [ ] Re-run Gittensory review");
+    expect(bothLabels).toContain("- [ ] Re-run LoopOver review");
     expect(bothLabels).toContain("- [ ] Generate an AI Playwright test for this PR");
 
     const onlyGenerateTests = buildUnifiedCommentBody({
@@ -549,7 +549,7 @@ describe("buildUnifiedCommentBody", () => {
       generateTestsLabel: "Generate an AI Playwright test for this PR",
       footerMarkdown: footer,
     });
-    expect(onlyGenerateTests).not.toContain("Re-run Gittensory review");
+    expect(onlyGenerateTests).not.toContain("Re-run LoopOver review");
     expect(onlyGenerateTests).toContain("- [ ] Generate an AI Playwright test for this PR");
 
     const neitherLabel = buildUnifiedCommentBody({ gate: gate(), panelRows, readinessTotal: 80, changedFiles: 2, footerMarkdown: footer });
@@ -689,7 +689,7 @@ describe("reconciliation invariant: comment tone is pinned to the gate conclusio
 
 // ── Single AI pass + single surfacing of the consensus defect (#1016) ───────────────────────────────
 //
-// The processor runs ONE AI review (`runAiReviewForAdvisory` → one `runGittensoryAiReview`) whose result
+// The processor runs ONE AI review (`runAiReviewForAdvisory` → one `runLoopOverAiReview`) whose result
 // feeds BOTH the gate (it mutates `advisory.findings` with the `ai_consensus_defect`, which
 // `evaluateGateCheck` reads) AND the comment (the same finding is RECOVERED from `advisory.findings` by
 // the bridge — never a second model call/synthesis). These bridge-level tests pin the "recover, don't
@@ -701,7 +701,7 @@ describe("single AI pass: the bridge RECOVERS the consensus defect, never re-der
     const body = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "failure",
-        title: "Gittensory Orb Review Agent: blocked",
+        title: "LoopOver Orb Review Agent: blocked",
         summary: "A hard blocker was found.",
         // The gate's own blockers list carries the defect (as evaluateGateCheck produced it)…
         blockers: [{ code: "ai_consensus_defect", severity: "critical", title: defectTitle, detail: "Both models agree." }],
@@ -743,7 +743,7 @@ describe("gate blockers render in 'Why this is blocked' (FIX D1)", () => {
     const body = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "failure",
-        title: "Gittensory Orb Review Agent: blocked",
+        title: "LoopOver Orb Review Agent: blocked",
         summary: "A hard blocker was found.",
         // A non-AI gate failure (no ai_consensus_defect anywhere) — the consensus defect alone would have left
         // "Why this is blocked" empty. The gate blocker must now render.
@@ -828,7 +828,7 @@ describe("gate blockers render in 'Why this is blocked' (FIX D1)", () => {
     const body = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "failure",
-        title: `Gittensory Orb Review Agent: ${blockerTitle}`,
+        title: `LoopOver Orb Review Agent: ${blockerTitle}`,
         // The exact shape evaluateGateCheckCore's `summary` field produces: blockers restated, title + action.
         summary: `${blockerTitle} — ${blockerAction}.`,
         blockers: [{ code: "ai_consensus_defect", severity: "critical", title: blockerTitle, detail: blockerAction, action: blockerAction }],
@@ -852,7 +852,7 @@ describe("gate blockers render in 'Why this is blocked' (FIX D1)", () => {
     const body = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "neutral",
-        title: "Gittensory Orb Review Agent — held for manual review",
+        title: "LoopOver Orb Review Agent — held for manual review",
         summary: "A repo-configured guardrail path was touched.",
         blockers: [],
         warnings: [{ code: "guardrail_hold", severity: "warning", title: "Guardrail path touched", detail: "wrangler.jsonc" }],
@@ -908,7 +908,7 @@ describe("buildUnifiedCommentBody: visual findings render in their OWN section, 
 describe("verdictReason on a held/blocked headline (FIX D2)", () => {
   it("appends the gate summary to a BLOCKED (close) verdict headline", () => {
     const body = buildUnifiedCommentBody({
-      gate: gate({ conclusion: "failure", title: "Gittensory Orb Review Agent: blocked", summary: "A hard blocker was found." }),
+      gate: gate({ conclusion: "failure", title: "LoopOver Orb Review Agent: blocked", summary: "A hard blocker was found." }),
       panelRows,
       readinessTotal: 30,
       changedFiles: 2,
@@ -920,7 +920,7 @@ describe("verdictReason on a held/blocked headline (FIX D2)", () => {
 
   it("appends the gate summary to a HELD (manual) verdict headline", () => {
     const body = buildUnifiedCommentBody({
-      gate: gate({ conclusion: "action_required", title: "Gittensory Orb Review Agent — needs review", summary: "Manual maintainer review required." }),
+      gate: gate({ conclusion: "action_required", title: "LoopOver Orb Review Agent — needs review", summary: "Manual maintainer review required." }),
       panelRows,
       readinessTotal: 55,
       changedFiles: 2,
@@ -974,13 +974,13 @@ describe("verdictReason on a held/blocked headline (FIX D2)", () => {
 
   it("falls back to the gate TITLE when the summary is empty", () => {
     const body = buildUnifiedCommentBody({
-      gate: gate({ conclusion: "failure", title: "Gittensory Orb Review Agent: blocked by policy", summary: "  " }),
+      gate: gate({ conclusion: "failure", title: "LoopOver Orb Review Agent: blocked by policy", summary: "  " }),
       panelRows,
       readinessTotal: 20,
       changedFiles: 2,
       footerMarkdown: footer,
     });
-    expect(body).toContain("Gittensory Orb Review Agent: blocked by policy");
+    expect(body).toContain("LoopOver Orb Review Agent: blocked by policy");
   });
 
   it("renders the Manual Review headline with no reason bullet when the whole fallback chain is exhausted (no matching warning, blank summary, blank title)", () => {
@@ -999,7 +999,7 @@ describe("verdictReason on a held/blocked headline (FIX D2)", () => {
 
   it("does NOT overwrite the positive ready wording on a passing (merge) verdict", () => {
     const body = buildUnifiedCommentBody({
-      gate: gate({ conclusion: "success", title: "Gittensory Orb Review Agent passed", summary: "No configured hard blocker was found." }),
+      gate: gate({ conclusion: "success", title: "LoopOver Orb Review Agent passed", summary: "No configured hard blocker was found." }),
       panelRows,
       readinessTotal: 90,
       changedFiles: 2,
@@ -1070,7 +1070,7 @@ describe("privacy invariant: the private 'Maintainer notes' internals never reac
     const body = buildUnifiedCommentBody({
       gate: gate({
         conclusion: "failure",
-        title: "Gittensory Orb Review Agent: blocked",
+        title: "LoopOver Orb Review Agent: blocked",
         summary: "A hard blocker was found.",
         blockers: [
           { code: "ai_consensus_defect", severity: "critical", title: "Real bug", detail: "Both agree." },
@@ -1186,7 +1186,7 @@ describe("buildClosedUnifiedCommentBody (closed/skipped PR through the unified r
   it("renders the non-blocking skipped state (skipped → comment verdict → advisory, not a CAUTION block)", () => {
     const body = buildClosedUnifiedCommentBody({ repoFullName: "octo/repo", pullNumber: 7, footerMarkdown: footer });
     // skipped maps to the `comment` verdict (gateConclusionToVerdict) → advisory tone, mirroring the legacy
-    // "[!NOTE] Gittensory Orb Review Agent skipped" panel. It must NOT read as a blocked/closed CAUTION.
+    // "[!NOTE] LoopOver Orb Review Agent skipped" panel. It must NOT read as a blocked/closed CAUTION.
     expect(body).not.toContain("> [!CAUTION]");
     expect(body).toContain("Skipped");
     expect(body).toContain("octo/repo#7 is no longer open.");

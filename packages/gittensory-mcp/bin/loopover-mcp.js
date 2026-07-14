@@ -69,7 +69,7 @@ const AGENT_PROFILES = {
     title: "Miner planner",
     audience: "contributors choosing and preparing Gittensor OSS work",
     purpose: "Plan cleanup-first work, run branch preflight, explain blockers, and prepare public-safe PR packets.",
-    recommendedPrompts: ["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_cleanup_first", "gittensory_miner_draft_pr_packet"],
+    recommendedPrompts: ["loopover_miner_select_issue", "loopover_miner_branch_preflight", "loopover_miner_cleanup_first", "loopover_miner_draft_pr_packet"],
     recommendedTools: ["loopover_agent_plan_next_work", "loopover_preflight_current_branch", "loopover_agent_prepare_pr_packet"],
     boundaries: [
       "Human-approved only: plan, explain, draft, and prepare packets; do not open PRs, post comments, label, close, merge, or publish public GitHub output.",
@@ -83,36 +83,36 @@ const AGENT_PROFILES = {
     title: "Miner auto-dev",
     audience: "miners running a local harness (Claude Code/Codex/Cursor) for reward-aware, gate-throttled OSS auto-development",
     purpose:
-      "Drive a plan→implement→push loop: pick reward-optimal work, plan it as a step DAG, let YOUR harness implement it locally, and push via local write-tools — always behind the Gittensory gate and the anti-slop throttle.",
-    recommendedPrompts: ["gittensory_miner_select_issue", "gittensory_miner_cleanup_first", "gittensory_miner_draft_pr_packet"],
+      "Drive a plan→implement→push loop: pick reward-optimal work, plan it as a step DAG, let YOUR harness implement it locally, and push via local write-tools — always behind the LoopOver gate and the anti-slop throttle.",
+    recommendedPrompts: ["loopover_miner_select_issue", "loopover_miner_cleanup_first", "loopover_miner_draft_pr_packet"],
     recommendedTools: [
       "loopover_agent_plan_next_work",
-      "gittensory_run_local_scorer",
-      "gittensory_build_plan",
-      "gittensory_plan_status",
-      "gittensory_record_step_result",
+      "loopover_run_local_scorer",
+      "loopover_build_plan",
+      "loopover_plan_status",
+      "loopover_record_step_result",
       "loopover_preflight_current_branch",
       "loopover_preview_local_pr_score",
       "loopover_check_slop_risk",
-      "gittensory_predict_gate",
+      "loopover_predict_gate",
       "loopover_agent_prepare_pr_packet",
-      "gittensory_create_branch",
-      "gittensory_open_pr",
-      "gittensory_file_issue",
-      "gittensory_apply_labels",
-      "gittensory_post_eligibility_comment",
-      "gittensory_delete_branch",
+      "loopover_create_branch",
+      "loopover_open_pr",
+      "loopover_file_issue",
+      "loopover_apply_labels",
+      "loopover_post_eligibility_comment",
+      "loopover_delete_branch",
     ],
     drivingLoop: [
       "Select: pull plan-next-work to pick the highest reward-optimal action. Respect your open-PR budget, credibility floor, and time-decay — skip work that would exceed your open-PR gate or chase low-credibility submissions.",
-      "Plan: build a step DAG (gittensory_build_plan) for the chosen work and advance it with gittensory_record_step_result as each step completes; gittensory_plan_status gives the next ready steps and lets you resume.",
-      "Implement: for a code step, run gittensory_create_branch, let YOUR harness write the change locally, then run your validation suite.",
-      "Gate-check: run gittensory_run_local_scorer + loopover_check_slop_risk + loopover_preflight_current_branch (and gittensory_predict_gate) to confirm the change is substantive, slop-free, and gate-ready. If it trips slop or fails preflight, fix it locally or skip the step — never push it.",
-      "Push: only once the gate is satisfied, call the local write-tools (open_pr / file_issue / apply_labels / post_eligibility_comment) and run the returned command with YOUR own credentials. Gittensory supplies the content and the gate; it never performs the write and never sees your source.",
+      "Plan: build a step DAG (loopover_build_plan) for the chosen work and advance it with loopover_record_step_result as each step completes; loopover_plan_status gives the next ready steps and lets you resume.",
+      "Implement: for a code step, run loopover_create_branch, let YOUR harness write the change locally, then run your validation suite.",
+      "Gate-check: run loopover_run_local_scorer + loopover_check_slop_risk + loopover_preflight_current_branch (and loopover_predict_gate) to confirm the change is substantive, slop-free, and gate-ready. If it trips slop or fails preflight, fix it locally or skip the step — never push it.",
+      "Push: only once the gate is satisfied, call the local write-tools (open_pr / file_issue / apply_labels / post_eligibility_comment) and run the returned command with YOUR own credentials. LoopOver supplies the content and the gate; it never performs the write and never sees your source.",
     ],
     boundaries: [
       "Reward-aware throttle: respect the open-PR gate, your credibility floor, and time-decay — never push work that fails preflight, trips the anti-slop check, or exceeds your open-PR budget.",
-      "Local execution: every GitHub write is run by YOUR harness with YOUR credentials via a write-tool's returned command. Gittensory supplies content + gates only; it never performs the write and never receives your source contents.",
+      "Local execution: every GitHub write is run by YOUR harness with YOUR credentials via a write-tool's returned command. LoopOver supplies content + gates only; it never performs the write and never receives your source contents.",
       "Do not request wallets, hotkeys, coldkeys, private keys, GitHub tokens, or upload local source contents.",
     ],
     whenNotToUse: "Do not use this profile to bypass the gate, mass-open PRs, farm low-credibility submissions, or push changes that fail preflight or trip the anti-slop check.",
@@ -122,7 +122,7 @@ const AGENT_PROFILES = {
     title: "Maintainer queue triage",
     audience: "maintainers preparing low-noise queue and PR review context",
     purpose: "Summarize queue risk, prepare review notes, and draft public guidance for human review.",
-    recommendedPrompts: ["gittensory_maintainer_queue_triage", "gittensory_maintainer_review_prep", "gittensory_maintainer_public_guidance"],
+    recommendedPrompts: ["loopover_maintainer_queue_triage", "loopover_maintainer_review_prep", "loopover_maintainer_public_guidance"],
     recommendedTools: ["loopover_get_repo_context", "loopover_get_burden_forecast", "loopover_preflight_pr"],
     boundaries: [
       "Human-approved only: prepare summaries and draft guidance; do not post comments, label, close, merge, or edit contributor work.",
@@ -136,8 +136,8 @@ const AGENT_PROFILES = {
     title: "Repo-owner intake",
     audience: "repository owners preparing intake readiness and onboarding plans",
     purpose: "Review registration readiness, focus manifests, docs/onboarding gaps, and manual setup actions.",
-    recommendedPrompts: ["gittensory_repo_owner_intake_readiness", "gittensory_repo_owner_focus_manifest_review", "gittensory_repo_owner_onboarding_pack"],
-    recommendedTools: ["loopover_get_repo_context", "gittensory_get_issue_quality"],
+    recommendedPrompts: ["loopover_repo_owner_intake_readiness", "loopover_repo_owner_focus_manifest_review", "loopover_repo_owner_onboarding_pack"],
+    recommendedTools: ["loopover_get_repo_context", "loopover_get_issue_quality"],
     boundaries: [
       "Human-approved only: review, explain, and draft setup plans; do not push config, label issues, post comments, close issues, or publish public output.",
       "Separate public readiness guidance from private maintainer or authenticated owner context.",
@@ -150,7 +150,7 @@ const configPath =
   process.env.GITTENSORY_CONFIG_PATH ??
   (process.env.GITTENSORY_CONFIG_DIR
     ? join(process.env.GITTENSORY_CONFIG_DIR, "config.json")
-    : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "gittensory", "config.json"));
+    : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "loopover", "config.json"));
 const cacheDir = process.env.GITTENSORY_CACHE_DIR ?? join(dirname(configPath), "cache");
 const decisionPackCacheDir = join(cacheDir, "decision-packs");
 const config = loadConfig();
@@ -201,7 +201,7 @@ const feasibilityGateShape = {
   duplicateClusterRisk: z.enum(["none", "low", "medium", "high"]),
   issueStatus: z.enum(["ready", "needs_proof", "hold", "do_not_use", "duplicate", "invalid", "missing"]),
   found: z.boolean().optional(),
-  // Optional: when both are supplied AND a local gittensory-miner install's claim ledger is present (#5157), claimStatus is
+  // Optional: when both are supplied AND a local loopover-miner install's claim ledger is present (#5157), claimStatus is
   // read from that ledger instead of trusting this caller-supplied value. Omitting either falls back to
   // today's caller-supplied-string behavior unchanged.
   repoFullName: z.string().min(1).optional(),
@@ -209,7 +209,7 @@ const feasibilityGateShape = {
 };
 
 /**
- * Read-only lookup of the caller's own claim status from a local gittensory-miner install's claim ledger
+ * Read-only lookup of the caller's own claim status from a local loopover-miner install's claim ledger
  * (#5157), so `loopover_feasibility_gate` isn't purely trusting a caller-supplied `claimStatus` string.
  * Returns `null` (fall back to the caller-supplied value unchanged) only when there is genuinely nothing to
  * look up: no repo/issue supplied, no local install detected (the ledger DB file doesn't exist -- checked
@@ -233,7 +233,7 @@ async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
   try {
     claimLedgerModule = await import("@loopover/miner/lib/claim-ledger.js");
   } catch {
-    /* v8 ignore next -- gittensory-miner genuinely unresolvable (not installed alongside loopover-mcp); not
+    /* v8 ignore next -- loopover-miner genuinely unresolvable (not installed alongside loopover-mcp); not
        reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always
        resolves */
     return null;
@@ -430,7 +430,7 @@ const agentRunIdShape = {
 const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_repo_context",
-    description: "Return the canonical repo intelligence bundle from the private Gittensory API.",
+    description: "Return the canonical repo intelligence bundle from the private LoopOver API.",
   },
   {
     name: "loopover_get_maintainer_noise",
@@ -474,7 +474,7 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_preflight_local_diff",
-    description: "Inspect local git diff metadata and run Gittensory preflight without uploading source contents.",
+    description: "Inspect local git diff metadata and run LoopOver preflight without uploading source contents.",
   },
   {
     name: "loopover_get_registry_changes",
@@ -487,16 +487,16 @@ const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_label_audit",
     description:
-      "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private Gittensory API.",
+      "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private LoopOver API.",
   },
   {
     name: "loopover_get_burden_forecast",
     description:
-      "Return the repo's cached maintainer burden forecast (projected review load, queue-growth risk, and stale-PR signals) with a freshness marker, from the private Gittensory API.",
+      "Return the repo's cached maintainer burden forecast (projected review load, queue-growth risk, and stale-PR signals) with a freshness marker, from the private LoopOver API.",
   },
   {
     name: "loopover_preview_local_pr_score",
-    description: "Inspect local diff metadata and request a private Gittensory scoring preview. No source contents are uploaded.",
+    description: "Inspect local diff metadata and request a private LoopOver scoring preview. No source contents are uploaded.",
   },
   {
     name: "loopover_explain_score_breakdown",
@@ -512,11 +512,11 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_compare_pr_variants",
-    description: "Compare private Gittensory scoring previews across local/metadata variants.",
+    description: "Compare private LoopOver scoring previews across local/metadata variants.",
   },
   {
     name: "loopover_local_status",
-    description: "Return local Gittensory MCP status, inferred git repo metadata, and privacy defaults.",
+    description: "Return local LoopOver MCP status, inferred git repo metadata, and privacy defaults.",
   },
   {
     name: "loopover_preflight_current_branch",
@@ -552,15 +552,15 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_agent_plan_next_work",
-    description: "Run the deterministic Gittensory base-agent planner for a GitHub login.",
+    description: "Run the deterministic LoopOver base-agent planner for a GitHub login.",
   },
   {
     name: "loopover_agent_start_run",
-    description: "Create a queued copilot-only Gittensory base-agent run.",
+    description: "Create a queued copilot-only LoopOver base-agent run.",
   },
   {
     name: "loopover_agent_get_run",
-    description: "Fetch a persisted Gittensory base-agent run.",
+    description: "Fetch a persisted LoopOver base-agent run.",
   },
   {
     name: "loopover_agent_explain_next_action",
@@ -572,11 +572,11 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_local_status_structured",
-    description: "Return local Gittensory MCP status with a validated structured output schema.",
+    description: "Return local LoopOver MCP status with a validated structured output schema.",
   },
   {
     name: "loopover_feasibility_gate",
-    description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local gittensory-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
+    description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local loopover-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
   },
 ];
 
@@ -592,7 +592,7 @@ if (cliArgs[0] && cliArgs[0] !== "--stdio") {
 }
 
 const server = new McpServer({
-  name: "gittensory-local",
+  name: "loopover-local",
   version: packageVersion,
 });
 
@@ -610,7 +610,7 @@ registerStdioTool(
   },
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-    return toolResult("Gittensory repo intelligence.", await apiGet(`${prefix}/intelligence`));
+    return toolResult("LoopOver repo intelligence.", await apiGet(`${prefix}/intelligence`));
   },
 );
 
@@ -622,7 +622,7 @@ registerStdioTool(
   },
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-    return toolResult("Gittensory maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
+    return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
   },
 );
 
@@ -632,7 +632,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_preflight_pr"),
     inputSchema: preflightShape,
   },
-  async (input) => toolResult("Gittensory PR preflight.", await apiPost("/v1/preflight/pr", input)),
+  async (input) => toolResult("LoopOver PR preflight.", await apiPost("/v1/preflight/pr", input)),
 );
 
 registerStdioTool(
@@ -644,7 +644,7 @@ registerStdioTool(
   async ({ owner, repo, issueNumber, plannedChange }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
-    return toolResult("Gittensory linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
+    return toolResult("LoopOver linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
   },
 );
 
@@ -661,7 +661,7 @@ registerStdioTool(
       ...(title ? { title } : {}),
       ...(plannedPaths ? { plannedPaths } : {}),
     };
-    return toolResult("Gittensory pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
+    return toolResult("LoopOver pre-start check.", await apiPost(`${prefix}/check-before-start`, body));
   },
 );
 
@@ -678,7 +678,7 @@ registerStdioTool(
       ...(goalSpec ? { goalSpec } : {}),
       ...(limit != null ? { limit } : {}),
     };
-    return toolResult("Gittensory cross-repo opportunities.", await apiPost("/v1/opportunities/find", body));
+    return toolResult("LoopOver cross-repo opportunities.", await apiPost("/v1/opportunities/find", body));
   },
 );
 
@@ -697,7 +697,7 @@ registerStdioTool(
       ...(labels && labels.length > 0 ? { labels } : {}),
       ...(topK != null ? { topK } : {}),
     };
-    return toolResult("Gittensory issue-centric RAG context.", await apiPost("/v1/issue-rag/retrieve", payload));
+    return toolResult("LoopOver issue-centric RAG context.", await apiPost("/v1/issue-rag/retrieve", payload));
   },
 );
 
@@ -707,7 +707,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_lint_pr_text"),
     inputSchema: lintPrTextShape,
   },
-  async (input) => toolResult("Gittensory PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
+  async (input) => toolResult("LoopOver PR-text lint.", await apiPost("/v1/lint/pr-text", input)),
 );
 
 registerStdioTool(
@@ -716,7 +716,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_validate_config"),
     inputSchema: validateConfigShape,
   },
-  async (input) => toolResult("Gittensory manifest validation.", await apiPost("/v1/validate/focus-manifest", input)),
+  async (input) => toolResult("LoopOver manifest validation.", await apiPost("/v1/validate/focus-manifest", input)),
 );
 
 registerStdioTool(
@@ -725,7 +725,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_check_slop_risk"),
     inputSchema: checkSlopRiskShape,
   },
-  async (input) => toolResult("Gittensory slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
+  async (input) => toolResult("LoopOver slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
 );
 
 registerStdioTool(
@@ -734,7 +734,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_check_issue_slop"),
     inputSchema: checkIssueSlopShape,
   },
-  async (input) => toolResult("Gittensory issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
+  async (input) => toolResult("LoopOver issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
 );
 
 registerStdioTool(
@@ -760,7 +760,7 @@ registerStdioTool(
       testFiles: diff.testFiles,
       changedLineCount: diff.changedLineCount,
     };
-    return toolResult("Gittensory local diff preflight.", await apiPost("/v1/preflight/local-diff", body));
+    return toolResult("LoopOver local diff preflight.", await apiPost("/v1/preflight/local-diff", body));
   },
 );
 
@@ -770,7 +770,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_get_registry_changes"),
     inputSchema: {},
   },
-  async () => toolResult("Gittensory registry changes.", await apiGet("/v1/registry/changes")),
+  async () => toolResult("LoopOver registry changes.", await apiGet("/v1/registry/changes")),
 );
 
 registerStdioTool(
@@ -779,7 +779,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_get_upstream_drift"),
     inputSchema: {},
   },
-  async () => toolResult("Gittensory upstream drift status.", await apiGet("/v1/upstream/drift")),
+  async () => toolResult("LoopOver upstream drift status.", await apiGet("/v1/upstream/drift")),
 );
 
 registerStdioTool(
@@ -791,7 +791,7 @@ registerStdioTool(
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
-    return toolResult("Gittensory label audit.", {
+    return toolResult("LoopOver label audit.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
       generatedAt: intelligence?.generatedAt,
       labelAudit: intelligence?.labelAudit ?? null,
@@ -808,7 +808,7 @@ registerStdioTool(
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
-    return toolResult("Gittensory burden forecast.", {
+    return toolResult("LoopOver burden forecast.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
       generatedAt: intelligence?.generatedAt,
       burdenForecast: intelligence?.burdenForecast ?? null,
@@ -823,7 +823,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_preview_local_pr_score"),
     inputSchema: localScoreShape,
   },
-  async (input) => toolResult("Gittensory private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
+  async (input) => toolResult("LoopOver private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
 registerStdioTool(
@@ -870,7 +870,7 @@ registerStdioTool(
       branchEligibility: workspaceInput.branchEligibility,
       metadataOnly: !upstreamPreview.ok,
     };
-    return toolResult("Gittensory private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", body));
+    return toolResult("LoopOver private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", body));
   },
 );
 
@@ -909,7 +909,7 @@ registerStdioTool(
     const previews = [];
     for (const variant of variants) previews.push(await previewLocalScore(withWorkspaceRoots({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }, roots)));
     previews.sort((left, right) => Number(right?.remotePreview?.result?.effectiveEstimatedScore ?? right?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0) - Number(left?.remotePreview?.result?.effectiveEstimatedScore ?? left?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0));
-    return toolResult("Gittensory PR variant comparison.", { variants: previews });
+    return toolResult("LoopOver PR variant comparison.", { variants: previews });
   },
 );
 
@@ -931,7 +931,7 @@ registerStdioTool(
     } catch (error) {
       git = { error: error instanceof Error ? error.message : "local_status_failed" };
     }
-    return toolResult("Gittensory local MCP status.", {
+    return toolResult("LoopOver local MCP status.", {
       apiUrl,
       package: {
         name: packageName,
@@ -957,7 +957,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
-    return toolResult("Gittensory current-branch preflight.", {
+    return toolResult("LoopOver current-branch preflight.", {
       local: result.local,
       preflight: result.analysis.preflight,
       prPacket: result.analysis.prPacket,
@@ -972,7 +972,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_review_pr_before_push"),
     inputSchema: currentBranchShape,
   },
-  async (input) => toolResult("Gittensory pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
+  async (input) => toolResult("LoopOver pre-PR review.", await reviewLocalPr(await withClientWorkspaceRoots(input))),
 );
 
 registerStdioTool(
@@ -983,7 +983,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
-    return toolResult("Gittensory current-branch private score preview.", {
+    return toolResult("LoopOver current-branch private score preview.", {
       local: result.local,
       scorePreview: result.analysis.scorePreview,
       scenarioScorePreview: result.analysis.scenarioScorePreview,
@@ -1001,7 +1001,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
-    return toolResult("Gittensory local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
+    return toolResult("LoopOver local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
   },
 );
 
@@ -1013,7 +1013,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
-    return toolResult("Gittensory local blocker explanation.", {
+    return toolResult("LoopOver local blocker explanation.", {
       local: result.local,
       scoreBlockers: result.analysis.scoreBlockers,
       branchQualityBlockers: result.analysis.branchQualityBlockers,
@@ -1035,7 +1035,7 @@ registerStdioTool(
     const workspaceInput = await withClientWorkspaceRoots(input);
     const payload = buildBranchAnalysisPayload({ ...workspaceInput, cwd: resolveWorkspaceCwd(workspaceInput).cwd });
     const { localScorerStatus: _localScorerStatus, ...body } = payload;
-    return toolResult("Gittensory remediation plan.", await apiPost("/v1/local/remediation-plan", body));
+    return toolResult("LoopOver remediation plan.", await apiPost("/v1/local/remediation-plan", body));
   },
 );
 
@@ -1047,7 +1047,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
-    return toolResult("Gittensory public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
+    return toolResult("LoopOver public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
   },
 );
 
@@ -1066,7 +1066,7 @@ registerStdioTool(
         Number(right.analysis.nextActions?.[0]?.priorityScore ?? 0) - Number(left.analysis.nextActions?.[0]?.priorityScore ?? 0) ||
         Number(right.analysis.scorePreview?.effectiveEstimatedScore ?? right.analysis.scorePreview?.scoreEstimate?.estimatedMergedScore ?? 0) - Number(left.analysis.scorePreview?.effectiveEstimatedScore ?? left.analysis.scorePreview?.scoreEstimate?.estimatedMergedScore ?? 0),
     );
-    return toolResult("Gittensory local variant comparison.", {
+    return toolResult("LoopOver local variant comparison.", {
       variants: analyses.map((entry) => ({
         local: entry.local,
         preflightStatus: entry.analysis.preflight.status,
@@ -1084,7 +1084,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_agent_plan_next_work"),
     inputSchema: agentPlanShape,
   },
-  async (input) => toolResult(`Gittensory base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
+  async (input) => toolResult(`LoopOver base-agent plan for ${input.login}.`, await apiPost("/v1/agent/plan-next-work", input)),
 );
 
 registerStdioTool(
@@ -1095,7 +1095,7 @@ registerStdioTool(
   },
   async (input) =>
     toolResult(
-      `Queued Gittensory base-agent run for ${input.actorLogin}.`,
+      `Queued LoopOver base-agent run for ${input.actorLogin}.`,
       await apiPost("/v1/agent/runs", {
         objective: input.objective,
         actorLogin: input.actorLogin,
@@ -1115,7 +1115,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_agent_get_run"),
     inputSchema: agentRunIdShape,
   },
-  async ({ runId }) => toolResult(`Gittensory base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
+  async ({ runId }) => toolResult(`LoopOver base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
 );
 
 registerStdioTool(
@@ -1126,7 +1126,7 @@ registerStdioTool(
   },
   async (input) => {
     const result = await apiPost("/v1/agent/explain-blockers", input);
-    return toolResult(`Gittensory base-agent next-action explanation for ${input.login}.`, {
+    return toolResult(`LoopOver base-agent next-action explanation for ${input.login}.`, {
       ...result,
       topAction: result.actions?.[0] ?? null,
     });
@@ -1139,7 +1139,7 @@ registerStdioTool(
     description: stdioToolDescription("loopover_agent_prepare_pr_packet"),
     inputSchema: currentBranchShape,
   },
-  async (input) => toolResult("Gittensory base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
+  async (input) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
 );
 
 // ── Output schemas for structured tool responses (#291) ──────────────────────
@@ -1245,7 +1245,7 @@ registerStdioTool(
       sourceUploadSupported: false,
       git: git ?? {},
     };
-    return { content: [{ type: "text", text: `Gittensory local MCP status.\n\n${JSON.stringify(data, null, 2)}` }], structuredContent: data };
+    return { content: [{ type: "text", text: `LoopOver local MCP status.\n\n${JSON.stringify(data, null, 2)}` }], structuredContent: data };
   },
 );
 
@@ -1258,7 +1258,7 @@ registerStdioTool(
   async ({ claimStatus, duplicateClusterRisk, issueStatus, found, repoFullName, issueNumber }) => {
     const ledgerClaimStatus = await resolveLedgerClaimStatus(repoFullName, issueNumber);
     return toolResult(
-      "Gittensory feasibility gate.",
+      "LoopOver feasibility gate.",
       buildFeasibilityVerdict({ claimStatus: ledgerClaimStatus ?? claimStatus, duplicateClusterRisk, issueStatus, found }),
     );
   },
@@ -1267,10 +1267,10 @@ registerStdioTool(
 // ── Resources: decision-pack, doctor, compatibility, changelog (#292) ─────────
 
 server.registerResource(
-  "gittensory_changelog",
-  "gittensory://changelog",
+  "loopover_changelog",
+  "loopover://changelog",
   {
-    title: "Gittensory MCP Changelog",
+    title: "LoopOver MCP Changelog",
     description: "Current CHANGELOG.md for the installed loopover-mcp package.",
     mimeType: "text/markdown",
   },
@@ -1281,15 +1281,15 @@ server.registerResource(
     } catch {
       text = "Changelog not available.";
     }
-    return { contents: [{ uri: "gittensory://changelog", mimeType: "text/markdown", text }] };
+    return { contents: [{ uri: "loopover://changelog", mimeType: "text/markdown", text }] };
   },
 );
 
 server.registerResource(
-  "gittensory_compatibility",
-  "gittensory://compatibility",
+  "loopover_compatibility",
+  "loopover://compatibility",
   {
-    title: "Gittensory API Compatibility",
+    title: "LoopOver API Compatibility",
     description: "Current API compatibility state: version, supported methods, and any deprecation notices.",
     mimeType: "application/json",
   },
@@ -1300,15 +1300,15 @@ server.registerResource(
     } catch {
       data = { status: "unavailable", currentApiVersion, packageVersion };
     }
-    return { contents: [{ uri: "gittensory://compatibility", mimeType: "application/json", text: JSON.stringify(data, null, 2) }] };
+    return { contents: [{ uri: "loopover://compatibility", mimeType: "application/json", text: JSON.stringify(data, null, 2) }] };
   },
 );
 
 server.registerResource(
-  "gittensory_decision_pack",
-  new ResourceTemplate("gittensory://decision-packs/{login}", { list: undefined }),
+  "loopover_decision_pack",
+  new ResourceTemplate("loopover://decision-packs/{login}", { list: undefined }),
   {
-    title: "Gittensory Decision Pack",
+    title: "LoopOver Decision Pack",
     description: "Cached private contributor decision pack for a GitHub login. Requires authentication.",
     mimeType: "application/json",
   },
@@ -1321,10 +1321,10 @@ server.registerResource(
 // ── Miner planning prompts (#293) ─────────────────────────────────────────────
 
 server.registerPrompt(
-  "gittensory_miner_select_issue",
+  "loopover_miner_select_issue",
   {
     title: "Select Next Issue to Work On",
-    description: "Guide a contributor through selecting the best open issue to work on next, using Gittensory lane and duplicate signals. Advisory only — no GitHub writes.",
+    description: "Guide a contributor through selecting the best open issue to work on next, using LoopOver lane and duplicate signals. Advisory only — no GitHub writes.",
     argsSchema: {
       repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
       login: z.string().min(1).describe("GitHub login of the contributor."),
@@ -1337,7 +1337,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            `You are a LoopOver miner planning assistant for ${login} working on ${repoFullName}.`,
             "",
             "Your job is to help the contributor select the best open issue to work on next.",
             "Use the loopover_get_repo_context and loopover_agent_plan_next_work tools to fetch lane and queue signals.",
@@ -1358,7 +1358,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_miner_draft_pr_packet",
+  "loopover_miner_draft_pr_packet",
   {
     title: "Draft PR Packet for Current Branch",
     description: "Guide a contributor through preparing a public-safe PR packet for the current branch. Advisory only — no GitHub writes.",
@@ -1374,7 +1374,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            `You are a LoopOver miner planning assistant for ${login} working on ${repoFullName}.`,
             "",
             "Your job is to help the contributor prepare a public-safe PR packet for their current branch.",
             "Use loopover_preflight_current_branch or loopover_prepare_pr_packet to gather branch signals.",
@@ -1395,7 +1395,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_miner_branch_preflight",
+  "loopover_miner_branch_preflight",
   {
     title: "Branch Preflight Check",
     description: "Run a preflight check on the current branch and summarize blockers for the contributor. Advisory only.",
@@ -1411,7 +1411,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory miner planning assistant for ${login} working on ${repoFullName}.`,
+            `You are a LoopOver miner planning assistant for ${login} working on ${repoFullName}.`,
             "",
             "Your job is to run a branch preflight check and explain any blockers clearly.",
             "Use loopover_explain_local_blockers and loopover_preflight_current_branch to fetch signals.",
@@ -1430,7 +1430,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_miner_cleanup_first",
+  "loopover_miner_cleanup_first",
   {
     title: "Cleanup-First Planning",
     description: "Help a contributor identify stale or low-value open PRs to close before opening new work. Advisory only.",
@@ -1445,7 +1445,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory miner planning assistant for ${login}.`,
+            `You are a LoopOver miner planning assistant for ${login}.`,
             "",
             "Your job is to help the contributor identify stale or low-value open PRs to close or supersede before opening new work.",
             "Use loopover_get_decision_pack to fetch the contributor decision pack.",
@@ -1467,10 +1467,10 @@ server.registerPrompt(
 // ── Maintainer and repo-owner workflow prompts (#294) ─────────────────────────
 
 server.registerPrompt(
-  "gittensory_maintainer_queue_triage",
+  "loopover_maintainer_queue_triage",
   {
     title: "Maintainer Queue Triage",
-    description: "Guide a maintainer through triaging the open PR queue using Gittensory signals. Advisory only — no GitHub writes.",
+    description: "Guide a maintainer through triaging the open PR queue using LoopOver signals. Advisory only — no GitHub writes.",
     argsSchema: {
       repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
     },
@@ -1482,7 +1482,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            `You are a LoopOver maintainer assistant for ${repoFullName}.`,
             "",
             "Your job is to help the maintainer triage the open PR queue.",
             "Use loopover_get_repo_context to fetch current lane and queue signals.",
@@ -1503,7 +1503,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_maintainer_review_prep",
+  "loopover_maintainer_review_prep",
   {
     title: "Maintainer Review Preparation",
     description: "Prepare a structured review packet for a specific PR. Advisory only — no GitHub writes.",
@@ -1519,7 +1519,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            `You are a LoopOver maintainer assistant for ${repoFullName}.`,
             "",
             `Your job is to prepare a structured review packet for PR #${pullNumber}.`,
             "Use loopover_preflight_pr or loopover_explain_repo_decision to fetch relevant signals.",
@@ -1539,7 +1539,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_maintainer_public_guidance",
+  "loopover_maintainer_public_guidance",
   {
     title: "Maintainer Public Guidance Draft",
     description: "Draft low-noise, public-safe guidance for a contributor based on their PR. Advisory only — no GitHub writes.",
@@ -1555,7 +1555,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory maintainer assistant for ${repoFullName}.`,
+            `You are a LoopOver maintainer assistant for ${repoFullName}.`,
             "",
             `Your job is to draft low-noise, public-safe guidance for contributor ${contributorLogin}.`,
             "Use loopover_get_repo_context for lane context.",
@@ -1575,10 +1575,10 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_repo_owner_intake_readiness",
+  "loopover_repo_owner_intake_readiness",
   {
     title: "Repo Owner Intake Readiness",
-    description: "Guide a repo owner through assessing contributor intake readiness using Gittensory signals. Advisory only.",
+    description: "Guide a repo owner through assessing contributor intake readiness using LoopOver signals. Advisory only.",
     argsSchema: {
       repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
     },
@@ -1590,7 +1590,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            `You are a LoopOver repo-owner assistant for ${repoFullName}.`,
             "",
             "Your job is to help the repo owner assess contributor intake readiness.",
             "Use loopover_get_repo_context to fetch lane and queue signals.",
@@ -1610,10 +1610,10 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_repo_owner_focus_manifest_review",
+  "loopover_repo_owner_focus_manifest_review",
   {
     title: "Repo Owner Focus Manifest Review",
-    description: "Help a repo owner review and improve their focus manifest using Gittensory policy signals. Advisory only.",
+    description: "Help a repo owner review and improve their focus manifest using LoopOver policy signals. Advisory only.",
     argsSchema: {
       repoFullName: z.string().min(3).describe("Target repository in owner/repo format."),
     },
@@ -1625,9 +1625,9 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            `You are a LoopOver repo-owner assistant for ${repoFullName}.`,
             "",
-            "Your job is to help the repo owner review and improve their Gittensory focus manifest.",
+            "Your job is to help the repo owner review and improve their LoopOver focus manifest.",
             "Use loopover_get_repo_context to fetch current policy and lane signals.",
             "",
             "Guidelines:",
@@ -1645,7 +1645,7 @@ server.registerPrompt(
 );
 
 server.registerPrompt(
-  "gittensory_repo_owner_onboarding_pack",
+  "loopover_repo_owner_onboarding_pack",
   {
     title: "Repo Owner Onboarding Pack Planning",
     description: "Help a repo owner plan and draft an onboarding pack for new contributors. Advisory only.",
@@ -1660,7 +1660,7 @@ server.registerPrompt(
         content: {
           type: "text",
           text: [
-            `You are a Gittensory repo-owner assistant for ${repoFullName}.`,
+            `You are a LoopOver repo-owner assistant for ${repoFullName}.`,
             "",
             "Your job is to help the repo owner plan and draft an onboarding pack for new contributors.",
             "Use loopover_get_repo_context to fetch lane and policy signals.",
@@ -1914,7 +1914,7 @@ function printReviewPrHelp() {
       "Usage: loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
       "",
       "Compose the existing preflight + slop-risk + PR-text-lint checks into ONE pre-PR review report,",
-      "so a contributor's own local agent can see everything the gittensory gate would flag before ever opening a PR.",
+      "so a contributor's own local agent can see everything the loopover gate would flag before ever opening a PR.",
       "Mirrors the loopover_review_pr_before_push MCP tool. Thin composition only — does not reimplement any check. No source upload.",
       "",
       "Pass --json for machine-readable output.",
@@ -1995,7 +1995,7 @@ function printLintPrTextHelp() {
     [
       "Usage: loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
       "",
-      "Lint a commit message and PR body against the Gittensory traceability and Conventional Commit rubric.",
+      "Lint a commit message and PR body against the LoopOver traceability and Conventional Commit rubric.",
       "Mirrors the loopover_lint_pr_text MCP tool and POST /v1/lint/pr-text. No source upload.",
       "",
       "Pass --json for machine-readable output.",
@@ -2224,13 +2224,13 @@ async function runAgentCli(args) {
     const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
     const payload = await apiPost("/v1/agent/plan-next-work", stripUndefined({ login, repoFullName: options.repo, objective: options.objective, surface: "mcp" }));
-    return outputAgentPayload(payload, options, `Gittensory agent plan: ${payload.summary ?? payload.run?.status ?? "ready"}`);
+    return outputAgentPayload(payload, options, `LoopOver agent plan: ${payload.summary ?? payload.run?.status ?? "ready"}`);
   }
   if (subcommand === "status") {
     const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
     if (!runId) throw new Error("Usage: loopover-mcp agent status <run-id>");
     const payload = await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`);
-    return outputAgentPayload(payload, options, `Gittensory agent run ${runId}: ${payload.run?.status ?? "unknown"}`);
+    return outputAgentPayload(payload, options, `LoopOver agent run ${runId}: ${payload.run?.status ?? "unknown"}`);
   }
   if (subcommand === "explain") {
     const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
@@ -2261,7 +2261,7 @@ async function runAgentCli(args) {
       validation: validationFromOptions(options),
       scorePreviewCommand: options.scorePreviewCommand,
     });
-    return outputAgentPayload(payload, options, "Gittensory public-safe PR packet prepared.");
+    return outputAgentPayload(payload, options, "LoopOver public-safe PR packet prepared.");
   }
   throw new Error(`Unknown agent command: ${subcommand}`);
 }
@@ -2459,7 +2459,7 @@ function buildBashCompletion(topLevel, withSubcommands) {
     .join("\n");
   return `# loopover-mcp bash completion. Add to ~/.bashrc:
 #   source <(loopover-mcp completion bash)
-_gittensory_mcp() {
+_loopover_mcp() {
   local cur prev cword
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
@@ -2474,7 +2474,7 @@ ${subcommandCases}
       *) COMPREPLY=( $(compgen -W "--json --format --login --repo --profile --agent-profile --base --cwd" -- "$cur") ); return 0;;
   esac
 }
-complete -F _gittensory_mcp loopover-mcp`;
+complete -F _loopover_mcp loopover-mcp`;
 }
 
 function buildZshCompletion(topLevel, withSubcommands) {
@@ -2484,7 +2484,7 @@ function buildZshCompletion(topLevel, withSubcommands) {
   return `#compdef loopover-mcp
 # loopover-mcp zsh completion. Add to your fpath, or:
 #   source <(loopover-mcp completion zsh)
-_gittensory_mcp() {
+_loopover_mcp() {
   local -a commands
   commands=(${topLevel.join(" ")})
   if (( CURRENT == 2 )); then
@@ -2495,7 +2495,7 @@ _gittensory_mcp() {
 ${subcommandCases}
   esac
 }
-_gittensory_mcp "$@"`;
+_loopover_mcp "$@"`;
 }
 
 function buildFishCompletion(topLevel, withSubcommands) {
@@ -2506,7 +2506,7 @@ function buildFishCompletion(topLevel, withSubcommands) {
     .map(([command, subcommands]) => `complete -c loopover-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
     .join("\n");
   return `# loopover-mcp fish completion. Save to:
-#   ~/.config/fish/completions/gittensory-mcp.fish
+#   ~/.config/fish/completions/loopover-mcp.fish
 ${topLevelLines}
 ${subcommandLines}`;
 }
@@ -2907,7 +2907,7 @@ async function doctor(options) {
 
   const token = getApiToken();
   if (!token) {
-    add("auth", "fail", `No Gittensory API/session token is configured for profile ${activeProfileName}.`, `Run \`loopover-mcp login --profile ${activeProfileName}\`.`);
+    add("auth", "fail", `No LoopOver API/session token is configured for profile ${activeProfileName}.`, `Run \`loopover-mcp login --profile ${activeProfileName}\`.`);
   } else {
     try {
       const session = await apiGet("/v1/auth/session");
@@ -2994,7 +2994,7 @@ async function doctor(options) {
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
-    process.stdout.write(`Gittensory doctor: ${payload.status}\n`);
+    process.stdout.write(`LoopOver doctor: ${payload.status}\n`);
     process.stdout.write(`Profile: ${activeProfileName}\n`);
     for (const group of checklist) {
       process.stdout.write(`\n${group.title}: ${group.status}\n`);
@@ -3142,7 +3142,7 @@ function initClient(options) {
       ...(agentProfile
         ? [
             agentProfile.drivingLoop
-              ? `Use the ${agentProfile.title} profile instructions as the agent system/developer prompt. Every GitHub write runs LOCALLY via your harness with your own credentials, only after the Gittensory gate + anti-slop check pass — Gittensory never performs the write.`
+              ? `Use the ${agentProfile.title} profile instructions as the agent system/developer prompt. Every GitHub write runs LOCALLY via your harness with your own credentials, only after the LoopOver gate + anti-slop check pass — LoopOver never performs the write.`
               : `Use the ${agentProfile.title} profile instructions as the agent system/developer prompt; keep all GitHub writes human-approved.`,
           ]
         : []),
@@ -3161,7 +3161,7 @@ function resolveAgentProfile(profileId) {
 
 function formatAgentProfile(profile) {
   return [
-    `# Gittensory agent profile: ${profile.title}`,
+    `# LoopOver agent profile: ${profile.title}`,
     `Audience: ${profile.audience}`,
     `Purpose: ${profile.purpose}`,
     "",
@@ -3530,12 +3530,12 @@ function redactPrivateValidationMetrics(text) {
 }
 
 function clientSnippet(client, command) {
-  if (client === "codex") return `[mcp_servers.gittensory]\ncommand = ${JSON.stringify(command)}\nargs = ["--stdio"]`;
+  if (client === "codex") return `[mcp_servers.loopover]\ncommand = ${JSON.stringify(command)}\nargs = ["--stdio"]`;
   if (client === "claude" || client === "cursor" || client === "mcp") {
     return JSON.stringify(
       {
         mcpServers: {
-          gittensory: {
+          loopover: {
             command,
             args: ["--stdio"],
           },
@@ -3551,7 +3551,7 @@ function clientSnippet(client, command) {
     return JSON.stringify(
       {
         servers: {
-          gittensory: {
+          loopover: {
             type: "stdio",
             command,
             args: ["--stdio"],
@@ -3591,14 +3591,14 @@ async function getRepoDecisionWithCache(login, owner, repo) {
 }
 
 function decisionPackToolSummary(login, payload) {
-  if (payload?.source === "local_cache") return `Gittensory decision pack for ${login} (stale local cache).`;
-  if (payload?.freshness === "stale" || payload?.freshness === "rebuilding") return `Gittensory decision pack for ${login} (${payload.freshness}).`;
-  return `Gittensory decision pack for ${login}.`;
+  if (payload?.source === "local_cache") return `LoopOver decision pack for ${login} (stale local cache).`;
+  if (payload?.freshness === "stale" || payload?.freshness === "rebuilding") return `LoopOver decision pack for ${login} (${payload.freshness}).`;
+  return `LoopOver decision pack for ${login}.`;
 }
 
 function repoDecisionToolSummary(login, repoFullName, payload) {
-  if (payload?.source === "local_cache") return `Gittensory repo decision for ${login} in ${repoFullName} (stale local cache).`;
-  return `Gittensory repo decision for ${login} in ${repoFullName}.`;
+  if (payload?.source === "local_cache") return `LoopOver repo decision for ${login} in ${repoFullName} (stale local cache).`;
+  return `LoopOver repo decision for ${login} in ${repoFullName}.`;
 }
 
 function isCacheableDecisionPack(payload, login) {
@@ -3717,7 +3717,7 @@ function cacheFallbackMetadata(entry, error) {
     schemaVersion: entry.schemaVersion,
     reason: "api_unavailable",
     detail: sanitizeDiagnosticText(error instanceof Error ? error.message : "api_unavailable"),
-    rerunGuidance: "Retry when Gittensory API access is restored; cached guidance may be stale.",
+    rerunGuidance: "Retry when LoopOver API access is restored; cached guidance may be stale.",
     clearCommand: "loopover-mcp cache clear",
   };
 }
@@ -3988,7 +3988,7 @@ async function apiFetch(path, init, options = {}) {
   }
   if (!response.ok) {
     const retry = response.headers.get("retry-after");
-    const error = new Error(`Gittensory API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);
+    const error = new Error(`LoopOver API ${response.status}${retry ? ` retry-after=${retry}s` : ""}: ${JSON.stringify(payload).slice(0, 500)}`);
     error.status = response.status;
     throw error;
   }

@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — the token-broker. A maintainer's self-hosted container exchanges a
+// LoopOver Orb central GitHub App (#1255) — the token-broker. A maintainer's self-hosted container exchanges a
 // one-time enrollment secret for short-lived GitHub installation tokens, so it can act on its own repos WITHOUT
 // ever holding the Orb App private key (gittensory holds it centrally and mints on demand).
 //

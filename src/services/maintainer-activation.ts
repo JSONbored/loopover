@@ -41,7 +41,7 @@ function recencyKey(pr: PullRequestRecord): string {
 
 /**
  * Repo-specific install demo (#701): runs the deterministic advisory engine over the repo's most recent PRs
- * so a newly-installed maintainer sees concrete "here's what Gittensory would have surfaced" evidence. Pure
+ * so a newly-installed maintainer sees concrete "here's what LoopOver would have surfaced" evidence. Pure
  * over already-loaded data; never runs AI (no surprise cost) — it only reports whether AI review is already
  * configured. Maintainer-private (served behind requireRepoMaintainer); PR titles are already public on GitHub.
  */

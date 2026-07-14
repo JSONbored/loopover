@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 // Forbidden terms that must never appear in miner planning prompt descriptions or content.
@@ -12,14 +12,14 @@ const FORBIDDEN_PROMPT_TERMS =
 const FORBIDDEN_REQUEST_PATTERNS = /enter your (wallet|hotkey|token|seed|key|mnemonic|password)|provide your (wallet|hotkey|token|seed|key)|paste your (hotkey|wallet|key)/i;
 
 const MINER_PROMPT_NAMES = [
-  "gittensory_select_contribution_issue",
-  "gittensory_draft_contribution_pr_packet",
-  "gittensory_preflight_contribution_branch",
-  "gittensory_plan_cleanup_first",
+  "loopover_select_contribution_issue",
+  "loopover_draft_contribution_pr_packet",
+  "loopover_preflight_contribution_branch",
+  "loopover_plan_cleanup_first",
 ];
 
 async function connectTestClient() {
-  const mcpServer = new GittensoryMcp(createTestEnv()).createServer();
+  const mcpServer = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-miner-test", version: "0.1.0" }, { capabilities: {} });
@@ -40,11 +40,11 @@ describe("MCP miner planning prompt discovery", () => {
     }
   });
 
-  it("all miner prompt names are prefixed with gittensory_", async () => {
+  it("all miner prompt names are prefixed with loopover_", async () => {
     const { client } = await connectTestClient();
     const { prompts } = await client.listPrompts();
     for (const prompt of prompts) {
-      expect(prompt.name).toMatch(/^gittensory_/);
+      expect(prompt.name).toMatch(/^loopover_/);
     }
   });
 
@@ -70,17 +70,17 @@ describe("MCP miner planning prompt discovery", () => {
 
   it("getting a non-existent miner prompt fails safely", async () => {
     const { client } = await connectTestClient();
-    await expect(client.getPrompt({ name: "gittensory_nonexistent_miner_prompt" })).rejects.toThrow();
+    await expect(client.getPrompt({ name: "loopover_nonexistent_miner_prompt" })).rejects.toThrow();
   });
 });
 
 // ── Prompt content safety ─────────────────────────────────────────────────────
 
 describe("MCP miner planning prompt content safety", () => {
-  it("gittensory_select_contribution_issue message is free of forbidden terms", async () => {
+  it("loopover_select_contribution_issue message is free of forbidden terms", async () => {
     const { client } = await connectTestClient();
     const result = await client.getPrompt({
-      name: "gittensory_select_contribution_issue",
+      name: "loopover_select_contribution_issue",
       arguments: { owner: "test-owner", repo: "test-repo", login: "contributor" },
     });
     for (const message of result.messages) {
@@ -90,10 +90,10 @@ describe("MCP miner planning prompt content safety", () => {
     }
   });
 
-  it("gittensory_draft_contribution_pr_packet message is free of forbidden terms", async () => {
+  it("loopover_draft_contribution_pr_packet message is free of forbidden terms", async () => {
     const { client } = await connectTestClient();
     const result = await client.getPrompt({
-      name: "gittensory_draft_contribution_pr_packet",
+      name: "loopover_draft_contribution_pr_packet",
       arguments: { owner: "test-owner", repo: "test-repo", login: "contributor" },
     });
     for (const message of result.messages) {
@@ -103,10 +103,10 @@ describe("MCP miner planning prompt content safety", () => {
     }
   });
 
-  it("gittensory_preflight_contribution_branch message is free of forbidden terms", async () => {
+  it("loopover_preflight_contribution_branch message is free of forbidden terms", async () => {
     const { client } = await connectTestClient();
     const result = await client.getPrompt({
-      name: "gittensory_preflight_contribution_branch",
+      name: "loopover_preflight_contribution_branch",
       arguments: { owner: "test-owner", repo: "test-repo", login: "contributor" },
     });
     for (const message of result.messages) {
@@ -116,10 +116,10 @@ describe("MCP miner planning prompt content safety", () => {
     }
   });
 
-  it("gittensory_plan_cleanup_first message is free of forbidden terms", async () => {
+  it("loopover_plan_cleanup_first message is free of forbidden terms", async () => {
     const { client } = await connectTestClient();
     const result = await client.getPrompt({
-      name: "gittensory_plan_cleanup_first",
+      name: "loopover_plan_cleanup_first",
       arguments: { login: "contributor" },
     });
     for (const message of result.messages) {
@@ -132,10 +132,10 @@ describe("MCP miner planning prompt content safety", () => {
   it("all miner prompts confirm advisory-only intent — no autonomous GitHub writes", async () => {
     const { client } = await connectTestClient();
     const promptArgs: Record<string, Record<string, string>> = {
-      gittensory_select_contribution_issue: { owner: "o", repo: "r", login: "dev" },
-      gittensory_draft_contribution_pr_packet: { owner: "o", repo: "r", login: "dev" },
-      gittensory_preflight_contribution_branch: { owner: "o", repo: "r", login: "dev" },
-      gittensory_plan_cleanup_first: { login: "dev" },
+      loopover_select_contribution_issue: { owner: "o", repo: "r", login: "dev" },
+      loopover_draft_contribution_pr_packet: { owner: "o", repo: "r", login: "dev" },
+      loopover_preflight_contribution_branch: { owner: "o", repo: "r", login: "dev" },
+      loopover_plan_cleanup_first: { login: "dev" },
     };
 
     for (const name of MINER_PROMPT_NAMES) {
@@ -157,10 +157,10 @@ describe("MCP miner planning prompt content safety", () => {
   it("miner prompts do not request secrets, tokens, wallets, or hotkeys from the user", async () => {
     const { client } = await connectTestClient();
     const promptArgs: Record<string, Record<string, string>> = {
-      gittensory_select_contribution_issue: { owner: "o", repo: "r", login: "dev" },
-      gittensory_draft_contribution_pr_packet: { owner: "o", repo: "r", login: "dev" },
-      gittensory_preflight_contribution_branch: { owner: "o", repo: "r", login: "dev" },
-      gittensory_plan_cleanup_first: { login: "dev" },
+      loopover_select_contribution_issue: { owner: "o", repo: "r", login: "dev" },
+      loopover_draft_contribution_pr_packet: { owner: "o", repo: "r", login: "dev" },
+      loopover_preflight_contribution_branch: { owner: "o", repo: "r", login: "dev" },
+      loopover_plan_cleanup_first: { login: "dev" },
     };
 
     for (const name of MINER_PROMPT_NAMES) {

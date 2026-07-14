@@ -1522,7 +1522,7 @@ describe("GitHub backfill", () => {
 
     const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/registered-only", requestedBy: "api" });
 
-    expect(result).toMatchObject({ status: "skipped", warnings: ["Repository is not installed for Gittensory backfill."] });
+    expect(result).toMatchObject({ status: "skipped", warnings: ["Repository is not installed for LoopOver backfill."] });
   });
 
   it("records partial sync warnings from caps and GitHub detail failures", async () => {
@@ -3063,7 +3063,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryOpenIssuesSupplement")) {
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
           if (query.includes("after:")) {
             return Response.json({
               data: {
@@ -3127,7 +3127,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryOpenIssuesSupplement")) return new Response("graphql down", { status: 502 });
+        if (query.includes("LoopOverOpenIssuesSupplement")) return new Response("graphql down", { status: 502 });
         return githubTotalsResponse({ openIssues: 2, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
       }
       if (url.includes("/issues?")) return Response.json([{ number: 1, title: "REST issue", state: "open", user: { login: "reporter" }, labels: [], body: "" }]);
@@ -3147,7 +3147,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryOpenIssuesSupplement")) {
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
           return Response.json({
             data: {
               repository: {
@@ -3178,7 +3178,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryOpenPullRequestsSupplement")) {
+        if (query.includes("LoopOverOpenPullRequestsSupplement")) {
           expect(query).toContain("isDraft");
           expect(query).toContain("mergeable");
           expect(query).toContain("reviewDecision");
@@ -3309,7 +3309,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryOpenIssuesSupplement")) {
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
           return Response.json({
             data: {
               repository: {
@@ -3630,7 +3630,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryPullRequestDetails")) {
+        if (query.includes("LoopOverPullRequestDetails")) {
           return Response.json({
             data: {
               repository: {
@@ -3723,7 +3723,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
+        if (query.includes("LoopOverPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
       }
       if (url.includes("/pulls/12/files")) return new Response("files unavailable", { status: 503 });
       if (url.includes("/pulls/12/reviews")) return Response.json([]);
@@ -3867,7 +3867,7 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
+        if (query.includes("LoopOverPullRequestDetails")) return Response.json({ data: { repository: { pullRequest: null } } });
       }
       if (url.includes("/pulls/12/files") || url.includes("/pulls/12/reviews")) return new Response("", { status: 404 });
       if (url.includes("/commits/missing/check-runs")) return Response.json({});
@@ -4048,13 +4048,13 @@ describe("GitHub backfill", () => {
       const url = input.toString();
       if (url === "https://api.github.com/graphql") {
         const query = JSON.parse(String(init?.body ?? "{}")).query as string;
-        if (query.includes("GittensoryRepoTotals")) {
+        if (query.includes("LoopOverRepoTotals")) {
           return githubTotalsResponse({ openIssues: 2, openPullRequests: 2, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
         }
-        if (query.includes("GittensoryOpenIssuesSupplement") && query.includes("after:")) {
+        if (query.includes("LoopOverOpenIssuesSupplement") && query.includes("after:")) {
           return Response.json({ data: { repository: { issues: undefined } } });
         }
-        if (query.includes("GittensoryOpenIssuesSupplement")) {
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
           return Response.json({
             data: {
               repository: {
@@ -4079,10 +4079,10 @@ describe("GitHub backfill", () => {
             },
           });
         }
-        if (query.includes("GittensoryOpenPullRequestsSupplement") && query.includes("after:")) {
+        if (query.includes("LoopOverOpenPullRequestsSupplement") && query.includes("after:")) {
           return Response.json({ data: { repository: { pullRequests: undefined } } });
         }
-        if (query.includes("GittensoryOpenPullRequestsSupplement")) {
+        if (query.includes("LoopOverOpenPullRequestsSupplement")) {
           return Response.json({
             data: {
               repository: {

@@ -4,7 +4,7 @@ import {
   COMMAND_SUGGEST_MAX_VERB_LENGTH,
   buildDidYouMeanSections,
   formatDidYouMeanLine,
-  isKnownGittensoryCommandVerb,
+  isKnownLoopOverCommandVerb,
   levenshteinDistance,
   suggestCommand,
   type CommandSuggestCatalog,
@@ -30,14 +30,14 @@ describe("levenshteinDistance", () => {
   });
 });
 
-describe("isKnownGittensoryCommandVerb", () => {
+describe("isKnownLoopOverCommandVerb", () => {
   it("recognizes mention commands, action commands, and aliases", () => {
-    expect(isKnownGittensoryCommandVerb("preflight", catalog)).toBe(true);
-    expect(isKnownGittensoryCommandVerb("review", catalog)).toBe(true);
-    expect(isKnownGittensoryCommandVerb("re-review", catalog)).toBe(true);
-    expect(isKnownGittensoryCommandVerb("reveiw", catalog)).toBe(false);
-    expect(isKnownGittensoryCommandVerb("", catalog)).toBe(false);
-    expect(isKnownGittensoryCommandVerb("   ", catalog)).toBe(false);
+    expect(isKnownLoopOverCommandVerb("preflight", catalog)).toBe(true);
+    expect(isKnownLoopOverCommandVerb("review", catalog)).toBe(true);
+    expect(isKnownLoopOverCommandVerb("re-review", catalog)).toBe(true);
+    expect(isKnownLoopOverCommandVerb("reveiw", catalog)).toBe(false);
+    expect(isKnownLoopOverCommandVerb("", catalog)).toBe(false);
+    expect(isKnownLoopOverCommandVerb("   ", catalog)).toBe(false);
   });
 });
 

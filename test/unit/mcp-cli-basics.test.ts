@@ -16,12 +16,12 @@ describe("loopover-mcp CLI — basics", () => {
 
   it("prints MCP client snippets without mutating client config", () => {
     const codex = run(["init-client", "--print", "codex"]);
-    expect(codex).toContain("[mcp_servers.gittensory]");
+    expect(codex).toContain("[mcp_servers.loopover]");
     expect(codex).toContain('args = ["--stdio"]');
 
     const claude = JSON.parse(run(["init-client", "--print", "claude", "--json"])) as { snippet: string };
     expect(claude.snippet).toContain('"mcpServers"');
-    expect(claude.snippet).toContain('"gittensory"');
+    expect(claude.snippet).toContain('"loopover"');
 
     const cursor = JSON.parse(run(["init-client", "--print", "cursor", "--json"])) as { snippet: string };
     expect(cursor.snippet).toBe(claude.snippet);
@@ -33,7 +33,7 @@ describe("loopover-mcp CLI — basics", () => {
     // VS Code uses a `servers` map with an explicit transport type, not the `mcpServers` shape.
     expect(vscode.snippet).toContain('"servers"');
     expect(vscode.snippet).toContain('"type": "stdio"');
-    expect(vscode.snippet).toContain('"gittensory"');
+    expect(vscode.snippet).toContain('"loopover"');
     expect(vscode.snippet).not.toContain('"mcpServers"');
   });
 
@@ -53,7 +53,7 @@ describe("loopover-mcp CLI — basics", () => {
     expect(payload.agentProfile).toMatchObject({
       id: "miner-planner",
       title: "Miner planner",
-      recommendedPrompts: expect.arrayContaining(["gittensory_miner_select_issue", "gittensory_miner_branch_preflight", "gittensory_miner_draft_pr_packet"]),
+      recommendedPrompts: expect.arrayContaining(["loopover_miner_select_issue", "loopover_miner_branch_preflight", "loopover_miner_draft_pr_packet"]),
       recommendedTools: expect.arrayContaining(["loopover_agent_plan_next_work", "loopover_agent_prepare_pr_packet"]),
     });
     expect(payload.agentProfile.boundaries.join("\n")).toMatch(/do not open PRs|do not.*post comments|do not.*tokens|local source contents/i);
@@ -62,8 +62,8 @@ describe("loopover-mcp CLI — basics", () => {
 
     const plain = run(["init-client", "--print", "claude", "--agent-profile", "repo-owner-intake"]);
     expect(plain).toContain('"mcpServers"');
-    expect(plain).toContain("Gittensory agent profile: Repo-owner intake");
-    expect(plain).toContain("gittensory_repo_owner_intake_readiness");
+    expect(plain).toContain("LoopOver agent profile: Repo-owner intake");
+    expect(plain).toContain("loopover_repo_owner_intake_readiness");
     expect(plain).toMatch(/do not.*publish public output/i);
   });
 
@@ -91,18 +91,18 @@ describe("loopover-mcp CLI — basics", () => {
     expect(payload.agentProfile.id).toBe("miner-auto-dev");
     // the new Phase-2 tools are wired in
     expect(payload.agentProfile.recommendedTools).toEqual(
-      expect.arrayContaining(["gittensory_run_local_scorer", "gittensory_build_plan", "gittensory_record_step_result", "gittensory_open_pr", "loopover_check_slop_risk"]),
+      expect.arrayContaining(["loopover_run_local_scorer", "loopover_build_plan", "loopover_record_step_result", "loopover_open_pr", "loopover_check_slop_risk"]),
     );
     // the driving loop is present and gate-throttled, with a local-execution push step
     expect(payload.agentProfile.drivingLoop.length).toBeGreaterThanOrEqual(4);
     expect(payload.agentProfile.drivingLoop.join("\n")).toMatch(/anti-slop|gate-ready|preflight/i);
     expect(payload.agentProfile.boundaries.join("\n")).toMatch(/run by YOUR harness with YOUR credentials|never performs the write/i);
     // the note reflects local execution after the gate (NOT the human-approved framing of the other profiles)
-    expect(payload.notes.join("\n")).toMatch(/runs LOCALLY|after the Gittensory gate/i);
+    expect(payload.notes.join("\n")).toMatch(/runs LOCALLY|after the LoopOver gate/i);
     expect(payload.notes.join("\n")).not.toMatch(/keep all GitHub writes human-approved/i);
     // the rendered markdown carries the driving loop too
     const plain = run(["init-client", "--print", "claude", "--agent-profile", "miner-auto-dev"]);
-    expect(plain).toContain("Gittensory agent profile: Miner auto-dev");
+    expect(plain).toContain("LoopOver agent profile: Miner auto-dev");
     expect(plain).toMatch(/Driving loop/);
     expect(JSON.stringify(payload)).not.toMatch(/github_pat_|gh[pousr]_|PRIVATE_KEY=/);
   });
@@ -173,8 +173,8 @@ describe("loopover-mcp CLI — basics", () => {
 
   it("prints shell completion scripts for bash, zsh, and fish", () => {
     const bash = run(["completion", "bash"]);
-    expect(bash).toContain("_gittensory_mcp()");
-    expect(bash).toContain("complete -F _gittensory_mcp loopover-mcp");
+    expect(bash).toContain("_loopover_mcp()");
+    expect(bash).toContain("complete -F _loopover_mcp loopover-mcp");
     expect(bash).toContain("analyze-branch");
     expect(bash).toContain("local commands=\"login logout whoami config status changelog completion version tools doctor");
     expect(bash).toContain("version");

@@ -39,7 +39,7 @@ test("barrel: the public entrypoint re-exports objective-anchor APIs (#3012)", (
 test("extractObjectiveAnchorFeatures normalizes paths, derives modules, and classifies change kind", () => {
   const features = extractObjectiveAnchorFeatures({
     paths: [
-      ".\\Packages\\Gittensory-Engine\\src\\Objective-Anchor.ts",
+      ".\\Packages\\LoopOver-Engine\\src\\Objective-Anchor.ts",
       "./packages/gittensory-engine/src/objective-anchor.ts",
       "README.md",
       ".github/workflows/ci.yml",

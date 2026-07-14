@@ -1,13 +1,13 @@
 // Plan-template library (pure).
 //
 // Reusable plan TEMPLATES for the fixed miner lifecycle (discover -> analyze -> plan -> prepare -> create ->
-// manage -> repeat), emitted in the exact stateless raw-step shape the MCP `gittensory_build_plan` tool accepts
+// manage -> repeat), emitted in the exact stateless raw-step shape the MCP `loopover_build_plan` tool accepts
 // (`rawPlanStepSchema` in src/mcp/server.ts), so `build_plan` can normalize them into a validated DAG. Each builder
 // is deterministic and side-effect-free: it only DESCRIBES steps and their `dependsOn` ordering — it never actuates
 // anything. The `RawPlanStep` type below mirrors the raw-step schema so the engine package stays standalone and
 // does not import the app's Zod schema (the tests validate the output against the real schema to guard drift).
 
-// Mirror of `rawPlanStepSchema` (src/mcp/server.ts): the pre-normalization step shape `gittensory_build_plan` accepts.
+// Mirror of `rawPlanStepSchema` (src/mcp/server.ts): the pre-normalization step shape `loopover_build_plan` accepts.
 export type RawPlanStep = {
   id: string;
   title: string;

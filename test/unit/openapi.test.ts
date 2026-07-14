@@ -116,18 +116,18 @@ describe("OpenAPI contract", () => {
     expect(JSON.stringify(spec.components?.schemas?.Health)).toContain("latestRecommendedMcpVersion");
     expect(JSON.stringify(spec.components?.schemas?.McpCompatibility)).toContain("minimumSupportedVersion");
     expect(JSON.stringify(spec.components?.schemas?.McpCompatibility)).toContain("compatibilityWarnings");
-    expect(spec.components?.securitySchemes?.GittensoryBearer).toBeDefined();
-    expect(spec.components?.securitySchemes?.GittensorySessionCookie).toBeDefined();
+    expect(spec.components?.securitySchemes?.LoopOverBearer).toBeDefined();
+    expect(spec.components?.securitySchemes?.LoopOverSessionCookie).toBeDefined();
     expect(spec.paths["/health"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/mcp/compatibility"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/public/stats"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/public/github/repos/{owner}/{repo}/stats"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/github/start"]?.get?.security).toBeUndefined();
-    expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
-    expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
+    expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
+    expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
     expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
-    expect(spec.paths["/v1/auth/extension/session"]?.post?.security).toEqual([{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }]);
+    expect(spec.paths["/v1/auth/extension/session"]?.post?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
   });
 
   it("declares an `in: path` parameter for every {templated} path segment (Cloudflare schema-validation warning 30046)", () => {

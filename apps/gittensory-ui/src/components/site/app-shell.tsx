@@ -33,7 +33,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { GittensoryMark } from "./mark";
+import { LoopOverMark } from "./mark";
 import { StatusPill, type Status } from "./control-primitives";
 import { LoadingState } from "./state-views";
 import { cn } from "@/lib/utils";
@@ -207,8 +207,8 @@ export function AppShell() {
       <Sidebar collapsible="icon" className="border-r border-border">
         <SidebarHeader className="border-b border-border">
           <div className="flex items-center gap-0.5 px-2 py-1.5">
-            <GittensoryMark className="size-4" />
-            <span className="sr-only">Gittensory</span>
+            <LoopOverMark className="size-4" />
+            <span className="sr-only">LoopOver</span>
             <span
               aria-hidden
               className="truncate font-display text-token-sm font-semibold group-data-[collapsible=icon]:hidden"
@@ -363,7 +363,7 @@ function SignedOut() {
         GitHub OAuth
       </div>
       <h1 className="font-display text-token-2xl font-semibold tracking-tight">
-        Sign in to Gittensory
+        Sign in to LoopOver
       </h1>
       <p className="mt-2 text-token-sm text-muted-foreground">
         Sign in with GitHub to use the live API-backed app surfaces.
@@ -405,7 +405,7 @@ function SignedOut() {
           </>
         )}
         <p className="mt-3 text-token-2xs text-muted-foreground">
-          No GitHub PAT is collected by the browser. The app uses an HttpOnly Gittensory session
+          No GitHub PAT is collected by the browser. The app uses an HttpOnly LoopOver session
           cookie issued after GitHub OAuth.
         </p>
       </div>

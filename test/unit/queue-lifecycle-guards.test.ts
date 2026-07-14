@@ -3459,7 +3459,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
 
   it("swallows persistSignalSnapshot errors — catch body runs without crashing the handler", async () => {
     // Bot-authored @loopover comment hits the early bot_author bail-out path in
-    // maybeProcessGittensoryMentionCommand, which calls recordAgentCommandUsage. Injecting a
+    // maybeProcessLoopOverMentionCommand, which calls recordAgentCommandUsage. Injecting a
     // persistSignalSnapshot failure exercises the catch at the bottom of that function.
     vi.spyOn(repositoriesModule, "persistSignalSnapshot").mockRejectedValueOnce(new Error("signal DB error"));
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

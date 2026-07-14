@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runLoopOverAiReview } from "../../src/services/ai-review";
 import { formatImpactMapPromptSection } from "../../src/review/impact-map-wire";
 import { createTestEnv } from "../helpers/d1";
 
@@ -55,7 +55,7 @@ describe("impact map wired into the AI reviewer's user prompt (#2186)", () => {
 
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({ AI: { run } as unknown as Ai });
-    const result = await runGittensoryAiReview(env, { ...baseReviewInput, impactMapContext });
+    const result = await runLoopOverAiReview(env, { ...baseReviewInput, impactMapContext });
     expect(result.status).toBe("ok");
     const user = seenUser[0] ?? "";
     expect(user).toContain("IMPACT MAP");
@@ -68,12 +68,12 @@ describe("impact map wired into the AI reviewer's user prompt (#2186)", () => {
   it("FLAG-OFF (impactMapContext absent): the prompt is byte-identical to the no-impact-map prompt", async () => {
     const { run: runOff, seenUser: seenOff } = capturingChatRun();
     const offEnv = aiReviewEnv({ AI: { run: runOff } as unknown as Ai });
-    await runGittensoryAiReview(offEnv, { ...baseReviewInput, impactMapContext: undefined });
+    await runLoopOverAiReview(offEnv, { ...baseReviewInput, impactMapContext: undefined });
 
     const { run: runOn, seenUser: seenOn } = capturingChatRun();
     const onEnv = aiReviewEnv({ AI: { run: runOn } as unknown as Ai });
     // An empty impact map formats to "" — same as undefined, appends nothing.
-    await runGittensoryAiReview(onEnv, { ...baseReviewInput, impactMapContext: formatImpactMapPromptSection([]) });
+    await runLoopOverAiReview(onEnv, { ...baseReviewInput, impactMapContext: formatImpactMapPromptSection([]) });
 
     expect(seenOn[0]).toBe(seenOff[0]);
     expect(seenOff[0] ?? "").not.toContain("IMPACT MAP");
@@ -82,7 +82,7 @@ describe("impact map wired into the AI reviewer's user prompt (#2186)", () => {
   it("an empty-string impactMapContext behaves the same as absent (no section appended)", async () => {
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({ AI: { run } as unknown as Ai });
-    await runGittensoryAiReview(env, { ...baseReviewInput, impactMapContext: "" });
+    await runLoopOverAiReview(env, { ...baseReviewInput, impactMapContext: "" });
     expect(seenUser[0] ?? "").not.toContain("IMPACT MAP");
   });
 });

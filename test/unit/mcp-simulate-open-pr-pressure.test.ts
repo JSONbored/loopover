@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
-  const server = new GittensoryMcp(createTestEnv()).createServer();
+  const server = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-open-pr-pressure-test", version: "0.1.0" }, { capabilities: {} });
@@ -46,11 +46,11 @@ type Simulation = {
   summary: string;
 };
 
-describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
+describe("MCP loopover_simulate_open_pr_pressure (#2224)", () => {
   it("registers with an outputSchema and needs no repo access", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
-    const tool = tools.find((t) => t.name === "gittensory_simulate_open_pr_pressure");
+    const tool = tools.find((t) => t.name === "loopover_simulate_open_pr_pressure");
     expect(tool).toBeDefined();
     expect(tool?.outputSchema?.type).toBe("object");
   });
@@ -58,7 +58,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("recommends opening new work for a contributor with no open PRs under low pressure", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -82,7 +82,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("recommends cleaning up first when a contributor already has open work under heavy pressure", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -101,7 +101,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("ranks maintainer-lane authors separately", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -119,7 +119,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("falls back to unknown pressure when queue health is unavailable", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -138,7 +138,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("rejects a null role context at the MCP boundary", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -152,7 +152,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("rejects queue health without bounded numeric signals at the MCP boundary", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",
@@ -166,7 +166,7 @@ describe("MCP gittensory_simulate_open_pr_pressure (#2224)", () => {
   it("rejects oversized string queue counts before they can be reflected in output", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_simulate_open_pr_pressure",
+      name: "loopover_simulate_open_pr_pressure",
       arguments: {
         repoFullName: "acme/widgets",
         generatedAt: "2026-07-08T00:00:00.000Z",

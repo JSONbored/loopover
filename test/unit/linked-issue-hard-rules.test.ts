@@ -400,7 +400,7 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     const body = Array.from({ length: 60 }, (_, i) => `closes #${i + 1}`).join(" ");
     const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), body, linkedIssues: [1] }));
     expect(r?.violated).toBe(true);
-    expect(r?.reason).toMatch(/more issues than Gittensory can safely verify/i);
+    expect(r?.reason).toMatch(/more issues than LoopOver can safely verify/i);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

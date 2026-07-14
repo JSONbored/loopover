@@ -1,6 +1,6 @@
 // Issue-to-plan decomposition heuristic (pure) (#4292).
 //
-// The stateless plan-DAG surface (rawPlanStepSchema / gittensory_build_plan, src/mcp/server.ts; plan-store.js
+// The stateless plan-DAG surface (rawPlanStepSchema / loopover_build_plan, src/mcp/server.ts; plan-store.js
 // persistence) consumes a caller-supplied RawPlanStep[], but nothing in the repo turns a TARGET ISSUE into those
 // steps — every caller has to hand it one already-built. plan-templates.ts's PLAN_TEMPLATE_BUILDERS describe the
 // miner's OWN fixed lifecycle, not the issue's actual implementation work; planPlanTemplate even carries a

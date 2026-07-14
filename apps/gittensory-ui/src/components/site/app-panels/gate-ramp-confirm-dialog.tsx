@@ -48,7 +48,7 @@ export function GateRampConfirmDialog({
                 This updates <span className="font-mono text-foreground/90">{repoFullName}</span>{" "}
                 via the same settings mutation as the repository settings editor. Pull requests that
                 trip these gates may be blocked from merging once branch protection requires the
-                Gittensory check.
+                LoopOver check.
               </p>
               {transitions.length > 0 ? (
                 <ul className="space-y-1 rounded-token border-hairline bg-muted/20 px-3 py-2 font-mono text-token-2xs">

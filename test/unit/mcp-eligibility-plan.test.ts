@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { upsertIssueFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 const FORBIDDEN_PUBLIC_LANGUAGE = /wallet|hotkey|coldkey|mnemonic|seed phrase|payout|raw trust|trust score|reward estimate|farming|private reviewability|scoreability|private ranking/i;
@@ -18,7 +18,7 @@ const BASE_ARGS = {
 
 async function connect(env: Env = createTestEnv()) {
   await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
-  const server = new GittensoryMcp(env).createServer();
+  const server = new LoopoverMcp(env).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-eligibility-plan-test", version: "0.1.0" }, { capabilities: {} });
@@ -37,14 +37,14 @@ type EligibilityPlanPayload = {
 };
 
 async function callPlan(client: Client, arguments_: Record<string, unknown>): Promise<EligibilityPlanPayload> {
-  const result = await client.callTool({ name: "gittensory_get_eligibility_plan", arguments: arguments_ });
+  const result = await client.callTool({ name: "loopover_get_eligibility_plan", arguments: arguments_ });
   expect(result.isError).toBeFalsy();
   const data = result.structuredContent as EligibilityPlanPayload;
   expect(JSON.stringify(data)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
   return data;
 }
 
-describe("MCP gittensory_get_eligibility_plan (#2222)", () => {
+describe("MCP loopover_get_eligibility_plan (#2222)", () => {
   it("returns an eligible maintainer-lane plan", async () => {
     const client = await connect();
     const plan = await callPlan(client, {
@@ -125,7 +125,7 @@ describe("MCP gittensory_get_eligibility_plan (#2222)", () => {
         body: "Issue body",
       });
     }
-    const server = new GittensoryMcp(env).createServer();
+    const server = new LoopoverMcp(env).createServer();
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client({ name: "gittensory-eligibility-plan-contributor-test", version: "0.1.0" }, { capabilities: {} });

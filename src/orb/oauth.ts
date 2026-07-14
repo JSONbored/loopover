@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — the post-install / OAuth landing + maintainer SELF-ENROLLMENT.
+// LoopOver Orb central GitHub App (#1255) — the post-install / OAuth landing + maintainer SELF-ENROLLMENT.
 // GitHub redirects here after a maintainer installs/authorizes the Orb App (the App's Callback URL, OAuth-during-
 // install ON) with an OAuth `code` + the `installation_id`. The maintainer can then self-issue their brokered
 // enrollment secret WITHOUT the operator — but ONLY after we prove, server-side, that they are an ADMIN of the
@@ -105,8 +105,8 @@ export async function handleOrbOAuthCallback(c: Context<{ Bindings: Env }>): Pro
   const updated = c.req.query("setup_action") === "update";
   return c.html(
     updated
-      ? landingPage(c.env, "Gittensory Orb updated", "Your repository selection was updated — the dashboard reflects the change shortly.")
-      : landingPage(c.env, "Gittensory Orb connected", "Your repositories are linked. Their review activity now flows to the global Gittensory dashboard."),
+      ? landingPage(c.env, "LoopOver Orb updated", "Your repository selection was updated — the dashboard reflects the change shortly.")
+      : landingPage(c.env, "LoopOver Orb connected", "Your repositories are linked. Their review activity now flows to the global LoopOver dashboard."),
   );
 }
 

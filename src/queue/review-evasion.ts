@@ -489,7 +489,7 @@ async function recloseDisallowedReopenIfNeeded(
     installationId,
     repoFullName,
     pr.number,
-    "This pull request was closed by Gittensory and can't be reopened — reviews are one-shot. Please open a new pull request with the issues resolved.",
+    "This pull request was closed by LoopOver and can't be reopened — reviews are one-shot. Please open a new pull request with the issues resolved.",
   ).catch(() => undefined);
   // #2260: the audit outcome must reflect whether the close actually happened on GitHub, not just whether this
   // handler ran. A swallowed 403/404/5xx here previously still recorded outcome:"completed", so an operator
@@ -497,7 +497,7 @@ async function recloseDisallowedReopenIfNeeded(
   const closeError = await closePullRequest(env, installationId, repoFullName, pr.number)
     .then(() => null)
     .catch((error: unknown) => error);
-  const originallyClosedBy = closer ?? "Gittensory (close beyond the inspected event window)";
+  const originallyClosedBy = closer ?? "LoopOver (close beyond the inspected event window)";
   /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
   await recordAuditEvent(env, {
     eventType: "github_app.reopen_reclosed",
@@ -682,7 +682,7 @@ async function closeReviewEvasionSelfCloseIfActive(
       installationId,
       repoFullName,
       pr.number,
-      "Gittensory had already started reviewing this pull request — closing it to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
+      "LoopOver had already started reviewing this pull request — closing it to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
     ).catch(
       /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
       () => undefined,
@@ -833,7 +833,7 @@ async function closeReviewEvasionDraftConversionIfActive(
       installationId,
       repoFullName,
       pr.number,
-      "Gittensory had already started reviewing this pull request — converting it to draft to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
+      "LoopOver had already started reviewing this pull request — converting it to draft to dodge the one-shot review process is not allowed. Please open a new pull request with the issues addressed.",
     ).catch(
       /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
       () => undefined,
@@ -999,7 +999,7 @@ async function closeRepeatedDraftCyclingIfDetected(
       installationId,
       repoFullName,
       pr.number,
-      `Gittensory detected this pull request has been converted to draft ${draftConversionCount} times — repeatedly cycling between ready and draft to solicit review feedback without a real one-shot attempt is not allowed. Please open a new pull request with the issues addressed.`,
+      `LoopOver detected this pull request has been converted to draft ${draftConversionCount} times — repeatedly cycling between ready and draft to solicit review feedback without a real one-shot attempt is not allowed. Please open a new pull request with the issues addressed.`,
     ).catch(
       /* v8 ignore next -- fail-safe: a courtesy-comment failure never blocks the handler. */
       () => undefined,

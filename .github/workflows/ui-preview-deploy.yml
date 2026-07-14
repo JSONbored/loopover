@@ -225,7 +225,7 @@ jobs:
               auto_merge: false,
               required_contexts: [],
               transient_environment: true,
-              description: "Gittensory UI preview",
+              description: "LoopOver UI preview",
               // Reviewbot reads `pr` here to re-review this exact PR once the preview is live.
               payload: JSON.stringify({ pr: prNumber, head_sha: sha }),
             });
@@ -283,7 +283,7 @@ jobs:
               auto_merge: false,
               required_contexts: [],
               transient_environment: true,
-              description: "Gittensory UI preview (failed)",
+              description: "LoopOver UI preview (failed)",
               payload: JSON.stringify({ pr: prNumber, head_sha: sha }),
             });
             await github.rest.repos.createDeploymentStatus({

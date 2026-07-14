@@ -191,7 +191,7 @@ describe("REGRESSION (#4111): a visual-regression finding can NEVER become a gat
       headSha: "sha9",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: buildVisualRegressionFindings([{ path: "/pricing", body: "The third column lost its border." }]),
       generatedAt: "2026-07-07T00:00:00.000Z",

@@ -1,8 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { EventLedger } from "../lib/event-ledger.js";
 
-/** The static, non-secret payload the gittensory_miner_ping tool always returns, independent of input. */
-export const MINER_PING_STATUS: { status: "ok"; tool: "gittensory_miner_ping" };
+/** The static, non-secret payload the loopover_miner_ping tool always returns, independent of input. */
+export const MINER_PING_STATUS: { status: "ok"; tool: "loopover_miner_ping" };
 
 export interface MinerMcpServerOptions {
   /**
@@ -55,10 +55,10 @@ export interface MinerMcpServerOptions {
 }
 
 /**
- * Build the miner MCP server with its tools registered (gittensory_miner_ping,
- * gittensory_miner_get_portfolio_dashboard, gittensory_miner_list_claims, gittensory_miner_get_audit_feed,
- * gittensory_miner_get_run_state, gittensory_miner_list_plans, gittensory_miner_get_plan,
- * gittensory_miner_get_governor_decisions, gittensory_miner_status). `options` supplies test injection seams;
+ * Build the miner MCP server with its tools registered (loopover_miner_ping,
+ * loopover_miner_get_portfolio_dashboard, loopover_miner_list_claims, loopover_miner_get_audit_feed,
+ * loopover_miner_get_run_state, loopover_miner_list_plans, loopover_miner_get_plan,
+ * loopover_miner_get_governor_decisions, loopover_miner_status). `options` supplies test injection seams;
  * production callers pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

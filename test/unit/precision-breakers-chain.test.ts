@@ -91,7 +91,7 @@ describe("precisionBreakerDowngradeDirections — bounded-cardinality breaker-do
   });
 });
 
-describe("agentDispositionLabels — bounded {actionClass, blockerClass} for gittensory_agent_disposition_total (#terminal-outcome-audit)", () => {
+describe("agentDispositionLabels — bounded {actionClass, blockerClass} for loopover_agent_disposition_total (#terminal-outcome-audit)", () => {
   it("actionClass is 'merge' when the final plan still contains a merge action", () => {
     expect(agentDispositionLabels([mergeAction], [], null)).toEqual({ actionClass: "merge", blockerClass: "none" });
   });

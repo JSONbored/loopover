@@ -49,7 +49,7 @@ function HowReviewsWork() {
         </li>
       </ol>
       <p>
-        comment on the PR, plus an optional <strong>Gittensory Orb Review Agent</strong> check run.
+        comment on the PR, plus an optional <strong>LoopOver Orb Review Agent</strong> check run.
         The review algorithm is open-source; what changes between repos is the configuration you
         tune. See <a href="/docs/tuning">Tuning your reviews</a> for the review options and
         defaults.
@@ -77,7 +77,7 @@ function HowReviewsWork() {
         </li>
         <li>
           <code>block</code> — the finding can become a hard{" "}
-          <strong>Gittensory Orb Review Agent</strong> blocker.
+          <strong>LoopOver Orb Review Agent</strong> blocker.
         </li>
       </ul>
       <p>
@@ -295,10 +295,10 @@ function HowReviewsWork() {
       </ul>
       <p>
         The check run can carry the same signals at adjustable depth — but this is the{" "}
-        <strong>Gittensory Context</strong> check, not the Orb Review Agent gate check:{" "}
+        <strong>LoopOver Context</strong> check, not the Orb Review Agent gate check:{" "}
         <code>checkRunMode</code> (<code>off</code> / <code>enabled</code>) publishes it, and{" "}
         <code>checkRunDetailLevel</code> (<code>minimal</code> / <code>standard</code>) sets how
-        much the check summary spells out. <strong>Gittensory Orb Review Agent</strong> is published
+        much the check summary spells out. <strong>LoopOver Orb Review Agent</strong> is published
         separately, controlled by <code>reviewCheckMode</code> (see above).
       </p>
 

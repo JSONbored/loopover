@@ -7,7 +7,7 @@ import {
 } from "./mcp-compatibility";
 
 type ClientTelemetryOptions = {
-  requireGittensoryHeader?: boolean;
+  requireLoopOverHeader?: boolean;
   defaultClientName?: string;
 };
 
@@ -31,8 +31,8 @@ export function buildMcpClientTelemetry(headers: Headers, options: ClientTelemet
   const explicitClientName = safeClientHeader(headers.get("x-loopover-mcp-client"));
   const explicitClientVersion = safeVersionHeader(headers.get("x-loopover-mcp-client-version"));
   const protocolVersion = safeProtocolHeader(headers.get("mcp-protocol-version"));
-  const hasGittensoryHeader = Boolean(packageName ?? packageVersion ?? explicitClientName ?? explicitClientVersion);
-  if (options.requireGittensoryHeader && !hasGittensoryHeader) return null;
+  const hasLoopOverHeader = Boolean(packageName ?? packageVersion ?? explicitClientName ?? explicitClientVersion);
+  if (options.requireLoopOverHeader && !hasLoopOverHeader) return null;
 
   const clientVersion = packageVersion ?? explicitClientVersion;
   const clientName = explicitClientName ?? clientNameFromPackage(packageName) ?? options.defaultClientName ?? "mcp";

@@ -120,12 +120,12 @@ POST /v1/repos/:owner/:repo/settings-preview`}
           {
             title: "Context check",
             description:
-              "Gittensory Context is advisory and should not be required by branch protection.",
+              "LoopOver Context is advisory and should not be required by branch protection.",
           },
           {
             title: "Review agent check",
             description:
-              "Gittensory Orb Review Agent is opt-in. Make it required only after the repo owner chooses blocking rules and validates previews.",
+              "LoopOver Orb Review Agent is opt-in. Make it required only after the repo owner chooses blocking rules and validates previews.",
           },
           {
             title: "Command access",
@@ -220,7 +220,7 @@ API unavailable or stale data
         contribution fits the repo, issue, and subnet goals.
       </p>
       <p>
-        If the repo enables <strong>Gittensory Orb Review Agent</strong>, document which blockers
+        If the repo enables <strong>LoopOver Orb Review Agent</strong>, document which blockers
         are enforced and why. Otherwise, treat LoopOver output as reviewer context only.
       </p>
 

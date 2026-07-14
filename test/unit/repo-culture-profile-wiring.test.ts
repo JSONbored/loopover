@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runLoopOverAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import { upsertRecentMergedPullRequest } from "../../src/db/repositories";
 import * as cultureProfileModule from "../../src/review/repo-culture-profile";
@@ -167,7 +167,7 @@ describe("buildRepoCultureProfileContext", () => {
   });
 });
 
-// ── End-to-end: flag-gated culture-profile context through runGittensoryAiReview ────────────────
+// ── End-to-end: flag-gated culture-profile context through runLoopOverAiReview ────────────────
 
 function capturingChatRun() {
   const seenUser: string[] = [];
@@ -198,7 +198,7 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
 
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({ AI: { run } as unknown as Ai });
-    const result = await runGittensoryAiReview(env, { ...baseReviewInput, cultureProfileContext });
+    const result = await runLoopOverAiReview(env, { ...baseReviewInput, cultureProfileContext });
     expect(result.status).toBe("ok");
     const user = seenUser[0] ?? "";
     expect(user).toContain("REPO QUALITY-CULTURE PROFILE");
@@ -209,11 +209,11 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
   it("FLAG-OFF (default): the prompt is byte-identical to the no-culture-profile prompt (cultureProfileContext undefined)", async () => {
     const off = capturingChatRun();
     const offEnv = aiReviewEnv({ AI: { run: off.run } as unknown as Ai });
-    await runGittensoryAiReview(offEnv, { ...baseReviewInput, cultureProfileContext: undefined });
+    await runLoopOverAiReview(offEnv, { ...baseReviewInput, cultureProfileContext: undefined });
 
     const none = capturingChatRun();
     const noneEnv = aiReviewEnv({ AI: { run: none.run } as unknown as Ai });
-    await runGittensoryAiReview(noneEnv, baseReviewInput);
+    await runLoopOverAiReview(noneEnv, baseReviewInput);
 
     expect(off.seenUser[0]).not.toContain("REPO QUALITY-CULTURE PROFILE");
     expect(none.seenUser[0]).toBe(off.seenUser[0]);
@@ -222,11 +222,11 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
   it("FLAG-ON but EMPTY context (insufficient history): prompt is byte-identical to flag-OFF", async () => {
     const on = capturingChatRun();
     const onEnv = aiReviewEnv({ AI: { run: on.run } as unknown as Ai });
-    await runGittensoryAiReview(onEnv, { ...baseReviewInput, cultureProfileContext: "" });
+    await runLoopOverAiReview(onEnv, { ...baseReviewInput, cultureProfileContext: "" });
 
     const none = capturingChatRun();
     const noneEnv = aiReviewEnv({ AI: { run: none.run } as unknown as Ai });
-    await runGittensoryAiReview(noneEnv, baseReviewInput);
+    await runLoopOverAiReview(noneEnv, baseReviewInput);
 
     expect(on.seenUser[0]).not.toContain("REPO QUALITY-CULTURE PROFILE");
     expect(on.seenUser[0]).toBe(none.seenUser[0]);
@@ -247,7 +247,7 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
       headSha: "sha3",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "ok",
       findings: [],
       generatedAt: "2026-06-20T00:00:00.000Z",
@@ -280,7 +280,7 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
       headSha: "sha4",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "ok",
       findings: [],
       generatedAt: "2026-06-20T00:00:00.000Z",
@@ -313,7 +313,7 @@ describe("culture profile wired into the AI reviewer (flag LOOPOVER_REVIEW_CULTU
       headSha: "sha5",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "ok",
       findings: [],
       generatedAt: "2026-06-20T00:00:00.000Z",

@@ -1,5 +1,5 @@
 // Predicted-gate call history (#predicted-live-gate-agreement, maintainer review-stack x AMS integration
-// audit 2026-07-09) -- records EVERY MCP `gittensory_predict_gate`/`gittensory_explain_gate_disposition` call,
+// audit 2026-07-09) -- records EVERY MCP `loopover_predict_gate`/`loopover_explain_gate_disposition` call,
 // so a later real gate decision for the same (project, login) can be paired against it (see
 // src/review/predicted-gate-agreement.ts for the read/join side). Structurally a sibling of
 // src/review/contributor-calibration.ts: `review_audit` (migrations/0049) is DELIBERATELY actor-login-free

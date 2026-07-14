@@ -810,9 +810,9 @@ function buildLocalFindings(
     ...(input.repoFullName.toLowerCase() === "jsonbored/gittensory"
       ? [
           {
-            code: "gittensory_not_registered",
+            code: "loopover_not_registered",
             severity: "warning" as const,
-            title: "Gittensory is not registered",
+            title: "LoopOver is not registered",
             detail: "Treat this project as product/maintainer work until it appears in the official registry snapshot.",
             action: "Do not treat this repo as a miner target yet.",
           },
@@ -1010,7 +1010,7 @@ function buildBaseFreshness(
     testFileCount,
     passedValidationCount,
     warnings,
-    recommendation: warnings.length > 0 ? "Run `git fetch origin` and rerun Gittensory branch analysis against the refreshed base." : undefined,
+    recommendation: warnings.length > 0 ? "Run `git fetch origin` and rerun LoopOver branch analysis against the refreshed base." : undefined,
   };
 }
 

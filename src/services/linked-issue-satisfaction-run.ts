@@ -2,7 +2,7 @@
 // maintainer-only slice" the pure analysis core (./linked-issue-satisfaction.ts, #2172) explicitly forward-
 // references in its own module doc: "That orchestration (budget, provider selection, usage accounting, and --
 // eventually -- a `gate.linkedIssueSatisfaction` mode wiring) is a separate, maintainer-only slice." Mirrors
-// ai-slop.ts's runGittensoryAiSlopAdvisory shape exactly (same budget/provider/retry discipline), but calls
+// ai-slop.ts's runLoopOverAiSlopAdvisory shape exactly (same budget/provider/retry discipline), but calls
 // the pure module's own buildLinkedIssueSatisfactionResult as the single source of truth for "is this attempt's
 // raw model text a valid, publishable result" -- never re-implements its parsing/confidence-floor/public-safe
 // logic here.
@@ -100,7 +100,7 @@ async function runWorkersSatisfactionOpinion(
  * Run the linked-issue satisfaction assessment. Returns the bounded, public-safe result (or null) plus the
  * estimated neuron spend. Fail-safe on every path: no result and no thrown error ever reaches the caller.
  */
-export async function runGittensoryLinkedIssueSatisfaction(env: Env, input: LinkedIssueSatisfactionRunInput): Promise<LinkedIssueSatisfactionRunResult> {
+export async function runLoopOverLinkedIssueSatisfaction(env: Env, input: LinkedIssueSatisfactionRunInput): Promise<LinkedIssueSatisfactionRunResult> {
   if (!isEnabled(env.AI_SUMMARIES_ENABLED)) return { status: "disabled", reason: "AI summaries are disabled." };
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return { status: "disabled", reason: "Public AI comments are disabled." };
   if (!env.AI) return { status: "unavailable", reason: "AI provider is not configured." };

@@ -1,7 +1,7 @@
 // Plan DAG rendering (pure).
 //
 // Deterministic, side-effect-free renderers over an already-validated plan DAG (the `planDagSchema` shape used by
-// the MCP `gittensory_plan_status` surface in src/mcp/server.ts). No IO and no new logic: given a plan, produce
+// the MCP `loopover_plan_status` surface in src/mcp/server.ts). No IO and no new logic: given a plan, produce
 // either a human-readable Markdown checklist ordered by dependency, or a stable, key-ordered JSON string that is
 // byte-identical across runs of the same plan (useful for diffing). The types below mirror the `planDagSchema`
 // shape so the engine package stays standalone and does not import the app's Zod schema.

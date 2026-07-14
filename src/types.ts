@@ -894,7 +894,7 @@ export type RepositorySettings = {
   /** Per-repo dual-AI combine-strategy override (#2567). Config-as-code only — set via `.gittensory.yml
    *  gate.aiReview.combine` (no dashboard/DB column); unset ⇒ the self-host operator's `AI_REVIEW_PLAN.combine`
    *  boot config (or `consensus` if the operator set nothing). A REFINEMENT of the operator's plan, not a
-   *  bypass — `runGittensoryAiReview` clamps the resolved `onMerge` to the operator's floor (see
+   *  bypass — `runLoopOverAiReview` clamps the resolved `onMerge` to the operator's floor (see
    *  {@link aiReviewOnMerge}); `combine` itself carries no floor semantics (single/consensus/synthesis are not
    *  ordered by strictness). */
   aiReviewCombine?: CombineStrategy | null | undefined;

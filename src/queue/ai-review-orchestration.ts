@@ -37,7 +37,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import {
   hasPublicReviewAssessment,
   isEnabled,
-  runGittensoryAiReview,
+  runLoopOverAiReview,
   type ImprovementMagnitude,
   type InlineFinding,
 } from "../services/ai-review";
@@ -154,7 +154,7 @@ export function aiReviewLockContendedResult(
       code: "ai_review_inconclusive",
       severity: "warning",
       title: "AI review already in progress for this PR head",
-      detail: "Another Gittensory pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
+      detail: "Another LoopOver pass is already running the AI review for this exact PR head. This pass is skipping to avoid a duplicate LLM call.",
       action: "The gate is held for a human reviewer rather than passed automatically; it re-evaluates once the in-flight review completes or on the next update.",
     },
   ];
@@ -359,7 +359,7 @@ export async function runAiReviewForAdvisory(
     // above, which are ALL caller-resolved rather than looked up internally (see `ModelReview.valueAssessment`'s
     // own doc comment in services/ai-review.ts for why `improvementSignal` -- a read-only advisory signal, not a
     // security control -- follows that majority pattern rather than `safety`'s internal-resolution exception).
-    // Threaded straight into runGittensoryAiReview's own `improvementSignal` gate (#4743) for the LLM tier's
+    // Threaded straight into runLoopOverAiReview's own `improvementSignal` gate (#4743) for the LLM tier's
     // value-assessment prompt addition. Absent/false ⇒ the prompt is byte-identical (no valueAssessment
     // requested) -- the only reachable value until this PR started resolving the feature.
     improvementSignal?: boolean | undefined;
@@ -630,7 +630,7 @@ export async function runAiReviewForAdvisory(
                   args.repoFullName,
                 )
               : undefined,
-            // The AI-review path loads the focus manifest later (inside runGittensoryAiReview), not before this
+            // The AI-review path loads the focus manifest later (inside runLoopOverAiReview), not before this
             // enrichment call, so there is no already-resolved manifest to pass here; loadRepoFocusManifest is
             // cached per repo, so this is a cache hit rather than an extra fetch. resolveRepoEnrichmentToggles is
             // exactly the load-and-swallow caller (a load error ⇒ no toggles ⇒ default analyzer set).
@@ -648,7 +648,7 @@ export async function runAiReviewForAdvisory(
       args.repoFullName,
       args.reviewInlineComments,
     );
-    const result = await runGittensoryAiReview(env, {
+    const result = await runLoopOverAiReview(env, {
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
       title: args.pr.title,
@@ -666,15 +666,15 @@ export async function runAiReviewForAdvisory(
       enrichment,
       profile: args.reviewProfile ?? null,
       // Per-repo dual-AI combine/onMerge/reviewers overrides (#2567), resolved by resolveEffectiveSettings from
-      // `.gittensory.yml gate.aiReview.*` onto `args.settings`. Absent ⇒ undefined ⇒ runGittensoryAiReview falls
+      // `.gittensory.yml gate.aiReview.*` onto `args.settings`. Absent ⇒ undefined ⇒ runLoopOverAiReview falls
       // back to the operator's AI_REVIEW_PLAN (byte-identical to today). `onMerge` is clamped to the operator's
-      // floor INSIDE runGittensoryAiReview (resolveEffectiveAiReviewOnMerge), not here.
+      // floor INSIDE runLoopOverAiReview (resolveEffectiveAiReviewOnMerge), not here.
       combine: args.settings.aiReviewCombine ?? undefined,
       onMerge: args.settings.aiReviewOnMerge ?? undefined,
       reviewers: args.settings.aiReviewReviewers ?? undefined,
       securityFocus: args.reviewSecurityFocus === true,
       // Self-host per-repo model/effort override (#selfhost-ai-model-override): absent/null fields fall through
-      // runGittensoryAiReview -> runWorkersOpinion -> the self-host provider's own global-env/hardcoded default,
+      // runLoopOverAiReview -> runWorkersOpinion -> the self-host provider's own global-env/hardcoded default,
       // exactly as if review.ai_model had never been set.
       claudeModel: args.reviewSelfHostAiModel?.claudeModel ?? null,
       claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
@@ -808,7 +808,7 @@ export async function runAiReviewForAdvisory(
     if (result.inconclusive) {
       return {
         notes:
-          "AI review could not be completed for this PR head. Gittensory is holding this PR for manual review instead of relying on deterministic signals alone.",
+          "AI review could not be completed for this PR head. LoopOver is holding this PR for manual review instead of relying on deterministic signals alone.",
         reviewerCount: result.reviewerCount,
         inlineFindings: [],
         findings,
@@ -850,7 +850,7 @@ export async function runAiReviewForAdvisory(
     );
     return {
       notes:
-        "AI review is unavailable for this PR head. Gittensory is holding this PR for manual review until the configured AI provider returns a usable public review summary.",
+        "AI review is unavailable for this PR head. LoopOver is holding this PR for manual review until the configured AI provider returns a usable public review summary.",
       reviewerCount: result.reviewerCount,
       inlineFindings: [],
       findings,

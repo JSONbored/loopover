@@ -72,7 +72,7 @@ function readyFixture(overrides: Partial<RegistrationReadinessPayload> = {}): Re
     docsCompleteness: {
       status: "repo_docs_not_crawled",
       requiredDocs: ["CONTRIBUTING.md", "README.md"],
-      note: "Gittensory validates public repo docs locally; remote crawl is not enabled yet.",
+      note: "LoopOver validates public repo docs locally; remote crawl is not enabled yet.",
     },
     dataQuality: { status: "complete", partial: false, warnings: [] },
     ...overrides,

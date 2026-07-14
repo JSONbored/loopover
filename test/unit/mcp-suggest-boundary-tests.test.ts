@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
-  const server = new GittensoryMcp(createTestEnv()).createServer();
+  const server = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-boundary-tests-test", version: "0.1.0" }, { capabilities: {} });
@@ -13,11 +13,11 @@ async function connect() {
   return client;
 }
 
-describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
+describe("MCP loopover_suggest_boundary_tests (#1972)", () => {
   it("returns a finding + action spec when a boundary pattern is touched with no test evidence", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_suggest_boundary_tests",
+      name: "loopover_suggest_boundary_tests",
       arguments: {
         changedFiles: [{ path: "src/list.ts" }],
         boundaryTouches: [{ path: "src/list.ts", kind: "empty_collection_check" }],
@@ -34,7 +34,7 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
   it("returns no finding and no spec when boundary touches already have test evidence", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_suggest_boundary_tests",
+      name: "loopover_suggest_boundary_tests",
       arguments: {
         changedFiles: [{ path: "src/list.ts" }],
         boundaryTouches: [{ path: "src/list.ts", kind: "empty_collection_check" }],
@@ -50,7 +50,7 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
   it("returns no finding when nothing touches a boundary pattern", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_suggest_boundary_tests",
+      name: "loopover_suggest_boundary_tests",
       arguments: {
         changedFiles: [{ path: "src/util.ts" }],
       },
@@ -63,7 +63,7 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
   it("rejects raw patch input at the MCP boundary", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_suggest_boundary_tests",
+      name: "loopover_suggest_boundary_tests",
       arguments: {
         changedFiles: [{ path: "src/list.ts", patch: "+if (items.length === 0) return null;\n" }],
       },
@@ -74,7 +74,7 @@ describe("MCP gittensory_suggest_boundary_tests (#1972)", () => {
   it("ignores boundary touches for files not listed in changedFiles", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_suggest_boundary_tests",
+      name: "loopover_suggest_boundary_tests",
       arguments: {
         changedFiles: [{ path: "src/list.ts" }],
         boundaryTouches: [{ path: "src/other.ts", kind: "empty_collection_check" }],

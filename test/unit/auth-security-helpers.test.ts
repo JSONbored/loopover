@@ -65,17 +65,17 @@ describe("extractCookieValue", () => {
 });
 
 describe("extractBrowserSessionToken", () => {
-  it("extracts the gittensory_session cookie value", () => {
-    expect(extractBrowserSessionToken("gittensory_session=tok123")).toBe(
+  it("extracts the loopover_session cookie value", () => {
+    expect(extractBrowserSessionToken("loopover_session=tok123")).toBe(
       "tok123",
     );
     expect(
-      extractBrowserSessionToken("a=1; gittensory_session=tok123; b=2"),
+      extractBrowserSessionToken("a=1; loopover_session=tok123; b=2"),
     ).toBe("tok123");
   });
 
   it("returns an empty string for a present-but-empty cookie and undefined when absent", () => {
-    expect(extractBrowserSessionToken("gittensory_session=")).toBe("");
+    expect(extractBrowserSessionToken("loopover_session=")).toBe("");
     expect(extractBrowserSessionToken("other=1")).toBeUndefined();
     expect(extractBrowserSessionToken(null)).toBeUndefined();
   });
@@ -86,19 +86,19 @@ describe("session/oauth cookie builders", () => {
     expect(
       buildClearedBrowserSessionCookie("https://app.example.com/auth"),
     ).toBe(
-      "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly; Secure",
+      "loopover_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly; Secure",
     );
   });
 
   it("omits Secure only for localhost/loopback hosts", () => {
     expect(buildClearedBrowserSessionCookie("http://localhost:8787/auth")).toBe(
-      "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
+      "loopover_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
     );
     expect(buildClearedBrowserSessionCookie("http://127.0.0.1/auth")).toBe(
-      "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
+      "loopover_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
     );
     expect(buildClearedBrowserSessionCookie("http://[::1]/auth")).toBe(
-      "gittensory_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
+      "loopover_session=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly",
     );
     expect(buildBrowserSessionCookie("token", "http://[::1]/v1/auth/session")).not.toContain(
       "Secure",
@@ -115,24 +115,24 @@ describe("session/oauth cookie builders", () => {
     expect(
       buildGitHubOAuthStateCookie("xyz789", "https://app.example.com"),
     ).toBe(
-      "gittensory_oauth_state=xyz789; Max-Age=600; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
+      "loopover_oauth_state=xyz789; Max-Age=600; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
     );
     expect(
       buildGitHubOAuthStateCookie("a b/c+d", "https://app.example.com"),
     ).toBe(
-      "gittensory_oauth_state=a%20b%2Fc%2Bd; Max-Age=600; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
+      "loopover_oauth_state=a%20b%2Fc%2Bd; Max-Age=600; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
     );
   });
 
   it("clears the oauth state cookie on the same scoped path", () => {
     expect(buildClearedGitHubOAuthStateCookie("https://app.example.com")).toBe(
-      "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
+      "loopover_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly; Secure",
     );
     expect(buildClearedGitHubOAuthStateCookie("http://localhost/cb")).toBe(
-      "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
+      "loopover_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
     );
     expect(buildClearedGitHubOAuthStateCookie("http://[::1]/cb")).toBe(
-      "gittensory_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
+      "loopover_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
     );
   });
 });

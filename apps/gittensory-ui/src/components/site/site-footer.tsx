@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Github } from "lucide-react";
 
-import { GittensoryMark } from "./mark";
+import { LoopOverMark } from "./mark";
 import { HealthDot } from "./health-dot";
 
 const cols = [
@@ -50,10 +50,10 @@ export function SiteFooter() {
         <div>
           <Link
             to="/"
-            aria-label="Gittensory"
+            aria-label="LoopOver"
             className="flex items-center gap-0.5 font-display text-token-base font-semibold"
           >
-            <GittensoryMark className="size-6" />
+            <LoopOverMark className="size-6" />
             <span aria-hidden>ittensory</span>
           </Link>
           <p className="mt-3 max-w-sm text-token-sm text-muted-foreground">
@@ -66,7 +66,7 @@ export function SiteFooter() {
               target="_blank"
               rel="noreferrer"
               className="inline-flex h-8 w-8 items-center justify-center rounded-token border border-border text-muted-foreground transition-colors duration-150 hover:text-foreground hover:border-strong focus-ring"
-              aria-label="Gittensory repository on GitHub"
+              aria-label="LoopOver repository on GitHub"
             >
               <Github className="size-4" />
             </a>
@@ -111,7 +111,7 @@ export function SiteFooter() {
               @jsonbored
             </a>
             <span>
-              © {new Date().getFullYear()} Gittensory, an{" "}
+              © {new Date().getFullYear()} LoopOver, an{" "}
               <a
                 href="https://aethereal.dev"
                 target="_blank"

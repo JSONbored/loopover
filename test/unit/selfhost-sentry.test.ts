@@ -1065,14 +1065,14 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
     );
     expect(mocks.scope.setLevel).toHaveBeenCalledWith("fatal");
     expect(mocks.scope.setTag).not.toHaveBeenCalled();
-    expect(lastCapturedError().name).toBe("GittensoryLog");
+    expect(lastCapturedError().name).toBe("LoopOverLog");
     expect(lastCapturedError().message).toBe("boom");
   });
 
   it("summarizes salient fields when neither event nor message is present", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     forwardStructuredLogToSentry(JSON.stringify({ level: "error", code: 500 }));
-    expect(lastCapturedError().name).toBe("GittensoryLog");
+    expect(lastCapturedError().name).toBe("LoopOverLog");
     expect(lastCapturedError().message).toBe("code=500");
   });
 

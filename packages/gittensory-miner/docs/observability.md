@@ -69,17 +69,17 @@ exposes four Prometheus text-exposition documents for live counters/gauges — a
 
 | Command                             | Metric family                                                                     |
 | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `loopover-miner metrics`           | Prediction-calibration counters (`gittensory_miner_prediction*_total`)               |
-| `loopover-miner queue metrics`     | Portfolio-queue backlog + lease-age gauges (`gittensory_miner_portfolio_queue*`)      |
-| `loopover-miner ledger metrics`    | Event-ledger counters (`gittensory_miner_events_total`)                              |
-| `loopover-miner governor metrics`  | Write-rate-limit + cap-usage pressure gauges (`gittensory_miner_governor*`)           |
+| `loopover-miner metrics`           | Prediction-calibration counters (`loopover_miner_prediction*_total`)               |
+| `loopover-miner queue metrics`     | Portfolio-queue backlog + lease-age gauges (`loopover_miner_portfolio_queue*`)      |
+| `loopover-miner ledger metrics`    | Event-ledger counters (`loopover_miner_events_total`)                              |
+| `loopover-miner governor metrics`  | Write-rate-limit + cap-usage pressure gauges (`loopover_miner_governor*`)           |
 
 None of these is a long-running HTTP server — Prometheus can't scrape a one-shot CLI command directly. To opt in,
 wire [`scripts/export-miner-prometheus-textfile.sh`](../../../scripts/export-miner-prometheus-textfile.sh) into
 your own cron/systemd timer alongside [node_exporter's textfile
 collector](https://github.com/prometheus/node_exporter#textfile-collector): the script runs all four commands and
 atomically writes their concatenated output to `$LOOPOVER_MINER_PROMETHEUS_TEXTFILE` (default
-`/var/lib/node_exporter/textfile_collector/gittensory_miner.prom`), the standard directory node_exporter's
+`/var/lib/node_exporter/textfile_collector/loopover_miner.prom`), the standard directory node_exporter's
 textfile collector watches. Point `LOOPOVER_MINER_BIN` at the miner binary if it isn't on `PATH`.
 
 A broken/corrupt local store for one family (e.g. the portfolio queue) never blocks the other three — that

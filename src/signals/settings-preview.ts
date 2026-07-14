@@ -16,7 +16,7 @@ import {
 } from "./engine";
 import { buildExtensionPrStatus, type ExtensionPrStatus } from "./extension-contributor-context";
 import { REQUIRED_INSTALLATION_PERMISSIONS } from "../github/backfill";
-import type { GittensoryFooterEnv } from "../github/footer";
+import type { LoopOverFooterEnv } from "../github/footer";
 import { LOOPOVER_GATE_CHECK_NAME, shouldPublishReviewCheck } from "../review/check-names";
 import { decideReviewEligibility } from "../review/review-eligibility";
 import { requiredAgentActionPermissions } from "../settings/agent-execution";
@@ -71,12 +71,12 @@ export type PublicSurfaceDecision = {
 
 const SKIP_SUMMARY: Record<PublicSurfaceSkipReason, string> = {
   surface_off: "Public surface and check runs are both disabled for this repo; nothing would be posted.",
-  missing_author: "The pull request has no resolvable author login; Gittensory would skip it.",
-  bot_author: "The author is a bot account; Gittensory would skip it.",
-  ignored_author: "The author matches review.auto_review.ignore_authors; Gittensory would skip it.",
+  missing_author: "The pull request has no resolvable author login; LoopOver would skip it.",
+  bot_author: "The author is a bot account; LoopOver would skip it.",
+  ignored_author: "The author matches review.auto_review.ignore_authors; LoopOver would skip it.",
   maintainer_author: "The author is a maintainer (owner/member/collaborator) and maintainer authors are excluded by this repo's settings.",
-  miner_detection_unavailable: "Official Gittensor miner detection is unavailable, so Gittensory would skip rather than guess.",
-  not_official_gittensor_miner: "The author is not a confirmed Gittensor miner; Gittensory would stay quiet.",
+  miner_detection_unavailable: "Official Gittensor miner detection is unavailable, so LoopOver would skip rather than guess.",
+  not_official_gittensor_miner: "The author is not a confirmed Gittensor miner; LoopOver would stay quiet.",
 };
 
 function skipDecision(reason: PublicSurfaceSkipReason): PublicSurfaceDecision {
@@ -122,7 +122,7 @@ export function decidePublicSurface(input: PublicSurfaceDecisionInput): PublicSu
     actions: surfaceActions,
     summary: surfaceActions.includes("none")
       ? "The author qualifies, but no surface action is enabled by the current settings."
-      : `Gittensory would ${surfaceActions.join(" + ").replace("check_run", "post a minimal check run")} for this PR.`,
+      : `LoopOver would ${surfaceActions.join(" + ").replace("check_run", "post a minimal check run")} for this PR.`,
   };
 }
 
@@ -266,7 +266,7 @@ export function buildRepoSettingsPreview(args: {
   pullRequests: PullRequestRecord[];
   sample: PublicSurfaceSample;
   /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
-  env: GittensoryFooterEnv;
+  env: LoopOverFooterEnv;
 }): RepoSettingsPreview {
   const { settings, repo, repoFullName } = args;
   const sample = {
@@ -401,7 +401,7 @@ function buildWarnings(settings: RepositorySettings, decision: PublicSurfaceDeci
     warnings.push("Review-agent checks are enabled but GitHub App permission Checks: write is missing. Set repository permission checks to write, then approve the change.");
   }
   for (const event of installation.missingEvents) {
-    warnings.push(`The GitHub App is not subscribed to the ${event} webhook event; subscribe to it so Gittensory receives the relevant deliveries.`);
+    warnings.push(`The GitHub App is not subscribed to the ${event} webhook event; subscribe to it so LoopOver receives the relevant deliveries.`);
   }
   if (installation.status !== "healthy" && warnings.length === 0) {
     warnings.push(`Installation status is ${installation.status}; review the installation health endpoint for remediation steps.`);
@@ -653,7 +653,7 @@ function buildSamplePreviewComment(args: {
   pullRequests: PullRequestRecord[];
   sample: { authorLogin: string; authorAssociation: string; minerStatus: "confirmed" | "not_found" | "unavailable"; title: string; labels: string[]; linkedIssues: number[] };
   body: string | null;
-  env: GittensoryFooterEnv;
+  env: LoopOverFooterEnv;
 }): string {
   const samplePr: PullRequestRecord = {
     repoFullName: args.repoFullName,

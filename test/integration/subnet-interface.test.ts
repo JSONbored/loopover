@@ -13,7 +13,7 @@ describe("public subnet-interface descriptor route", () => {
     await expect(response.json()).resolves.toMatchObject({
       schemaVersion: "1.0",
       subnet: { netuid: 74, name: "gittensor" },
-      provider: { name: "Gittensory", role: "contribution_interface" },
+      provider: { name: "LoopOver", role: "contribution_interface" },
       interfaces: {
         mcp: { endpoint: "https://gittensory-api.aethereal.dev/mcp", transport: "http" },
         // The publicly installable App slug is a stable hardcoded product identity now (see

@@ -148,7 +148,7 @@ export function AuditFeed({ enabled = true }: AuditFeedProps) {
         />
         <EmptyState
           title="No skipped PR events"
-          description="When Gittensory intentionally skips public GitHub App output for a pull request, the decision appears here."
+          description="When LoopOver intentionally skips public GitHub App output for a pull request, the decision appears here."
           action={<StateActionButton onClick={() => void load()}>Refresh</StateActionButton>}
         />
       </div>

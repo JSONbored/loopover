@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — installation registry maintenance.
+// LoopOver Orb central GitHub App (#1255) — installation registry maintenance.
 //
 // Keeps orb_github_installations in sync with the App's `installation` lifecycle events (created /
 // new_permissions_accepted / suspend / unsuspend / deleted). A fast, idempotent upsert run synchronously

@@ -47,7 +47,7 @@ describe("handleAnalyticsProxy", () => {
       new Request("https://gittensory.aethereal.dev/stats/api/send", {
         method: "POST",
         headers: {
-          cookie: "gittensory_session=secret; gh_oauth_state=abc",
+          cookie: "loopover_session=secret; gh_oauth_state=abc",
           "cf-connecting-ip": "203.0.113.7",
         },
         body: "{}",

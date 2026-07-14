@@ -163,7 +163,7 @@ export function buildPullRequestAdvisory(
       code: "repo_not_registered",
       severity: "warning",
       title: "Repository registration is unknown",
-      detail: "Gittensory cannot evaluate repo-specific rules until registry data is available.",
+      detail: "LoopOver cannot evaluate repo-specific rules until registry data is available.",
       action: "Refresh the Gittensor registry snapshot.",
     });
   } else {
@@ -189,7 +189,7 @@ function addRepoFindings(repo: RepositoryRecord, findings: AdvisoryFinding[]): v
       code: "repo_unregistered",
       severity: "warning",
       title: "Repository is not registered in the latest snapshot",
-      detail: "This repository is installed in Gittensory, but the latest registry snapshot does not include it.",
+      detail: "This repository is installed in LoopOver, but the latest registry snapshot does not include it.",
       action: "Verify repository registration before relying on Gittensor-specific signals.",
     });
     return;
@@ -301,8 +301,8 @@ function addPullRequestFindings(
       code: "busy_pr_queue",
       severity: "info",
       title: "Review queue is busy",
-      detail: `Gittensory has ${otherOpenPullRequests.length} other open pull requests cached for this repository.`,
-      publicText: "This repo has a busy review queue in the local Gittensory cache.",
+      detail: `LoopOver has ${otherOpenPullRequests.length} other open pull requests cached for this repository.`,
+      publicText: "This repo has a busy review queue in the local LoopOver cache.",
     });
   }
   const multiplierPatterns = Object.keys(repo?.registryConfig?.labelMultipliers ?? {});

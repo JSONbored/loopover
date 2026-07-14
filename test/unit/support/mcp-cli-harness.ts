@@ -59,7 +59,7 @@ export function createPacketRepo() {
   const cwd = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
   git(cwd, "init");
   git(cwd, "config", "user.email", "test@example.com");
-  git(cwd, "config", "user.name", "Gittensory Test");
+  git(cwd, "config", "user.name", "LoopOver Test");
   git(cwd, "config", "commit.gpgsign", "false");
   git(cwd, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
   writeFileSync(join(cwd, "README.md"), "fixture\n");
@@ -335,7 +335,7 @@ export async function startFixtureServer(
           noiseSources: ["3 open PRs lack linked issue context."],
           maintainerActions: ["review_now"],
           queueHealth: { signals: { openPullRequests: 2 } },
-          summary: "Gittensory maintainer noise report for owner/repo: medium noise (score 42); 1 source(s) to triage.",
+          summary: "LoopOver maintainer noise report for owner/repo: medium noise (score 42); 1 source(s) to triage.",
         }),
       );
       return;

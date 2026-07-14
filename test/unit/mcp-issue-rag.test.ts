@@ -3,12 +3,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { validateIssueRagInput } from "../../src/mcp/issue-rag";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = new GittensoryMcp(env, identity).createServer();
+  const server = new LoopoverMcp(env, identity).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-issue-rag-test", version: "0.1.0" }, { capabilities: {} });
@@ -30,15 +30,15 @@ describe("validateIssueRagInput (#4293)", () => {
   });
 });
 
-describe("MCP gittensory_retrieve_issue_context", () => {
+describe("MCP loopover_retrieve_issue_context", () => {
   it("registers the tool and rejects invalid requests before authorization", async () => {
     const env = createTestEnv();
     const client = await connect(env);
     const { tools } = await client.listTools();
-    expect(tools.map((tool) => tool.name)).toContain("gittensory_retrieve_issue_context");
+    expect(tools.map((tool) => tool.name)).toContain("loopover_retrieve_issue_context");
 
     const invalid = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: { owner: "acme", repo: "widgets", title: "" },
     });
     expect(invalid.isError).toBeFalsy();
@@ -52,7 +52,7 @@ describe("MCP gittensory_retrieve_issue_context", () => {
     const env = createTestEnv();
     const client = await connect(env);
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: { owner: "acme", repo: "widgets", title: "Tiny" },
     });
     expect(result.isError).toBeFalsy();
@@ -68,7 +68,7 @@ describe("MCP gittensory_retrieve_issue_context", () => {
     const env = createTestEnv({ DB: ragDbStub(), VECTORIZE: vectorizeStub() as unknown as Vectorize, AI: aiStub() as unknown as Ai });
     const client = await connect(env);
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "acme",
         repo: "widgets",
@@ -94,7 +94,7 @@ describe("MCP gittensory_retrieve_issue_context", () => {
     const env = createTestEnv();
     const client = await connect(env);
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "acme",
         repo: "widgets",
@@ -126,7 +126,7 @@ describe("MCP gittensory_retrieve_issue_context", () => {
     });
     const client = await connect(env);
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "acme",
         repo: "widgets",
@@ -152,7 +152,7 @@ describe("MCP gittensory_retrieve_issue_context", () => {
     const client = await connect(env, { kind: "session", actor: "contributor-dev", session });
 
     const result = await client.callTool({
-      name: "gittensory_retrieve_issue_context",
+      name: "loopover_retrieve_issue_context",
       arguments: {
         owner: "victimco",
         repo: "private-roadmap",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runLoopOverAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import {
   aiCiRefutationActive,
@@ -147,7 +147,7 @@ describe("buildCheckAggregate maps gittensory check summaries → the grounding 
   });
 });
 
-// ── End-to-end: flag-gated prompt grounding through runGittensoryAiReview ─────────────────────────
+// ── End-to-end: flag-gated prompt grounding through runLoopOverAiReview ─────────────────────────
 
 describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROUNDING)", () => {
   it("FLAG-ON: the user prompt gains CI STATUS + FULL FILE CONTENT and the system prompt gains the grounding discipline", async () => {
@@ -163,7 +163,7 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
       checks: [check({ name: "build" }), check({ name: "test", id: "t" })],
       installationId: null,
     });
-    const result = await runGittensoryAiReview(env, { ...baseReviewInput, grounding });
+    const result = await runLoopOverAiReview(env, { ...baseReviewInput, grounding });
     expect(result.status).toBe("ok");
     const user = seenUser[0] ?? "";
     const system = seenSystem[0] ?? "";
@@ -206,7 +206,7 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
     const adv: Advisory = {
       id: "adv-g", targetType: "pull_request", targetKey: "acme/widgets#7", repoFullName: "acme/widgets",
       pullNumber: 7, headSha: "sha7", conclusion: "neutral", severity: "info",
-      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+      title: "LoopOver advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
     };
     try {
       const result = await runAiReviewForAdvisory(env, {
@@ -247,7 +247,7 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
     const adv: Advisory = {
       id: "adv-g2", targetType: "pull_request", targetKey: "acme/widgets#7", repoFullName: "acme/widgets",
       pullNumber: 7, headSha: "sha7", conclusion: "neutral", severity: "info",
-      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+      title: "LoopOver advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
     };
     try {
       const result = await runAiReviewForAdvisory(env, {
@@ -269,9 +269,9 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
     // With grounding undefined (the flag-OFF call site leaves it undefined), the prompt must equal the
     // no-grounding prompt — proving no section was appended.
     const off = capturingAiEnv(false);
-    await runGittensoryAiReview(off.env, { ...baseReviewInput, grounding: undefined });
+    await runLoopOverAiReview(off.env, { ...baseReviewInput, grounding: undefined });
     const none = capturingAiEnv(undefined);
-    await runGittensoryAiReview(none.env, baseReviewInput);
+    await runLoopOverAiReview(none.env, baseReviewInput);
 
     expect(off.seenUser[0]).not.toContain("CI STATUS");
     expect(off.seenUser[0]).not.toContain("FULL FILE CONTENT");

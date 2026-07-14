@@ -11,7 +11,7 @@ function RootLayout() {
       <header className="border-b-hairline px-6 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
           <div>
-            <p className="text-token-xs uppercase tracking-[0.2em] text-primary font-mono">Gittensory Miner</p>
+            <p className="text-token-xs uppercase tracking-[0.2em] text-primary font-mono">LoopOver Miner</p>
             <h1 className="text-token-lg font-display font-semibold">Local dashboard</h1>
           </div>
           <nav className="flex gap-4 text-token-sm text-muted-foreground">

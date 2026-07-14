@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import {
   MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
@@ -12,7 +12,7 @@ import {
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-notifications-test", version: "0.1.0" }, { capabilities: {} });
@@ -42,16 +42,16 @@ describe("MCP notification tools", () => {
     await seedDelivered(env, "miner", "k1");
     const client = await connect(env);
 
-    const list = await client.callTool({ name: "gittensory_list_notifications", arguments: { login: "miner" } });
+    const list = await client.callTool({ name: "loopover_list_notifications", arguments: { login: "miner" } });
     expect(list.isError).toBeFalsy();
     expect((list.structuredContent as { unreadCount: number }).unreadCount).toBe(1);
     expect(JSON.stringify(list.structuredContent)).not.toMatch(/wallet|hotkey|reward estimate|trust score/i);
 
-    const read = await client.callTool({ name: "gittensory_mark_notifications_read", arguments: { login: "miner" } });
+    const read = await client.callTool({ name: "loopover_mark_notifications_read", arguments: { login: "miner" } });
     expect(read.isError).toBeFalsy();
     expect((read.structuredContent as { marked: number }).marked).toBe(1);
 
-    const after = await client.callTool({ name: "gittensory_list_notifications", arguments: { login: "miner" } });
+    const after = await client.callTool({ name: "loopover_list_notifications", arguments: { login: "miner" } });
     expect((after.structuredContent as { unreadCount: number }).unreadCount).toBe(0);
   });
 
@@ -60,7 +60,7 @@ describe("MCP notification tools", () => {
     const client = await connect(env);
 
     const tooManyIds = await client.callTool({
-      name: "gittensory_mark_notifications_read",
+      name: "loopover_mark_notifications_read",
       arguments: {
         login: "miner",
         ids: Array.from({ length: MAX_NOTIFICATION_MARK_READ_IDS + 1 }, (_, index) => `id-${index}`),
@@ -69,13 +69,13 @@ describe("MCP notification tools", () => {
     expect(tooManyIds.isError).toBe(true);
 
     const tooLongId = await client.callTool({
-      name: "gittensory_mark_notifications_read",
+      name: "loopover_mark_notifications_read",
       arguments: { login: "miner", ids: ["x".repeat(MAX_NOTIFICATION_DELIVERY_ID_LENGTH + 1)] },
     });
     expect(tooLongId.isError).toBe(true);
   });
 
-  it("returns a contributor's own post-merge outcomes via gittensory_pr_outcome (#702)", async () => {
+  it("returns a contributor's own post-merge outcomes via loopover_pr_outcome (#702)", async () => {
     const env = createTestEnv();
     // Seed a merged-PR outcome + a changes-requested delivery; only the merge should surface as an outcome.
     await insertNotificationDeliveryIfAbsent(env, {
@@ -93,7 +93,7 @@ describe("MCP notification tools", () => {
     await seedDelivered(env, "miner", "changes-requested-1");
     const client = await connect(env);
 
-    const result = await client.callTool({ name: "gittensory_pr_outcome", arguments: { login: "miner" } });
+    const result = await client.callTool({ name: "loopover_pr_outcome", arguments: { login: "miner" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { count: number; outcomes: Array<{ repoFullName: string; pullNumber: number; outcome: string }> };
     expect(data.count).toBe(1);
@@ -105,7 +105,7 @@ describe("MCP notification tools", () => {
     const env = createTestEnv();
     const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
     const client = await connect(env, { kind: "session", actor: "miner", session });
-    const result = await client.callTool({ name: "gittensory_pr_outcome", arguments: { login: "other" } });
+    const result = await client.callTool({ name: "loopover_pr_outcome", arguments: { login: "other" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("authenticated GitHub login");
   });
@@ -116,11 +116,11 @@ describe("MCP notification tools", () => {
     const identity: AuthIdentity = { kind: "session", actor: "miner", session };
     const client = await connect(env, identity);
 
-    const list = await client.callTool({ name: "gittensory_list_notifications", arguments: { login: "other" } });
+    const list = await client.callTool({ name: "loopover_list_notifications", arguments: { login: "other" } });
     expect(list.isError).toBe(true);
     expect(JSON.stringify(list.content)).toContain("authenticated GitHub login");
 
-    const read = await client.callTool({ name: "gittensory_mark_notifications_read", arguments: { login: "other" } });
+    const read = await client.callTool({ name: "loopover_mark_notifications_read", arguments: { login: "other" } });
     expect(read.isError).toBe(true);
   });
 });

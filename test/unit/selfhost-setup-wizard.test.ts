@@ -33,7 +33,7 @@ describe("setup-wizard (#981 GitHub App Manifest)", () => {
     const html = renderSetupPage("https://gt.example.com", "nonce-abc");
     expect(html).toContain('action="https://github.com/settings/apps/new"');
     expect(html).toContain('name="manifest"');
-    expect(html).toContain("Gittensory Self-Host");
+    expect(html).toContain("LoopOver Self-Host");
     expect(html).toContain("nonce-abc"); // state is baked into the manifest value
   });
 

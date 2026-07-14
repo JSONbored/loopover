@@ -17,7 +17,7 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 The single **required** status check is **`validate`** (it aggregates `changes, lint, test, workers,
 mcp, ui, security`; a path-skipped job counts as success). **Codecov** posts `codecov/patch` (the real
 coverage gate) and `codecov/project` (informational) independently. The review engine also posts its
-own check run named **`Gittensory Orb Review Agent`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
+own check run named **`LoopOver Orb Review Agent`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
 verdict (§3), separate from CI. On a PR, jobs run only if their
 path filter matched; on push to `main`, everything runs.
 
@@ -157,7 +157,7 @@ All tools are metadata-only (no source upload). Run in this order:
    issueNumber, plannedChange}` → is the issue open, valid, single-owner, solvable by this PR.
 3. `loopover_check_slop_risk` — `{changedFiles[{path,additions,deletions}], description, tests,
    testFiles}` → band + findings.
-4. `gittensory_check_improvement_potential` — `{changedFiles?[{path,additions,deletions}], tests?,
+4. `loopover_check_improvement_potential` — `{changedFiles?[{path,additions,deletions}], tests?,
    testFiles?, patchCoverageDeltaPercent?, complexityDeltas?[{file,line,name,before,after,delta}],
    duplicationDeltas?[{file,line,duplicateOfLine,lines}]}` → improvementScore + band
    (insufficient-signal/none/minor/moderate/significant) + findings. The positive-axis mirror of
@@ -167,11 +167,11 @@ All tools are metadata-only (no source upload). Run in this order:
    strong/adequate/weak + specific fixes.
 6. `loopover_validate_config` — `{content, source?}` → normalized manifest fields,
    warnings, and ok/warn/error status.
-7. `gittensory_predict_gate` — `{login, owner, repo, title, body, labels, linkedIssues}` → predicted
+7. `loopover_predict_gate` — `{login, owner, repo, title, body, labels, linkedIssues}` → predicted
    conclusion + blockers + warnings + readiness score.
 
 (Auth'd extras: `loopover_preflight_pr` / `…_local_diff`
-for lane fit + collision + queue health; `gittensory_get_pr_ai_review_findings` — `{login, owner, repo,
+for lane fit + collision + queue health; `loopover_get_pr_ai_review_findings` — `{login, owner, repo,
 pullNumber}` → structured post-submission AI-review inline findings (category/path/severity) for your
 own PR.)
 

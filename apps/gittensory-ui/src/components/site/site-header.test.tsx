@@ -37,7 +37,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("./mcp-version-badge", () => ({ McpVersionBadge: () => null }));
-vi.mock("./mark", () => ({ GittensoryMark: () => null }));
+vi.mock("./mark", () => ({ LoopOverMark: () => null }));
 vi.mock("./command-palette", () => ({ CommandPalette: () => null }));
 vi.mock("./github-stats-chip", () => ({ GithubStatsChip: () => null }));
 vi.mock("./keyboard-shortcuts", () => ({ KeyboardShortcutsDialog: () => null }));

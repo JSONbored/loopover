@@ -1,6 +1,6 @@
 # @loopover/miner
 
-Foundation CLI for the local Gittensory miner runtime.
+Foundation CLI for the local LoopOver miner runtime.
 
 This package is the future home of the autonomous discover → analyze → plan → prepare → create → manage miner workflow. In this foundation phase it provides the package scaffold, a minimal CLI surface for `--help` and `--version`, and a non-blocking npm registry version nudge on startup.
 
@@ -238,18 +238,18 @@ loopover-miner-mcp
 
 It exposes these read-only tools:
 
-- `gittensory_miner_ping` (#5153) — a health check returning a static `{ "status": "ok", "tool": "gittensory_miner_ping" }` object. Reads no AMS state, takes no arguments.
-- `gittensory_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `loopover-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
-- `gittensory_miner_list_claims` (#5156) — lists the local claim ledger (repo, issue number, status, claimed-at, note) via `listClaims()`. Optional `repoFullName` / `status` filters pass through to the query. Read-only — exposes no claim/release mutation.
-- `gittensory_miner_get_audit_feed` (#5158) — read-only, metadata-only event-ledger audit feed (`eventType`, `repoFullName`, `outcome`, `actor`, `detail`, `createdAt`). Wraps `collectEventLedgerAuditFeed()` with the same filters as `loopover-miner ledger list` (`--repo`, `--since`, `--type`). Never returns `payload_json` or other raw ledger columns.
+- `loopover_miner_ping` (#5153) — a health check returning a static `{ "status": "ok", "tool": "loopover_miner_ping" }` object. Reads no AMS state, takes no arguments.
+- `loopover_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `loopover-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
+- `loopover_miner_list_claims` (#5156) — lists the local claim ledger (repo, issue number, status, claimed-at, note) via `listClaims()`. Optional `repoFullName` / `status` filters pass through to the query. Read-only — exposes no claim/release mutation.
+- `loopover_miner_get_audit_feed` (#5158) — read-only, metadata-only event-ledger audit feed (`eventType`, `repoFullName`, `outcome`, `actor`, `detail`, `createdAt`). Wraps `collectEventLedgerAuditFeed()` with the same filters as `loopover-miner ledger list` (`--repo`, `--since`, `--type`). Never returns `payload_json` or other raw ledger columns.
 
-- `gittensory_miner_get_run_state` (#5160) — read-only per-repo run-state (`idle` / `discovering` / `planning` / `preparing`) via `getRunState` / `listRunStates`. Pass `repoFullName` for one repo (a null state means none recorded yet), or omit it to list all. The read-only analog of ORB's `gittensory_get_automation_state`; adds no state-set mutation.
+- `loopover_miner_get_run_state` (#5160) — read-only per-repo run-state (`idle` / `discovering` / `planning` / `preparing`) via `getRunState` / `listRunStates`. Pass `repoFullName` for one repo (a null state means none recorded yet), or omit it to list all. The read-only analog of ORB's `loopover_get_automation_state`; adds no state-set mutation.
 
-- `gittensory_miner_list_plans` / `gittensory_miner_get_plan` (#5161) — read-only access to the persisted plan store (`planId`, plan DAG, status, `updatedAt`) via `listPlans` / `loadPlan`; `list_plans` takes an optional `status` filter, `get_plan` takes a `planId` and returns an explicit `{ planId, found: false }` for an unknown id. These read the store-backed AMS plan store — distinct from ORB's stateless `gittensory_plan_status` tool.
+- `loopover_miner_list_plans` / `loopover_miner_get_plan` (#5161) — read-only access to the persisted plan store (`planId`, plan DAG, status, `updatedAt`) via `listPlans` / `loadPlan`; `list_plans` takes an optional `status` filter, `get_plan` takes a `planId` and returns an explicit `{ planId, found: false }` for an unknown id. These read the store-backed AMS plan store — distinct from ORB's stateless `loopover_plan_status` tool.
 
-- `gittensory_miner_get_governor_decisions` (#5159) — read-only projection of the governor decision log (`id`, `ts`, `eventType`, `repoFullName`, `actionClass`, `decision`, `reason`), optionally filtered by `repoFullName`. The projection **excludes the sensitive `payload_json` column by construction** — `governor-ledger.js` reads it with an explicit named-column SELECT, never `SELECT *`.
+- `loopover_miner_get_governor_decisions` (#5159) — read-only projection of the governor decision log (`id`, `ts`, `eventType`, `repoFullName`, `actionClass`, `decision`, `reason`), optionally filtered by `repoFullName`. The projection **excludes the sensitive `payload_json` column by construction** — `governor-ledger.js` reads it with an explicit named-column SELECT, never `SELECT *`.
 
-- `gittensory_miner_status` (#5154) — read-only status + doctor diagnostics, returning `{ status, doctor }`: `status` = package/engine versions (and skew), node version, state-dir + config-file paths, and the resolved coding-agent driver (provider name, the model **env-var NAME** never its value, CLI-present boolean); `doctor` = the checks `loopover-miner doctor` runs (Docker/CLI presence, config validity, …) as `{ name, ok, detail }`. Reuses `collectStatus` / `runDoctorChecks` so it can't drift from the CLI, and returns only names / booleans / paths — never any env-var value, token, or credential.
+- `loopover_miner_status` (#5154) — read-only status + doctor diagnostics, returning `{ status, doctor }`: `status` = package/engine versions (and skew), node version, state-dir + config-file paths, and the resolved coding-agent driver (provider name, the model **env-var NAME** never its value, CLI-present boolean); `doctor` = the checks `loopover-miner doctor` runs (Docker/CLI presence, config validity, …) as `{ name, ok, detail }`. Reuses `collectStatus` / `runDoctorChecks` so it can't drift from the CLI, and returns only names / booleans / paths — never any env-var value, token, or credential.
 
 This completes the read-only AMS MCP tool surface (status, portfolio, claims, event-ledger, governor-ledger, run-state, plan-store).
 
@@ -272,7 +272,7 @@ This completes the read-only AMS MCP tool surface (status, portfolio, claims, ev
 }
 ```
 
-`gittensory` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs). `loopover-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans) — a fully separate, 100% local tool surface with no shared code or network calls between the two. Both follow the same `gittensory_*` tool-naming convention (`gittensory_...` vs. `gittensory_miner_...`), but back onto different stores: ORB's tools read the hosted gittensory backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `gittensory_miner_get_run_state` is the read-only analog of `gittensory_get_automation_state`) so the relationship is explicit at the point of use, not just here.
+`gittensory` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs). `loopover-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans) — a fully separate, 100% local tool surface with no shared code or network calls between the two. Both follow the same `loopover_*` tool-naming convention (`loopover_...` vs. `loopover_miner_...`), but back onto different stores: ORB's tools read the hosted gittensory backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `loopover_miner_get_run_state` is the read-only analog of `loopover_get_automation_state`) so the relationship is explicit at the point of use, not just here.
 
 ## Version check
 

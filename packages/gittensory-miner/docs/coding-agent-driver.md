@@ -1,6 +1,6 @@
 # CodingAgentDriver — the miner's coding-agent seam
 
-`CodingAgentDriver` is the single interface a Gittensory miner runs a coding agent through. It lets the miner drive
+`CodingAgentDriver` is the single interface a LoopOver miner runs a coding agent through. It lets the miner drive
 **either** a local CLI subprocess (e.g. `claude` / `codex`) **or** an in-process Agent SDK `query()` loop behind one
 provider-agnostic contract, so the rest of the miner — planning, attempt logging, metering, gate polling — never
 has to know which backend actually did the work.

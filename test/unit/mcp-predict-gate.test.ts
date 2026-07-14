@@ -1,14 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import { setLocalManifestReader, upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-predict-gate-test", version: "0.1.0" }, { capabilities: {} });
@@ -16,7 +16,7 @@ async function connect(env: Env, identity?: AuthIdentity) {
   return client;
 }
 
-describe("MCP gittensory_predict_gate", () => {
+describe("MCP loopover_predict_gate", () => {
   afterEach(() => setLocalManifestReader(null));
   it("predicts the gate from public config on an unregistered repo under oss-anti-slop", async () => {
     const env = createTestEnv();
@@ -27,7 +27,7 @@ describe("MCP gittensory_predict_gate", () => {
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       // Pass body + labels + linkedIssues so the optional-field plumbing is exercised.
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", body: "Improves upload reliability.", labels: ["enhancement"], linkedIssues: [] },
     });
@@ -40,7 +40,7 @@ describe("MCP gittensory_predict_gate", () => {
 
     // Also works with only the required fields (optional body/labels/linkedIssues omitted).
     const minimal = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Minimal self-check" },
     });
     expect(minimal.isError).toBeFalsy();
@@ -52,7 +52,7 @@ describe("MCP gittensory_predict_gate", () => {
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Huge path", changedPaths: [`src/${"a".repeat(301)}.ts`] },
     });
 
@@ -69,7 +69,7 @@ describe("MCP gittensory_predict_gate", () => {
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Build output", changedPaths: ["dist/bundle.js"] },
     });
     expect(result.isError).toBeFalsy();
@@ -104,7 +104,7 @@ testExpectations:
     const client = await connect(env);
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Public config only", linkedIssues: [] },
     });
 
@@ -143,7 +143,7 @@ testExpectations:
       const client = await connect(env);
 
       const result = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
       });
       expect(result.isError).toBeFalsy();
@@ -163,7 +163,7 @@ testExpectations:
       const client = await connect(env);
 
       const result = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
       });
       expect(result.isError).toBeFalsy();
@@ -190,7 +190,7 @@ testExpectations:
       const client = await connect(env);
 
       const result = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client", linkedIssues: [] },
       });
       expect(result.isError).toBeFalsy();
@@ -209,7 +209,7 @@ testExpectations:
     const client = await connect(env, { kind: "session", actor: "miner1", session });
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "miner1", owner: "victimco", repo: "private-roadmap", title: "Probe private repo" },
     });
     expect(result.isError).toBe(true);
@@ -222,7 +222,7 @@ testExpectations:
     const client = await connect(env, { kind: "session", actor: "miner1", session });
 
     const result = await client.callTool({
-      name: "gittensory_predict_gate",
+      name: "loopover_predict_gate",
       arguments: { login: "someone-else", owner: "acme", repo: "widgets", title: "x" },
     });
     expect(result.isError).toBe(true);
@@ -240,7 +240,7 @@ testExpectations:
       const client = await connect(env);
 
       await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
 
@@ -249,12 +249,12 @@ testExpectations:
       expect(rows[0]).toMatchObject({ login: "miner1", project: "acme/widgets" });
     });
 
-    it("also records from gittensory_explain_gate_disposition (both tools share computePredictedGateVerdict)", async () => {
+    it("also records from loopover_explain_gate_disposition (both tools share computePredictedGateVerdict)", async () => {
       const env = createTestEnv();
       const client = await connect(env);
 
       await client.callTool({
-        name: "gittensory_explain_gate_disposition",
+        name: "loopover_explain_gate_disposition",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
 
@@ -267,7 +267,7 @@ testExpectations:
       const client = await connect(env);
 
       await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "miner1", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
 
@@ -295,11 +295,11 @@ testExpectations:
       const client = await connect(env);
 
       const fresh = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "fresh-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
       const weak = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "shaky-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
 
@@ -317,7 +317,7 @@ testExpectations:
       const client = await connect(env);
 
       const result = await client.callTool({
-        name: "gittensory_predict_gate",
+        name: "loopover_predict_gate",
         arguments: { login: "shaky-miner", owner: "acme", repo: "widgets", title: "Add retry to upload client" },
       });
 

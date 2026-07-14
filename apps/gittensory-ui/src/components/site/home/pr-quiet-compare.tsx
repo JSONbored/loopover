@@ -28,7 +28,7 @@ export function PrQuietCompare() {
           variant="loud"
         />
       </Panel>
-      <Panel label="After — Gittensory">
+      <Panel label="After — LoopOver">
         <ul className="divide-y divide-border border-t border-border">
           {QUIET.map((c) => (
             <Row key={c.name} {...c} />

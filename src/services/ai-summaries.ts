@@ -63,8 +63,8 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
           role: "system",
           content:
             visibility === "public"
-              ? "Summarize deterministic Gittensory signals for a public GitHub comment. Do not mention rewards, rankings, payouts, wallets, hotkeys, raw trust scores, scoreability, or reviewability."
-              : "Summarize deterministic Gittensory signals for an authenticated MCP/API user. Be concise and preserve scoreability blockers and next actions.",
+              ? "Summarize deterministic LoopOver signals for a public GitHub comment. Do not mention rewards, rankings, payouts, wallets, hotkeys, raw trust scores, scoreability, or reviewability."
+              : "Summarize deterministic LoopOver signals for an authenticated MCP/API user. Be concise and preserve scoreability blockers and next actions.",
         },
         { role: "user", content: prompt },
       ],
@@ -156,7 +156,7 @@ function sanitizePublicPromptText(value: string): string {
 function buildPrompt(signalBundle: Record<string, JsonValue>, visibility: AiSummaryVisibility): string {
   return [
     `Visibility: ${visibility}`,
-    "Summarize this deterministic Gittensory signal bundle in 4 short bullets.",
+    "Summarize this deterministic LoopOver signal bundle in 4 short bullets.",
     "Do not invent facts or claim guaranteed outcomes.",
     JSON.stringify(signalBundle),
   ].join("\n");
@@ -367,14 +367,14 @@ export async function rewritePublicPrIntelligenceComment(
     bundle: args.bundle,
     fallbackText: args.deterministicBody,
     instructions:
-      "Rewrite this deterministic Gittensory PR signal bundle as a short, friendly public GitHub comment with 3-5 bullet points. Only restate the facts provided. Never mention rewards, rankings, payouts, wallets, hotkeys, raw or estimated trust scores, score estimates, scoreability, reviewability, or farming, and never claim a guaranteed outcome.",
+      "Rewrite this deterministic LoopOver PR signal bundle as a short, friendly public GitHub comment with 3-5 bullet points. Only restate the facts provided. Never mention rewards, rankings, payouts, wallets, hotkeys, raw or estimated trust scores, score estimates, scoreability, reviewability, or farming, and never claim a guaranteed outcome.",
     actor: args.actor,
     route: args.route,
   });
   if (outcome.status !== "ok") return { body: args.deterministicBody, outcome };
   const body = [
     PR_INTELLIGENCE_MARKER,
-    "## Gittensory contribution context",
+    "## LoopOver contribution context",
     "",
     "_AI-clarified from deterministic public GitHub metadata. Deterministic signals remain authoritative; this is not an endorsement._",
     "",
@@ -386,7 +386,7 @@ export async function rewritePublicPrIntelligenceComment(
 function buildBundlePrompt(signalBundle: Record<string, JsonValue>, visibility: AiSummaryVisibility): string {
   return [
     `Visibility: ${visibility}`,
-    "Summarize this deterministic Gittensory signal bundle clearly and concisely.",
+    "Summarize this deterministic LoopOver signal bundle clearly and concisely.",
     "Do not invent facts or claim guaranteed outcomes.",
     JSON.stringify(signalBundle),
   ].join("\n");

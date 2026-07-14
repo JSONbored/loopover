@@ -85,8 +85,8 @@ describe("MCP resource discovery", () => {
   it("discovers all expected resources", async () => {
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri);
-    expect(uris).toContain("gittensory://changelog");
-    expect(uris).toContain("gittensory://compatibility");
+    expect(uris).toContain("loopover://changelog");
+    expect(uris).toContain("loopover://compatibility");
   });
 
   it("resource descriptions do not expose forbidden public terms", async () => {
@@ -100,11 +100,11 @@ describe("MCP resource discovery", () => {
   it("does not expose deterministic slop weights as a discoverable resource", async () => {
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri);
-    expect(uris).not.toContain("gittensory://slop-rules");
+    expect(uris).not.toContain("loopover://slop-rules");
   });
 
   it("can read the changelog resource without authentication", async () => {
-    const result = await client.readResource({ uri: "gittensory://changelog" });
+    const result = await client.readResource({ uri: "loopover://changelog" });
     expect(result.contents).toHaveLength(1);
     const content = result.contents[0];
     expect(content?.mimeType).toBe("text/markdown");
@@ -114,7 +114,7 @@ describe("MCP resource discovery", () => {
   });
 
   it("can read the compatibility resource and get structured JSON", async () => {
-    const result = await client.readResource({ uri: "gittensory://compatibility" });
+    const result = await client.readResource({ uri: "loopover://compatibility" });
     expect(result.contents).toHaveLength(1);
     const content = result.contents[0];
     expect(content?.mimeType).toBe("application/json");
@@ -126,7 +126,7 @@ describe("MCP resource discovery", () => {
   it("decision-pack resource template is discoverable", async () => {
     const { resourceTemplates } = await client.listResourceTemplates();
     const names = resourceTemplates.map((t) => t.name);
-    expect(names).toContain("gittensory_decision_pack");
+    expect(names).toContain("loopover_decision_pack");
   });
 });
 
@@ -137,21 +137,21 @@ describe("MCP prompt discovery", () => {
   it("discovers all expected miner planning prompts", async () => {
     const { prompts } = await client.listPrompts();
     const names = prompts.map((p) => p.name);
-    expect(names).toContain("gittensory_miner_select_issue");
-    expect(names).toContain("gittensory_miner_draft_pr_packet");
-    expect(names).toContain("gittensory_miner_branch_preflight");
-    expect(names).toContain("gittensory_miner_cleanup_first");
+    expect(names).toContain("loopover_miner_select_issue");
+    expect(names).toContain("loopover_miner_draft_pr_packet");
+    expect(names).toContain("loopover_miner_branch_preflight");
+    expect(names).toContain("loopover_miner_cleanup_first");
   });
 
   it("discovers all expected maintainer and repo-owner prompts", async () => {
     const { prompts } = await client.listPrompts();
     const names = prompts.map((p) => p.name);
-    expect(names).toContain("gittensory_maintainer_queue_triage");
-    expect(names).toContain("gittensory_maintainer_review_prep");
-    expect(names).toContain("gittensory_maintainer_public_guidance");
-    expect(names).toContain("gittensory_repo_owner_intake_readiness");
-    expect(names).toContain("gittensory_repo_owner_focus_manifest_review");
-    expect(names).toContain("gittensory_repo_owner_onboarding_pack");
+    expect(names).toContain("loopover_maintainer_queue_triage");
+    expect(names).toContain("loopover_maintainer_review_prep");
+    expect(names).toContain("loopover_maintainer_public_guidance");
+    expect(names).toContain("loopover_repo_owner_intake_readiness");
+    expect(names).toContain("loopover_repo_owner_focus_manifest_review");
+    expect(names).toContain("loopover_repo_owner_onboarding_pack");
   });
 
   it("prompt descriptions do not expose forbidden public terms", async () => {
@@ -165,19 +165,19 @@ describe("MCP prompt discovery", () => {
   it("miner prompts require expected arguments", async () => {
     const { prompts } = await client.listPrompts();
 
-    const selectIssue = prompts.find((p) => p.name === "gittensory_miner_select_issue");
+    const selectIssue = prompts.find((p) => p.name === "loopover_miner_select_issue");
     const argNames = selectIssue?.arguments?.map((a) => a.name) ?? [];
     expect(argNames).toContain("repoFullName");
     expect(argNames).toContain("login");
 
-    const cleanupFirst = prompts.find((p) => p.name === "gittensory_miner_cleanup_first");
+    const cleanupFirst = prompts.find((p) => p.name === "loopover_miner_cleanup_first");
     const cleanupArgs = cleanupFirst?.arguments?.map((a) => a.name) ?? [];
     expect(cleanupArgs).toContain("login");
   });
 
   it("maintainer review prep prompt requires pullNumber and repoFullName arguments", async () => {
     const { prompts } = await client.listPrompts();
-    const reviewPrep = prompts.find((p) => p.name === "gittensory_maintainer_review_prep");
+    const reviewPrep = prompts.find((p) => p.name === "loopover_maintainer_review_prep");
     const argNames = reviewPrep?.arguments?.map((a) => a.name) ?? [];
     expect(argNames).toContain("repoFullName");
     expect(argNames).toContain("pullNumber");
@@ -189,7 +189,7 @@ describe("MCP prompt content safety", () => {
   afterEach(disconnect);
 
   it("miner select-issue prompt text enforces no-write and no-credential boundaries", async () => {
-    const result = await client.getPrompt({ name: "gittensory_miner_select_issue", arguments: { repoFullName: "owner/repo", login: "dev" } });
+    const result = await client.getPrompt({ name: "loopover_miner_select_issue", arguments: { repoFullName: "owner/repo", login: "dev" } });
     const text = result.messages.map((m) => (typeof m.content === "object" && "text" in m.content ? m.content.text : "")).join("\n");
     expect(text).toMatch(/do not open|do not.*comment|do not.*label|do not.*close|do not.*merge/i);
     expect(text).toMatch(/do not request wallet|do not request.*hotkey|do not request.*coldkey/i);
@@ -197,14 +197,14 @@ describe("MCP prompt content safety", () => {
   });
 
   it("miner cleanup-first prompt text enforces no-write boundary", async () => {
-    const result = await client.getPrompt({ name: "gittensory_miner_cleanup_first", arguments: { login: "dev" } });
+    const result = await client.getPrompt({ name: "loopover_miner_cleanup_first", arguments: { login: "dev" } });
     const text = result.messages.map((m) => (typeof m.content === "object" && "text" in m.content ? m.content.text : "")).join("\n");
     expect(text).toMatch(/do not close|do not.*comment|do not.*merge/i);
     expect(text).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
 
   it("maintainer queue triage prompt enforces no-autonomous-write boundary", async () => {
-    const result = await client.getPrompt({ name: "gittensory_maintainer_queue_triage", arguments: { repoFullName: "owner/repo" } });
+    const result = await client.getPrompt({ name: "loopover_maintainer_queue_triage", arguments: { repoFullName: "owner/repo" } });
     const text = result.messages.map((m) => (typeof m.content === "object" && "text" in m.content ? m.content.text : "")).join("\n");
     expect(text).toMatch(/do not post|do not.*merge|do not.*label/i);
     expect(text).toMatch(/do not expose.*private|no.*private scoreability|no.*raw trust/i);
@@ -212,7 +212,7 @@ describe("MCP prompt content safety", () => {
   });
 
   it("maintainer public guidance prompt forbids compensation language and autonomous posting", async () => {
-    const result = await client.getPrompt({ name: "gittensory_maintainer_public_guidance", arguments: { repoFullName: "owner/repo", contributorLogin: "dev" } });
+    const result = await client.getPrompt({ name: "loopover_maintainer_public_guidance", arguments: { repoFullName: "owner/repo", contributorLogin: "dev" } });
     const text = result.messages.map((m) => (typeof m.content === "object" && "text" in m.content ? m.content.text : "")).join("\n");
     expect(text).toMatch(/do not post.*autonomously|present it for/i);
     expect(text).toMatch(/no compensation language/i);
@@ -220,7 +220,7 @@ describe("MCP prompt content safety", () => {
   });
 
   it("repo-owner prompts forbid autonomous repo edits and private data exposure", async () => {
-    for (const name of ["gittensory_repo_owner_intake_readiness", "gittensory_repo_owner_focus_manifest_review", "gittensory_repo_owner_onboarding_pack"]) {
+    for (const name of ["loopover_repo_owner_intake_readiness", "loopover_repo_owner_focus_manifest_review", "loopover_repo_owner_onboarding_pack"]) {
       const result = await client.getPrompt({ name, arguments: { repoFullName: "owner/repo" } });
       const text = result.messages.map((m) => (typeof m.content === "object" && "text" in m.content ? m.content.text : "")).join("\n");
       expect(text).toMatch(/do not autonomously|do not.*push|present.*manually/i);

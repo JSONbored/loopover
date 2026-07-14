@@ -1,5 +1,5 @@
 // Gated-submission trigger (#2336): THE safety-critical chokepoint of Phase 4 -- the actual decision point
-// that decides "call gittensory_open_pr NOW" for an autonomous run. Conservatively requires BOTH a predicted-
+// that decides "call loopover_open_pr NOW" for an autonomous run. Conservatively requires BOTH a predicted-
 // gate PASS AND a slop score under a configurable threshold before a local-write open_pr action spec is ever
 // built. Any ambiguity (a missing/errored signal) resolves to NOT submitting -- this function never defaults
 // to allow.
@@ -9,7 +9,7 @@
 // redundant: this gates on CONTENT-QUALITY signals (predicted-gate conclusion, slop risk) specific to the
 // candidate diff; the chokepoint gates on RESOURCE/GOVERNANCE signals (rate-limit, budget, reputation, self-
 // plagiarism, dry-run mode) that apply to every write action class, not just open_pr. "The actual call site
-// invoking buildOpenPrSpec / gittensory_open_pr is gated exclusively through this function" (this issue's own
+// invoking buildOpenPrSpec / loopover_open_pr is gated exclusively through this function" (this issue's own
 // deliverable) is a POLICY this and every future call site must honor -- wiring a real call site is a later,
 // separate issue (mirrors #2333/#2335's own split between loop mechanics and policy).
 //
@@ -101,7 +101,7 @@ function evaluateSubmissionSignals(candidate: SubmissionGateCandidate): string[]
 }
 
 /**
- * THE gate: build (or invoke) `gittensory_open_pr`'s action spec ONLY when this returns `allow: true`. Requires
+ * THE gate: build (or invoke) `loopover_open_pr`'s action spec ONLY when this returns `allow: true`. Requires
  * BOTH a clean predicted-gate pass AND a slop band at or under the configured threshold; any missing signal, or
  * `mode: "observe"`, forces `allow: false`. The kill-switch is checked FIRST, before any other logic -- an
  * active kill-switch blocks unconditionally, regardless of otherwise-passing signals. Pure; identical inputs

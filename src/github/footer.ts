@@ -17,7 +17,7 @@ export const GITTENSORY_SITE_URL = "https://loopover.ai";
  *  `maintainerControlPanelUrl` already narrows its own `env` param inline -- so every file that renders
  *  the footer only has to thread this one field down from wherever the real `Env` is in scope, not the
  *  whole worker binding type. */
-export type GittensoryFooterEnv = { PUBLIC_SITE_ORIGIN?: string | undefined };
+export type LoopOverFooterEnv = { PUBLIC_SITE_ORIGIN?: string | undefined };
 
 /** The maintainer control panel for a repo on the LoopOver site (`/app?view=maintainer&repo=…`). Used as the
  *  check-run `details_url` so the merge-box "Details" link lands on the repo's review panel instead of GitHub's
@@ -41,7 +41,7 @@ export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | u
  *  both resolve correctly instead of risking a double slash from naive concatenation. Falls back to the
  *  literal path string only if origin resolution itself throws (an operator-misconfigured PUBLIC_SITE_ORIGIN
  *  should degrade the link, not crash comment rendering). */
-export function commandReferenceUrl(env: GittensoryFooterEnv): string {
+export function commandReferenceUrl(env: LoopOverFooterEnv): string {
   const origin = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
   try {
     return new URL("/docs/gittensory-commands", origin).toString();
@@ -68,7 +68,7 @@ export function gittensorRepoEarnUrl(repoFullName: string): string {
  *  `env.PUBLIC_SITE_ORIGIN` (same resolution as `maintainerControlPanelUrl` above) lets a self-hoster's
  *  own domain replace `GITTENSORY_SITE_URL` in the "Checked by LoopOver" attribution link (#4613) --
  *  the Gittensor register link (`GITTENSOR_HOME_URL`) is a separate, shared network and is never rebranded. */
-export function gittensoryFooter(env: GittensoryFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
+export function gittensoryFooter(env: LoopOverFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
   const siteUrl = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
   const earnUrl = opts.earnUrl ?? GITTENSOR_HOME_URL;
   // Maintainer-customized footer (via `.gittensory.yml review.footer.text`): the maintainer's public-safe

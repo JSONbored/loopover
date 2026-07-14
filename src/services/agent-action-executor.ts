@@ -886,7 +886,7 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       return;
     case "approve": {
       if (action.dismissStaleApproval) {
-        await dismissLatestBotApproval(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "Gittensory retracted this approval — a newer commit no longer qualifies.");
+        await dismissLatestBotApproval(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, "LoopOver retracted this approval — a newer commit no longer qualifies.");
         return;
       }
       // Pin the approve to the REVIEWED head (#2262), mirroring the merge case's identical pattern immediately
@@ -1016,7 +1016,7 @@ async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, acti
     eventType: "agent.pending_action",
     repoFullName: ctx.repoFullName,
     pullNumber: ctx.pullNumber,
-    title: `Gittensory staged a ${action.actionClass.replace(/_/g, " ")} for your approval`,
+    title: `LoopOver staged a ${action.actionClass.replace(/_/g, " ")} for your approval`,
     body: `${action.reason}. Accept to execute it, or reject to cancel.`,
     deeplink: `https://github.com/${ctx.repoFullName}/pull/${ctx.pullNumber}`,
     actorLogin: AGENT_ACTOR,

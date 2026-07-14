@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AI_SLOP_FINDING_CODE,
   __aiSlopInternals,
-  runGittensoryAiSlopAdvisory,
+  runLoopOverAiSlopAdvisory,
   type AiSlopInput,
 } from "../../src/services/ai-slop";
 import { evaluateGateCheck } from "../../src/rules/advisory";
@@ -134,23 +134,23 @@ describe("buildUserPrompt", () => {
   });
 });
 
-describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
+describe("runLoopOverAiSlopAdvisory gating + fail-safe", () => {
   it("is disabled until both AI flags are on, and never calls the model", async () => {
     const run = vi.fn();
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true" });
-    await expect(runGittensoryAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "disabled" });
+    await expect(runLoopOverAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "disabled" });
     expect(run).not.toHaveBeenCalled();
   });
 
   it("reports unavailable when the Workers AI binding is missing", async () => {
     const env = createTestEnv({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true" });
-    await expect(runGittensoryAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "unavailable" });
+    await expect(runLoopOverAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "unavailable" });
   });
 
   it("enforces the shared daily neuron budget before calling the model", async () => {
     const run = vi.fn();
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
-    await expect(runGittensoryAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "quota_exceeded" });
+    await expect(runLoopOverAiSlopAdvisory(env, baseInput)).resolves.toMatchObject({ status: "quota_exceeded" });
     expect(run).not.toHaveBeenCalled();
   });
 
@@ -163,7 +163,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
       AI_DAILY_NEURON_BUDGET: "1",
     });
 
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
 
     expect(result).toMatchObject({ status: "quota_exceeded" });
     expect(run).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "2000000" });
     // Prior shared spend of 1.5M neurons — OVER the old 1M ceiling, well under the 2M shared budget.
     await recordAiUsageEvent(env, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 1_500_000 });
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
     expect(result.status).not.toBe("quota_exceeded"); // the old clamp(2M, 0, 1M) = 1M budget → quota_exceeded at 1.5M used
     expect(run).toHaveBeenCalled();
   });
@@ -186,7 +186,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     const env = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "" });
     // 2M prior spend — OVER the old 10k default, under the 10M default the fix uses.
     await recordAiUsageEvent(env, { feature: "ai_review", model: "m", status: "ok", estimatedNeurons: 2_000_000 });
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
     expect(result.status).not.toBe("quota_exceeded"); // the old `|| 10000` default → quota_exceeded at 2M used
     expect(run).toHaveBeenCalled();
   });
@@ -194,7 +194,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
   it("records the pre-budgeted retry and fallback estimate when all Workers AI outputs are unusable", async () => {
     const run = vi.fn(async () => ({ response: "not json" }));
     const env = enabledEnv(run);
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
 
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
@@ -214,13 +214,13 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
     });
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
     expect(result).toMatchObject({ status: "ok", finding: null, band: null });
   });
 
   it("returns an advisory finding when the model flags an elevated band", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
-    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    const result = await runLoopOverAiSlopAdvisory(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.band).toBe("elevated");
@@ -230,7 +230,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
   it("records the REAL reported model, not the hardcoded fallback label, when the provider reports one (2026-07 fix)", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }), usage: { provider: "ollama", model: "qwen3:8b" } }));
     const env = enabledEnv(run);
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
     expect(result.status).toBe("ok");
 
     const row = await env.DB.prepare("select model, provider from ai_usage_events where feature = ? order by rowid desc limit 1")
@@ -242,7 +242,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
   it("falls back to the hardcoded model label when the provider reports no usage/model at all", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
     const env = enabledEnv(run);
-    const result = await runGittensoryAiSlopAdvisory(env, baseInput);
+    const result = await runLoopOverAiSlopAdvisory(env, baseInput);
     expect(result.status).toBe("ok");
 
     const row = await env.DB.prepare("select model from ai_usage_events where feature = ? order by rowid desc limit 1")
@@ -253,7 +253,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
 
   it("returns no finding when the model judges the change clean", async () => {
     const run = vi.fn(async () => ({ response: slopJson({ band: "clean", rationale: "genuine effort", signals: [] }) }));
-    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    const result = await runLoopOverAiSlopAdvisory(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.band).toBe("clean");
@@ -264,7 +264,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     const run = vi.fn(async () => {
       throw new Error("model exploded");
     });
-    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    const result = await runLoopOverAiSlopAdvisory(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.finding).toBeNull();
@@ -275,7 +275,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     const run = vi.fn(async () => {
       throw new Error("claude_code_error_429");
     });
-    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    const result = await runLoopOverAiSlopAdvisory(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.finding).toBeNull();
@@ -287,7 +287,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
 
   it("falls back to the reliable model when the primary keeps returning garbage", async () => {
     const run = vi.fn(async (model: string) => ({ response: model.includes("gpt-oss") ? "not json" : slopJson({ band: "low" }) }));
-    const result = await runGittensoryAiSlopAdvisory(enabledEnv(run), baseInput);
+    const result = await runLoopOverAiSlopAdvisory(enabledEnv(run), baseInput);
     expect(result.status).toBe("ok");
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.band).toBe("low");
@@ -301,7 +301,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
     const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     // Free budget is exhausted (1 neuron) but BYOK skips it; the BYOK cap is what stops the call.
-    const result = await runGittensoryAiSlopAdvisory(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
+    const result = await runLoopOverAiSlopAdvisory(env, { ...baseInput, providerKey: { provider: "anthropic", key: "sk-ant-x" } });
     expect(result.status).toBe("quota_exceeded");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
@@ -322,7 +322,7 @@ describe("runGittensoryAiSlopAdvisory gating + fail-safe", () => {
       ),
     );
     const env = enabledEnv(vi.fn());
-    const result = await runGittensoryAiSlopAdvisory(env, {
+    const result = await runLoopOverAiSlopAdvisory(env, {
       ...baseInput,
       providerKey: { provider: "anthropic", key: "sk-ant-x", model: "claude-sonnet-5" },
     });
@@ -360,7 +360,7 @@ describe("the AI slop advisory can never become a gate blocker", () => {
       headSha: "sha7",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: [slopFindingFromOpinion({ band: "high", rationale: "looks low effort", signals: ["padding"] })!],
       generatedAt: "2026-06-14T00:00:00.000Z",
@@ -397,7 +397,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       headSha: "sha3",
       conclusion: "neutral",
       severity: "info",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "ok",
       findings: [],
       generatedAt: "2026-06-14T00:00:00.000Z",

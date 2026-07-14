@@ -3,14 +3,14 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { ENRICHMENT_ANALYZERS_URI } from "../../src/review/enrichment-analyzers-taxonomy";
 import { createTestEnv } from "../helpers/d1";
 
 const metadataPath = join(process.cwd(), "review-enrichment/analyzer-metadata.json");
 
 async function connectTestClient() {
-  const mcpServer = new GittensoryMcp(createTestEnv()).createServer();
+  const mcpServer = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-enrichment-analyzers-test", version: "0.1.0" }, { capabilities: {} });

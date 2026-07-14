@@ -11,7 +11,7 @@ import { buildAiReviewDiff } from "../review/review-diff";
 import { aiSlopCacheInputFingerprint } from "../review/ai-slop-cache-input";
 import { withAdvisoryAiEnv } from "../selfhost/ai";
 import { incr } from "../selfhost/metrics";
-import { runGittensoryAiSlopAdvisory } from "../services/ai-slop";
+import { runLoopOverAiSlopAdvisory } from "../services/ai-slop";
 import type { AgentActionMode } from "../settings/agent-execution";
 import type { SlopBand } from "../signals/slop";
 import type { RepositorySettings } from "../types";
@@ -110,7 +110,7 @@ export async function runAiSlopForAdvisory(
       model: providerKey?.model,
     });
     const cachedSlop = await getCachedAiSlopAdvisory(env, args.repoFullName, args.pr.number, args.advisory.headSha, inputFingerprint).catch(() => null);
-    let result: Awaited<ReturnType<typeof runGittensoryAiSlopAdvisory>>;
+    let result: Awaited<ReturnType<typeof runLoopOverAiSlopAdvisory>>;
     if (cachedSlop) {
       result = { status: "ok", finding: cachedSlop.finding, band: cachedSlop.band as SlopBand | null, estimatedNeurons: cachedSlop.estimatedNeurons };
       incr("loopover_ai_slop_cache_hit_total");
@@ -134,7 +134,7 @@ export async function runAiSlopForAdvisory(
         /* v8 ignore next -- reached only past this function's own `!args.advisory.headSha` early return, so headSha is always truthy here; the `?? null` is a type-level fallback for an unreachable branch. */
         metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha ?? null },
       }).catch(() => undefined);
-      result = await runGittensoryAiSlopAdvisory(withAdvisoryAiEnv(env, args.settings.advisoryAiRouting?.slop === true), {
+      result = await runLoopOverAiSlopAdvisory(withAdvisoryAiEnv(env, args.settings.advisoryAiRouting?.slop === true), {
         repoFullName: args.repoFullName,
         prNumber: args.pr.number,
         title: args.pr.title,

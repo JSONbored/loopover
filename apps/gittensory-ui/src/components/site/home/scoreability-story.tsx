@@ -53,7 +53,7 @@ export function ScoreabilityStory() {
       <div className="sm:sticky sm:top-14 sm:self-start sm:h-[calc(100vh-3.5rem)] sm:flex sm:flex-col sm:items-center sm:justify-center">
         <Gauge value={v} label={STEPS[active].label} />
         <p className="mt-3 max-w-[14rem] text-center text-token-xs text-muted-foreground leading-token-relaxed">
-          Estimates only. Gittensory never shows raw trust scores or promises payouts.
+          Estimates only. LoopOver never shows raw trust scores or promises payouts.
         </p>
       </div>
       <ol className="space-y-24 sm:space-y-40">

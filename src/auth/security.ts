@@ -18,8 +18,8 @@ export type AuthIdentity =
   | { kind: "session"; actor: string; session: AuthSessionRecord };
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-export const BROWSER_SESSION_COOKIE = "gittensory_session";
-export const GITHUB_OAUTH_STATE_COOKIE = "gittensory_oauth_state";
+export const BROWSER_SESSION_COOKIE = "loopover_session";
+export const GITHUB_OAUTH_STATE_COOKIE = "loopover_oauth_state";
 export const GITHUB_OAUTH_STATE_TTL_SECONDS = 10 * 60;
 
 export function extractBearerToken(header: string | null | undefined): string | undefined {

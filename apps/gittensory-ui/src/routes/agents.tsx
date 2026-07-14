@@ -6,13 +6,13 @@ import { Section, SectionTitle, Card, CodeBlock, Callout } from "@/components/si
 export const Route = createFileRoute("/agents")({
   head: () => ({
     meta: [
-      { title: "Coding agents — Gittensory" },
+      { title: "Coding agents — LoopOver" },
       {
         name: "description",
         content:
           "MCP server for Codex, Claude Desktop, Cursor. Deterministic tools for plan, preflight, branch analysis, and packet prep.",
       },
-      { property: "og:title", content: "Coding agents — Gittensory" },
+      { property: "og:title", content: "Coding agents — LoopOver" },
       {
         property: "og:description",
         content:
@@ -35,7 +35,7 @@ function AgentsPage() {
             Deterministic tools, not vibes.
           </h1>
           <p className="mt-4 text-token-lg text-muted-foreground">
-            Gittensory ships an MCP server that exposes structured, schema-validated tools for plan,
+            LoopOver ships an MCP server that exposes structured, schema-validated tools for plan,
             preflight, branch analysis, and packet prep. Use it as the base layer for Codex, Claude
             Desktop, Cursor, or your own agent runtime.
           </p>
@@ -118,7 +118,7 @@ gittensory-mcp init-client --print cursor`}
         <SectionTitle
           eyebrow="Workflow"
           title="The agent loop, made boring on purpose."
-          description="Predictable inputs, predictable outputs. The agent makes decisions; Gittensory makes those decisions explainable."
+          description="Predictable inputs, predictable outputs. The agent makes decisions; LoopOver makes those decisions explainable."
         />
         <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {[
@@ -149,7 +149,7 @@ gittensory-mcp init-client --print cursor`}
         <SectionTitle
           eyebrow="How it fits your agent"
           title="Drop-in tools, predictable shapes."
-          description="Three places Gittensory makes your agent's contribution loop boring on purpose."
+          description="Three places LoopOver makes your agent's contribution loop boring on purpose."
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {[

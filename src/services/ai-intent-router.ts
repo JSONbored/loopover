@@ -23,7 +23,7 @@ export type IntentRoutingResult =
   | { status: "matched"; model: string; estimatedNeurons: number; command: IntentRoutableCommandName };
 
 export type IntentRoutingRequest = {
-  /** The free-form text after `@loopover` (GittensoryMentionCommand.unrecognizedText). */
+  /** The free-form text after `@loopover` (LoopOverMentionCommand.unrecognizedText). */
   text: string;
   /** Resolved repository settings' `advisoryAiRouting` block; `intentRouting === true` is the enable gate. */
   advisoryAiRouting: AdvisoryAiRoutingConfig | undefined;
@@ -41,7 +41,7 @@ const INTENT_ROUTER_SYSTEM_PROMPT =
   "entirely (e.g. requesting a new review, changing settings, or anything not in the list). When uncertain, prefer " +
   'null over a guess. Never output anything other than this one JSON object.';
 
-export async function classifyGittensoryIntent(env: Env, req: IntentRoutingRequest): Promise<IntentRoutingResult> {
+export async function classifyLoopOverIntent(env: Env, req: IntentRoutingRequest): Promise<IntentRoutingResult> {
   if (req.advisoryAiRouting?.intentRouting !== true) {
     return { status: "disabled", reason: "Intent routing is not enabled on this instance (settings.advisoryAiRouting.intentRouting is off)." };
   }

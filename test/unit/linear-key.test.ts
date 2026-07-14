@@ -236,7 +236,7 @@ describe("maintainer Linear key route (session/API-token scoped, #3186)", () => 
     mockedPermission.mockResolvedValue("admin"); // real GitHub write access
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const owned = "/v1/repos/repo-owner/owned-repo/linear-key";
-    const cookie = { cookie: `gittensory_session=${token}` };
+    const cookie = { cookie: `loopover_session=${token}` };
     const res = await app.request(owned, { method: "POST", headers: { ...cookie, "content-type": "application/json" }, body: JSON.stringify({ key: "lin_api_owner-key-4242" }) }, env);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ configured: true, last4: "4242", createdBy: "repo-owner" });
@@ -262,10 +262,10 @@ describe("maintainer Linear key route (session/API-token scoped, #3186)", () => 
     await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", { number: 5, title: "tweak", state: "open", user: { login: "reader" }, author_association: "COLLABORATOR", head: { sha: "a1", ref: "f" }, base: { ref: "main" }, labels: [] });
     mockedPermission.mockResolvedValue("read"); // real GitHub access, but not write/admin
     const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
-    const json = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const json = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
     const owned = "/v1/repos/repo-owner/owned-repo/linear-key";
 
-    const get = await app.request(owned, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const get = await app.request(owned, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(get.status).toBe(403);
     expect(await get.json()).toMatchObject({ error: "insufficient_repo_permission" });
 
@@ -273,7 +273,7 @@ describe("maintainer Linear key route (session/API-token scoped, #3186)", () => 
     expect(post.status).toBe(403);
     expect(await post.json()).toMatchObject({ error: "insufficient_repo_permission" });
 
-    const del = await app.request(owned, { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } }, env);
+    const del = await app.request(owned, { method: "DELETE", headers: { cookie: `loopover_session=${token}` } }, env);
     expect(del.status).toBe(403);
     expect(await del.json()).toMatchObject({ error: "insufficient_repo_permission" });
   });

@@ -9,12 +9,12 @@ import {
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { INLINE_FINDINGS_METADATA_KEY } from "../../src/mcp/pr-ai-review-findings";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity): Promise<Client> {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-pr-ai-review-findings-test", version: "0.1.0" }, { capabilities: {} });
@@ -47,12 +47,12 @@ async function seedPublishedReview(env: Env): Promise<void> {
   await markAiReviewPublished(env, "acme/widgets", 42, "sha-reviewed");
 }
 
-describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
+describe("MCP loopover_get_pr_ai_review_findings (#4519)", () => {
   it("returns structured findings that match the PR comment category counts", async () => {
     const env = createTestEnv();
     await seedPublishedReview(env);
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 42 },
     });
     expect(result.isError).toBeFalsy();
@@ -84,7 +84,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
       body: "x",
     });
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 7 },
     });
     expect(result.isError).toBeFalsy();
@@ -99,7 +99,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: "acme/widgets", private: false, owner: { login: "acme" } });
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 404 },
     });
     expect(result.isError).toBeFalsy();
@@ -125,7 +125,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     await putCachedAiReview(env, "acme/widgets", 99, "sha-clean", "block", { notes: "No inline findings.", reviewerCount: 1 });
     await markAiReviewPublished(env, "acme/widgets", 99, "sha-clean");
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 99 },
     });
     expect(result.isError).toBeFalsy();
@@ -147,7 +147,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
       body: "x",
     });
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "acme", repo: "widgets", pullNumber: 8 },
     });
     expect(result.isError).toBeFalsy();
@@ -159,7 +159,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     const env = createTestEnv();
     await seedPublishedReview(env);
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "other-miner", owner: "acme", repo: "widgets", pullNumber: 42 },
     });
     expect(result.isError).toBe(true);
@@ -171,7 +171,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     await seedPublishedReview(env);
     const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });
     const result = await (await connect(env, { kind: "session", actor: "miner1", session })).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "someone-else", owner: "acme", repo: "widgets", pullNumber: 42 },
     });
     expect(result.isError).toBe(true);
@@ -198,7 +198,7 @@ describe("MCP gittensory_get_pr_ai_review_findings (#4519)", () => {
     });
     const { session } = await createSessionForGitHubUser(env, { login: "miner1", id: 1 });
     const result = await (await connect(env, { kind: "session", actor: "miner1", session })).callTool({
-      name: "gittensory_get_pr_ai_review_findings",
+      name: "loopover_get_pr_ai_review_findings",
       arguments: { login: "miner1", owner: "victimco", repo: "private-roadmap", pullNumber: 1 },
     });
     expect(result.isError).toBe(true);

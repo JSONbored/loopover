@@ -1,4 +1,4 @@
-// Gittensory Orb (#1255) — fleet calibration EXPORTER. Each self-hosted instance already records de-noised
+// LoopOver Orb (#1255) — fleet calibration EXPORTER. Each self-hosted instance already records de-noised
 // ground truth in review_audit (gate_decision + pr_outcome + reversal_reopened/reversal_reverted) via the
 // engine's outcomes-wire. This ships an anonymized, reversal-aware signal UP to gittensory's central
 // collector so the gate can be calibrated across the whole self-host fleet.

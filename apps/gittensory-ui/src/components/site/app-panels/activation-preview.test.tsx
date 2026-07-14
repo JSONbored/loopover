@@ -36,7 +36,7 @@ const BASE_PREVIEW = {
   ],
   recommendedAction: "enable_advisory" as const,
   summary:
-    "Gittensory reviewed your 3 most recent pull request(s) and would have surfaced guidance on 2 of them.",
+    "LoopOver reviewed your 3 most recent pull request(s) and would have surfaced guidance on 2 of them.",
 };
 
 describe("ActivationPreview", () => {
@@ -113,7 +113,7 @@ describe("ActivationPreview", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText(/Advisory mode enabled\. Gittensory will now surface guidance/i),
+        screen.getByText(/Advisory mode enabled\. LoopOver will now surface guidance/i),
       ).toBeTruthy(),
     );
     await waitFor(() => expect(screen.getByText(/Advisory mode is already enabled/i)).toBeTruthy());

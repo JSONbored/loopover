@@ -96,7 +96,7 @@ describe("draft endpoints — flag ON, public + unauthenticated", () => {
     // path-only URL resolves the origin to http://localhost, so the redirect_uri lives under it.
     expect(authUrl.searchParams.get("redirect_uri")).toBe("http://localhost/v1/drafts/auth/callback");
     expect(authUrl.searchParams.get("state")?.startsWith(`${body.draftId}.`)).toBe(true);
-    expect(res.headers.get("set-cookie")).toContain("gittensory_draft_oauth=");
+    expect(res.headers.get("set-cookie")).toContain("loopover_draft_oauth=");
     expect(res.headers.get("set-cookie")).toContain("HttpOnly");
     expect(res.headers.get("set-cookie")).toContain("SameSite=Lax");
 
@@ -555,11 +555,11 @@ describe("handleDraftOAuthCallback — success + error paths", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     // One Cookie header that drives both parseCookieHeader fallbacks:
     //  • " =lead"                  → whitespace-only name (eq > 0 but name trims to "") → `if (!name) continue`
-    //  • gittensory_draft_oauth=%  → a lone-percent value makes decodeURIComponent throw → decoded as ""
+    //  • loopover_draft_oauth=%  → a lone-percent value makes decodeURIComponent throw → decoded as ""
     // The draft cookie therefore resolves to "", cannot match the URL state, and the callback rejects (no exchange).
     const res = await handleDraftOAuthCallback(
       new Request(`${ORIGIN}/v1/drafts/auth/callback?code=valid-code&state=${encodeURIComponent(state)}`, {
-        headers: { cookie: " =lead; gittensory_draft_oauth=%" },
+        headers: { cookie: " =lead; loopover_draft_oauth=%" },
       }),
       env,
     );

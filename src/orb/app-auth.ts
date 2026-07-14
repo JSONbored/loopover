@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — App authentication. Mints the Orb App JWT (RS256, signed with the
+// LoopOver Orb central GitHub App (#1255) — App authentication. Mints the Orb App JWT (RS256, signed with the
 // Orb App's OWN private key), lists the App's installations, and mints short-lived installation tokens. This is
 // the token-broker foundation: a maintainer's self-hosted container (after enrollment) exchanges for one of these
 // installation tokens to act on its own repos. Modeled on src/github/app.ts (the gittensory review App's auth),

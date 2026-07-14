@@ -255,7 +255,7 @@ describe("maintainer route authz (session-scoped)", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("admin"); // real GitHub write access
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const res = await app.request(`${OWNED}/ai-review`, { method: "PUT", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "advisory", byok: true, provider: "anthropic" }) }, env);
+    const res = await app.request(`${OWNED}/ai-review`, { method: "PUT", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "advisory", byok: true, provider: "anthropic" }) }, env);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ aiReviewMode: "advisory", aiReviewProvider: "anthropic" });
   });
@@ -267,7 +267,7 @@ describe("maintainer route authz (session-scoped)", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("admin"); // real GitHub write access
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
+    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ configured: true, provider: "anthropic", last4: "4242" });
   });
@@ -281,14 +281,14 @@ describe("maintainer route authz (session-scoped)", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("read");
     const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
-    const json = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const json = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
     const post = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: json, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-reader-key-9999" }) }, env);
     expect(post.status).toBe(403);
     expect(await post.json()).toMatchObject({ error: "insufficient_repo_permission" });
     // DELETE is gated the same way.
-    expect((await app.request(`${OWNED}/ai-key`, { method: "DELETE", headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(403);
+    expect((await app.request(`${OWNED}/ai-key`, { method: "DELETE", headers: { cookie: `loopover_session=${token}` } }, env)).status).toBe(403);
     // GET key status and AI-review writes are also gated by real GitHub write access.
-    expect((await app.request(`${OWNED}/ai-key`, { headers: { cookie: `gittensory_session=${token}` } }, env)).status).toBe(403);
+    expect((await app.request(`${OWNED}/ai-key`, { headers: { cookie: `loopover_session=${token}` } }, env)).status).toBe(403);
     const review = await app.request(`${OWNED}/ai-review`, { method: "PUT", headers: json, body: JSON.stringify({ mode: "advisory", byok: false }) }, env);
     expect(review.status).toBe(403);
     expect(await review.json()).toMatchObject({ error: "insufficient_repo_permission" });
@@ -300,7 +300,7 @@ describe("maintainer route authz (session-scoped)", () => {
     await seedRepo(env, "repo-owner", "owned-repo", 201);
     stubMinerFetch();
     const { token } = await createSessionForGitHubUser(env, { login: "ops-admin", id: 9 });
-    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", key: "sk-openai-operator-key-123" }) }, env);
+    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "openai", key: "sk-openai-operator-key-123" }) }, env);
     expect(res.status).toBe(200);
     expect(mockedPermission).not.toHaveBeenCalled(); // operators skip the push check
   });
@@ -312,7 +312,7 @@ describe("maintainer route authz (session-scoped)", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("none");
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
+    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
     expect(res.status).toBe(403);
     expect(await res.json()).toMatchObject({ error: "insufficient_repo_permission" });
   });
@@ -325,7 +325,7 @@ describe("maintainer route authz (session-scoped)", () => {
     await env.DB.prepare("UPDATE repositories SET installation_id = NULL WHERE full_name = ?").bind("repo-owner/owned-repo").run();
     stubMinerFetch();
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
+    const res = await app.request(`${OWNED}/ai-key`, { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-owner-key-4242" }) }, env);
     expect(res.status).toBe(403);
     expect(mockedPermission).not.toHaveBeenCalled();
   });
@@ -335,7 +335,7 @@ describe("maintainer route authz (session-scoped)", () => {
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, ADMIN_GITHUB_LOGINS: "" });
     await seedRepo(env, "repo-owner", "owned-repo", 201);
     const { token } = await createSessionForGitHubUser(env, { login: "someone-else", id: 999 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
     const json = { cookie, "content-type": "application/json" };
     expect((await app.request(`${OWNED}/ai-key`, { headers: { cookie } }, env)).status).toBe(403);
     expect((await app.request(`${OWNED}/ai-key`, { method: "POST", headers: json, body: JSON.stringify({ provider: "anthropic", key: "sk-ant-nope-000000000" }) }, env)).status).toBe(403);
@@ -350,7 +350,7 @@ describe("maintainer route authz (session-scoped)", () => {
     await seedRepo(env, "other-owner", "other-repo", 202);
     stubMinerFetch();
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const res = await app.request("/v1/repos/other-owner/other-repo/ai-key", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/repos/other-owner/other-repo/ai-key", { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(403);
   });
 });

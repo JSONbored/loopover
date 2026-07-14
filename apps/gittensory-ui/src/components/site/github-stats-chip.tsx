@@ -46,7 +46,7 @@ async function fetchRepo(): Promise<RepoStats> {
     {
       label: "GitHub stats",
       timeoutMs: 6000,
-      silentStatus: true, // GitHub failures shouldn't poison the Gittensory API status pill
+      silentStatus: true, // GitHub failures shouldn't poison the LoopOver API status pill
     },
   );
   if (result.ok) {

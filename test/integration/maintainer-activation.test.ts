@@ -78,7 +78,7 @@ describe("maintainer activation routes", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("read");
     const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
-    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const headers = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
 
     const preview = await app.request(PATH_PREVIEW, { headers }, env);
     expect(preview.status).toBe(200);
@@ -96,7 +96,7 @@ describe("maintainer activation routes", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("write");
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 201 });
-    const response = await app.request(PATH_ACTIVATE, { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: "{}" }, env);
+    const response = await app.request(PATH_ACTIVATE, { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: "{}" }, env);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ repoFullName: FULL_NAME, reviewCheckMode: "required" });
   });
@@ -118,7 +118,7 @@ describe("maintainer activation routes", () => {
     stubMinerFetch();
     mockedPermission.mockResolvedValue("read");
     const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
-    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const headers = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
 
     const update = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
       method: "PUT",
@@ -142,7 +142,7 @@ describe("maintainer activation routes", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 201 });
     const response = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
       method: "PUT",
-      headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+      headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
       body: JSON.stringify({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } }),
     }, env);
 
@@ -162,7 +162,7 @@ describe("maintainer activation routes", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "owner", id: 202 });
     const response = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
       method: "PUT",
-      headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+      headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
       body: JSON.stringify({ selfAuthoredLinkedIssueGateMode: "block" }),
     }, env);
 

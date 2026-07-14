@@ -72,7 +72,7 @@ describe("private-beta auth and rate limiting", () => {
 
     const malformedUrlCookie = buildBrowserSessionCookie("token", "not-a-url");
     expect(malformedUrlCookie).toContain("Secure");
-    expect(extractCookieValue("gittensory_session=%E0%A4%A", "gittensory_session")).toBeUndefined();
+    expect(extractCookieValue("loopover_session=%E0%A4%A", "loopover_session")).toBeUndefined();
   });
 
   it("enforces burst limits inside the Durable Object bucket", async () => {

@@ -62,7 +62,7 @@ describe("api route guards and error branches", () => {
     const startCookie = started.headers.get("set-cookie") ?? "";
     const location = new URL(started.headers.get("location") ?? "");
     const state = location.searchParams.get("state") ?? "";
-    expect(startCookie).toContain("gittensory_oauth_state=");
+    expect(startCookie).toContain("loopover_oauth_state=");
     expect(state).toBeTruthy();
 
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -76,10 +76,10 @@ describe("api route guards and error branches", () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.get("location")).toBe("https://loopover.ai/app");
     const callbackCookie = callback.headers.get("set-cookie") ?? "";
-    expect(callbackCookie).toContain("gittensory_session=");
+    expect(callbackCookie).toContain("loopover_session=");
     expect(callbackCookie).toContain("HttpOnly");
 
-    const sessionCookie = firstCookiePair(callbackCookie, "gittensory_session");
+    const sessionCookie = firstCookiePair(callbackCookie, "loopover_session");
     const session = await app.request("/v1/auth/session", { headers: { cookie: sessionCookie } }, env);
     expect(session.status).toBe(200);
     await expect(session.json()).resolves.toMatchObject({
@@ -94,7 +94,7 @@ describe("api route guards and error branches", () => {
 
     const logout = await app.request("/v1/auth/logout", { method: "POST", headers: { cookie: sessionCookie } }, env);
     expect(logout.status).toBe(200);
-    expect(logout.headers.get("set-cookie")).toContain("gittensory_session=");
+    expect(logout.headers.get("set-cookie")).toContain("loopover_session=");
     const signedOut = await app.request("/v1/auth/session", { headers: { cookie: sessionCookie } }, env);
     expect(signedOut.status).toBe(200);
     await expect(signedOut.json()).resolves.toMatchObject({ status: "signed_out" });
@@ -122,8 +122,8 @@ describe("api route guards and error branches", () => {
 
     const { token: ownerToken } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const { token: otherOwnerToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
-    const ownerCookie = `gittensory_session=${ownerToken}`;
-    const otherOwnerCookie = `gittensory_session=${otherOwnerToken}`;
+    const ownerCookie = `loopover_session=${ownerToken}`;
+    const otherOwnerCookie = `loopover_session=${otherOwnerToken}`;
 
     const roles = await app.request("/v1/auth/session", { headers: { cookie: ownerCookie } }, env);
     expect(roles.status).toBe(200);
@@ -146,10 +146,10 @@ describe("api route guards and error branches", () => {
   it("rejects bad GitHub web OAuth callbacks without creating a browser session", async () => {
     const app = createApp();
     const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id", GITHUB_OAUTH_CLIENT_SECRET: "client-secret" });
-    const invalid = await app.request("/v1/auth/github/callback?code=code&state=wrong", { headers: { cookie: "gittensory_oauth_state=other" } }, env);
+    const invalid = await app.request("/v1/auth/github/callback?code=code&state=wrong", { headers: { cookie: "loopover_oauth_state=other" } }, env);
     expect(invalid.status).toBe(302);
     expect(invalid.headers.get("location")).toContain("auth=error");
-    expect(invalid.headers.get("set-cookie")).toContain("gittensory_oauth_state=");
+    expect(invalid.headers.get("set-cookie")).toContain("loopover_oauth_state=");
 
     const denied = await app.request("/v1/auth/github/callback?error=access_denied", {}, env);
     expect(denied.status).toBe(302);
@@ -295,7 +295,7 @@ describe("api route guards and error branches", () => {
 
     // Scoped (non-wildcard) read allowlist: LOOPOVER_MCP_TOKEN is a shared, end-user-obtainable CLI credential,
     // so it must NOT read an arbitrary contributor's private decision pack over HTTP — mirroring the MCP tool
-    // surface's guard for the identical data (GittensoryMcp.requireContributorAccess, #2455).
+    // surface's guard for the identical data (LoopoverMcp.requireContributorAccess, #2455).
     const scopedEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "owner/private-repo" });
     await seedVictimDecisionPack(scopedEnv);
     const mcpHeaders = { authorization: `Bearer ${scopedEnv.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" };
@@ -1104,7 +1104,7 @@ describe("api route guards and error branches", () => {
     const rawRequest = new Request("http://localhost/mcp", {
       method: "POST",
       headers: { authorization: `Bearer ${defensiveSessionToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: "raw-failure", method: "tools/call", params: { name: "gittensory_get_repo_context", arguments: { owner: "JSONbored", repo: "gittensory" } } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: "raw-failure", method: "tools/call", params: { name: "loopover_get_repo_context", arguments: { owner: "JSONbored", repo: "gittensory" } } }),
     });
     let rawReads = 0;
     await expect(

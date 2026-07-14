@@ -25,7 +25,7 @@ function AuditRoute() {
         <PageHeader
           eyebrow="Audit"
           title="Skipped PR audit feed"
-          description="Review why Gittensory kept public GitHub App output quiet for specific pull requests."
+          description="Review why LoopOver kept public GitHub App output quiet for specific pull requests."
         />
         <EmptyState
           title="Maintainer access required"

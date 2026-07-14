@@ -107,7 +107,7 @@ type ToolContract = {
 
 const READ_ONLY_TOOLS: ToolContract[] = [
   {
-    tool: "gittensory_miner_status",
+    tool: "loopover_miner_status",
     args: {},
     valid: {
       collectStatus: () => ({
@@ -125,7 +125,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_get_portfolio_dashboard",
+    tool: "loopover_miner_get_portfolio_dashboard",
     args: {},
     valid: { initPortfolioQueue: () => ({ listQueue: () => [], close() {} }) },
     missing: { initPortfolioQueue: openerThrows },
@@ -133,7 +133,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_list_claims",
+    tool: "loopover_miner_list_claims",
     args: {},
     valid: { openClaimLedger: () => ({ listClaims: () => [], close() {} }) },
     missing: { openClaimLedger: openerThrows },
@@ -141,7 +141,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_get_audit_feed",
+    tool: "loopover_miner_get_audit_feed",
     args: {},
     // Seed a RAW ledger entry carrying a full payload (secret-shaped token + sensitive keys). The tool runs the
     // real collectEventLedgerAuditFeed projection over it, which must reduce each row to metadata only
@@ -177,7 +177,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: ["payload", "payload_json", "token"],
   },
   {
-    tool: "gittensory_miner_get_run_state",
+    tool: "loopover_miner_get_run_state",
     args: {},
     valid: { initRunStateStore: () => ({ getRunState: () => null, listRunStates: () => [], close() {} }) },
     missing: { initRunStateStore: openerThrows },
@@ -185,7 +185,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_list_plans",
+    tool: "loopover_miner_list_plans",
     args: {},
     valid: { openPlanStore: () => ({ loadPlan: () => null, listPlans: () => [], close() {} }) },
     missing: { openPlanStore: openerThrows },
@@ -193,7 +193,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_get_plan",
+    tool: "loopover_miner_get_plan",
     args: { planId: "p1" },
     valid: { openPlanStore: () => ({ loadPlan: () => null, listPlans: () => [], close() {} }) },
     missing: { openPlanStore: openerThrows },
@@ -201,7 +201,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     excluded: [],
   },
   {
-    tool: "gittensory_miner_get_governor_decisions",
+    tool: "loopover_miner_get_governor_decisions",
     args: {},
     // Real temp ledger (seeded above) so the redaction assertion exercises the actual explicit-named-column SQL —
     // it must fail if a future edit widens the SELECT to include payload_json.

@@ -6641,7 +6641,7 @@ describe("queue processors", () => {
       // `.loopover.yml` now enables propagation for itself (#priority-linked-issue-gate-ownership
       // dogfooding), and `resolveRepositorySettings` falls back to the bundled
       // `GITTENSORY_REPO_FOCUS_MANIFEST_YAML` copy of it whenever a live manifest fetch is unavailable
-      // (`isGittensorySelfRepo`, `src/signals/focus-manifest-loader.ts`) -- exactly the case in this test's
+      // (`isLoopOverSelfRepo`, `src/signals/focus-manifest-loader.ts`) -- exactly the case in this test's
       // stubbed fetch. Using gittensory's own literal repo name here would make this "propagation is off by
       // DEFAULT" test silently stop being a default-behavior test at all.
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });

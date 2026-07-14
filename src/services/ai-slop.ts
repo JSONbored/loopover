@@ -1,4 +1,4 @@
-// Gittensory AI-assisted slop advisory (the `slopAiAdvisory` capability).
+// LoopOver AI-assisted slop advisory (the `slopAiAdvisory` capability).
 //
 // An ADVISORY-ONLY second opinion that augments the deterministic slop detector (src/signals/slop.ts).
 // It exists to catch the SEMANTIC slop the deterministic rules cannot quantify — generated boilerplate
@@ -195,7 +195,7 @@ function buildUserPrompt(input: AiSlopInput): string {
  * Run the AI slop advisory. Returns a single advisory finding (or null) plus the model's band. Fail-safe on
  * every path: no finding and no thrown error ever reaches the caller.
  */
-export async function runGittensoryAiSlopAdvisory(env: Env, input: AiSlopInput): Promise<AiSlopResult> {
+export async function runLoopOverAiSlopAdvisory(env: Env, input: AiSlopInput): Promise<AiSlopResult> {
   if (!isEnabled(env.AI_SUMMARIES_ENABLED)) return { status: "disabled", reason: "AI summaries are disabled." };
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED)) return { status: "disabled", reason: "Public AI comments are disabled." };
   if (!env.AI) return { status: "unavailable", reason: "AI provider is not configured." };

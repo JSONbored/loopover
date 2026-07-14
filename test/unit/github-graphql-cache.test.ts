@@ -21,7 +21,7 @@ import { listLatestGitHubRateLimitObservations, recordGitHubRateLimitObservation
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 
-const TOTALS_QUERY = `query GittensoryRepoTotals {
+const TOTALS_QUERY = `query LoopOverRepoTotals {
   rateLimit { remaining resetAt }
   repository(owner: "o", name: "r") {
     issues(states: OPEN) { totalCount }
@@ -32,7 +32,7 @@ const TOTALS_QUERY = `query GittensoryRepoTotals {
   }
 }`;
 
-const MUTABLE_QUERY = `query GittensoryPullRequestDetails {
+const MUTABLE_QUERY = `query LoopOverPullRequestDetails {
   repository(owner: "o", name: "r") {
     pullRequest(number: 1) { title }
   }
@@ -61,12 +61,12 @@ afterEach(() => {
 
 describe("graphql cache allowlist", () => {
   it("recognizes stable operations and rejects mutable or anonymous queries", () => {
-    expect(graphqlOperationName(TOTALS_QUERY)).toBe("GittensoryRepoTotals");
+    expect(graphqlOperationName(TOTALS_QUERY)).toBe("LoopOverRepoTotals");
     expect(graphqlCacheClassForQuery(TOTALS_QUERY)).toBe("repo_totals");
     expect(isCacheableGraphQlQuery(TOTALS_QUERY)).toBe(true);
 
-    expect(graphqlOperationName(`query GittensoryContributorActivity { rateLimit { remaining } }`)).toBe("GittensoryContributorActivity");
-    expect(graphqlCacheClassForQuery(`query GittensoryContributorActivity { x: rateLimit { remaining } }`)).toBe("contributor_activity");
+    expect(graphqlOperationName(`query LoopOverContributorActivity { rateLimit { remaining } }`)).toBe("LoopOverContributorActivity");
+    expect(graphqlCacheClassForQuery(`query LoopOverContributorActivity { x: rateLimit { remaining } }`)).toBe("contributor_activity");
     expect(githubGraphQlCacheTtlSeconds("contributor_activity")).toBe(600);
     vi.stubEnv("GITHUB_GRAPHQL_CACHE_TTL_SECONDS", "   ");
     expect(githubGraphQlCacheTtlSeconds("repo_totals")).toBe(600);

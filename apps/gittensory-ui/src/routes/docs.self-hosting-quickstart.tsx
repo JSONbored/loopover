@@ -251,7 +251,7 @@ cp config/examples/global.loopover.yml loopover-config/owner__my-repo/.loopover.
         <Link to="/docs/self-hosting-configuration">Configuration</Link>.
       </Callout>
       <Callout variant="warn" title="Checks: write on the GitHub App">
-        If reviews compute but no <code>Gittensory Orb Review Agent</code> check-run appears, open
+        If reviews compute but no <code>LoopOver Orb Review Agent</code> check-run appears, open
         your App&apos;s permissions page and confirm <strong>Checks: write</strong> is granted —
         <code>checks: read</code> alone 403s the write silently. New permissions also require a
         one-time re-approval on each installation; see{" "}

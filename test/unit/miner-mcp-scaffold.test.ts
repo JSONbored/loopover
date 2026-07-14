@@ -91,35 +91,35 @@ describe("gittensory-miner MCP server (#5153 scaffold)", () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
-      "gittensory_miner_get_audit_feed",
-      "gittensory_miner_get_governor_decisions",
-      "gittensory_miner_get_plan",
-      "gittensory_miner_get_portfolio_dashboard",
-      "gittensory_miner_get_run_state",
-      "gittensory_miner_list_claims",
-      "gittensory_miner_list_plans",
-      "gittensory_miner_ping",
-      "gittensory_miner_status",
+      "loopover_miner_get_audit_feed",
+      "loopover_miner_get_governor_decisions",
+      "loopover_miner_get_plan",
+      "loopover_miner_get_portfolio_dashboard",
+      "loopover_miner_get_run_state",
+      "loopover_miner_list_claims",
+      "loopover_miner_list_plans",
+      "loopover_miner_ping",
+      "loopover_miner_status",
     ]);
   });
 
-  it("gittensory_miner_ping returns the static, non-secret status object", async () => {
+  it("loopover_miner_ping returns the static, non-secret status object", async () => {
     const client = await connectedClient();
-    const result = (await client.callTool({ name: "gittensory_miner_ping", arguments: {} })) as Content;
-    expect(JSON.parse(toolText(result))).toEqual({ status: "ok", tool: "gittensory_miner_ping" });
+    const result = (await client.callTool({ name: "loopover_miner_ping", arguments: {} })) as Content;
+    expect(JSON.parse(toolText(result))).toEqual({ status: "ok", tool: "loopover_miner_ping" });
     expect(JSON.parse(toolText(result))).toEqual(MINER_PING_STATUS);
   });
 
-  it("gittensory_miner_ping returns the same object on every call, no AMS state required (invariant)", async () => {
+  it("loopover_miner_ping returns the same object on every call, no AMS state required (invariant)", async () => {
     const client = await connectedClient();
-    const a = (await client.callTool({ name: "gittensory_miner_ping", arguments: {} })) as Content;
-    const b = (await client.callTool({ name: "gittensory_miner_ping", arguments: {} })) as Content;
+    const a = (await client.callTool({ name: "loopover_miner_ping", arguments: {} })) as Content;
+    const b = (await client.callTool({ name: "loopover_miner_ping", arguments: {} })) as Content;
     expect(toolText(a)).toBe(toolText(b));
     expect(JSON.parse(toolText(a))).toEqual(MINER_PING_STATUS);
   });
 });
 
-describe("gittensory_miner_get_portfolio_dashboard (#5155)", () => {
+describe("loopover_miner_get_portfolio_dashboard (#5155)", () => {
   function dashboardClient(rows: unknown[]): Promise<Client> {
     return connectedClient({ initPortfolioQueue: () => fakeQueue(rows), nowMs: NOW_MS });
   }
@@ -127,7 +127,7 @@ describe("gittensory_miner_get_portfolio_dashboard (#5155)", () => {
   it("returns per-repo status counts, totals, and oldest-queued age over a multi-repo backlog", async () => {
     const client = await dashboardClient(QUEUE_ROWS);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_portfolio_dashboard",
+      name: "loopover_miner_get_portfolio_dashboard",
       arguments: {},
     })) as Content;
     const summary = JSON.parse(toolText(result));
@@ -145,7 +145,7 @@ describe("gittensory_miner_get_portfolio_dashboard (#5155)", () => {
   it("handles an empty queue without a clock error (single-repo/empty edge)", async () => {
     const client = await dashboardClient([]);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_portfolio_dashboard",
+      name: "loopover_miner_get_portfolio_dashboard",
       arguments: {},
     })) as Content;
     expect(JSON.parse(toolText(result))).toEqual({
@@ -159,7 +159,7 @@ describe("gittensory_miner_get_portfolio_dashboard (#5155)", () => {
   it("is structurally identical to collectPortfolioDashboard() — the wrapper adds no drift (invariant)", async () => {
     const client = await dashboardClient(QUEUE_ROWS);
     const result = (await client.callTool({
-      name: "gittensory_miner_get_portfolio_dashboard",
+      name: "loopover_miner_get_portfolio_dashboard",
       arguments: {},
     })) as Content;
     const direct = collectPortfolioDashboard({ portfolioQueue: fakeQueue(QUEUE_ROWS) }, { nowMs: NOW_MS });
@@ -167,12 +167,12 @@ describe("gittensory_miner_get_portfolio_dashboard (#5155)", () => {
   });
 });
 
-describe("gittensory_miner_list_claims (#5156)", () => {
+describe("loopover_miner_list_claims (#5156)", () => {
   function claimsClient(ledger: FakeLedger): Promise<Client> {
     return connectedClient({ openClaimLedger: () => ledger });
   }
   async function callList(client: Client, args: Record<string, unknown> = {}): Promise<unknown[]> {
-    const result = (await client.callTool({ name: "gittensory_miner_list_claims", arguments: args })) as Content;
+    const result = (await client.callTool({ name: "loopover_miner_list_claims", arguments: args })) as Content;
     return JSON.parse(toolText(result));
   }
 
@@ -235,12 +235,12 @@ function fakeRunStateStore(rows: Array<{ repoFullName: string; state: string }>)
   };
 }
 
-describe("gittensory_miner_get_run_state (#5160)", () => {
+describe("loopover_miner_get_run_state (#5160)", () => {
   function runStateClient(store: ReturnType<typeof fakeRunStateStore>): Promise<Client> {
     return connectedClient({ initRunStateStore: () => store });
   }
   async function callRunState(client: Client, args: Record<string, unknown> = {}): Promise<unknown> {
-    const result = (await client.callTool({ name: "gittensory_miner_get_run_state", arguments: args })) as Content;
+    const result = (await client.callTool({ name: "loopover_miner_get_run_state", arguments: args })) as Content;
     return JSON.parse(toolText(result));
   }
 
@@ -296,7 +296,7 @@ function fakePlanStore(records: Array<{ planId: string; status: string }>) {
   };
 }
 
-describe("gittensory_miner_list_plans / get_plan (#5161)", () => {
+describe("loopover_miner_list_plans / get_plan (#5161)", () => {
   function planClient(store: ReturnType<typeof fakePlanStore>): Promise<Client> {
     return connectedClient({ openPlanStore: () => store });
   }
@@ -306,26 +306,26 @@ describe("gittensory_miner_list_plans / get_plan (#5161)", () => {
   }
 
   it("list_plans returns every plan when no status filter is given", async () => {
-    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_list_plans", {});
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "loopover_miner_list_plans", {});
     expect(out).toEqual(PLAN_RECORDS);
   });
 
   it("list_plans passes an optional status filter through to listPlans", async () => {
-    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_list_plans", {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "loopover_miner_list_plans", {
       status: "running",
     });
     expect(out).toEqual([PLAN_RECORDS[0]]);
   });
 
   it("get_plan returns the full record for an existing planId", async () => {
-    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_get_plan", {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "loopover_miner_get_plan", {
       planId: "p2",
     });
     expect(out).toEqual({ found: true, plan: PLAN_RECORDS[1] });
   });
 
   it("get_plan returns an explicit not-found result for an unknown planId (no throw)", async () => {
-    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "gittensory_miner_get_plan", {
+    const out = await callTool(await planClient(fakePlanStore(PLAN_RECORDS)), "loopover_miner_get_plan", {
       planId: "nope",
     });
     expect(out).toEqual({ planId: "nope", found: false });
@@ -334,8 +334,8 @@ describe("gittensory_miner_list_plans / get_plan (#5161)", () => {
   it("only reads — neither tool reaches savePlan (invariant)", async () => {
     const store = fakePlanStore(PLAN_RECORDS);
     const client = await planClient(store);
-    await callTool(client, "gittensory_miner_list_plans", {});
-    await callTool(client, "gittensory_miner_get_plan", { planId: "p1" });
+    await callTool(client, "loopover_miner_list_plans", {});
+    await callTool(client, "loopover_miner_get_plan", { planId: "p1" });
     expect(store.calls).toEqual(["listPlans", "loadPlan"]);
     expect(store.calls).not.toContain("savePlan");
   });
@@ -355,12 +355,12 @@ const FAKE_DOCTOR = [
   { name: "Claude CLI", ok: true, detail: "present" },
 ];
 
-describe("gittensory_miner_status (#5154)", () => {
+describe("loopover_miner_status (#5154)", () => {
   function statusClient(): Promise<Client> {
     return connectedClient({ collectStatus: () => FAKE_STATUS, runDoctorChecks: () => FAKE_DOCTOR });
   }
   async function callStatus(client: Client): Promise<Record<string, unknown>> {
-    const result = (await client.callTool({ name: "gittensory_miner_status", arguments: {} })) as Content;
+    const result = (await client.callTool({ name: "loopover_miner_status", arguments: {} })) as Content;
     return JSON.parse(toolText(result)) as Record<string, unknown>;
   }
 

@@ -2,7 +2,7 @@
   "name": "@loopover/ui-miner",
   "version": "0.0.0",
   "private": true,
-  "description": "Local read-only dashboard shell for the Gittensory miner.",
+  "description": "Local read-only dashboard shell for the LoopOver miner.",
   "packageManager": "npm@10.9.8",
   "type": "module",
   "scripts": {

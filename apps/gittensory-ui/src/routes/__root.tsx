@@ -120,13 +120,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Gittensory — Deterministic base-agent layer for Gittensor OSS mining" },
+      { title: "LoopOver — Deterministic base-agent layer for Gittensor OSS mining" },
       {
         name: "description",
         content:
           "Plan better work, preflight branches, understand score blockers, and keep maintainer review surfaces quiet. Built for the Gittensor ecosystem.",
       },
-      { property: "og:site_name", content: "Gittensory" },
+      { property: "og:site_name", content: "LoopOver" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "theme-color", content: "#0e100d" },

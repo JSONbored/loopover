@@ -60,7 +60,7 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
 
     const res = await app.request(
       "/v1/app/maintainer-dashboard",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -130,7 +130,7 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
 
     const res = await app.request(
       "/v1/app/maintainer-dashboard",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 
@@ -160,7 +160,7 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
 
     const res = await app.request(
       "/v1/app/maintainer-dashboard",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
 

@@ -1066,15 +1066,15 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
     ...(document.components ?? {}),
     securitySchemes: {
       ...(document.components?.securitySchemes ?? {}),
-      GittensoryBearer: {
+      LoopOverBearer: {
         type: "http",
         scheme: "bearer",
         description: "Static API/MCP token, GitHub device-flow LoopOver session token, or extension-scoped LoopOver session token where supported. GitHub personal access tokens are not accepted.",
       },
-      GittensorySessionCookie: {
+      LoopOverSessionCookie: {
         type: "apiKey",
         in: "cookie",
-        name: "gittensory_session",
+        name: "loopover_session",
         description: "HttpOnly browser session cookie set by GitHub web OAuth.",
       },
     },
@@ -1083,7 +1083,7 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
     if (!pathItem || !isProtectedPath(path)) continue;
     for (const method of ["get", "post", "put", "patch", "delete"] as const) {
       const operation = pathItem[method] as GeneratedOperation | undefined;
-      if (operation) operation.security = [{ GittensoryBearer: [] }, { GittensorySessionCookie: [] }];
+      if (operation) operation.security = [{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }];
     }
   }
   return document;

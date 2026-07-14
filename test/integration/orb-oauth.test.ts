@@ -13,19 +13,19 @@ describe("GET /v1/orb/oauth/callback (post-install landing)", () => {
     const res = await app.request("/v1/orb/oauth/callback?installation_id=142475427&setup_action=install", {}, createTestEnv());
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Gittensory Orb connected");
+    expect(html).toContain("LoopOver Orb connected");
     expect(html).toContain("loopover.ai");
   });
 
   it("returns the updated page on a repo-selection update", async () => {
     const res = await app.request("/v1/orb/oauth/callback?setup_action=update", {}, createTestEnv());
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain("Gittensory Orb updated");
+    expect(await res.text()).toContain("LoopOver Orb updated");
   });
 
   it("defaults to the connected page when setup_action is absent", async () => {
     const res = await app.request("/v1/orb/oauth/callback", {}, createTestEnv());
-    expect(await res.text()).toContain("Gittensory Orb connected");
+    expect(await res.text()).toContain("LoopOver Orb connected");
   });
 
   it("the new exemption + rate class are path-specific (a later orb path still routes)", async () => {
@@ -197,7 +197,7 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
     vi.stubGlobal("fetch", asFetch(async () => Response.json({}))); // no access_token
     expect((await app.request("/v1/orb/oauth/callback?code=abc&installation_id=505", {}, e)).status).toBe(400);
     const off = createTestEnv({ ORB_GITHUB_CLIENT_ID: "id", ORB_GITHUB_CLIENT_SECRET: "sec" }); // broker OFF
-    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=505", {}, off)).text()).toContain("Gittensory Orb connected");
+    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=505", {}, off)).text()).toContain("LoopOver Orb connected");
   });
 
   it("a failed /user read → 400", async () => {
@@ -209,7 +209,7 @@ describe("maintainer self-enrollment via the OAuth callback", () => {
 
   it("a code with a non-numeric or non-positive installation_id is NOT an enrollment → landing page", async () => {
     stubGitHub();
-    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=nope", {}, brokeredEnv())).text()).toContain("Gittensory Orb connected"); // Number.isInteger false
-    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=0", {}, brokeredEnv())).text()).toContain("Gittensory Orb connected"); // installationId > 0 false
+    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=nope", {}, brokeredEnv())).text()).toContain("LoopOver Orb connected"); // Number.isInteger false
+    expect(await (await app.request("/v1/orb/oauth/callback?code=abc&installation_id=0", {}, brokeredEnv())).text()).toContain("LoopOver Orb connected"); // installationId > 0 false
   });
 });

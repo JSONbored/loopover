@@ -1,6 +1,6 @@
 # @loopover/engine
 
-Shared, deterministic engine logic for the Gittensory review stack and the `gittensory-miner`.
+Shared, deterministic engine logic for the LoopOver review stack and the `gittensory-miner`.
 
 This package houses pure, side-effect-free logic (scoring preview/model, predicted-gate types, reward-risk,
 slop signals, focus-manifest parse/compile core, duplicate-winner adjudication, and their engine-parity
@@ -519,7 +519,7 @@ rendering.
 ## Plan templates
 
 `plan-templates.ts` exports one builder per miner lifecycle stage (`analyze`, `plan`, `prepare`, `create`, `manage`).
-Each builder returns `RawPlanStep[]` in the shape accepted by `gittensory_build_plan`. Templates are pure data — they
+Each builder returns `RawPlanStep[]` in the shape accepted by `loopover_build_plan`. Templates are pure data — they
 describe step ordering via `dependsOn` but never actuate anything.
 
 ## Plan DAG status helpers

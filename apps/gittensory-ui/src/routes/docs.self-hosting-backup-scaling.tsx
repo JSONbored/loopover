@@ -119,7 +119,7 @@ QDRANT_URL=http://qdrant:6333`}
         shared by every HTTP handler and queue worker in that instance — set <code>PGPOOL_MAX</code>{" "}
         (default 10) if a single instance needs more headroom than that under real concurrency (many
         registered repos, higher <code>QUEUE_CONCURRENCY</code>). Raise it gradually and watch for{" "}
-        <code>GittensoryPostgresConnectionPressure</code>: that alert means you're approaching
+        <code>LoopOverPostgresConnectionPressure</code>: that alert means you're approaching
         Postgres's own <code>max_connections</code>, a different ceiling than this per-instance pool
         size.
       </p>
@@ -172,7 +172,7 @@ docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /ba
         lang="bash"
         code={`docker compose --profile backup run --rm \\
   -e VERIFY_RESTORE_SCRATCH=1 \\
-  -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/gittensory_verify \\
+  -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/loopover_verify \\
   backup sh /scripts/verify-backup.sh`}
       />
       <Callout variant="warn">

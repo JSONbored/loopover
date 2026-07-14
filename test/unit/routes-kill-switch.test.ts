@@ -46,7 +46,7 @@ describe("kill-switch operator route (#2359)", () => {
     const app = createApp();
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
-    const res = await app.request("/v1/app/kill-switch", { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const res = await app.request("/v1/app/kill-switch", { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(res.status).toBe(403);
   });
 
@@ -84,7 +84,7 @@ describe("kill-switch operator route (#2359)", () => {
     const app = createApp();
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
-    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const headers = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
 
     const freeze = await app.request("/v1/app/kill-switch", { method: "POST", headers, body: JSON.stringify({ frozen: true }) }, env);
     expect(freeze.status).toBe(200);
@@ -107,7 +107,7 @@ describe("kill-switch operator route (#2359)", () => {
     const app = createApp();
     const env = createTestEnv();
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
-    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const headers = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
     const res = await app.request("/v1/app/kill-switch", { method: "POST", headers, body: JSON.stringify({ frozen: "yes" }) }, env);
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({ error: "invalid_kill_switch_update" });
@@ -129,7 +129,7 @@ describe("kill-switch operator route (#2359)", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "not-an-operator", id: 501 });
     const forbidden = await app.request(
       "/v1/app/kill-switch",
-      { method: "POST", headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ frozen: true }) },
+      { method: "POST", headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" }, body: JSON.stringify({ frozen: true }) },
       env,
     );
     expect(forbidden.status).toBe(403);

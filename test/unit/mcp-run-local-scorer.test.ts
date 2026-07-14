@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
-  const server = new GittensoryMcp(createTestEnv()).createServer();
+  const server = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-scorer-test", version: "0.1.0" }, { capabilities: {} });
@@ -13,11 +13,11 @@ async function connect() {
   return client;
 }
 
-describe("MCP gittensory_run_local_scorer (#782)", () => {
+describe("MCP loopover_run_local_scorer (#782)", () => {
   it("returns deterministic token scores from changed-file metadata (no repo/auth needed)", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_run_local_scorer",
+      name: "loopover_run_local_scorer",
       arguments: {
         changedFiles: [
           { path: "src/foo.ts", additions: 10, deletions: 2 },
@@ -36,7 +36,7 @@ describe("MCP gittensory_run_local_scorer (#782)", () => {
   it("surfaces a validation-failure warning", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_run_local_scorer",
+      name: "loopover_run_local_scorer",
       arguments: { changedFiles: [{ path: "src/a.ts", additions: 4 }], validation: [{ command: "npm test", status: "failed" }] },
     });
     const data = result.structuredContent as { tokenScores: { warnings?: string[] } };

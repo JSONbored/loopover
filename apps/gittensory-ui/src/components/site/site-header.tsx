@@ -3,7 +3,7 @@ import { Menu, X, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { McpVersionBadge } from "./mcp-version-badge";
-import { GittensoryMark } from "./mark";
+import { LoopOverMark } from "./mark";
 import { CommandPalette } from "./command-palette";
 import { GithubStatsChip } from "./github-stats-chip";
 import { KeyboardShortcutsDialog } from "./keyboard-shortcuts";
@@ -52,10 +52,10 @@ export function SiteHeader() {
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4 sm:px-6 lg:gap-6">
         <Link
           to="/"
-          aria-label="Gittensory"
+          aria-label="LoopOver"
           className="flex items-center gap-0.5 text-token-sm font-medium tracking-tight text-foreground transition-opacity hover:opacity-80 focus-ring rounded-token"
         >
-          <GittensoryMark className="size-4" />
+          <LoopOverMark className="size-4" />
           <span aria-hidden>ittensory</span>
         </Link>
 

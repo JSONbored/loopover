@@ -44,7 +44,7 @@ describe("self-dogfood registration-pack route auth", () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token } = await createSessionForGitHubUser(env, { login: "new-user", id: 2468 });
-    const response = await app.request(SELF_DOGFOOD_PATH, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(SELF_DOGFOOD_PATH, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "insufficient_role" });
   });
@@ -55,7 +55,7 @@ describe("self-dogfood registration-pack route auth", () => {
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
     const response = await app.request(
       "/v1/repos/other/repo/self-dogfood-registration-pack",
-      { headers: { cookie: `gittensory_session=${token}` } },
+      { headers: { cookie: `loopover_session=${token}` } },
       env,
     );
     expect(response.status).toBe(403);
@@ -68,7 +68,7 @@ describe("self-dogfood registration-pack route auth", () => {
     await seedInstalledRepo(env, 201, "JSONbored", "gittensory");
     await seedInstalledRepo(env, 202, "unrelated-owner", "unrelated-repo");
     const { token } = await createSessionForGitHubUser(env, { login: "unrelated-owner", id: 202 });
-    const response = await app.request(APP_SELF_DOGFOOD_PATH, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(APP_SELF_DOGFOOD_PATH, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
@@ -78,10 +78,10 @@ describe("self-dogfood registration-pack route auth", () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedInstalledRepo(env, 201, "JSONbored", "gittensory");
     const { token } = await createSessionForGitHubUser(env, { login: "JSONbored", id: 201 });
-    const response = await app.request(APP_SELF_DOGFOOD_PATH, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(APP_SELF_DOGFOOD_PATH, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      kind: "gittensory_self_dogfood_registration_pack",
+      kind: "loopover_self_dogfood_registration_pack",
       repoFullName: "JSONbored/gittensory",
       privateOnly: true,
     });
@@ -93,7 +93,7 @@ describe("self-dogfood registration-pack route auth", () => {
     const response = await app.request(SELF_DOGFOOD_PATH, { headers: apiHeaders(env) }, env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      kind: "gittensory_self_dogfood_registration_pack",
+      kind: "loopover_self_dogfood_registration_pack",
       repoFullName: "JSONbored/gittensory",
       privateOnly: true,
       advisoryOnly: true,

@@ -57,7 +57,7 @@ function commandSuggestTargets(catalog: CommandSuggestCatalog): string[] {
   ];
 }
 
-export function isKnownGittensoryCommandVerb(
+export function isKnownLoopOverCommandVerb(
   rawVerb: string,
   catalog: CommandSuggestCatalog,
 ): boolean {
@@ -79,7 +79,7 @@ export function suggestCommand(
   if (
     !verb ||
     verb.length > COMMAND_SUGGEST_MAX_VERB_LENGTH ||
-    isKnownGittensoryCommandVerb(verb, catalog)
+    isKnownLoopOverCommandVerb(verb, catalog)
   )
     return null;
   const targets = commandSuggestTargets(catalog);

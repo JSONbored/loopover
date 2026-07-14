@@ -6,7 +6,7 @@ import {
   QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS,
 } from "../../packages/gittensory-miner/lib/portfolio-queue-cli.js";
 
-// Fixture for the GittensoryMinerPortfolioQueueItemStuck / GittensoryMinerPortfolioQueueBacklogHigh alerts
+// Fixture for the LoopOverMinerPortfolioQueueItemStuck / LoopOverMinerPortfolioQueueBacklogHigh alerts
 // (#5186). This is the config-side equivalent of a `promtool test rules` harness (the repo ships no promtool
 // dependency): it pins each rule's formula, threshold, and metric names to the real renderer surface so the
 // alerts can't silently drift away from the metrics they consume. Mirrors
@@ -41,8 +41,8 @@ function findAlert(name: string): AlertRule {
   throw new Error(`alert ${name} not found in prometheus/rules/alerts.yml`);
 }
 
-describe("GittensoryMinerPortfolioQueueItemStuck alert (#5186)", () => {
-  const rule = findAlert("GittensoryMinerPortfolioQueueItemStuck");
+describe("LoopOverMinerPortfolioQueueItemStuck alert (#5186)", () => {
+  const rule = findAlert("LoopOverMinerPortfolioQueueItemStuck");
   const flat = rule.expr.replace(/\s+/g, " ").trim();
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {
@@ -74,8 +74,8 @@ describe("GittensoryMinerPortfolioQueueItemStuck alert (#5186)", () => {
   });
 });
 
-describe("GittensoryMinerPortfolioQueueBacklogHigh alert (#5186)", () => {
-  const rule = findAlert("GittensoryMinerPortfolioQueueBacklogHigh");
+describe("LoopOverMinerPortfolioQueueBacklogHigh alert (#5186)", () => {
+  const rule = findAlert("LoopOverMinerPortfolioQueueBacklogHigh");
   const flat = rule.expr.replace(/\s+/g, " ").trim();
 
   it("lives in the same miner-scoped portfolio-queue rule group", () => {

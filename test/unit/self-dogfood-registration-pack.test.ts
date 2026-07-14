@@ -173,7 +173,7 @@ function readinessFixture(overrides: Partial<RegistrationReadinessReport> = {}):
       checkRunMode: "off",
       reviewCheckMode: "disabled",
       quietByDefault: false,
-      behavior: "Gittensory would stay silent because the GitHub App is not installed.",
+      behavior: "LoopOver would stay silent because the GitHub App is not installed.",
       warnings: ["GitHub App is not installed on this repo; maintainers will not get any automated assistance."],
     },
     policyReadiness: null,
@@ -224,7 +224,7 @@ function packFromRepo(
 }
 
 describe("resolveSelfDogfoodRepoFullName", () => {
-  it("defaults to the Gittensory repo when drift issue repo is unset", () => {
+  it("defaults to the LoopOver repo when drift issue repo is unset", () => {
     expect(resolveSelfDogfoodRepoFullName({})).toBe(DEFAULT_SELF_DOGFOOD_REPO);
     expect(resolveSelfDogfoodRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "" })).toBe(DEFAULT_SELF_DOGFOOD_REPO);
   });
@@ -248,7 +248,7 @@ describe("buildSelfDogfoodRegistrationPack", () => {
     // directPrFirst must follow that recommendation, not the repo's current direct-PR lane.
     expect(pack.gittensorConfigRecommendation.recommended.participationMode).toBe("split");
     expect(pack).toMatchObject({
-      kind: "gittensory_self_dogfood_registration_pack",
+      kind: "loopover_self_dogfood_registration_pack",
       privateOnly: true,
       advisoryOnly: true,
       directPrFirst: false,
@@ -369,7 +369,7 @@ describe("buildSelfDogfoodRegistrationPack", () => {
           checkRunMode: "off",
           reviewCheckMode: "disabled",
           quietByDefault: false,
-          behavior: "Gittensory posts comment and label in oss maintainer mode, for all PRs.",
+          behavior: "LoopOver posts comment and label in oss maintainer mode, for all PRs.",
           warnings: [],
         },
       }),

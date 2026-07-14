@@ -37,7 +37,7 @@ describe("check-before-start route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ issueNumber: 1 }),
       },
       env,
@@ -61,7 +61,7 @@ describe("check-before-start route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ issueNumber: 1 }),
       },
       env,

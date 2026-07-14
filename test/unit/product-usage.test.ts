@@ -263,7 +263,7 @@ describe("product usage events", () => {
       surface: "mcp",
       eventName: "mcp_tool_called",
       actor: "miner-user",
-      metadata: { toolName: "gittensory_get_repo_context" },
+      metadata: { toolName: "loopover_get_repo_context" },
     });
     expect(recorded.role).toBe("miner");
   });

@@ -1,6 +1,6 @@
 # LoopOver
 
-_Formerly Gittensory._
+_Formerly LoopOver._
 
 <p align="center">
   <a href="https://github.com/JSONbored/gittensory/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JSONbored/gittensory/actions/workflows/ci.yml/badge.svg" /></a>

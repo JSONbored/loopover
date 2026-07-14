@@ -470,7 +470,7 @@ export async function enqueueRepositoryOpenDataBackfill(
   options: { repoFullName: string; requestedBy: "schedule" | "api" | "test"; mode?: BackfillMode; force?: boolean },
 ): Promise<{ ok: true; repoFullName: string; status: "queued" | "skipped"; totals?: RepoGithubTotalsSnapshotRecord; warnings: string[] }> {
   const repo = await getRepository(env, options.repoFullName);
-  if (!repo?.isInstalled) return { ok: true, repoFullName: options.repoFullName, status: "skipped", warnings: ["Repository is not installed for Gittensory backfill."] };
+  if (!repo?.isInstalled) return { ok: true, repoFullName: options.repoFullName, status: "skipped", warnings: ["Repository is not installed for LoopOver backfill."] };
   const mode = options.mode ?? "light";
   const settings = await resolveRepositorySettings(env, repo.fullName);
   if (!settings.backfillEnabled) return { ok: true, repoFullName: repo.fullName, status: "skipped", warnings: ["Backfill is disabled for this repository."] };
@@ -1090,7 +1090,7 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
       event,
       missing: missingEvents.has(event),
       optional: false,
-      summary: `Gittensory expects the ${event} webhook event for installation health and GitHub App automation.`,
+      summary: `LoopOver expects the ${event} webhook event for installation health and GitHub App automation.`,
       action: missingEvents.has(event) ? `Subscribe to the ${event} webhook event, then approve or reinstall the app.` : "No change needed.",
     })),
     ...OPTIONAL_VISIBLE_INSTALLATION_EVENTS.map((event) => ({
@@ -1100,7 +1100,7 @@ export async function buildInstallationRepairDiagnostics(env: Env, health: Insta
       summary:
         event === "installation_repositories"
           ? "GitHub sends installation repository add/remove events automatically; it is not a selectable subscription event in the app settings UI."
-          : `The ${event} webhook event can appear in GitHub metadata, but it is not required for Gittensory PR automation.`,
+          : `The ${event} webhook event can appear in GitHub metadata, but it is not required for LoopOver PR automation.`,
       action: "No manual subscription is required.",
     })),
   ];
@@ -1369,7 +1369,7 @@ async function refreshRepoGithubTotals(
   sourceKind: RepoSyncSegmentRecord["sourceKind"],
 ): Promise<RepoGithubTotalsSnapshotRecord> {
   const { owner, name } = repoParts(repo.fullName);
-  const query = `query GittensoryRepoTotals {
+  const query = `query LoopOverRepoTotals {
     rateLimit { remaining resetAt }
     repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
       issues(states: OPEN) { totalCount }
@@ -1784,7 +1784,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
   let after = "";
   let supplemented = 0;
   for (;;) {
-    const query = `query GittensoryOpenIssuesSupplement {
+    const query = `query LoopOverOpenIssuesSupplement {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
         issues(states: OPEN, first: 100${after}) {
           pageInfo { hasNextPage endCursor }
@@ -1839,7 +1839,7 @@ async function supplementOpenPullRequestsFromGraphQl(env: Env, repo: RepositoryR
   let after = "";
   let supplemented = 0;
   for (;;) {
-    const query = `query GittensoryOpenPullRequestsSupplement {
+    const query = `query LoopOverOpenPullRequestsSupplement {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
         pullRequests(states: OPEN, first: 100${after}, orderBy: { field: CREATED_AT, direction: ASC }) {
           pageInfo { hasNextPage endCursor }
@@ -3055,7 +3055,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
   if (!headSha || !token) return null;
   const [owner, name] = repoFullName.split("/");
   if (!owner || !name) return null;
-  const query = `query GittensoryLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status startedAt detailsUrl title summary checkSuite { databaseId app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } } } } } }`;
+  const query = `query LoopOverLiveCiRollup { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { object(oid: ${JSON.stringify(headSha)}) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name conclusion status startedAt detailsUrl title summary checkSuite { databaseId app { slug } } } ... on StatusContext { context state description targetUrl } } pageInfo { hasNextPage } } } checkSuites(first: 100) { nodes { status app { slug } } } } } } }`;
   const result = await githubGraphQl<{
     data?: {
       repository?: {
@@ -3268,7 +3268,7 @@ export async function fetchLinkedIssueClosedByPullRequest(
   if (!token) return "fetch_error";
   const { owner, name } = repoParts(repoFullName);
   if (!owner || !name) return "fetch_error";
-  const query = `query GittensoryIssueCloser { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { issue(number: ${issueNumber}) { timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { __typename ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } } } } }`;
+  const query = `query LoopOverIssueCloser { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { issue(number: ${issueNumber}) { timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) { nodes { __typename ... on ClosedEvent { closer { __typename ... on PullRequest { number } } } } } } } }`;
   const result = await githubGraphQl<{
     data?: {
       repository?: {
@@ -3797,7 +3797,7 @@ export async function fetchLiveReviewThreadBlockers(
   const seenCursors = new Set<string>();
   for (;;) {
     const after: string = cursor ? `, after: ${JSON.stringify(cursor)}` : "";
-    const query: string = `query GittensoryPullRequestReviewThreads {
+    const query: string = `query LoopOverPullRequestReviewThreads {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
         pullRequest(number: ${prNumber}) {
           reviewThreads(first: 50${after}) {
@@ -4075,7 +4075,7 @@ async function fetchPullRequestDetailsFromGraphQl(
 ): Promise<{ files: GitHubFilePayload[]; reviews: GitHubReviewPayload[] }> {
   /* v8 ignore start -- GitHub detail GraphQL sparse-node fallbacks are exercised through PR detail hydration tests. */
   const { owner, name } = repoParts(repoFullName);
-  const query = `query GittensoryPullRequestDetails {
+  const query = `query LoopOverPullRequestDetails {
     repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
       pullRequest(number: ${pullNumber}) {
         files(first: 100) {
@@ -4713,7 +4713,7 @@ function buildContributorActivityQuery(aliases: Array<{ alias: string; query: st
         }`,
     )
     .join("\n");
-  return `query GittensoryContributorActivity {${fields}\n}`;
+  return `query LoopOverContributorActivity {${fields}\n}`;
 }
 
 function activityAlias(repoFullName: string, kind: "all" | "merged" | "open" | "issues"): string {

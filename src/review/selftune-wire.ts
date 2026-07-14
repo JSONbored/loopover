@@ -51,7 +51,7 @@ export function isSelfTuneEnabled(env: {
   return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_SELFTUNE ?? "").trim());
 }
 
-/** The project's base confidence floor the tightening direction is judged against IN THE SOAK. Gittensory has no
+/** The project's base confidence floor the tightening direction is judged against IN THE SOAK. LoopOver has no
  *  live `confidenceFloor` tunable (the live read-back instead RAISES `qualityGateMinScore` — see
  *  applySelfTuneOverrideToSettings), so a no-override project starts the soak from an UNSET base — the apply path
  *  treats "no live floor" as the loosest state, so any positive floor recommendation is strictly tightening (it

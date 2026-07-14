@@ -1,4 +1,4 @@
-// Gittensory Orb central GitHub App (#1255) — inbound webhook receiver (POST /v1/orb/webhook).
+// LoopOver Orb central GitHub App (#1255) — inbound webhook receiver (POST /v1/orb/webhook).
 //
 // The central Orb App is a SEPARATE GitHub App that maintainers INSTALL (one shared app, like
 // das-github-mirror's). GitHub delivers its install + PR/review events here, to gittensory-api. This is the

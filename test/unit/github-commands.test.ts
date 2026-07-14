@@ -5,11 +5,11 @@ import {
   buildPublicAgentCommandComment,
   isAiCostBearingCommand,
   isAuthorizedCommandActor,
-  isGittensoryActionCommand,
+  isLoopOverActionCommand,
   isIntentRoutableCommand,
   isMaintainerOnlyCommand,
   parseAgentCommandFeedbackContext,
-  parseGittensoryMentionCommand,
+  parseLoopOverMentionCommand,
   sanitizePublicComment,
   suggestCommand,
   GITTENSORY_ACTION_COMMAND_CATALOG,
@@ -21,58 +21,58 @@ import {
 
 describe("GitHub mention commands", () => {
   it("parses only explicit @loopover commands", () => {
-    expect(parseGittensoryMentionCommand(null)).toBeNull();
-    expect(parseGittensoryMentionCommand("@loopover")?.name).toBe("help");
-    expect(parseGittensoryMentionCommand("@loopover ask   ")).toMatchObject({ name: "ask", question: undefined });
-    expect(parseGittensoryMentionCommand("@loopover ask what should I fix first?")).toMatchObject({
+    expect(parseLoopOverMentionCommand(null)).toBeNull();
+    expect(parseLoopOverMentionCommand("@loopover")?.name).toBe("help");
+    expect(parseLoopOverMentionCommand("@loopover ask   ")).toMatchObject({ name: "ask", question: undefined });
+    expect(parseLoopOverMentionCommand("@loopover ask what should I fix first?")).toMatchObject({
       name: "ask",
       question: "what should I fix first?",
     });
-    expect(parseGittensoryMentionCommand("@loopover ask")).toMatchObject({ name: "ask", question: undefined });
-    expect(parseGittensoryMentionCommand("@loopover chat   ")).toMatchObject({ name: "chat", question: undefined });
-    expect(parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover ask")).toMatchObject({ name: "ask", question: undefined });
+    expect(parseLoopOverMentionCommand("@loopover chat   ")).toMatchObject({ name: "chat", question: undefined });
+    expect(parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")).toMatchObject({
       name: "chat",
       question: "why is this PR blocked?",
     });
-    expect(parseGittensoryMentionCommand("@loopover preflight")?.name).toBe("preflight");
-    expect(parseGittensoryMentionCommand("please @loopover duplicate-check now")?.name).toBe("duplicate-check");
-    expect(parseGittensoryMentionCommand("@loopover reviewability")?.name).toBe("reviewability");
-    expect(parseGittensoryMentionCommand("@loopover repo-fit")?.name).toBe("repo-fit");
-    expect(parseGittensoryMentionCommand("@loopover packet")?.name).toBe("packet");
-    expect(parseGittensoryMentionCommand("@loopover queue-summary")?.name).toBe("queue-summary");
-    expect(parseGittensoryMentionCommand("@loopover confirmed-miners")?.name).toBe("confirmed-miners");
-    expect(parseGittensoryMentionCommand("@loopover review-now")?.name).toBe("review-now");
-    expect(parseGittensoryMentionCommand("@loopover needs-author")?.name).toBe("needs-author");
-    expect(parseGittensoryMentionCommand("@loopover duplicate-clusters")?.name).toBe("duplicate-clusters");
-    expect(parseGittensoryMentionCommand("@loopover unknown")).toMatchObject({ name: "help", unknownVerb: "unknown", unrecognizedText: "unknown" });
+    expect(parseLoopOverMentionCommand("@loopover preflight")?.name).toBe("preflight");
+    expect(parseLoopOverMentionCommand("please @loopover duplicate-check now")?.name).toBe("duplicate-check");
+    expect(parseLoopOverMentionCommand("@loopover reviewability")?.name).toBe("reviewability");
+    expect(parseLoopOverMentionCommand("@loopover repo-fit")?.name).toBe("repo-fit");
+    expect(parseLoopOverMentionCommand("@loopover packet")?.name).toBe("packet");
+    expect(parseLoopOverMentionCommand("@loopover queue-summary")?.name).toBe("queue-summary");
+    expect(parseLoopOverMentionCommand("@loopover confirmed-miners")?.name).toBe("confirmed-miners");
+    expect(parseLoopOverMentionCommand("@loopover review-now")?.name).toBe("review-now");
+    expect(parseLoopOverMentionCommand("@loopover needs-author")?.name).toBe("needs-author");
+    expect(parseLoopOverMentionCommand("@loopover duplicate-clusters")?.name).toBe("duplicate-clusters");
+    expect(parseLoopOverMentionCommand("@loopover unknown")).toMatchObject({ name: "help", unknownVerb: "unknown", unrecognizedText: "unknown" });
     // #4596: an unrecognized verb's trailing free text is reconstructed (verb token + trailing text) so the
     // intent router can classify the FULL natural-language message, not just its first word.
-    expect(parseGittensoryMentionCommand("@loopover why is this stuck?")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover why is this stuck?")).toMatchObject({
       name: "help",
       unknownVerb: "why",
       unrecognizedText: "why is this stuck?",
     });
     // A bare "@loopover help" (or any recognized verb) never sets unrecognizedText.
-    expect(parseGittensoryMentionCommand("@loopover help")?.unrecognizedText).toBeUndefined();
-    expect(parseGittensoryMentionCommand("@loopover preflight")?.unrecognizedText).toBeUndefined();
+    expect(parseLoopOverMentionCommand("@loopover help")?.unrecognizedText).toBeUndefined();
+    expect(parseLoopOverMentionCommand("@loopover preflight")?.unrecognizedText).toBeUndefined();
     // No verb-shaped token at all (starts with a non-letter) still captures the trailing text for classification.
-    const noVerbToken = parseGittensoryMentionCommand("@loopover 123 why is this stuck");
+    const noVerbToken = parseLoopOverMentionCommand("@loopover 123 why is this stuck");
     expect(noVerbToken).toMatchObject({ name: "help", unrecognizedText: "123 why is this stuck" });
     expect(noVerbToken?.unknownVerb).toBeUndefined();
     // A bare "@loopover" with nothing meaningful after it leaves unrecognizedText undefined (nothing to classify).
-    expect(parseGittensoryMentionCommand("@loopover   ")?.unrecognizedText).toBeUndefined();
+    expect(parseLoopOverMentionCommand("@loopover   ")?.unrecognizedText).toBeUndefined();
     // gate-override is an action command: it must be recognized (NOT downgraded to "help") and carry the
     // trailing free text as its reason.
-    expect(parseGittensoryMentionCommand("@loopover gate-override")).toMatchObject({ name: "gate-override", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover gate-override known false positive, shipping")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover gate-override")).toMatchObject({ name: "gate-override", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover gate-override known false positive, shipping")).toMatchObject({
       name: "gate-override",
       reason: "known false positive, shipping",
     });
-    expect(parseGittensoryMentionCommand("gittensory preflight")).toBeNull();
+    expect(parseLoopOverMentionCommand("gittensory preflight")).toBeNull();
     // Other usernames that merely start with "@loopover" must not be read as a bare "@loopover help".
-    expect(parseGittensoryMentionCommand("@loopover-bot can you take a look?")).toBeNull();
-    expect(parseGittensoryMentionCommand("@loopoverbot help")).toBeNull();
-    expect(parseGittensoryMentionCommand("@loopover2 preflight")).toBeNull();
+    expect(parseLoopOverMentionCommand("@loopover-bot can you take a look?")).toBeNull();
+    expect(parseLoopOverMentionCommand("@loopoverbot help")).toBeNull();
+    expect(parseLoopOverMentionCommand("@loopover2 preflight")).toBeNull();
     expect(isMaintainerOnlyCommand("queue-summary")).toBe(true);
     expect(isMaintainerOnlyCommand("preflight")).toBe(false);
   });
@@ -108,45 +108,45 @@ describe("GitHub mention commands", () => {
   it("registers the #1960 PR control-surface action verbs (review/pause/resume/resolve/configuration/explain)", () => {
     // Each new verb is recognized as a first-class action command (not silently downgraded to "help") and
     // carries the trailing free text as `reason`, mirroring gate-override's existing shape.
-    expect(parseGittensoryMentionCommand("@loopover review")).toMatchObject({ name: "review", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover review flaky test unrelated to this diff")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover review")).toMatchObject({ name: "review", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover review flaky test unrelated to this diff")).toMatchObject({
       name: "review",
       reason: "flaky test unrelated to this diff",
     });
     // "re-review" is an alias for "review" — both spellings resolve to the same canonical command name.
-    expect(parseGittensoryMentionCommand("@loopover re-review")).toMatchObject({ name: "review", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover re-review please, new commits landed")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover re-review")).toMatchObject({ name: "review", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover re-review please, new commits landed")).toMatchObject({
       name: "review",
       reason: "please, new commits landed",
     });
-    expect(parseGittensoryMentionCommand("@loopover pause")).toMatchObject({ name: "pause", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover pause waiting on design sign-off")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover pause")).toMatchObject({ name: "pause", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover pause waiting on design sign-off")).toMatchObject({
       name: "pause",
       reason: "waiting on design sign-off",
     });
-    expect(parseGittensoryMentionCommand("@loopover resume")).toMatchObject({ name: "resume", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover resume design signed off")).toMatchObject({
+    expect(parseLoopOverMentionCommand("@loopover resume")).toMatchObject({ name: "resume", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover resume design signed off")).toMatchObject({
       name: "resume",
       reason: "design signed off",
     });
-    expect(parseGittensoryMentionCommand("@loopover resolve")).toMatchObject({ name: "resolve", reason: undefined });
-    expect(parseGittensoryMentionCommand("@loopover resolve finding-42")).toMatchObject({ name: "resolve", reason: "finding-42" });
-    expect(parseGittensoryMentionCommand("@loopover configuration")).toMatchObject({ name: "configuration", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover resolve")).toMatchObject({ name: "resolve", reason: undefined });
+    expect(parseLoopOverMentionCommand("@loopover resolve finding-42")).toMatchObject({ name: "resolve", reason: "finding-42" });
+    expect(parseLoopOverMentionCommand("@loopover configuration")).toMatchObject({ name: "configuration", reason: undefined });
     // "explain" captures its trailing text as `argument` (a lookup key), not `reason` (free-form prose) — so a
     // handler can tell "no finding id supplied" apart from "no reason supplied".
-    expect(parseGittensoryMentionCommand("@loopover explain")).toMatchObject({ name: "explain", argument: undefined });
-    expect(parseGittensoryMentionCommand("@loopover explain finding-7")).toMatchObject({ name: "explain", argument: "finding-7" });
-    expect(parseGittensoryMentionCommand("@loopover explain finding-7")).not.toHaveProperty("reason");
+    expect(parseLoopOverMentionCommand("@loopover explain")).toMatchObject({ name: "explain", argument: undefined });
+    expect(parseLoopOverMentionCommand("@loopover explain finding-7")).toMatchObject({ name: "explain", argument: "finding-7" });
+    expect(parseLoopOverMentionCommand("@loopover explain finding-7")).not.toHaveProperty("reason");
     // An unknown verb still resolves to "help", and a bare mention still resolves to "help" (unchanged).
-    expect(parseGittensoryMentionCommand("@loopover reveiw")).toMatchObject({ name: "help", unknownVerb: "reveiw" });
-    expect(parseGittensoryMentionCommand("@loopover")).toMatchObject({ name: "help" });
-    expect(parseGittensoryMentionCommand("@loopover")?.unknownVerb).toBeUndefined();
+    expect(parseLoopOverMentionCommand("@loopover reveiw")).toMatchObject({ name: "help", unknownVerb: "reveiw" });
+    expect(parseLoopOverMentionCommand("@loopover")).toMatchObject({ name: "help" });
+    expect(parseLoopOverMentionCommand("@loopover")?.unknownVerb).toBeUndefined();
   });
 
   it("surfaces did-you-mean hints in the help card for close typos (#2170)", () => {
     expect(suggestCommand("prefliht")).toBe("preflight");
     expect(suggestCommand("reveiw")).toBe("review");
-    const typo = parseGittensoryMentionCommand("@loopover prefliht")!;
+    const typo = parseLoopOverMentionCommand("@loopover prefliht")!;
     const typoBody = buildPublicAgentCommandComment({env: {},
       command: typo,
       repo: null,
@@ -155,7 +155,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
     });
     expect(typoBody).toContain("Did you mean `@loopover preflight`?");
-    const far = parseGittensoryMentionCommand("@loopover zzzz")!;
+    const far = parseLoopOverMentionCommand("@loopover zzzz")!;
     const farBody = buildPublicAgentCommandComment({env: {},
       command: far,
       repo: null,
@@ -164,7 +164,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
     });
     expect(farBody).not.toContain("Did you mean");
-    const ok = parseGittensoryMentionCommand("@loopover preflight")!;
+    const ok = parseLoopOverMentionCommand("@loopover preflight")!;
     const okBody = buildPublicAgentCommandComment({env: {},
       command: ok,
       repo: null,
@@ -173,7 +173,7 @@ describe("GitHub mention commands", () => {
       actorKind: "maintainer",
     });
     expect(okBody).not.toContain("Did you mean");
-    const bareHelp = parseGittensoryMentionCommand("@loopover")!;
+    const bareHelp = parseLoopOverMentionCommand("@loopover")!;
     const bareHelpBody = buildPublicAgentCommandComment({env: {},
       command: bareHelp,
       repo: null,
@@ -215,7 +215,7 @@ describe("GitHub mention commands", () => {
     const rendered = githubCommandsInternals.actionCommandHelpSections().join("\n");
     expect(rendered).toContain("@loopover re-review");
     const helpCard = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover")!,
+      command: parseLoopOverMentionCommand("@loopover")!,
       repo: null,
       issue: { number: 1, title: "t", state: "open" },
       pullRequest: null,
@@ -245,12 +245,12 @@ describe("GitHub mention commands", () => {
     );
   });
 
-  it("isGittensoryActionCommand distinguishes action verbs from Q&A commands", () => {
+  it("isLoopOverActionCommand distinguishes action verbs from Q&A commands", () => {
     for (const action of ["gate-override", "review", "pause", "resume", "resolve", "configuration", "explain"] as const) {
-      expect(isGittensoryActionCommand(action)).toBe(true);
+      expect(isLoopOverActionCommand(action)).toBe(true);
     }
     for (const qa of ["help", "ask", "preflight", "queue-summary"] as const) {
-      expect(isGittensoryActionCommand(qa)).toBe(false);
+      expect(isLoopOverActionCommand(qa)).toBe(false);
     }
   });
 
@@ -340,7 +340,7 @@ describe("GitHub mention commands", () => {
   });
 
   it("keeps public comments sanitized", () => {
-    const command = parseGittensoryMentionCommand("@loopover next-action")!;
+    const command = parseLoopOverMentionCommand("@loopover next-action")!;
     const body = buildPublicAgentCommandComment({env: {},
       command,
       repo: null,
@@ -436,7 +436,7 @@ describe("GitHub mention commands", () => {
 
     for (const mention of ["@loopover preflight", "@loopover reviewability", "@loopover packet"]) {
       const body = buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(mention)!,
+        command: parseLoopOverMentionCommand(mention)!,
         repo: { fullName: "owner/repo" } as any,
         issue: { number: 12, title: "PR", state: "open", pull_request: {} },
         pullRequest: null,
@@ -452,7 +452,7 @@ describe("GitHub mention commands", () => {
 
   it("adds parseable aggregate-only feedback context without public leak terms", () => {
     const body = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 12, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -474,7 +474,7 @@ describe("GitHub mention commands", () => {
 
   it("does not publish repo outcome-pattern details in duplicate-check comments", () => {
     const body = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 99, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -516,7 +516,7 @@ describe("GitHub mention commands", () => {
     const bundle = sampleBundle();
 
     const preflight = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 10, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -528,7 +528,7 @@ describe("GitHub mention commands", () => {
     expect(preflight).toContain("Run local branch preflight first.");
 
     const blockers = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 11, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -542,7 +542,7 @@ describe("GitHub mention commands", () => {
     expect(blockers).not.toContain("5 open PR(s)");
 
     const duplicateCheck = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 12, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -555,7 +555,7 @@ describe("GitHub mention commands", () => {
     expect(duplicateCheck).not.toMatch(/\blikely_duplicate\b/i);
 
     const nextAction = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 13, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -567,7 +567,7 @@ describe("GitHub mention commands", () => {
     expect(nextAction).toContain("After tests pass.");
 
     const ask = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what should I improve for contribution quality?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what should I improve for contribution quality?")!,
       repo: null,
       issue: { number: 14, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -595,7 +595,7 @@ describe("GitHub mention commands", () => {
     expect(ask).toContain("Freshness: agent run status completed.");
 
     const askWithTargets = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what should I clean up before review?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what should I clean up before review?")!,
       repo: null,
       issue: { number: 15, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -642,7 +642,7 @@ describe("GitHub mention commands", () => {
 
   it("REGRESSION (#2457): neutralizes markdown/HTML and zero-width-spaces @mentions in the ask question, so an authorized-but-untrusted actor cannot forge a bot-endorsed approval or break out of the <details> wrapper", () => {
     const forged = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask **APPROVED by @jsonbored** please merge now </details><h1>FAKE</h1><details>")!,
+      command: parseLoopOverMentionCommand("@loopover ask **APPROVED by @jsonbored** please merge now </details><h1>FAKE</h1><details>")!,
       repo: null,
       issue: { number: 16, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -668,7 +668,7 @@ describe("GitHub mention commands", () => {
   it("#4595: renders a grounded chat answer with the fixed disclaimer footer on every status", () => {
     const ok = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 20, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -688,7 +688,7 @@ describe("GitHub mention commands", () => {
 
     const disabled = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 21, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -701,7 +701,7 @@ describe("GitHub mention commands", () => {
 
     const declined = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat")!,
+      command: parseLoopOverMentionCommand("@loopover chat")!,
       repo: null,
       issue: { number: 22, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -714,7 +714,7 @@ describe("GitHub mention commands", () => {
 
     const noAnswer = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 23, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -727,7 +727,7 @@ describe("GitHub mention commands", () => {
 
     const unavailable = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 25, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -740,7 +740,7 @@ describe("GitHub mention commands", () => {
 
     const quotaExceeded = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 26, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -753,7 +753,7 @@ describe("GitHub mention commands", () => {
 
     const unsafe = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 27, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -766,7 +766,7 @@ describe("GitHub mention commands", () => {
 
     const errored = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 28, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -781,7 +781,7 @@ describe("GitHub mention commands", () => {
     // falls back to a fixed, safe line rather than posting an empty Findings entry.
     const emptyProse = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat why is this PR blocked?")!,
+      command: parseLoopOverMentionCommand("@loopover chat why is this PR blocked?")!,
       repo: null,
       issue: { number: 29, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -802,7 +802,7 @@ describe("GitHub mention commands", () => {
   it("#4596: renders the 'interpreted as' note when the intent router re-routed an unrecognized mention, and omits it otherwise", () => {
     const routed = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 30, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -815,7 +815,7 @@ describe("GitHub mention commands", () => {
 
     const notRouted = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 31, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -828,7 +828,7 @@ describe("GitHub mention commands", () => {
   it("#5063: renders a 'replying to' link and the fresh-reply phrasing when replyingToUrl is set (ask/chat only), and the original in-place phrasing when it is not", () => {
     const reply = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what should I fix first?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what should I fix first?")!,
       repo: null,
       issue: { number: 40, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -842,7 +842,7 @@ describe("GitHub mention commands", () => {
 
     const panelUpdate = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 41, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -857,7 +857,7 @@ describe("GitHub mention commands", () => {
   it("REGRESSION (#4596): neutralizes markdown/HTML and zero-width-spaces @mentions in the interpreted-from question, same as the ask/chat question lines (#2457)", () => {
     const forged = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 32, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -876,7 +876,7 @@ describe("GitHub mention commands", () => {
   it("REGRESSION (#4595 req 8): neutralizes markdown/HTML and zero-width-spaces @mentions in BOTH the chat question and the model's own answer text", () => {
     const forged = buildPublicAgentCommandComment({
       env: {},
-      command: parseGittensoryMentionCommand("@loopover chat **APPROVED by @jsonbored** please merge now </details><h1>FAKE</h1><details>")!,
+      command: parseLoopOverMentionCommand("@loopover chat **APPROVED by @jsonbored** please merge now </details><h1>FAKE</h1><details>")!,
       repo: null,
       issue: { number: 24, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -894,7 +894,7 @@ describe("GitHub mention commands", () => {
 
   it("redacts private score floor blockers from public preflight comments", () => {
     const body = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 25, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -933,7 +933,7 @@ describe("GitHub mention commands", () => {
 
   it("does not publish private blocker why details", () => {
     const body = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 24, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -972,7 +972,7 @@ describe("GitHub mention commands", () => {
 
   it("renders help, miner-context fallback, refresh, and empty-action responses", () => {
     const help = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover help")!,
+      command: parseLoopOverMentionCommand("@loopover help")!,
       repo: null,
       issue: { number: 1, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -986,7 +986,7 @@ describe("GitHub mention commands", () => {
     expect(help).toContain("@loopover next-action");
 
     const minerFallback = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover miner-context")!,
+      command: parseLoopOverMentionCommand("@loopover miner-context")!,
       repo: null,
       issue: { number: 2, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -996,7 +996,7 @@ describe("GitHub mention commands", () => {
     expect(minerFallback).toContain("Official miner context is unavailable");
 
     const minerContext = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover miner-context")!,
+      command: parseLoopOverMentionCommand("@loopover miner-context")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 22, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1007,7 +1007,7 @@ describe("GitHub mention commands", () => {
     expect(minerContext).toContain("| Scope | owner/repo#22 |");
 
     const refresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 3, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1033,7 +1033,7 @@ describe("GitHub mention commands", () => {
     expect(refresh).toContain("Retry after the contributor decision snapshot refresh completes.");
 
     const preflightRefresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 31, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1057,7 +1057,7 @@ describe("GitHub mention commands", () => {
     expect(preflightRefresh).toContain("**Preflight snapshot refresh**");
 
     const duplicateRefresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 33, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1081,7 +1081,7 @@ describe("GitHub mention commands", () => {
     expect(duplicateRefresh).toContain("**Duplicate-check snapshot refresh**");
 
     const askRefresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask should I update linked issue context?")!,
+      command: parseLoopOverMentionCommand("@loopover ask should I update linked issue context?")!,
       repo: null,
       issue: { number: 35, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1110,7 +1110,7 @@ describe("GitHub mention commands", () => {
     expect(askRefresh).toContain("Freshness: contribution context snapshot refresh in progress.");
 
     const nextActionRefresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 36, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1120,7 +1120,7 @@ describe("GitHub mention commands", () => {
     expect(nextActionRefresh).toContain("**Next-action snapshot refresh**");
 
     const empty = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 4, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1145,7 +1145,7 @@ describe("GitHub mention commands", () => {
     expect(empty).toContain("No public-safe context is available");
 
     const askNoQuestion = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask")!,
+      command: parseLoopOverMentionCommand("@loopover ask")!,
       repo: null,
       issue: { number: 36, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1170,7 +1170,7 @@ describe("GitHub mention commands", () => {
     expect(askNoQuestion).toContain("No matching contribution-quality context is available");
 
     const askMetadata = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what blocks contribution readiness?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what blocks contribution readiness?")!,
       repo: null,
       issue: { number: 37, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1257,7 +1257,7 @@ describe("GitHub mention commands", () => {
     expect(askMetadata).not.toContain("No concrete cached source reference is available for this response.");
 
     const askNoSources = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what is the repo policy?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what is the repo policy?")!,
       repo: null,
       issue: { number: 38, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1266,7 +1266,7 @@ describe("GitHub mention commands", () => {
     expect(askNoSources).toContain("cached LoopOver agent context (no connected-source metadata in this run)");
 
     const askEvidenceOnly = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what should I verify locally?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what should I verify locally?")!,
       repo: null,
       issue: { number: 39, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1303,7 +1303,7 @@ describe("GitHub mention commands", () => {
     expect(askEvidenceOnly).toContain("custom unknown source");
 
     const askFallbackCitations = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what is missing?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what is missing?")!,
       repo: null,
       issue: { number: 40, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1336,7 +1336,7 @@ describe("GitHub mention commands", () => {
     expect(askFallbackDetails).not.toMatch(/origin: /);
 
     const noBundle = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 44, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1346,7 +1346,7 @@ describe("GitHub mention commands", () => {
     expect(noBundle).toContain("No public-safe context is available");
 
     const noBundleNextAction = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 48, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1356,7 +1356,7 @@ describe("GitHub mention commands", () => {
     expect(noBundleNextAction).toContain("No public-safe context is available");
 
     const emptyBlockers = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 45, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1371,7 +1371,7 @@ describe("GitHub mention commands", () => {
     expect(emptyBlockers).toContain("No public readiness blockers are visible");
 
     const emptyDuplicate = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 46, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1386,7 +1386,7 @@ describe("GitHub mention commands", () => {
     expect(emptyDuplicate).toContain("No duplicate or work-in-progress collision signal is visible");
 
     const missingDigest = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover queue-summary")!,
+      command: parseLoopOverMentionCommand("@loopover queue-summary")!,
       repo: null,
       issue: { number: 47, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1395,7 +1395,7 @@ describe("GitHub mention commands", () => {
     expect(missingDigest).toContain("Cached queue context is unavailable");
 
     const withPrFallbackScope = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 5, title: "PR", state: "open", pull_request: {} },
       pullRequest: { repoFullName: "owner/from-pr" } as any,
@@ -1440,7 +1440,7 @@ describe("GitHub mention commands", () => {
     // Five distinct contributing sources → five citations. The first four render under Findings and the
     // overflow (citations 5+) under Additional safe details; no citation should appear in both sections.
     const ask = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what is missing?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what is missing?")!,
       repo: null,
       issue: { number: 61, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1501,7 +1501,7 @@ describe("GitHub mention commands", () => {
 
   it("covers blocker label fallbacks, rerun bullets, and duplicate-risk heuristics", () => {
     const blockersWithFallbackLabel = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 20, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1531,7 +1531,7 @@ describe("GitHub mention commands", () => {
     expect(blockersWithFallbackLabel).toContain("Reduce concurrent review load.");
 
     const blockersWithDuplicateCodes = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 24, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1560,7 +1560,7 @@ describe("GitHub mention commands", () => {
     expect(blockersWithDuplicateCodes.match(/Private readiness context available in authenticated LoopOver views/g)).toHaveLength(1);
 
     const blockersFromStatus = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 25, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1589,7 +1589,7 @@ describe("GitHub mention commands", () => {
     expect(blockersFromStatus.match(/Private readiness context available in authenticated LoopOver views/g)).toHaveLength(1);
 
     const statusOnlyBlocker = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 26, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1618,7 +1618,7 @@ describe("GitHub mention commands", () => {
     expect(statusOnlyBlocker).toContain("Wait for maintainer review capacity.");
 
     const duplicateViaRecommendation = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 21, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1650,7 +1650,7 @@ describe("GitHub mention commands", () => {
     expect(duplicateViaRecommendation).not.toContain("Concurrent review pressure");
 
     const duplicateWithInjectedWhy = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 27, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1681,7 +1681,7 @@ describe("GitHub mention commands", () => {
     expect(duplicateWithInjectedWhy).not.toMatch(/\n@octo-team|@octo-team|[^\\]\[click\]\(https:\/\/example\.test\)/);
 
     const preflightWithRerun = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 22, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1712,7 +1712,7 @@ describe("GitHub mention commands", () => {
     expect(preflightWithRerun).toContain("Private readiness context available in authenticated LoopOver views");
 
     const duplicateBlockerLabels = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 25, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1741,7 +1741,7 @@ describe("GitHub mention commands", () => {
     expect(duplicateBlockerLabels.match(/Private readiness context available in authenticated LoopOver views/g)).toHaveLength(1);
 
     const duplicateFallbackPick = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-check")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-check")!,
       repo: null,
       issue: { number: 23, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1772,7 +1772,7 @@ describe("GitHub mention commands", () => {
 
   it("renders v2 reviewability, repo-fit, and packet sections without private internals", () => {
     const reviewability = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover reviewability")!,
+      command: parseLoopOverMentionCommand("@loopover reviewability")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 31, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1786,7 +1786,7 @@ describe("GitHub mention commands", () => {
     expect(reviewability).not.toMatch(/private reviewability|reviewability internals|scoreability|public score estimate|wallet|hotkey|payout|farming/i);
 
     const repoFit = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover repo-fit")!,
+      command: parseLoopOverMentionCommand("@loopover repo-fit")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 32, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1800,7 +1800,7 @@ describe("GitHub mention commands", () => {
     expect(repoFit).not.toMatch(/private reviewability|scoreability|public score estimate|wallet|hotkey|payout|farming/i);
 
     const packet = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover packet")!,
+      command: parseLoopOverMentionCommand("@loopover packet")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 33, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1816,7 +1816,7 @@ describe("GitHub mention commands", () => {
 
   it("covers v2 refresh, empty, rerun, and duplicate-line fallbacks", () => {
     const preflightRefresh = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover preflight")!,
+      command: parseLoopOverMentionCommand("@loopover preflight")!,
       repo: null,
       issue: { number: 40, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1830,7 +1830,7 @@ describe("GitHub mention commands", () => {
       ["@loopover duplicate-check", "Duplicate & WIP caution", "No duplicate or work-in-progress collision signal is visible"],
     ] as const) {
       const body = buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(commandText)!,
+        command: parseLoopOverMentionCommand(commandText)!,
         repo: null,
         issue: { number: 40, title: "PR", state: "open", pull_request: {} },
         pullRequest: null,
@@ -1847,7 +1847,7 @@ describe("GitHub mention commands", () => {
       ["@loopover packet", "Public packet snapshot refresh"],
     ] as const) {
       const body = buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(commandText)!,
+        command: parseLoopOverMentionCommand(commandText)!,
         repo: null,
         issue: { number: 41, title: "PR", state: "open", pull_request: {} },
         pullRequest: null,
@@ -1863,7 +1863,7 @@ describe("GitHub mention commands", () => {
       ["@loopover packet", "Public packet"],
     ] as const) {
       const body = buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(commandText)!,
+        command: parseLoopOverMentionCommand(commandText)!,
         repo: null,
         issue: { number: 42, title: "PR", state: "open", pull_request: {} },
         pullRequest: null,
@@ -1875,7 +1875,7 @@ describe("GitHub mention commands", () => {
     }
 
     const repoFitWithRerun = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover repo-fit")!,
+      command: parseLoopOverMentionCommand("@loopover repo-fit")!,
       repo: null,
       issue: { number: 43, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1906,7 +1906,7 @@ describe("GitHub mention commands", () => {
     expect(repoFitWithRerun).not.toContain("Target:");
 
     const repoFitFromSummary = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover repo-fit")!,
+      command: parseLoopOverMentionCommand("@loopover repo-fit")!,
       repo: null,
       issue: { number: 43, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1935,7 +1935,7 @@ describe("GitHub mention commands", () => {
     expect(repoFitFromSummary).toContain("Repository fit looks clean");
 
     const packetFromSafetyClass = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover packet")!,
+      command: parseLoopOverMentionCommand("@loopover packet")!,
       repo: null,
       issue: { number: 43, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -1964,7 +1964,7 @@ describe("GitHub mention commands", () => {
     expect(packetFromSafetyClass).toContain("Post the public-safe PR packet");
 
     const duplicateBlockers = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover blockers")!,
+      command: parseLoopOverMentionCommand("@loopover blockers")!,
       repo: null,
       issue: { number: 44, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2003,7 +2003,7 @@ describe("GitHub mention commands", () => {
     const FORBIDDEN = /wallet|hotkey|coldkey|mnemonic|raw trust score|trust score|payout|reward estimate|farming|private reviewability|scoreability/i;
     const render = (mention: string) =>
       buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(mention)!,
+        command: parseLoopOverMentionCommand(mention)!,
         repo: { fullName: "owner/repo" } as any,
         issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
         pullRequest: null,
@@ -2032,7 +2032,7 @@ describe("GitHub mention commands", () => {
     expect(noise).toContain("Noise level:");
     expect(noise).not.toMatch(FORBIDDEN);
 
-    expect(parseGittensoryMentionCommand("@loopover burden-forecast")?.name).toBe("burden-forecast");
+    expect(parseLoopOverMentionCommand("@loopover burden-forecast")?.name).toBe("burden-forecast");
     expect(isMaintainerOnlyCommand("noise-report")).toBe(true);
   });
 
@@ -2040,7 +2040,7 @@ describe("GitHub mention commands", () => {
     const base = sampleMaintainerDigest();
     const render = (mention: string, digest: typeof base) =>
       buildPublicAgentCommandComment({env: {},
-        command: parseGittensoryMentionCommand(mention)!,
+        command: parseLoopOverMentionCommand(mention)!,
         repo: { fullName: "owner/repo" } as any,
         issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
         pullRequest: null,
@@ -2123,7 +2123,7 @@ describe("GitHub mention commands", () => {
     expect(reversedDigest.needsAuthorPullRequests.map((pr) => pr.number)).toEqual(digest.needsAuthorPullRequests.map((pr) => pr.number));
 
     const queueSummary = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover queue-summary")!,
+      command: parseLoopOverMentionCommand("@loopover queue-summary")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2137,7 +2137,7 @@ describe("GitHub mention commands", () => {
     expect(queueSummary).not.toMatch(/wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i);
 
     const confirmed = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover confirmed-miners")!,
+      command: parseLoopOverMentionCommand("@loopover confirmed-miners")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2149,7 +2149,7 @@ describe("GitHub mention commands", () => {
     expect(confirmed).toContain("#13: Cache overlap first");
 
     const reviewNow = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover review-now")!,
+      command: parseLoopOverMentionCommand("@loopover review-now")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2161,7 +2161,7 @@ describe("GitHub mention commands", () => {
     expect(reviewNow).not.toContain("#12: Needs issue context");
 
     const needsAuthor = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover needs-author")!,
+      command: parseLoopOverMentionCommand("@loopover needs-author")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2174,7 +2174,7 @@ describe("GitHub mention commands", () => {
     expect(needsAuthor).toContain("Possible duplicate or WIP overlap");
 
     const duplicateClusters = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-clusters")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-clusters")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2205,7 +2205,7 @@ describe("GitHub mention commands", () => {
       ],
     });
     const defensiveClusters = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-clusters")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-clusters")!,
       repo: null,
       issue: { number: 100, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2215,7 +2215,7 @@ describe("GitHub mention commands", () => {
     expect(defensiveClusters).toContain("medium risk:");
     expect(defensiveClusters).toContain("...");
     const defensiveSummary = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover queue-summary")!,
+      command: parseLoopOverMentionCommand("@loopover queue-summary")!,
       repo: null,
       issue: { number: 101, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2226,7 +2226,7 @@ describe("GitHub mention commands", () => {
     expect(defensiveDigest.needsAuthorPullRequests.find((pr) => pr.number === 18)?.reasons).toContain("Maintainer-authored PR; review as repo stewardship.");
 
     const unavailableDigest = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover review-now")!,
+      command: parseLoopOverMentionCommand("@loopover review-now")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 102, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2236,7 +2236,7 @@ describe("GitHub mention commands", () => {
     expect(unavailableDigest).toContain("Cached queue context is unavailable for this command.");
 
     const emptyReviewNow = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover review-now")!,
+      command: parseLoopOverMentionCommand("@loopover review-now")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 103, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2246,7 +2246,7 @@ describe("GitHub mention commands", () => {
     expect(emptyReviewNow).toContain("No cached PR currently looks ready for detailed review.");
 
     const emptyDuplicateClusters = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-clusters")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-clusters")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 104, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2256,7 +2256,7 @@ describe("GitHub mention commands", () => {
     expect(emptyDuplicateClusters).toContain("No duplicate or WIP cluster is visible from cached metadata.");
 
     const emptyConfirmed = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover confirmed-miners")!,
+      command: parseLoopOverMentionCommand("@loopover confirmed-miners")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 105, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2266,7 +2266,7 @@ describe("GitHub mention commands", () => {
     expect(emptyConfirmed).toContain("No cached confirmed-miner PRs are visible in this queue.");
 
     const emptyNeedsAuthor = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover needs-author")!,
+      command: parseLoopOverMentionCommand("@loopover needs-author")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 106, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2304,7 +2304,7 @@ describe("GitHub mention commands", () => {
     } satisfies ReturnType<typeof sampleMaintainerDigest>;
 
     const reviewNow = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover review-now")!,
+      command: parseLoopOverMentionCommand("@loopover review-now")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2312,7 +2312,7 @@ describe("GitHub mention commands", () => {
       maintainerDigest: digest,
     });
     const duplicateClusters = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-clusters")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-clusters")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2364,7 +2364,7 @@ describe("GitHub mention commands", () => {
     } satisfies ReturnType<typeof sampleMaintainerDigest>;
 
     const reviewNow = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover review-now")!,
+      command: parseLoopOverMentionCommand("@loopover review-now")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2372,7 +2372,7 @@ describe("GitHub mention commands", () => {
       maintainerDigest: digest,
     });
     const duplicateClusters = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover duplicate-clusters")!,
+      command: parseLoopOverMentionCommand("@loopover duplicate-clusters")!,
       repo: { fullName: "owner/repo" } as any,
       issue: { number: 99, title: "Digest", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2480,7 +2480,7 @@ describe("ask citation helpers", () => {
     );
 
     const comment = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what should I do next?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what should I do next?")!,
       repo: null,
       issue: { number: 44, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2596,7 +2596,7 @@ describe("ask citation helpers", () => {
     expect(extended.find((source) => source.key === "open_pr_monitor")?.freshness).toBe("unknown");
 
     const askOverflow = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask list every connected source?")!,
+      command: parseLoopOverMentionCommand("@loopover ask list every connected source?")!,
       repo: null,
       issue: { number: 41, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2607,7 +2607,7 @@ describe("ask citation helpers", () => {
     expect(askOverflow).toContain("Source: cached GitHub open PR/issue queue; freshness:");
 
     const askWithoutTimestamps = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what is synced?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what is synced?")!,
       repo: null,
       issue: { number: 42, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,
@@ -2631,7 +2631,7 @@ describe("ask citation helpers", () => {
     expect(askWithoutTimestamps).not.toContain("freshness unknown as of");
 
     const askFourSources = buildPublicAgentCommandComment({env: {},
-      command: parseGittensoryMentionCommand("@loopover ask what sources apply?")!,
+      command: parseLoopOverMentionCommand("@loopover ask what sources apply?")!,
       repo: null,
       issue: { number: 43, title: "PR", state: "open", pull_request: {} },
       pullRequest: null,

@@ -80,7 +80,7 @@ export const SLOP_WEIGHTS = {
 } as const;
 
 export const SLOP_RUBRIC_MARKDOWN = [
-  "# Gittensory slop assessment rubric",
+  "# LoopOver slop assessment rubric",
   "",
   "- `clean`: 0",
   "- `low`: 1-30",

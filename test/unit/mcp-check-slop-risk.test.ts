@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
-  const server = new GittensoryMcp(createTestEnv()).createServer();
+  const server = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-slop-test", version: "0.1.0" }, { capabilities: {} });
@@ -13,11 +13,11 @@ async function connect() {
   return client;
 }
 
-describe("MCP gittensory_check_slop_risk", () => {
+describe("MCP loopover_check_slop_risk", () => {
   it("assesses slop from local diff metadata (no repo/auth needed) and returns band + findings", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_check_slop_risk",
+      name: "loopover_check_slop_risk",
       arguments: { changedFiles: [{ path: "src/api/routes.ts", additions: 6, deletions: 1 }], description: "" },
     });
     expect(result.isError).toBeFalsy();
@@ -34,7 +34,7 @@ describe("MCP gittensory_check_slop_risk", () => {
   it("returns a clean assessment for a documented, tested change", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_check_slop_risk",
+      name: "loopover_check_slop_risk",
       arguments: {
         changedFiles: [{ path: "src/x.ts", additions: 20, deletions: 3 }, { path: "test/x.test.ts", additions: 15, deletions: 0 }],
         description: "Adds a retry path with regression coverage.",
@@ -46,10 +46,10 @@ describe("MCP gittensory_check_slop_risk", () => {
   });
 });
 
-describe("MCP gittensory_check_issue_slop (#533)", () => {
+describe("MCP loopover_check_issue_slop (#533)", () => {
   it("flags a low-effort issue (empty body) from title+body alone and returns band + findings", async () => {
     const client = await connect();
-    const result = await client.callTool({ name: "gittensory_check_issue_slop", arguments: { title: "broken", body: "  " } });
+    const result = await client.callTool({ name: "loopover_check_issue_slop", arguments: { title: "broken", body: "  " } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { band: string; findings: Array<{ code: string }> };
     expect(["low", "elevated", "high"]).toContain(data.band);
@@ -63,7 +63,7 @@ describe("MCP gittensory_check_issue_slop (#533)", () => {
   it("returns a clean assessment for a genuine issue", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_check_issue_slop",
+      name: "loopover_check_issue_slop",
       arguments: { title: "500 on save", body: "Clicking Save on /settings returns a 500; expected a redirect. Repro: open /settings, submit." },
     });
     const data = result.structuredContent as { band: string };

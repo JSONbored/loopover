@@ -1,11 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
-  const server = new GittensoryMcp(createTestEnv()).createServer();
+  const server = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-write-tools-test", version: "0.1.0" }, { capabilities: {} });
@@ -19,7 +19,7 @@ describe("MCP miner write-tools (#780)", () => {
   it("open_pr returns a local-execution spec; gittensory performs no write", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_open_pr",
+      name: "loopover_open_pr",
       arguments: { repoFullName: "o/r", base: "main", head: "feat/x", title: "Add thing", body: "Body", draft: true },
     });
     expect(result.isError).toBeFalsy();
@@ -33,11 +33,11 @@ describe("MCP miner write-tools (#780)", () => {
   it("file_issue / apply_labels / post_eligibility_comment / branch helpers all return runnable specs", async () => {
     const client = await connect();
     const cases: Array<{ name: string; args: Record<string, unknown>; expect: string }> = [
-      { name: "gittensory_file_issue", args: { repoFullName: "o/r", title: "T", body: "B", labels: ["bug"] }, expect: "gh issue create --repo 'o/r' --title 'T' --body 'B' --label 'bug'" },
-      { name: "gittensory_apply_labels", args: { repoFullName: "o/r", number: 7, labels: ["x"] }, expect: "gh issue edit 7 --repo 'o/r' --add-label 'x'" },
-      { name: "gittensory_post_eligibility_comment", args: { repoFullName: "o/r", number: 7, body: "hi" }, expect: "gh issue comment 7 --repo 'o/r' --body 'hi'" },
-      { name: "gittensory_create_branch", args: { branch: "feat/x", base: "main" }, expect: "git switch -c 'feat/x' 'main'" },
-      { name: "gittensory_delete_branch", args: { branch: "feat/x", remote: true }, expect: "git branch -D 'feat/x' && git push origin --delete 'feat/x'" },
+      { name: "loopover_file_issue", args: { repoFullName: "o/r", title: "T", body: "B", labels: ["bug"] }, expect: "gh issue create --repo 'o/r' --title 'T' --body 'B' --label 'bug'" },
+      { name: "loopover_apply_labels", args: { repoFullName: "o/r", number: 7, labels: ["x"] }, expect: "gh issue edit 7 --repo 'o/r' --add-label 'x'" },
+      { name: "loopover_post_eligibility_comment", args: { repoFullName: "o/r", number: 7, body: "hi" }, expect: "gh issue comment 7 --repo 'o/r' --body 'hi'" },
+      { name: "loopover_create_branch", args: { branch: "feat/x", base: "main" }, expect: "git switch -c 'feat/x' 'main'" },
+      { name: "loopover_delete_branch", args: { branch: "feat/x", remote: true }, expect: "git branch -D 'feat/x' && git push origin --delete 'feat/x'" },
     ];
     for (const testCase of cases) {
       const result = await client.callTool({ name: testCase.name, arguments: testCase.args });
@@ -50,7 +50,7 @@ describe("MCP miner write-tools (#780)", () => {
   it("generate_tests returns a local-execution spec naming the framework and target files; gittensory performs no write", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_generate_tests",
+      name: "loopover_generate_tests",
       arguments: { repoFullName: "o/r", targetFiles: ["src/widget.ts"], framework: "vitest", testDir: "test/unit/", criteria: ["cover the nullish branch"] },
     });
     expect(result.isError).toBeFalsy();
@@ -66,7 +66,7 @@ describe("MCP miner write-tools (#780)", () => {
   it("generate_tests rejects a framework outside the detector's known set", async () => {
     const client = await connect();
     const result = await client.callTool({
-      name: "gittensory_generate_tests",
+      name: "loopover_generate_tests",
       arguments: { repoFullName: "o/r", targetFiles: ["src/widget.ts"], framework: "not-a-real-framework" },
     });
     expect(result.isError).toBeTruthy();
@@ -76,7 +76,7 @@ describe("MCP miner write-tools (#780)", () => {
   it("file_follow_up_issue composes a file_issue spec from a deferred finding, with and without a label", async () => {
     const client = await connect();
     const withLabel = await client.callTool({
-      name: "gittensory_file_follow_up_issue",
+      name: "loopover_file_follow_up_issue",
       arguments: { repoFullName: "o/r", path: "src/a.ts", line: 42, finding: "Null check missing before dereference.", label: "gittensor:bug" },
     });
     expect(withLabel.isError).toBeFalsy();
@@ -86,7 +86,7 @@ describe("MCP miner write-tools (#780)", () => {
     expect(spec.command).toContain("--label 'gittensor:bug'");
 
     const withoutLabel = await client.callTool({
-      name: "gittensory_file_follow_up_issue",
+      name: "loopover_file_follow_up_issue",
       arguments: { repoFullName: "o/r", path: "src/a.ts", finding: "Null check missing." },
     });
     expect(withoutLabel.isError).toBeFalsy();

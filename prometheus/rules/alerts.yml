@@ -632,7 +632,7 @@ groups:
   # without the D1 probe.
   - name: gittensory-miner-prediction
     rules:
-      - alert: GittensoryMinerPredictionCalibrationDrift
+      - alert: LoopOverMinerPredictionCalibrationDrift
         # Calibration = how often the miner's predicted gate conclusion matched the realized outcome. This is
         # the miner counterpart of loopover-jobs' LoopoverHighJobFailureRatio and uses the identical
         # bad/(bad+good) shape: the fraction of RESOLVED predictions that came back INCORRECT over the window.
@@ -673,7 +673,7 @@ groups:
   # `selfhost:validate-observability` and never false-fires on an install with no miner scrape configured.
   - name: gittensory-miner-portfolio-queue
     rules:
-      - alert: GittensoryMinerPortfolioQueueItemStuck
+      - alert: LoopOverMinerPortfolioQueueItemStuck
         # The concrete "is a claimed item actually stuck" signal, distinct from #4827 (the lease/timeout/reclaim
         # CLI logic itself, which already self-heals a stuck lease past DEFAULT_MAX_LEASE_MS = 30m) and #4840
         # (alerting guidance docs, not a rule definition) -- this is the rule that pages an operator when the
@@ -690,7 +690,7 @@ groups:
           description: "The oldest in-flight portfolio-queue claim lease is {{ $value | printf \"%.0f\" }}s old (sustained 15m), well past the 30m default reclaim window. A crashed/killed attempt process's lease isn't being automatically reclaimed."
           runbook: "Run `gittensory-miner queue list --json` to find the stuck item, and `gittensory-miner queue claim-batch` (or a scheduled reclaim sweep) to trigger the lease-expiry self-heal (portfolio-queue-expiry.js's sweepStuckItems). If it stays stuck after that, release it manually with `gittensory-miner queue release <owner/repo> <identifier>`."
 
-      - alert: GittensoryMinerPortfolioQueueBacklogHigh
+      - alert: LoopOverMinerPortfolioQueueBacklogHigh
         # Standing size of the queued (not yet claimed) backlog, the miner counterpart of
         # LoopoverQueueBacklogHigh above -- a sustained high queued count means discovery is outpacing
         # claiming, mirroring the main product's own "queue > threshold for N minutes" shape. 200 is a
@@ -713,7 +713,7 @@ groups:
   # governor decision logic in any way (governor-chokepoint.js/governor-chokepoint-persisted.js are untouched).
   - name: gittensory-miner-governor
     rules:
-      - alert: GittensoryMinerGovernorRateLimitPressureHigh
+      - alert: LoopOverMinerGovernorRateLimitPressureHigh
         # remaining_ratio is 1 for an empty bucket and 0 once a write-rate-limit bucket (global or per-repo,
         # evaluated against DEFAULT_WRITE_RATE_LIMIT_POLICIES) is exhausted. Each bucket's own window is only
         # 60s (the default policy's windowMs), so staying under 0.1 for a full 10m means the bucket has been
@@ -728,7 +728,7 @@ groups:
           description: "{{ $labels.scope }}/{{ $labels.action_class }}{{ with $labels.repo }} ({{ . }}){{ end }} has had under 10% of its write-rate-limit headroom remaining for 10m."
           runbook: "Check `gittensory-miner governor metrics` for the affected scope/action_class and slow down that write class (fewer concurrent attempts, longer loop --cycle-delay-ms), or raise the relevant DEFAULT_WRITE_RATE_LIMIT_POLICIES ceiling if the current limit is genuinely too conservative for this install."
 
-      - alert: GittensoryMinerGovernorCapUsageHigh
+      - alert: LoopOverMinerGovernorCapUsageHigh
         # cap_usage_ratio compares governor-state's persisted cumulative capUsage (budget spent / turns taken /
         # elapsed session ms) against DEFAULT_AMS_POLICY_SPEC.capLimits, the same fleet-wide default loop-cli.js
         # itself falls back to when a repo has no `.gittensory-ams.yml` override. 0.9 gives an operator a

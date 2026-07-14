@@ -9,7 +9,7 @@ function gate(over: Partial<GateCheckEvaluation> = {}): GateCheckEvaluation {
   return {
     enabled: true,
     conclusion: "success",
-    title: "Gittensory Orb Review Agent passed",
+    title: "LoopOver Orb Review Agent passed",
     summary: "No configured hard blocker was found.",
     blockers: [],
     warnings: [],
@@ -20,7 +20,7 @@ function gate(over: Partial<GateCheckEvaluation> = {}): GateCheckEvaluation {
 const panelRows: PublicPrPanelSignalRow[] = [
   { key: "gateResult", cells: ["Gate result", "✅ Passing", "No configured blocker found.", "No action."] },
 ];
-const footer = "💰 Earn for open-source contributions. Checked by Gittensory.";
+const footer = "💰 Earn for open-source contributions. Checked by LoopOver.";
 
 describe("buildManifestValidationCollapsible (#2056)", () => {
   it("returns null for an empty warnings array", () => {

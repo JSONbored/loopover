@@ -1636,7 +1636,7 @@ const LinkedIssueMultiplierDecisionSchema = z.object({
 
 const ScoreScenarioPreviewSchema = z.object({
   name: z.enum(["current", "cleanGates", "afterPendingMerges", "afterApprovedPrsMerge", "afterStalePrsClose", "linkedIssueFixed", "bestReasonableCase"]),
-  source: z.enum(["current_data", "user_supplied", "github_observed", "gittensory_projection"]),
+  source: z.enum(["current_data", "user_supplied", "github_observed", "loopover_projection"]),
   assumptions: z.array(z.string()),
   scoreEstimate: ScoreEstimateSchema,
   gates: ScoreGatesSchema,

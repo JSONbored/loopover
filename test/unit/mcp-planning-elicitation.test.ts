@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ElicitRequestSchema, type ClientCapabilities } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import {
   applyMcpPlanningChoices,
   buildMcpPlanningElicitationAudit,
@@ -14,7 +14,7 @@ import {
 import { createTestEnv } from "../helpers/d1";
 
 async function connectTestClient(capabilities: ClientCapabilities) {
-  const mcpServer = new GittensoryMcp(createTestEnv()).createServer();
+  const mcpServer = new LoopoverMcp(createTestEnv()).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-planning-elicitation-test", version: "0.1.0" }, { capabilities });
@@ -155,7 +155,7 @@ describe("MCP planning elicitation", () => {
         },
       };
     });
-    const result = await client.callTool({ name: "gittensory_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
+    const result = await client.callTool({ name: "loopover_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     expect(requestPayload).not.toBe("");
     expect(requestPayload).not.toMatch(/token|secret|wallet|hotkey|coldkey|private keys?|pat|mnemonic|private maintainer evidence/i);
@@ -177,7 +177,7 @@ describe("MCP planning elicitation", () => {
       action: "accept",
       content: { repoFullName: "JSONbored/gittensory" },
     }));
-    const result = await client.callTool({ name: "gittensory_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
+    const result = await client.callTool({ name: "loopover_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.planningElicitation).toMatchObject({ supported: true, requested: true, accepted: true });
@@ -193,7 +193,7 @@ describe("MCP planning elicitation", () => {
       return { action: "accept", content: { repoFullName: "ignored/repo" } };
     });
     const result = await client.callTool({
-      name: "gittensory_agent_plan_next_work",
+      name: "loopover_agent_plan_next_work",
       arguments: { login: "oktofeesh1", objective: "Use explicit context.", repoFullName: "JSONbored/gittensory" },
     });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
@@ -206,7 +206,7 @@ describe("MCP planning elicitation", () => {
 
   it("falls back without elicitation for unsupported MCP clients", async () => {
     const { client, mcpServer } = await connectTestClient({});
-    const result = await client.callTool({ name: "gittensory_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
+    const result = await client.callTool({ name: "loopover_agent_plan_next_work", arguments: { login: "oktofeesh1" } });
     expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.planningElicitation).toEqual({ supported: false, requested: false, accepted: false, fields: [] });

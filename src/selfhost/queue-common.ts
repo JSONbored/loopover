@@ -730,7 +730,7 @@ export function queueStartupJitterMinJobs(): number {
 // worker's own DB traffic, including jobs that fan out several concurrent writes (e.g.
 // hydrateMergedPullRequestFiles). 10 (pg's own hardcoded default, made explicit here rather than left
 // implicit) is fine for a small/idle instance but can bottleneck the app on its own connection pool --
-// well before Postgres's own max_connections or the GittensoryPostgresConnectionPressure alert would fire
+// well before Postgres's own max_connections or the LoopOverPostgresConnectionPressure alert would fire
 // -- once webhook bursts and fan-out jobs overlap at real volume. PGPOOL_MAX lets an operator raise this
 // without a code change (#audit-rate-headroom).
 export function resolvePostgresPoolMax(): number {

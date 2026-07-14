@@ -109,7 +109,7 @@ describe("adversarial regression fixtures (#2998)", () => {
 });
 
 // The `diff` field's own type ("A bounded unified-diff-ish string built by the caller (filenames + patches)",
-// GittensoryAiReviewInput in src/services/ai-review.ts) never carries commit messages -- those are a separate
+// LoopOverAiReviewInput in src/services/ai-review.ts) never carries commit messages -- those are a separate
 // GitHub API concept (GET /commits) that this codebase does not fetch into the AI review input at all. A
 // "commit message crafted to manipulate the reviewer" (one of the #2998 threat scenarios) therefore has no
 // path to the model today; this is a structural boundary, not a defang-strength question, so it is documented

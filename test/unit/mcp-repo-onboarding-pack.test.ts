@@ -3,11 +3,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import { persistSignalSnapshot, upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity): Promise<Client> {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "repo-onboarding-pack-test", version: "0.1.0" }, { capabilities: {} });
@@ -35,7 +35,7 @@ async function seedRegisteredInstalledRepo(env: Env, installationId: number, own
     .run();
 }
 
-describe("gittensory_get_repo_onboarding_pack MCP tool (#2223)", () => {
+describe("loopover_get_repo_onboarding_pack MCP tool (#2223)", () => {
   it("returns a structured onboarding-pack preview for an authorized repo maintainer session", async () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
@@ -53,7 +53,7 @@ describe("gittensory_get_repo_onboarding_pack MCP tool (#2223)", () => {
     });
     const { session } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const result = await (await connect(env, { kind: "session", actor: "repo-owner", session })).callTool({
-      name: "gittensory_get_repo_onboarding_pack",
+      name: "loopover_get_repo_onboarding_pack",
       arguments: { owner: "repo-owner", repo: "owned-repo" },
     });
     expect(result.isError).toBeFalsy();
@@ -73,7 +73,7 @@ describe("gittensory_get_repo_onboarding_pack MCP tool (#2223)", () => {
     await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
     const { session } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
     const result = await (await connect(env, { kind: "session", actor: "other-owner", session })).callTool({
-      name: "gittensory_get_repo_onboarding_pack",
+      name: "loopover_get_repo_onboarding_pack",
       arguments: { owner: "repo-owner", repo: "owned-repo" },
     });
     expect(result.isError).toBe(true);
@@ -84,7 +84,7 @@ describe("gittensory_get_repo_onboarding_pack MCP tool (#2223)", () => {
     const env = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "repo-owner/owned-repo" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     const result = await (await connect(env)).callTool({
-      name: "gittensory_get_repo_onboarding_pack",
+      name: "loopover_get_repo_onboarding_pack",
       arguments: { owner: "repo-owner", repo: "owned-repo" },
     });
     expect(result.isError).toBe(true);
@@ -100,7 +100,7 @@ describe("gittensory_get_repo_onboarding_pack MCP tool (#2223)", () => {
       owner: { login: "octo" },
     });
     const result = await (await connect(env, { kind: "static", actor: "api" })).callTool({
-      name: "gittensory_get_repo_onboarding_pack",
+      name: "loopover_get_repo_onboarding_pack",
       arguments: { owner: "octo", repo: "unregistered" },
     });
     expect(result.isError).toBeFalsy();

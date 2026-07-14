@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { AuthIdentity } from "../../src/auth/security";
@@ -25,7 +25,7 @@ async function seedChunk(env: ReturnType<typeof createTestEnv>, path: string, te
 }
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-refresh-repo-docs-test", version: "0.1.0" }, { capabilities: {} });
@@ -33,7 +33,7 @@ async function connect(env: Env, identity?: AuthIdentity) {
   return client;
 }
 
-describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
+describe("MCP loopover_refresh_repo_docs (#3003)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -59,7 +59,7 @@ describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
     });
 
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({ opened: true, reused: false, pullNumber: 101, url: "https://github.com/owner/widgets/pull/101" });
   });
@@ -78,7 +78,7 @@ describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
     });
 
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({ opened: true, reused: true, pullNumber: 55, url: "https://github.com/owner/widgets/pull/55" });
   });
@@ -87,7 +87,7 @@ describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: REPO, private: false, owner: { login: "owner" } }, 555);
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({ opened: false, reason: "repo-doc generation is not enabled for this repository (.loopover.yml repoDocGeneration.enabled)" });
   });
@@ -96,7 +96,7 @@ describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
     const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "" });
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: REPO, private: false, owner: { login: "owner" } }, 555);
     const client = await connect(env); // default identity: { kind: "static", actor: "mcp" }
-    const result = await client.callTool({ name: "gittensory_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).toMatch(/MCP_ACTUATION_REPO_ALLOWLIST/);
   });
@@ -105,7 +105,7 @@ describe("MCP gittensory_refresh_repo_docs (#3003)", () => {
     const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "" });
     await upsertRepositoryFromGitHub(env, { name: "widgets", full_name: REPO, private: false, owner: { login: "owner" } }, 555);
     const client = await connect(env, { kind: "static", actor: "api" } as AuthIdentity);
-    const result = await client.callTool({ name: "gittensory_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_refresh_repo_docs", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ opened: false });
   });

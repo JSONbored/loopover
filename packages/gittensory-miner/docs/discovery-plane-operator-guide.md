@@ -15,7 +15,7 @@ Part of the Miner Wave 2 discovery plane ([#2353](https://github.com/JSONbored/g
 
 ## Default posture: opt-in (not like Orb)
 
-Two telemetry/export surfaces exist in Gittensory, and they intentionally use **opposite defaults**:
+Two telemetry/export surfaces exist in LoopOver, and they intentionally use **opposite defaults**:
 
 | Surface | Default | Operator action | Precedent |
 |---------|---------|-------------------|-----------|

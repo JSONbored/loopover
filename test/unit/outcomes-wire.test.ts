@@ -147,7 +147,7 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
     });
   });
 
-  it("writes a pr_outcome=closed row when Gittensory (a bot) closes a PR", async () => {
+  it("writes a pr_outcome=closed row when LoopOver (a bot) closes a PR", async () => {
     const env = createTestEnv();
     await recordPrOutcome(env, "pull_request", {
       action: "closed",

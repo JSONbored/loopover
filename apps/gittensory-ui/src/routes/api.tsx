@@ -5,11 +5,11 @@ import { ApiSidebar } from "@/components/site/api/api-sidebar";
 export const Route = createFileRoute("/api")({
   head: () => ({
     meta: [
-      { title: "API reference — Gittensory" },
+      { title: "API reference — LoopOver" },
       {
         name: "description",
         content:
-          "Browse the Gittensory private API. Bring your own session token to try requests — tokens stay in your browser.",
+          "Browse the LoopOver private API. Bring your own session token to try requests — tokens stay in your browser.",
       },
       { property: "og:url", content: "/api" },
     ],

@@ -15,7 +15,7 @@ function missingIssueAdvisory(): Advisory {
     headSha: "sha7",
     conclusion: "neutral",
     severity: "warning",
-    title: "Gittensory advisory available",
+    title: "LoopOver advisory available",
     summary: "1 advisory finding generated.",
     findings: [
       {

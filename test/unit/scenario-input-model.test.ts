@@ -45,7 +45,7 @@ function completeInput() {
         kind: "estimate",
         label: "Queue pressure",
         detail: "Opening another PR would add moderate review load.",
-        source: "gittensory_projection",
+        source: "loopover_projection",
       }),
     ],
     unavailableSignals: [
@@ -171,7 +171,7 @@ describe("public vs private serialization", () => {
           kind: "estimate",
           label: "Estimated rewards ranking",
           detail: "estimated rewards place this contributor in the top ranking and rankings table",
-          source: "gittensory_projection",
+          source: "loopover_projection",
         }),
       ],
     });

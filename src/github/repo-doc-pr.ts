@@ -109,7 +109,7 @@ function repoDocPullRequestBody(repoFullName: string, skillPath: string | null):
   const skillParagraph = skillPath
     ? `\n\nThis repo's contribution workflow has enough structure (a blocking gate check, a strict linked-issue rule, and/or multi-stage CI) that it also gets a generated skill file at \`${skillPath}\`, following this project's own \`.claude/skills/\` convention -- a frontmatter description plus a procedural body.`
     : "";
-  return `Gittensory opened this pull request on the maintainer's behalf. This is an automated maintenance action, not a manual code review.
+  return `LoopOver opened this pull request on the maintainer's behalf. This is an automated maintenance action, not a manual code review.
 
 ## What this is
 
@@ -117,7 +117,7 @@ function repoDocPullRequestBody(repoFullName: string, skillPath: string | null):
 
 ## Why it looks like this
 
-Every fact above was read directly from this repository, not templated or guessed. If something looks wrong, it most likely means the underlying signal doesn't represent this repo well -- edit the generated file directly on this branch (or after merging) rather than filing an issue against Gittensory.
+Every fact above was read directly from this repository, not templated or guessed. If something looks wrong, it most likely means the underlying signal doesn't represent this repo well -- edit the generated file directly on this branch (or after merging) rather than filing an issue against LoopOver.
 
 ## Opting out
 

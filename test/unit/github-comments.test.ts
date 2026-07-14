@@ -7,7 +7,7 @@ describe("GitHub PR intelligence comments", () => {
     vi.unstubAllGlobals();
   });
 
-  it("creates a sticky comment when no prior Gittensory comment exists", async () => {
+  it("creates a sticky comment when no prior LoopOver comment exists", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

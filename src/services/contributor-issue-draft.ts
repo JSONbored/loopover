@@ -400,7 +400,7 @@ function policyWarningCandidate(repoFullName: string, warning: RepoPolicyReadine
       publicPrivateBoundaries: [
         "Public GitHub issues must stay advisory and must not imply guaranteed participation outcomes.",
         "Do not expose credentials, miner keys, or private maintainer-only evaluation language.",
-        "Keep private maintainer notes in authenticated Gittensory surfaces only.",
+        "Keep private maintainer notes in authenticated LoopOver surfaces only.",
       ],
       acceptanceCriteria: [
         "The warning category is addressed with tests and documentation where applicable.",
@@ -431,7 +431,7 @@ function upstreamDriftCandidate(repoFullName: string, warnings: string[], manife
     labels: ["signals", "enhancement"],
     sections: {
       background: [
-        "Gittensory detected upstream Gittensor registry drift that may require fixture or guidance updates for this repo.",
+        "LoopOver detected upstream Gittensor registry drift that may require fixture or guidance updates for this repo.",
         ...warnings.slice(0, 5),
       ],
       currentBehavior: ["Upstream drift is visible in private signals but may not yet have a contributor-ready tracking issue."],
@@ -445,7 +445,7 @@ function upstreamDriftCandidate(repoFullName: string, warnings: string[], manife
       ],
       publicPrivateBoundaries: [
         "Do not publish private contributor ordering or compensation estimates on GitHub.",
-        "Keep maintainer triage notes in authenticated Gittensory views only.",
+        "Keep maintainer triage notes in authenticated LoopOver views only.",
       ],
       acceptanceCriteria: [
         "Upstream drift warnings for this repo are resolved or documented as expected semantic change.",

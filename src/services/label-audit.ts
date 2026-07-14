@@ -17,5 +17,5 @@ export async function loadLabelAudit(env: Env, fullName: string): Promise<LabelA
 }
 
 export function labelAuditSummary(report: LabelAudit): string {
-  return `Gittensory label audit for ${report.repoFullName}: trusted-label pipeline ${report.trustedPipelineReady ? "ready" : "not ready"}; ${report.missingConfiguredLabels.length} missing, ${report.suspiciousConfiguredLabels.length} suspicious configured label(s).`;
+  return `LoopOver label audit for ${report.repoFullName}: trusted-label pipeline ${report.trustedPipelineReady ? "ready" : "not ready"}; ${report.missingConfiguredLabels.length} missing, ${report.suspiciousConfiguredLabels.length} suspicious configured label(s).`;
 }

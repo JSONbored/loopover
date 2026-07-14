@@ -68,7 +68,7 @@ async function createOrUpdateIssueCommentWithMarker(
         page,
       });
       const batch = response.data as IssueComment[];
-      existing.push(...batch.filter((comment) => isGittensoryBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate))));
+      existing.push(...batch.filter((comment) => isLoopOverBotComment(comment, botLogin) && markers.some((candidate) => comment.body?.includes(candidate))));
       if (batch.length < 100) break;
     }
     const canonical = canonicalMarkerComment(existing);
@@ -101,7 +101,7 @@ async function createOrUpdateIssueCommentWithMarker(
   });
 }
 
-function isGittensoryBotComment(comment: IssueComment, botLogin: string): boolean {
+function isLoopOverBotComment(comment: IssueComment, botLogin: string): boolean {
   return comment.user?.type === "Bot" && comment.user.login?.toLowerCase() === botLogin.toLowerCase();
 }
 

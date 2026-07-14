@@ -63,7 +63,7 @@ export function evaluateClaCheck(
         code: CLA_CHECK_UNRESOLVED_CODE,
         severity: "warning",
         title: `CLA check held — "${config.checkRunName}" not resolved`,
-        detail: `Gittensory could not resolve the "${config.checkRunName}" check-run's conclusion for this PR; the gate is held and re-evaluates automatically.`,
+        detail: `LoopOver could not resolve the "${config.checkRunName}" check-run's conclusion for this PR; the gate is held and re-evaluates automatically.`,
         action: "No action needed — the gate re-evaluates once the check-run's conclusion is available.",
       },
     ];

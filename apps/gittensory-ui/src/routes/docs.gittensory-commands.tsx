@@ -27,7 +27,7 @@ export const Route = createFileRoute("/docs/gittensory-commands")({
     ],
     links: [{ rel: "canonical", href: "/docs/gittensory-commands" }],
   }),
-  component: GittensoryCommandsReference,
+  component: LoopOverCommandsReference,
 });
 
 const DEFAULT_ROLE_SUMMARY: Record<string, string> = {
@@ -97,7 +97,7 @@ function CommandTable({
   );
 }
 
-function GittensoryCommandsReference() {
+function LoopOverCommandsReference() {
   return (
     <DocsPage
       eyebrow="Commands"

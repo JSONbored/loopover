@@ -1,4 +1,4 @@
-// Gittensory AI maintainer review (the `aiReview` capability).
+// LoopOver AI maintainer review (the `aiReview` capability).
 //
 // Two layers, both opt-in and both fail-safe (no AI / errors / over-budget / unsafe output → no public
 // text and no gate finding; gittensory NEVER blocks because the model spoke):
@@ -154,7 +154,7 @@ export function resolveEffectiveAiReviewPlan(
   const hasOperatorFloor = operatorOnMergeFloor === "either";
   if (hasOperatorFloor) {
     // The operator's OWN effective reviewer count under their plan -- absent reviewers falls back to the
-    // built-in default pair (2), the historical dual-reviewer behavior (see GittensoryAiReviewInput.reviewers).
+    // built-in default pair (2), the historical dual-reviewer behavior (see LoopOverAiReviewInput.reviewers).
     const operatorReviewerCount = operatorPlan?.reviewers?.length ?? 2;
     const repoReviewerCount = repoOverride.reviewers?.length ?? operatorReviewerCount;
     const reducesReviewerCount = repoOverride.reviewers != null && repoReviewerCount < operatorReviewerCount;
@@ -174,7 +174,7 @@ export function resolveEffectiveAiReviewPlan(
   };
 }
 
-export type GittensoryAiReviewInput = {
+export type LoopOverAiReviewInput = {
   repoFullName: string;
   prNumber: number;
   title: string;
@@ -358,7 +358,7 @@ export type AiConsensusDefect = {
   confidence: number;
 };
 
-export type GittensoryAiReviewResult =
+export type LoopOverAiReviewResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
   | {
@@ -826,7 +826,7 @@ function selectContextSectionsWithinBudget(
   return included;
 }
 
-function buildUserPrompt(input: GittensoryAiReviewInput): string {
+function buildUserPrompt(input: LoopOverAiReviewInput): string {
   const lines = [
     `Repository: ${input.repoFullName}`,
     `Pull request #${input.prNumber}: ${input.title}`,
@@ -946,7 +946,7 @@ const IMPROVEMENT_SIGNAL_SUFFIX =
  *  prioritization suffix when on, then the inline-findings instruction when the caller asked for them, then the
  *  improvement-signal instruction when the caller resolved that feature on; all absent (default) → the base
  *  prompt, byte-identical to today. */
-function buildSystemPrompt(input: GittensoryAiReviewInput): string {
+function buildSystemPrompt(input: LoopOverAiReviewInput): string {
   const groundingSuffix = input.grounding?.systemSuffix ?? "";
   // Review-enrichment brief (#1472): the REES supplies a one-line discipline suffix ("treat a listed CVE/secret as
   // verified ground truth"). Absent (default) ⇒ "" ⇒ byte-identical.
@@ -1428,7 +1428,7 @@ function fallbackUnstructuredPublicNote(text: string): string | null {
   const safe = toPublicSafe(text.slice(0, 4000));
   if (!safe) return null;
   return [
-    "The AI reviewer returned public review text but not the expected structured verdict, so Gittensory is holding this PR for manual review.",
+    "The AI reviewer returned public review text but not the expected structured verdict, so LoopOver is holding this PR for manual review.",
     "",
     safe,
   ].join("\n").trim();
@@ -2018,10 +2018,10 @@ export function combineReviews(
  * a consensus defect when the free Workers-AI pair agrees with high confidence. Fail-safe on every error
  * path: no notes, no defect, never a thrown error reaching the webhook.
  */
-export async function runGittensoryAiReview(
+export async function runLoopOverAiReview(
   env: Env,
-  input: GittensoryAiReviewInput,
-): Promise<GittensoryAiReviewResult> {
+  input: LoopOverAiReviewInput,
+): Promise<LoopOverAiReviewResult> {
   if (!isEnabled(env.AI_SUMMARIES_ENABLED))
     return { status: "disabled", reason: "AI summaries are disabled." };
   if (!isEnabled(env.AI_PUBLIC_COMMENTS_ENABLED))
@@ -2396,7 +2396,7 @@ export async function runGittensoryAiReview(
 /** The actual configured reviewer label for usage attribution (#1566): the self-host provider plus its explicit
  *  provider-specific model when set, else the Worker dual-AI models. Without this, self-host claude-code reviews
  *  were mis-logged as the Workers-AI model ids (`@cf/openai/gpt-oss-120b+...`), which hid outages. */
-function reviewerModelLabel(env: Env, input: GittensoryAiReviewInput): string {
+function reviewerModelLabel(env: Env, input: LoopOverAiReviewInput): string {
   const e = env as unknown as Record<string, string | undefined>;
   const reviewers = (input.reviewers?.length ? input.reviewers : env.AI_REVIEW_PLAN?.reviewers) ?? null;
   if (reviewers?.length) return labelSelfHostReviewerModels(reviewers, e);
@@ -2455,7 +2455,7 @@ function aggregateActualUsage(diagnostics: readonly AiReviewDiagnostic[]): AiRev
 
 async function record(
   env: Env,
-  input: GittensoryAiReviewInput,
+  input: LoopOverAiReviewInput,
   status: string,
   estimatedNeurons: number,
   detail: string,

@@ -57,7 +57,7 @@ describe("loopover-mcp CLI — packets", () => {
       cache: { source: "local_cache", clearCommand: "loopover-mcp cache clear" },
     });
     expect(offline.cachedAt).toEqual(expect.any(String));
-    expect(offline.cache.rerunGuidance).toMatch(/Retry when Gittensory API access is restored/);
+    expect(offline.cache.rerunGuidance).toMatch(/Retry when LoopOver API access is restored/);
 
     const repoDecision = JSON.parse(await runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)) as {
       status: string;
@@ -173,7 +173,7 @@ describe("loopover-mcp CLI — packets", () => {
         ...env,
         GITTENSORY_TOKEN: "different-session-token",
       }),
-    ).rejects.toThrow(/Gittensory API 429/);
+    ).rejects.toThrow(/LoopOver API 429/);
   });
 
   it("does not use stale decision-pack cache for authorization failures", async () => {
@@ -189,7 +189,7 @@ describe("loopover-mcp CLI — packets", () => {
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
     fixtureOptions.decisionPackStatus = 403;
 
-    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/LoopOver API 403/);
   });
 
   it("does not use stale decision-pack cache for non-JSON authorization failures", async () => {
@@ -217,8 +217,8 @@ describe("loopover-mcp CLI — packets", () => {
     fixtureOptions.repoDecisionErrorBody = "<html>forbidden</html>";
     fixtureOptions.repoDecisionErrorContentType = "text/html";
 
-    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
-    await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)).rejects.toThrow(/Gittensory API 403/);
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)).rejects.toThrow(/LoopOver API 403/);
+    await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)).rejects.toThrow(/LoopOver API 403/);
   });
 
   it("does not use stale decision-pack cache when local credentials are missing", async () => {
@@ -277,7 +277,7 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -306,7 +306,7 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -346,7 +346,7 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -440,7 +440,7 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:JSONbored/gittensory.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");

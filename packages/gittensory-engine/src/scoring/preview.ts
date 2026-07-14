@@ -161,7 +161,7 @@ export type ScoreGateDelta = {
 
 export type ScoreScenarioPreview = {
   name: "current" | "cleanGates" | "afterPendingMerges" | "afterApprovedPrsMerge" | "afterStalePrsClose" | "linkedIssueFixed" | "bestReasonableCase";
-  source: "current_data" | "user_supplied" | "github_observed" | "gittensory_projection";
+  source: "current_data" | "user_supplied" | "github_observed" | "loopover_projection";
   assumptions: string[];
   scoreEstimate: ScorePreviewResult["scoreEstimate"];
   gates: ScorePreviewResult["gates"];
@@ -309,7 +309,7 @@ export function buildScorePreview(args: {
     scoreabilityStatus,
     warnings,
     assumptions: [
-      "Advisory preview only; tied to the recorded scoring model snapshot and cached Gittensory data.",
+      "Advisory preview only; tied to the recorded scoring model snapshot and cached LoopOver data.",
       "No future outcome or exact payout is guaranteed.",
       "Private API/MCP output only; public comments intentionally omit these details.",
       `Linked issue multiplier status: ${current.linkedIssueMultiplier.status}; ${current.linkedIssueMultiplier.reason}`,
@@ -607,7 +607,7 @@ function buildScenarioPreviews(
   };
   return [
     scenario("current", "current_data", input, current, ["Current cached/account state and supplied local diff metadata."], repo),
-    scenario("cleanGates", "gittensory_projection", cleanGatesInput, computeScoreCore(cleanGatesInput, repo, snapshot, contributorEvidence), [
+    scenario("cleanGates", "loopover_projection", cleanGatesInput, computeScoreCore(cleanGatesInput, repo, snapshot, contributorEvidence), [
       "Open PR, open-issue, credibility, and contributor-history gates are projected as cleared; branch metadata is otherwise unchanged.",
     ], repo),
     scenario(
@@ -616,7 +616,7 @@ function buildScenarioPreviews(
         ? "github_observed"
         : userPendingCount > 0 || input.expectedOpenPrCountAfterMerge !== undefined || input.projectedCredibility !== undefined
           ? "user_supplied"
-          : "gittensory_projection",
+          : "loopover_projection",
       afterPendingInput,
       computeScoreCore(afterPendingInput, repo, snapshot, contributorEvidence),
       [
@@ -661,12 +661,12 @@ function buildScenarioPreviews(
       ],
       repo,
     ),
-    scenario("linkedIssueFixed", "gittensory_projection", linkedIssueInput, computeScoreCore(linkedIssueInput, repo, snapshot, contributorEvidence), [
+    scenario("linkedIssueFixed", "loopover_projection", linkedIssueInput, computeScoreCore(linkedIssueInput, repo, snapshot, contributorEvidence), [
       input.linkedIssueMode === "none" || !input.linkedIssueMode
         ? "A standard linked-issue/no-issue rationale multiplier is projected as solved-by-PR validated."
         : "Linked issue mode was already supplied; this scenario projects solved-by-PR validation where needed.",
     ], repo),
-    scenario("bestReasonableCase", "gittensory_projection", bestReasonableInput, computeScoreCore(bestReasonableInput, repo, snapshot, contributorEvidence), [
+    scenario("bestReasonableCase", "loopover_projection", bestReasonableInput, computeScoreCore(bestReasonableInput, repo, snapshot, contributorEvidence), [
       "Combines plausible near-term gate cleanup: open PR pressure at threshold or below, open-issue spam pressure at threshold or below, credibility at floor or above, contributor merged-history and issue-discovery validity at floor or above, and linked-issue context where applicable.",
       ...(input.scenarioNotes ?? []),
       ...observedScenarioNotes(input),
@@ -709,7 +709,7 @@ function scenario(
 function blockedByFor(input: ScorePreviewInput, repo: RepositoryRecord | null, core: ScoreCore, branchEligibility = normalizeBranchEligibility(input)): ScoreGateBlocker[] {
   return [
     ...(!repo?.isRegistered
-      ? [{ code: "repo_not_registered" as const, severity: "blocker" as const, detail: "Repository is not registered in the local Gittensory cache." }]
+      ? [{ code: "repo_not_registered" as const, severity: "blocker" as const, detail: "Repository is not registered in the local LoopOver cache." }]
       : []),
     ...(core.laneMath.repoEmissionShare <= 0
       ? [{ code: "inactive_allocation" as const, severity: "blocker" as const, detail: "Repository has no active allocation in the current registry snapshot." }]

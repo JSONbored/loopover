@@ -14,7 +14,7 @@ import {
 import { buildAgentActionExplanationCard } from "../../src/services/agent-action-explanation-card";
 import * as aiSummariesModule from "../../src/services/ai-summaries";
 import { CONTRIBUTOR_DECISION_PACK_SIGNAL, type ContributorDecisionPack, type RepoOutcomeSummary } from "../../src/services/decision-pack";
-import { buildPublicAgentCommandComment, parseGittensoryMentionCommand } from "../../src/github/commands";
+import { buildPublicAgentCommandComment, parseLoopOverMentionCommand } from "../../src/github/commands";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import type { AgentRunRecord, JsonValue } from "../../src/types";
@@ -257,7 +257,7 @@ describe("agent orchestrator", () => {
       surface: "github_comment",
     });
     const comment = buildPublicAgentCommandComment({
-      command: parseGittensoryMentionCommand("@loopover next-action")!,
+      command: parseLoopOverMentionCommand("@loopover next-action")!,
       repo: null,
       issue: { number: 101, title: "Public PR", state: "open", pull_request: {} },
       pullRequest: null,

@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/security";
 import {
   deleteIssueWatchSubscription,
@@ -158,7 +158,7 @@ describe("buildIssueWatchNotification", () => {
 });
 
 async function connect(env: Env, identity?: AuthIdentity) {
-  const server = (identity ? new GittensoryMcp(env, identity) : new GittensoryMcp(env)).createServer();
+  const server = (identity ? new LoopoverMcp(env, identity) : new LoopoverMcp(env)).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "issue-watch-test", version: "0.1.0" }, { capabilities: {} });
@@ -166,19 +166,19 @@ async function connect(env: Env, identity?: AuthIdentity) {
   return client;
 }
 
-describe("MCP gittensory_watch_issues", () => {
+describe("MCP loopover_watch_issues", () => {
   it("watches, lists, and unwatches a repo for the authenticated login", async () => {
     const env = createTestEnv();
     const client = await connect(env);
 
-    const watched = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo", labels: ["bug"] } });
+    const watched = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo", labels: ["bug"] } });
     expect(watched.isError).toBeFalsy();
     expect((watched.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: ["bug"] }]);
 
-    const listed = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "list" } });
+    const listed = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "list" } });
     expect((listed.structuredContent as { watching: unknown[] }).watching).toHaveLength(1);
 
-    const unwatched = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "unwatch", repoFullName: "owner/repo" } });
+    const unwatched = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "unwatch", repoFullName: "owner/repo" } });
     expect((unwatched.structuredContent as { watching: unknown[] }).watching).toHaveLength(0);
   });
 
@@ -189,7 +189,7 @@ describe("MCP gittensory_watch_issues", () => {
     const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
     const client = await connect(env, { kind: "session", actor: "miner", session });
 
-    const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo" } });
+    const result = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "owner/repo" } });
 
     expect(result.isError).toBeFalsy();
     expect((result.structuredContent as { watching: Array<{ repoFullName: string }> }).watching).toEqual([{ repoFullName: "owner/repo", labels: [] }]);
@@ -201,7 +201,7 @@ describe("MCP gittensory_watch_issues", () => {
     const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
     const client = await connect(env, { kind: "session", actor: "miner", session });
 
-    const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "victim/private" } });
+    const result = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "watch", repoFullName: "victim/private" } });
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("session cannot watch this repository");
@@ -212,7 +212,7 @@ describe("MCP gittensory_watch_issues", () => {
     const env = createTestEnv();
     const { session } = await createSessionForGitHubUser(env, { login: "miner", id: 1 });
     const client = await connect(env, { kind: "session", actor: "miner", session });
-    const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "other", action: "list" } });
+    const result = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "other", action: "list" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("authenticated GitHub login");
   });
@@ -222,7 +222,7 @@ describe("MCP gittensory_watch_issues", () => {
   // MCP_READ_REPO_ALLOWLIST: "*" default back to unset, exercising the real deny-by-default behavior.
   it("forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard opt-in (#2455)", async () => {
     const client = await connect(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }));
-    const result = await client.callTool({ name: "gittensory_watch_issues", arguments: { login: "miner", action: "list" } });
+    const result = await client.callTool({ name: "loopover_watch_issues", arguments: { login: "miner", action: "list" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toMatch(/not authorized to read another contributor's data/i);
   });

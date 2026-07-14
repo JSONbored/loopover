@@ -1,4 +1,4 @@
-import { GITTENSOR_SELF_REPO_DEFAULT, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
+import { GITTENSOR_SELF_REPO_DEFAULT, resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import {
   buildGittensorConfigRecommendation,
   buildRegistrationReadiness,
@@ -21,7 +21,7 @@ export type SelfDogfoodActionArea = {
 };
 
 export type SelfDogfoodRegistrationPack = {
-  kind: "gittensory_self_dogfood_registration_pack";
+  kind: "loopover_self_dogfood_registration_pack";
   repoFullName: string;
   generatedAt: string;
   privateOnly: true;
@@ -36,7 +36,7 @@ export type SelfDogfoodRegistrationPack = {
   rerunHint: string;
 };
 
-export const resolveSelfDogfoodRepoFullName = resolveGittensorySelfRepoFullName;
+export const resolveSelfDogfoodRepoFullName = resolveLoopOverSelfRepoFullName;
 
 export function buildSelfDogfoodRegistrationPack(args: {
   repoFullName: string;
@@ -51,7 +51,7 @@ export function buildSelfDogfoodRegistrationPack(args: {
   const directPrFirst = recommendation.recommended.participationMode === "direct_pr";
 
   return {
-    kind: "gittensory_self_dogfood_registration_pack",
+    kind: "loopover_self_dogfood_registration_pack",
     repoFullName: args.repoFullName,
     generatedAt: nowIso(),
     privateOnly: true,

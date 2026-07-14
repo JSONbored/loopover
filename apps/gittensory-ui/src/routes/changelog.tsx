@@ -13,12 +13,12 @@ import {
 export const Route = createFileRoute("/changelog")({
   head: () => ({
     meta: [
-      { title: "Changelog — Gittensory" },
+      { title: "Changelog — LoopOver" },
       {
         name: "description",
         content: "Release history for @loopover/mcp pulled live from the npm registry.",
       },
-      { property: "og:title", content: "Changelog — Gittensory" },
+      { property: "og:title", content: "Changelog — LoopOver" },
       {
         property: "og:description",
         content: "Release history for @loopover/mcp pulled live from the npm registry.",

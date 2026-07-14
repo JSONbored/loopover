@@ -315,7 +315,7 @@ describe("loopover-mcp CLI — review-pr", () => {
       prTextLint?: { verdict: string };
     };
     expect(json.slopRisk).toBeUndefined();
-    expect(json.slopRiskError).toMatch(/Gittensory API 500/);
+    expect(json.slopRiskError).toMatch(/LoopOver API 500/);
     expect(
       json.sections.find((section) => section.name === "slop_risk"),
     ).toMatchObject({ status: "fail" });
@@ -339,7 +339,7 @@ describe("loopover-mcp CLI — review-pr", () => {
       ],
       env,
     );
-    expect(plain).toMatch(/Slop risk: unavailable \(Gittensory API 500/);
+    expect(plain).toMatch(/Slop risk: unavailable \(LoopOver API 500/);
     expect(plain).toMatch(/PR text lint: strong/);
   });
 
@@ -378,7 +378,7 @@ describe("loopover-mcp CLI — review-pr", () => {
       prTextLintError?: string;
     };
     expect(json.prTextLint).toBeUndefined();
-    expect(json.prTextLintError).toMatch(/Gittensory API 503/);
+    expect(json.prTextLintError).toMatch(/LoopOver API 503/);
     expect(
       json.sections.find((section) => section.name === "pr_text_lint"),
     ).toMatchObject({ status: "fail" });

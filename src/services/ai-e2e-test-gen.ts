@@ -1,4 +1,4 @@
-// Gittensory AI-generated E2E test coverage (the `e2eTests` capability, #4191/#4200, part of the #4189 epic).
+// LoopOver AI-generated E2E test coverage (the `e2eTests` capability, #4191/#4200, part of the #4189 epic).
 //
 // Turns a PR's changed-file diffs into a complete Playwright test file, following the SAME shape as
 // `ai-slop.ts`'s AI-assisted advisory: an opt-in, fail-safe second capability layered on top of the
@@ -251,7 +251,7 @@ async function record(
  * `unavailable` / `quota_exceeded` / an `ok` result with `testSource: null` are all valid, non-throwing
  * outcomes; the caller decides what (if anything) to render or dispatch from the result.
  */
-export async function runGittensoryE2eTestGeneration(env: Env, input: E2eTestGenInput): Promise<E2eTestGenResult> {
+export async function runLoopOverE2eTestGeneration(env: Env, input: E2eTestGenInput): Promise<E2eTestGenResult> {
   if (!isE2eTestGenerationEnabled(env)) return { status: "disabled", reason: "E2E test generation is disabled." };
   if (!(await convergedFeatureActive(env, input.repoFullName, "e2eTests"))) {
     return { status: "disabled", reason: "E2E test generation is not enabled for this repository." };

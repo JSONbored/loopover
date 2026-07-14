@@ -45,7 +45,7 @@ const SECRET_VALUE = new RegExp(
     String.raw`gh[opsru]_[A-Za-z0-9_]{20,}`,
     String.raw`sk-[A-Za-z0-9_-]{20,}`,
     String.raw`xox[baprs]-[A-Za-z0-9-]+`,
-    // Gittensory's own opaque tokens (createOpaqueToken, src/auth/security.ts): gts_ is the default session-token
+    // LoopOver's own opaque tokens (createOpaqueToken, src/auth/security.ts): gts_ is the default session-token
     // prefix, orbenr_/orbsec_ are the Orb broker's enrollment id/secret (#1825) — a broker error message can quote
     // these bare (no "secret"/"token"-named field for the key-based redaction above to catch), so the VALUE itself
     // must be recognized here too.
@@ -650,7 +650,7 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
       .filter(Boolean)
       .join(" ") || "(no message — see the log context)");
   const errorEvent = new Error(value);
-  errorEvent.name = event ?? "GittensoryLog";
+  errorEvent.name = event ?? "LoopOverLog";
   // This exception is synthetic: it was minted from a console line, never thrown at the failing code. Strip the
   // wrapper stack so Sentry does not attribute forwarded operational issues to this forwarding helper.
   errorEvent.stack = `${errorEvent.name}: ${value}`;

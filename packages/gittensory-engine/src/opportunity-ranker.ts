@@ -1,6 +1,6 @@
 // Opportunity ranker (#2302). The core Phase-1 miner-discovery ranker: it composes five already-normalized,
 // deterministic signals into a single ordinal score used to sort a cross-repo candidate-issue list, so the
-// find-opportunities MCP tool (hosted `gittensory_find_opportunities` / stdio `loopover_find_opportunities`)
+// find-opportunities MCP tool (hosted `loopover_find_opportunities` / stdio `loopover_find_opportunities`)
 // has something deterministic to sort by.
 //
 // This module is PURE — no IO, no Date, no random — so identical inputs always produce identical order, matching

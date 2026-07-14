@@ -39,7 +39,7 @@ describe("GitHub check runs", () => {
     vi.unstubAllGlobals();
   });
 
-  it("creates a completed Gittensory check run with an installation token", async () => {
+  it("creates a completed LoopOver check run with an installation token", async () => {
     const privateKey = await generatePrivateKeyPem();
     const calls: string[] = [];
     vi.stubGlobal(
@@ -1041,7 +1041,7 @@ describe("GitHub check runs", () => {
     expect(secondCancelCalled).toBe(false); // stopped at the first failure rather than continuing past it
   });
 
-  it("updates an existing Gittensory check run for the same head SHA", async () => {
+  it("updates an existing LoopOver check run for the same head SHA", async () => {
     const privateKey = await generatePrivateKeyPem();
     const methods: string[] = [];
     vi.stubGlobal(
@@ -1055,7 +1055,7 @@ describe("GitHub check runs", () => {
         if (url.includes("/commits/abc123/check-runs")) {
           return Response.json({
             total_count: 1,
-            check_runs: [{ id: 42, name: "Gittensory" }],
+            check_runs: [{ id: 42, name: "LoopOver" }],
           });
         }
         if (url.includes("/check-runs/42")) {
@@ -1360,7 +1360,7 @@ describe("GitHub check runs", () => {
     expect(capturedBody).not.toHaveProperty("conclusion");
     // The Gate blocks every author the same on a configured blocker (confirmed status no longer gates the verdict).
     expect(capturedBody.output?.text).toContain("blocks every author");
-    // The "Details" link points at the repo's Gittensory maintainer panel, not GitHub's generic check page. (#audit-details-url)
+    // The "Details" link points at the repo's LoopOver maintainer panel, not GitHub's generic check page. (#audit-details-url)
     expect(capturedBody.details_url).toBe(
       "https://loopover.ai/app?view=maintainer&repo=JSONbored%2Fgittensory",
     );
@@ -1796,7 +1796,7 @@ describe("GitHub check runs", () => {
       123,
       "JSONbored/gittensory",
       gateAdvisory("closed123"),
-      "Merged before Gittensory finished.",
+      "Merged before LoopOver finished.",
     );
 
     expect(result).toMatchObject({ kind: "published", id: 91 });
@@ -1805,7 +1805,7 @@ describe("GitHub check runs", () => {
       conclusion: "skipped",
       output: {
         title: "LoopOver Orb Review Agent skipped",
-        summary: "Merged before Gittensory finished.",
+        summary: "Merged before LoopOver finished.",
       },
     });
     expect(capturedBody.output?.text).toContain(

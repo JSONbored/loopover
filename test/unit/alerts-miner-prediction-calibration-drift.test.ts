@@ -6,7 +6,7 @@ import {
   MINER_PREDICTION_INCORRECT_TOTAL,
 } from "../../packages/gittensory-engine/src/miner-prediction-metrics";
 
-// Fixture for the GittensoryMinerPredictionCalibrationDrift alert (#5188). This is the config-side
+// Fixture for the LoopOverMinerPredictionCalibrationDrift alert (#5188). This is the config-side
 // equivalent of a `promtool test rules` harness (the repo ships no promtool dependency): it pins the
 // rule's formula, threshold, and metric names to the real renderer surface so the alert can't silently
 // drift away from the metrics it consumes. Mirrors alerts-job-failure-ratio-formula.test.ts (#3892).
@@ -41,8 +41,8 @@ function findAlert(name: string): AlertRule {
   throw new Error(`alert ${name} not found in prometheus/rules/alerts.yml`);
 }
 
-describe("GittensoryMinerPredictionCalibrationDrift alert (#5188)", () => {
-  const rule = findAlert("GittensoryMinerPredictionCalibrationDrift");
+describe("LoopOverMinerPredictionCalibrationDrift alert (#5188)", () => {
+  const rule = findAlert("LoopOverMinerPredictionCalibrationDrift");
   const flat = rule.expr.replace(/\s+/g, " ").trim();
 
   it("lives in its own miner-scoped rule group, separate from the loopover server groups", () => {

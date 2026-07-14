@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
  *  shape (optional `?`, then `:`, then whitespace, then `string`) rather than a bare name match, so a comment
  *  that merely MENTIONS a flag name (common in this file's prose-heavy JSDoc) is never mistaken for a real
  *  declaration. */
-export function extractGittensoryReviewFlags(envDtsText) {
+export function extractLoopOverReviewFlags(envDtsText) {
   const matches = envDtsText.matchAll(/LOOPOVER_REVIEW_[A-Z0-9_]+(?=\??:\s*string)/g);
   return [...new Set([...matches].map((match) => match[0]))];
 }
@@ -269,7 +269,7 @@ export function checkDocsDrift({ root, readFile = defaultReadFile }) {
 
   // 1. Feature flags: src/env.d.ts vs docs.tuning.tsx + docs.privacy-security.tsx.
   const envDtsText = read("src/env.d.ts");
-  const flags = extractGittensoryReviewFlags(envDtsText);
+  const flags = extractLoopOverReviewFlags(envDtsText);
   if (flags.length < 10) {
     failures.push(`src/env.d.ts: extraction found only ${flags.length} LOOPOVER_REVIEW_* flags -- expected 10+; the extraction regex may be broken`);
   } else {

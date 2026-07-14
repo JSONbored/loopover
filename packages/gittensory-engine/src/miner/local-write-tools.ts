@@ -1,5 +1,5 @@
 // #780 miner write-tools. These build ACTION SPECS — gittensory supplies the content; the miner's OWN local
-// harness runs the command with its OWN GitHub credentials. Gittensory NEVER performs the write, so source code
+// harness runs the command with its OWN GitHub credentials. LoopOver NEVER performs the write, so source code
 // and the write both stay on the miner's machine: the no-cloud-write boundary holds. Pure + deterministic: every
 // builder returns a self-contained, shell-safe spec and touches nothing.
 //
@@ -15,7 +15,7 @@
 export type LocalWriteJsonValue = string | number | boolean | null | LocalWriteJsonValue[] | { [key: string]: LocalWriteJsonValue };
 
 export const LOCAL_WRITE_BOUNDARY =
-  "Run this locally with your OWN GitHub credentials (e.g. an authenticated `gh`/`git`). Gittensory supplies the content but never performs the write — your code and the action both stay on your machine.";
+  "Run this locally with your OWN GitHub credentials (e.g. an authenticated `gh`/`git`). LoopOver supplies the content but never performs the write — your code and the action both stay on your machine.";
 
 export type LocalWriteActionSpec = {
   action: string;

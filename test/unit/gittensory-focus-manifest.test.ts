@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   GITTENSORY_REPO_FOCUS_MANIFEST_YAML,
   GITTENSOR_SELF_REPO_DEFAULT,
-  resolveGittensorySelfRepoFullName,
+  resolveLoopOverSelfRepoFullName,
 } from "../../src/config/gittensory-repo-focus-manifest";
 import { createTestEnv } from "../helpers/d1";
 import {
@@ -18,20 +18,20 @@ import { loadRepoFocusManifest, MANIFEST_FILE_CANDIDATES } from "../../src/signa
 const FORBIDDEN_PUBLIC_LANGUAGE =
   /wallet|hotkey|payout|reward estimate|raw trust score|public score estimate|private reviewability|farming/i;
 
-describe("resolveGittensorySelfRepoFullName", () => {
-  it("defaults to the Gittensory repo when drift issue repo is unset or invalid", () => {
-    expect(resolveGittensorySelfRepoFullName({})).toBe(GITTENSOR_SELF_REPO_DEFAULT);
-    expect(resolveGittensorySelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "invalid" })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
-    expect(resolveGittensorySelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  " })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
+describe("resolveLoopOverSelfRepoFullName", () => {
+  it("defaults to the LoopOver repo when drift issue repo is unset or invalid", () => {
+    expect(resolveLoopOverSelfRepoFullName({})).toBe(GITTENSOR_SELF_REPO_DEFAULT);
+    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "invalid" })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
+    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  " })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
   });
 
   it("returns a configured owner/repo drift target when present", () => {
-    expect(resolveGittensorySelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
-    expect(resolveGittensorySelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  org/repo  " })).toBe("org/repo");
+    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
+    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  org/repo  " })).toBe("org/repo");
   });
 });
 
-describe("Gittensory repo focus manifest", () => {
+describe("LoopOver repo focus manifest", () => {
   it("keeps bundled YAML aligned with the committed .loopover.yml file", () => {
     const onDisk = readFileSync(resolve(process.cwd(), ".loopover.yml"), "utf8").trim();
     expect(GITTENSORY_REPO_FOCUS_MANIFEST_YAML.trim()).toBe(onDisk);
@@ -111,7 +111,7 @@ describe("Gittensory repo focus manifest", () => {
     expect(byIssueLabel["gittensor:priority"]?.trustMaintainerAuthoredIssue).toBeUndefined();
   });
 
-  it("loads bundled manifest for the Gittensory repo when fetch is unavailable", async () => {
+  it("loads bundled manifest for the LoopOver repo when fetch is unavailable", async () => {
     const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
     const manifest = await loadRepoFocusManifest(env, "JSONbored/gittensory", { fetcher: async () => null });
     expect(manifest.present).toBe(true);

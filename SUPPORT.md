@@ -18,7 +18,7 @@ For conduct issues, use the expectations in `CODE_OF_CONDUCT.md`.
 
 ## Useful Issue Details
 
-- Gittensory MCP version from `gittensory-mcp status`
+- LoopOver MCP version from `gittensory-mcp status`
 - command used, with tokens and local paths removed
 - sanitized error message
 - repository owner/name when relevant

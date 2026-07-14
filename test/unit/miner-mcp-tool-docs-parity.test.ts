@@ -6,11 +6,11 @@ const MCP_BIN_PATH = join(process.cwd(), "packages/gittensory-miner/bin/loopover
 const README_PATH = join(process.cwd(), "packages/gittensory-miner/README.md");
 const CODING_AGENT_DRIVER_DOC_PATH = join(process.cwd(), "packages/gittensory-miner/docs/coding-agent-driver.md");
 
-/** Every `server.registerTool("gittensory_miner_...", ...)` name in the real MCP bin -- the source of truth
+/** Every `server.registerTool("loopover_miner_...", ...)` name in the real MCP bin -- the source of truth
  *  this test pins the README's "MCP server" section against, so the two can never silently drift (#5162). */
 function registeredMinerMcpToolNames(): string[] {
   const source = readFileSync(MCP_BIN_PATH, "utf8");
-  const names = [...source.matchAll(/server\.registerTool\(\s*\n?\s*"(gittensory_miner_\w+)"/g)]
+  const names = [...source.matchAll(/server\.registerTool\(\s*\n?\s*"(loopover_miner_\w+)"/g)]
     .map((m) => m[1])
     .filter((name): name is string => name !== undefined);
   expect(names.length).toBeGreaterThan(0);
@@ -27,7 +27,7 @@ describe("miner MCP tool documentation parity (#5162)", () => {
       expect(mcpSection).toContain(`\`${name}\``);
     }
 
-    const documented = [...mcpSection.matchAll(/`(gittensory_miner_\w+)`/g)]
+    const documented = [...mcpSection.matchAll(/`(loopover_miner_\w+)`/g)]
       .map((m) => m[1])
       .filter((name): name is string => name !== undefined);
     for (const name of documented) {

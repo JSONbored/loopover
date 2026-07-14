@@ -1,4 +1,4 @@
-// Gittensory Orb (#1255) — fleet calibration ANALYTICS. Reads the anonymized orb_signals collected from
+// LoopOver Orb (#1255) — fleet calibration ANALYTICS. Reads the anonymized orb_signals collected from
 // self-hosted instances and derives gate-accuracy metrics across the fleet. Aggregation is median/percentile
 // (never mean) so a single instance contributing fabricated data cannot move the fleet numbers.
 //

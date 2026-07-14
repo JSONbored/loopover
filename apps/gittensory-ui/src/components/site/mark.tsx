@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 
 // The mark is always brand citron, regardless of theme — only surrounding
 // text (e.g. the "ittensory" wordmark half) follows currentColor.
-export function GittensoryMark({ className }: { className?: string }) {
+export function LoopOverMark({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 512 512"

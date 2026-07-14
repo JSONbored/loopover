@@ -55,7 +55,7 @@ function missingIssueAdvisory(): Advisory {
     headSha: "sha7",
     conclusion: "neutral",
     severity: "warning",
-    title: "Gittensory advisory available",
+    title: "LoopOver advisory available",
     summary: "1 advisory finding generated.",
     findings: [{ code: "missing_linked_issue", title: "No linked issue detected", severity: "warning", detail: "No closing reference.", action: "Link the issue." }],
     generatedAt: "2026-06-13T00:00:00.000Z",

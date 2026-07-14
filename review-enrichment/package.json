@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Gittensory review-enrichment service (REES) — heavy/external/historical PR analysis returned as a structured brief the review engine splices into the prompt. Deploys standalone on Railway; see #1473.",
+  "description": "LoopOver review-enrichment service (REES) — heavy/external/historical PR analysis returned as a structured brief the review engine splices into the prompt. Deploys standalone on Railway; see #1473.",
   "engines": {
     "node": ">=20"
   },

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMinerMcpServer } from "../../packages/gittensory-miner/bin/loopover-miner-mcp.js";
 import { initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 
-// gittensory_miner_get_governor_decisions (#5159). Driven against a REAL temp governor ledger (not a fake) so the
+// loopover_miner_get_governor_decisions (#5159). Driven against a REAL temp governor ledger (not a fake) so the
 // redaction assertion exercises the actual explicit-named-column SQL — it must fail if a future edit widens the
 // SELECT to include payload_json.
 
@@ -43,13 +43,13 @@ async function callGovernorDecisions(
     client.connect(clientTransport),
   ]);
   const result = (await client.callTool({
-    name: "gittensory_miner_get_governor_decisions",
+    name: "loopover_miner_get_governor_decisions",
     arguments: args,
   })) as Content;
   return JSON.parse(toolText(result));
 }
 
-describe("gittensory_miner_get_governor_decisions (#5159)", () => {
+describe("loopover_miner_get_governor_decisions (#5159)", () => {
   it("projects the decision columns and NEVER leaks payload / reputation / budget (redaction by construction)", async () => {
     const ledger = tempGovernorLedger();
     ledger.appendGovernorEvent({

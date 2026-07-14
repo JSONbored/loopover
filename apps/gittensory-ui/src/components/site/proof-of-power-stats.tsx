@@ -21,7 +21,7 @@ const intFmt = new Intl.NumberFormat("en");
 
 async function fetchPublicStats(): Promise<PublicStats | null> {
   const result = await apiFetch<PublicStats>(`${getApiOrigin()}/v1/public/stats`, {
-    label: "Gittensory stats",
+    label: "LoopOver stats",
     timeoutMs: 6000,
     silentStatus: true, // a disabled/missing public-stats endpoint must not poison the API status pill
   });
@@ -112,11 +112,11 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
   return (
     <section
       className={cn("mx-auto w-full max-w-6xl px-4 pb-2 sm:px-6", className)}
-      aria-label="Live Gittensory stats"
+      aria-label="Live LoopOver stats"
     >
       <div className="mb-3 flex items-center gap-2 text-token-xs text-muted-foreground">
         <span aria-hidden className="size-1.5 rounded-full bg-coral motion-safe:animate-pulse" />
-        Live — every PR Gittensory has handled
+        Live — every PR LoopOver has handled
         <span className="ml-auto font-mono text-token-2xs uppercase tracking-wider">
           updated {formatStatsAgo(data.updatedAt, now)}
         </span>

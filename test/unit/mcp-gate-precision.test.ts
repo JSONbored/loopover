@@ -1,14 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { recordGateBlockOutcome, upsertPullRequestFromGitHub } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 const REPO = "owner/widgets";
 
 async function connect(env: Env) {
-  const server = new GittensoryMcp(env).createServer();
+  const server = new LoopoverMcp(env).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "gittensory-gate-precision-test", version: "0.1.0" }, { capabilities: {} });
@@ -31,12 +31,12 @@ async function seedGateLedger(env: Env) {
   }
 }
 
-describe("MCP gittensory_get_gate_precision (#2220)", () => {
+describe("MCP loopover_get_gate_precision (#2220)", () => {
   it("returns the per-gate-type precision report for an authorized caller and passes windowDays through", async () => {
     const env = createTestEnv();
     await seedGateLedger(env);
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_get_gate_precision", arguments: { owner: "owner", repo: "widgets", windowDays: 30 } });
+    const result = await client.callTool({ name: "loopover_get_gate_precision", arguments: { owner: "owner", repo: "widgets", windowDays: 30 } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as {
       repoFullName: string;
@@ -57,7 +57,7 @@ describe("MCP gittensory_get_gate_precision (#2220)", () => {
   it("returns an empty report with a null rate when no gate blocks are recorded (no windowDays)", async () => {
     const env = createTestEnv();
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_get_gate_precision", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_get_gate_precision", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as { windowDays: number | null; perGateType: unknown[]; overall: { blocked: number; falsePositiveRate: number | null } };
     expect(data.windowDays).toBeNull();
@@ -72,7 +72,7 @@ describe("MCP gittensory_get_gate_precision (#2220)", () => {
     const env = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
     await seedGateLedger(env);
     const client = await connect(env);
-    const result = await client.callTool({ name: "gittensory_get_gate_precision", arguments: { owner: "owner", repo: "widgets" } });
+    const result = await client.callTool({ name: "loopover_get_gate_precision", arguments: { owner: "owner", repo: "widgets" } });
     expect(result.isError).toBeTruthy();
     expect(JSON.stringify(result.content)).toMatch(/cannot access this repository/i);
   });

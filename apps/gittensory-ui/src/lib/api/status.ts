@@ -3,7 +3,7 @@ import { getApiOrigin } from "./origin";
 
 /**
  * Tiny shared store for global API status.
- * Tracks the live status of the Gittensory API plus an in-flight request count
+ * Tracks the live status of the LoopOver API plus an in-flight request count
  * so chrome (HealthDot, top progress bar) can react globally.
  */
 

@@ -105,7 +105,7 @@ gittensory-mcp init-client --print claude  # or --print cursor — prints the co
 Use that generator instead of hand-writing config (**Codex uses TOML, Claude/Cursor use JSON** — a
 pasted JSON block will not work in Codex). You'll use these tools in Phases 1 and 6 (inputs in
 `reference.md`): `loopover_check_before_start`, `loopover_validate_linked_issue`,
-`loopover_check_slop_risk`, `loopover_lint_pr_text`, `gittensory_predict_gate` — all metadata-only
+`loopover_check_slop_risk`, `loopover_lint_pr_text`, `loopover_predict_gate` — all metadata-only
 (no source upload, no secrets).
 
 ---
@@ -235,7 +235,7 @@ If `ui:lint` fails on formatting, run `npm --workspace @loopover/ui run format`.
 **Sync with `main` before you push if it moved** — a base conflict auto-closes a contributor PR:
 `git fetch upstream && git rebase upstream/main`, resolve, re-run the gate, then push. On the PR, the
 required status check is **`validate`** (it aggregates the CI jobs) and the engine posts a check run
-named **`Gittensory Orb Review Agent`** — watch both go green/passing.
+named **`LoopOver Orb Review Agent`** — watch both go green/passing.
 
 ---
 
@@ -248,7 +248,7 @@ Run the MCP predictor with your actual PR shape:
 - `loopover_lint_pr_text` — your commit + PR body must read as **strong**: Conventional Commit
   subject, traceability (a linked, currently-open, eligible issue — no no-issue rationale accepted),
   and a body that says what changed, why, and how it was validated.
-- `gittensory_predict_gate` — simulate the repo's public `.loopover.yml` gate. Resolve any
+- `loopover_predict_gate` — simulate the repo's public `.loopover.yml` gate. Resolve any
   predicted blocker (the duplicate-PR blocker is the one that hard-fails here) before opening.
 
 Resolve **every** finding before you push. The engine MERGES only a clean + green + gate-passing PR

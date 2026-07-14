@@ -10,7 +10,7 @@ import {
   updateUpstreamDriftReportIssue,
   upsertUpstreamDriftReport,
 } from "../db/repositories";
-import { resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
+import { resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import { githubHeaders, timeoutFetch } from "../github/client";
 import { resolveUpstreamCommitSha } from "./commit";
 import { isGlobalAgentPause } from "../settings/agent-execution";
@@ -285,7 +285,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   }
   const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };
-  const repo = resolveGittensorySelfRepoFullName(env);
+  const repo = resolveLoopOverSelfRepoFullName(env);
   const assignees = resolveDriftAssignees(env);
   const reports = (await listUpstreamDriftReports(env, 20)).filter((report) => report.status === "open");
   let created = 0;
@@ -1199,7 +1199,7 @@ function githubDriftIssueBody(report: UpstreamDriftReportRecord): string {
     "",
     "## Background",
     "",
-    "Gittensory detected upstream Gittensor rule drift that may require code or fixture updates.",
+    "LoopOver detected upstream Gittensor rule drift that may require code or fixture updates.",
     "",
     "## Drift Summary",
     "",
@@ -1219,7 +1219,7 @@ function githubDriftIssueBody(report: UpstreamDriftReportRecord): string {
     "## Required Follow-Up",
     "",
     "- Inspect the upstream ruleset drift report in the private API.",
-    "- Update Gittensory parsing/scoring fixtures if the semantic change is expected.",
+    "- Update LoopOver parsing/scoring fixtures if the semantic change is expected.",
     "- Keep public GitHub output sanitized and avoid private contributor context.",
   ].join("\n");
 }

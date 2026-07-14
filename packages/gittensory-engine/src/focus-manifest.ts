@@ -122,14 +122,14 @@ export type FocusManifestGateConfig = {
   aiReviewLowConfidenceDisposition: AiReviewLowConfidenceDisposition | null;
   /** `gate.aiReview.combine` (#2567): per-repo override of the self-host operator's `AI_REVIEW_PLAN.combine`
    *  boot default (single/consensus/synthesis). null (unset) ⇒ the operator's plan (or `consensus`). A
-   *  REFINEMENT only — see {@link aiReviewOnMerge} for the operator-floor clamp `runGittensoryAiReview` applies
+   *  REFINEMENT only — see {@link aiReviewOnMerge} for the operator-floor clamp `runLoopOverAiReview` applies
    *  to the paired `onMerge` field; `combine` itself is not floor-clamped (the three strategies are not ordered
    *  by strictness, so there is no single "loosening" direction to clamp). */
   aiReviewCombine: CombineStrategy | null;
   /** `gate.aiReview.onMerge` (#2567): per-repo override of the `synthesis` merge rule. `either` is the STRICTER
    *  rule (any one reviewer's blocker blocks/holds); `both` is more PERMISSIVE (requires every reviewer to
    *  agree). null (unset) ⇒ the operator's `AI_REVIEW_PLAN.onMerge`. A repo may only TIGHTEN the operator's
-   *  floor (never loosen `either` down to `both`) — `runGittensoryAiReview` enforces the clamp at resolve time,
+   *  floor (never loosen `either` down to `both`) — `runLoopOverAiReview` enforces the clamp at resolve time,
    *  since only it can see both the per-repo value and the operator's plan. */
   aiReviewOnMerge: OnMerge | null;
   /** `gate.aiReview.reviewers` (#2567): per-repo override of the named reviewer pair(s) to run, in place of the
@@ -344,7 +344,7 @@ export type FocusManifestReviewRecapConfig = {
  * under `maintainerRecap:`. Distinct from `reviewRecap:` above (that is the single-repo digest's own window/
  * enable knob); this instead overrides the GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars
  * that gate the cron-scheduled cross-repo digest (buildMaintainerRecap, #2239 / #2248) — read from the
- * gittensory self-repo's manifest (resolveGittensorySelfRepoFullName), since the digest is an operator-level
+ * gittensory self-repo's manifest (resolveLoopOverSelfRepoFullName), since the digest is an operator-level
  * setting, not a per-contributor-repo one. Mirrors `reviewRecap:` exactly: no DB-backed counterpart, so the
  * parsed value (or the default below when unset) IS the effective value. Not present (or present with no
  * fields set) ⇒ the caller falls back to the env vars, byte-identical to before this override existed.

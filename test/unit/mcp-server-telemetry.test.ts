@@ -31,7 +31,7 @@ describe("MCP server telemetry", () => {
         jsonrpc: "2.0",
         id: "error-telemetry",
         method: "tools/call",
-        params: { name: "gittensory_local_status" },
+        params: { name: "loopover_local_status" },
       }),
     });
 
@@ -56,7 +56,7 @@ describe("MCP server telemetry", () => {
         clientName: "loopover-<redacted-actor>-cli",
         clientVersion: "0.5.0",
         metadata: expect.objectContaining({
-          toolName: "gittensory_local_status",
+          toolName: "loopover_local_status",
           compatibilityStatus: "stale",
         }),
       }),

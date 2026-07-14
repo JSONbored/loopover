@@ -43,7 +43,7 @@ export function evaluatePreMergeChecks(
             code: PRE_MERGE_CHECK_UNRESOLVED_CODE,
             severity: "warning",
             title: `Pre-merge check held — changed files not resolved: ${check.name}`,
-            detail: `Gittensory could not resolve this PR's changed files to evaluate the path-gated check "${check.name}"; the gate is held and re-evaluates automatically.`,
+            detail: `LoopOver could not resolve this PR's changed files to evaluate the path-gated check "${check.name}"; the gate is held and re-evaluates automatically.`,
             action: "No action needed — the gate re-evaluates once the PR's files are available.",
           });
         continue;

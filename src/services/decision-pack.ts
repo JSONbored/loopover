@@ -1308,7 +1308,7 @@ function portfolioItem(args: {
     maintainerImpact: portfolioMaintainerImpact(args.decision, args.bucket),
     blockedBy: safeScoreBlockers(args.decision).map((blocker) => blocker.code),
     rerunWhen: portfolioRerunWhen(args.decision, args.bucket),
-    publicSafeSummary: sanitizePortfolioPublicSummary(args.publicNextActions[0] ?? `${args.decision.repoFullName}: Use Gittensory preflight before posting public PR context.`),
+    publicSafeSummary: sanitizePortfolioPublicSummary(args.publicNextActions[0] ?? `${args.decision.repoFullName}: Use LoopOver preflight before posting public PR context.`),
     nextActions: args.nextActions,
     publicNextActions: args.publicNextActions.map(sanitizePortfolioPublicSummary),
     source: "decision_pack",
@@ -1724,9 +1724,9 @@ function publicNextActionsFor(recommendation: DecisionRecommendation, context: R
   }
   if (recommendation === "pursue") {
     if (lane === "split") {
-      return [`${repoFullName}: split lane — direct PR or actionable issue report${languageHint}${labelHint}; use Gittensory preflight before posting public PR context.${issueQualityHint}`];
+      return [`${repoFullName}: split lane — direct PR or actionable issue report${languageHint}${labelHint}; use LoopOver preflight before posting public PR context.${issueQualityHint}`];
     }
-    return [`${repoFullName}: pick a narrow change${languageHint}${labelHint}; use Gittensory preflight before posting public PR context.`];
+    return [`${repoFullName}: pick a narrow change${languageHint}${labelHint}; use LoopOver preflight before posting public PR context.`];
   }
   if (recommendation === "watch" || lane === "issue_discovery") {
     return [`${repoFullName}: file only actionable, non-duplicate issue-discovery reports${labelHint}.${issueQualityHint}`];

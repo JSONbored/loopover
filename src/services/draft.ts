@@ -515,7 +515,7 @@ function json(data: unknown, status: number, headers: Record<string, string> = {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", ...headers } });
 }
 
-const DRAFT_OAUTH_COOKIE = "gittensory_draft_oauth";
+const DRAFT_OAUTH_COOKIE = "loopover_draft_oauth";
 
 function parseCookieHeader(header: string | null): Record<string, string> {
   const cookies: Record<string, string> = {};

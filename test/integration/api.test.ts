@@ -1349,7 +1349,7 @@ describe("api routes", () => {
       reason: "cross_repo_search_requires_discovery_access",
     });
 
-    // Agent-native slop self-checks (mirror the gittensory_check_slop_risk / gittensory_check_issue_slop MCP tools).
+    // Agent-native slop self-checks (mirror the loopover_check_slop_risk / loopover_check_issue_slop MCP tools).
     const slopRisk = await app.request(
       "/v1/lint/slop-risk",
       { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ changedFiles: [{ path: "src/widget.ts", additions: 80, deletions: 2 }], description: "" }) },
@@ -2304,7 +2304,7 @@ describe("api routes", () => {
     stubOktofeeshFetch();
 
     const { token: browserToken } = await createSessionForGitHubUser(env, { login: "oktofeesh1", id: 12345 });
-    const cookieHeaders = { cookie: `gittensory_session=${browserToken}`, "content-type": "application/json" };
+    const cookieHeaders = { cookie: `loopover_session=${browserToken}`, "content-type": "application/json" };
     const internalHeaders = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
 
     const overviewPreflight = await app.request("/v1/app/overview", { method: "OPTIONS", headers: { origin: "https://gittensory.aethereal.dev" } }, env);
@@ -2376,14 +2376,14 @@ describe("api routes", () => {
     expect(missingMinerLogin.status).toBe(400);
 
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other", id: 987 });
-    const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
     expect((await app.request("/v1/app/maintainer-dashboard", {}, env)).status).toBe(401);
 
     // #129 in-UI "refresh decision pack": contributor-authed enqueue of the decision-pack rebuild.
     const refreshMissingLogin = await app.request("/v1/app/miner-dashboard/refresh", { method: "POST", headers: apiHeaders(env) }, env);
     expect(refreshMissingLogin.status).toBe(400);
-    const refreshForbidden = await app.request("/v1/app/miner-dashboard/refresh?login=oktofeesh1", { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    const refreshForbidden = await app.request("/v1/app/miner-dashboard/refresh?login=oktofeesh1", { method: "POST", headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(refreshForbidden.status).toBe(403);
     const refreshQueued = await app.request("/v1/app/miner-dashboard/refresh?login=oktofeesh1", { method: "POST", headers: apiHeaders(env) }, env);
     expect(refreshQueued.status).toBe(202);
@@ -2397,7 +2397,7 @@ describe("api routes", () => {
     ).results;
     expect(queuedRefreshRows[0]?.count).toBe(1);
     // No ?login → the login resolves from the session actor (covers the session-actor fallback).
-    const refreshSelf = await app.request("/v1/app/miner-dashboard/refresh", { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    const refreshSelf = await app.request("/v1/app/miner-dashboard/refresh", { method: "POST", headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(refreshSelf.status).toBe(202);
     await expect(refreshSelf.json()).resolves.toMatchObject({ status: "queued", login: "other" });
     // Unauthenticated POST is rejected by the write-protection middleware before the handler.
@@ -2406,7 +2406,7 @@ describe("api routes", () => {
 
     const unknownEnv = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token: unknownToken } = await createSessionForGitHubUser(unknownEnv, { login: "new-user", id: 2468 });
-    const unknownHeaders = { cookie: `gittensory_session=${unknownToken}`, "content-type": "application/json" };
+    const unknownHeaders = { cookie: `loopover_session=${unknownToken}`, "content-type": "application/json" };
     const unknownSession = await app.request("/v1/auth/session", { headers: unknownHeaders }, unknownEnv);
     expect(unknownSession.status).toBe(200);
     const unknownSessionBody = await unknownSession.json();
@@ -2506,7 +2506,7 @@ describe("api routes", () => {
       labels: [],
     });
     const { token: ownerToken } = await createSessionForGitHubUser(ownerEnv, { login: "repo-owner", id: 777 });
-    const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    const ownerHeaders = { cookie: `loopover_session=${ownerToken}`, "content-type": "application/json" };
     mockedPermission.mockImplementation(async (_env, _installationId, repoFullName, login) => {
       if (repoFullName === "repo-owner/owned-repo" && login === "repo-owner") return "write";
       return "read";
@@ -2717,7 +2717,7 @@ describe("api routes", () => {
       "/v1/app/commands/preview",
       {
         method: "POST",
-        headers: { cookie: `gittensory_session=${operatorToken}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${operatorToken}`, "content-type": "application/json" },
         body: JSON.stringify({ command: "plan-next-work", repoFullName: "victim-org/secret-repo" }),
       },
       ownerEnv,
@@ -3558,7 +3558,7 @@ describe("api routes", () => {
       recentRuns: expect.arrayContaining([expect.objectContaining({ run: expect.objectContaining({ id: "completed-overview-run", status: "completed" }) })]),
     });
 
-    const forbiddenRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1", { headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    const forbiddenRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1", { headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(forbiddenRuns.status).toBe(403);
     const invalidLimitRuns = await app.request("/v1/agent/runs?actorLogin=oktofeesh1&limit=not-a-number", { headers: cookieHeaders }, env);
     expect(invalidLimitRuns.status).toBe(200);
@@ -3661,7 +3661,7 @@ describe("api routes", () => {
     const { token: noIdToken } = await createSessionForGitHubUser(fallbackOriginEnv, { login: "oktofeesh1" });
     const fallbackOriginExtensionSession = await app.request(
       "/v1/auth/extension/session",
-      { method: "POST", headers: { cookie: `gittensory_session=${noIdToken}` } },
+      { method: "POST", headers: { cookie: `loopover_session=${noIdToken}` } },
       fallbackOriginEnv,
     );
     expect(fallbackOriginExtensionSession.status).toBe(201);
@@ -3860,7 +3860,7 @@ describe("api routes", () => {
       clientName: "gittensory-mcp",
       clientVersion: "0.2.1",
       metadata: {
-        toolName: "gittensory_local_status",
+        toolName: "loopover_local_status",
         protocolVersion: "2025-03-26",
         compatibilityStatus: "stale",
         token: "github_pat_secret",
@@ -3906,7 +3906,7 @@ describe("api routes", () => {
         expect.objectContaining({ surface: "mcp", eventName: "mcp_tool_called", clientVersion: "0.2.1", metadata: expect.objectContaining({ compatibilityStatus: "stale" }) }),
       ]),
     );
-    expect(JSON.stringify(productUsageEvents)).not.toMatch(/oktofeesh1|operator@example.com|gittensory_session|\/Users|github_pat|ghp_|source code|raw trust|wallet|hotkey|private-repo/i);
+    expect(JSON.stringify(productUsageEvents)).not.toMatch(/oktofeesh1|operator@example.com|loopover_session|\/Users|github_pat|ghp_|source code|raw trust|wallet|hotkey|private-repo/i);
 
     const usageRollupRun = await app.request(
       "/v1/internal/jobs/rollup-product-usage/run",
@@ -3960,7 +3960,7 @@ describe("api routes", () => {
         expect.objectContaining({ window: "previous_30_days", activeActors: expect.any(Number), retainedActors: expect.any(Number), retentionRate: expect.any(Number), capped: false, byRole: expect.any(Array), bySurface: expect.any(Array) }),
       ]),
     );
-    expect(JSON.stringify(dailyRollupsBody)).not.toMatch(/oktofeesh1|operator@example.com|mcp-user|old-mcp-user|current-mcp-user|mcp-session|old-mcp-session|current-mcp-session|gittensory_session|\/Users|github_pat|ghp_|private-repo|wallet|hotkey|raw trust/i);
+    expect(JSON.stringify(dailyRollupsBody)).not.toMatch(/oktofeesh1|operator@example.com|mcp-user|old-mcp-user|current-mcp-user|mcp-session|old-mcp-session|current-mcp-session|loopover_session|\/Users|github_pat|ghp_|private-repo|wallet|hotkey|raw trust/i);
     const fallbackLimitRollups = await app.request("/v1/app/analytics/daily-rollups?limit=invalid", { headers: apiHeaders(env) }, env);
     expect(fallbackLimitRollups.status).toBe(200);
     await expect(fallbackLimitRollups.json()).resolves.toMatchObject({
@@ -4127,7 +4127,7 @@ describe("api routes", () => {
 
     // A non-maintainer mints a CONTRIBUTOR-scoped extension session.
     const { token: browserToken } = await createSessionForGitHubUser(env, { login: "contributor-dev", id: 555 });
-    const session = await app.request("/v1/auth/extension/session", { method: "POST", headers: { cookie: `gittensory_session=${browserToken}`, "content-type": "application/json" } }, env);
+    const session = await app.request("/v1/auth/extension/session", { method: "POST", headers: { cookie: `loopover_session=${browserToken}`, "content-type": "application/json" } }, env);
     expect(session.status).toBe(201);
     const sessionBody = (await session.json()) as { token: string; scopes: string[] };
     expect(sessionBody.scopes).toEqual(["extension:contributor_context"]);
@@ -4330,7 +4330,7 @@ describe("api routes", () => {
 
     expect((await app.request("/v1/app/skipped-pr-audit", {}, env)).status).toBe(401);
     const { token: unknownToken } = await createSessionForGitHubUser(env, { login: "unknown-user", id: 404 });
-    expect((await app.request("/v1/app/skipped-pr-audit", { headers: { cookie: `gittensory_session=${unknownToken}` } }, env)).status).toBe(403);
+    expect((await app.request("/v1/app/skipped-pr-audit", { headers: { cookie: `loopover_session=${unknownToken}` } }, env)).status).toBe(403);
 
     const bounded = await app.request("/v1/app/skipped-pr-audit?limit=3", { headers: apiHeaders(env) }, env);
     expect(bounded.status).toBe(200);
@@ -4378,7 +4378,7 @@ describe("api routes", () => {
     expect((await app.request("/v1/app/skipped-pr-audit?reason=unknown", { headers: apiHeaders(env) }, env)).status).toBe(400);
 
     const { token: ownerToken } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 101 });
-    const ownerHeaders = { cookie: `gittensory_session=${ownerToken}`, "content-type": "application/json" };
+    const ownerHeaders = { cookie: `loopover_session=${ownerToken}`, "content-type": "application/json" };
     const ownerAudit = await app.request("/v1/app/skipped-pr-audit", { headers: ownerHeaders }, env);
     expect(ownerAudit.status).toBe(200);
     const ownerAuditBody = (await ownerAudit.json()) as { items: Array<{ repoFullName: string; reason: string }> };
@@ -4443,7 +4443,7 @@ describe("api routes", () => {
     const oauthDenied = await app.request("/v1/auth/github/callback?error=access_denied", {}, env);
     expect(oauthDenied.status).toBe(302);
     expect(oauthDenied.headers.get("location")).toContain("reason=access_denied");
-    expect(oauthDenied.headers.get("set-cookie")).toContain("gittensory_oauth_state=");
+    expect(oauthDenied.headers.get("set-cookie")).toContain("loopover_oauth_state=");
     const oauthMissingCode = await app.request("/v1/auth/github/callback?state=state-only", {}, env);
     expect(oauthMissingCode.status).toBe(302);
     expect(oauthMissingCode.headers.get("location")).toContain("github_oauth_callback_invalid");
@@ -4454,7 +4454,7 @@ describe("api routes", () => {
     expect(invalidGitHubSession.status).toBe(400);
 
     const { token: noIdToken } = await createSessionForGitHubUser(env, { login: "jsonbored" });
-    const noIdSession = await app.request("/v1/auth/session", { headers: { cookie: `gittensory_session=${noIdToken}` } }, env);
+    const noIdSession = await app.request("/v1/auth/session", { headers: { cookie: `loopover_session=${noIdToken}` } }, env);
     expect(noIdSession.status).toBe(200);
     await expect(noIdSession.json()).resolves.toMatchObject({
       status: "authenticated",
@@ -4487,7 +4487,7 @@ describe("api routes", () => {
     expect(invalidQueueShape.status).toBe(400);
     await expect(invalidQueueShape.json()).resolves.toMatchObject({ error: "invalid_request", detail: "pullRequests array required" });
 
-    const invalidDigestJson = await app.request("/v1/app/digest/subscriptions", { method: "POST", headers: { cookie: `gittensory_session=${noIdToken}` }, body: "{" }, env);
+    const invalidDigestJson = await app.request("/v1/app/digest/subscriptions", { method: "POST", headers: { cookie: `loopover_session=${noIdToken}` }, body: "{" }, env);
     expect(invalidDigestJson.status).toBe(400);
 
     const queuedBackfillAll = await app.request("/v1/internal/jobs/backfill-registered-repos", { method: "POST", headers: internalHeaders, body: "{" }, env);
@@ -4640,7 +4640,7 @@ describe("api routes", () => {
       body: "SECRET-LAUNCH-CODE: fixes #321; do not disclose.",
     });
     const { token } = await createSessionForGitHubUser(env, { login: "collab", id: 7002 });
-    const headers = { cookie: `gittensory_session=${token}`, "content-type": "application/json" };
+    const headers = { cookie: `loopover_session=${token}`, "content-type": "application/json" };
 
     const allowedPreview = await app.request(
       "/v1/app/commands/preview",
@@ -4670,7 +4670,7 @@ describe("api routes", () => {
           jsonrpc: "2.0",
           id: "allowed-session-repo-context",
           method: "tools/call",
-          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "allowed" } },
+          params: { name: "loopover_get_repo_context", arguments: { owner: "target-org", repo: "allowed" } },
         }),
       },
       env,
@@ -4687,7 +4687,7 @@ describe("api routes", () => {
           jsonrpc: "2.0",
           id: "forbidden-session-repo-context",
           method: "tools/call",
-          params: { name: "gittensory_get_repo_context", arguments: { owner: "target-org", repo: "secret" } },
+          params: { name: "loopover_get_repo_context", arguments: { owner: "target-org", repo: "secret" } },
         }),
       },
       env,
@@ -5149,7 +5149,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: { ...mcpHeaders(env), authorization: `Bearer ${operatorMcpToken}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: "wrong-login", method: "tools/call", params: { name: "gittensory_get_decision_pack", arguments: { login: "other-user" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "wrong-login", method: "tools/call", params: { name: "loopover_get_decision_pack", arguments: { login: "other-user" } } }),
       },
       env,
     );
@@ -5177,7 +5177,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-method", params: { name: "gittensory_get_repo_context" } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-method", params: { name: "loopover_get_repo_context" } }),
       },
       env,
     );
@@ -5224,7 +5224,7 @@ describe("api routes", () => {
     );
     expect(tools.status).toBe(200);
     const initializePayload = (await mcpJson(tools)) as { result: { serverInfo: { name: string } } };
-    expect(initializePayload.result.serverInfo.name).toBe("gittensory");
+    expect(initializePayload.result.serverInfo.name).toBe("loopover");
 
     const toolsList = await app.request(
       "/mcp",
@@ -5238,51 +5238,51 @@ describe("api routes", () => {
     expect(toolsList.status).toBe(200);
     const toolsPayload = (await mcpJson(toolsList)) as { result: { tools: Array<{ name: string }> } };
     const toolNames = toolsPayload.result.tools.map((tool) => tool.name);
-    expect(toolNames).toContain("gittensory_get_repo_context");
-    expect(toolNames).toContain("gittensory_get_maintainer_noise");
-    expect(toolNames).toContain("gittensory_get_label_audit");
-    expect(toolNames).toContain("gittensory_get_maintainer_lane");
-    expect(toolNames).toContain("gittensory_get_repo_onboarding_pack");
-    expect(toolNames).toContain("gittensory_get_issue_quality");
-    expect(toolNames).toContain("gittensory_get_burden_forecast");
-    expect(toolNames).toContain("gittensory_get_contributor_profile");
-    expect(toolNames).toContain("gittensory_get_decision_pack");
-    expect(toolNames).toContain("gittensory_explain_repo_decision");
-    expect(toolNames).toContain("gittensory_preflight_pr");
-    expect(toolNames).toContain("gittensory_find_opportunities");
-    expect(toolNames).toContain("gittensory_retrieve_issue_context");
-    expect(toolNames).toContain("gittensory_preflight_local_diff");
-    expect(toolNames).toContain("gittensory_preview_local_pr_score");
-    expect(toolNames).toContain("gittensory_explain_score_breakdown");
-    expect(toolNames).toContain("gittensory_get_outcome_calibration");
-    expect(toolNames).toContain("gittensory_get_registry_changes");
-    expect(toolNames).toContain("gittensory_get_upstream_drift");
-    expect(toolNames).toContain("gittensory_explain_review_risk");
-    expect(toolNames).toContain("gittensory_compare_pr_variants");
-    expect(toolNames).toContain("gittensory_local_status");
-    expect(toolNames).toContain("gittensory_preflight_current_branch");
-    expect(toolNames).toContain("gittensory_preview_current_branch_score");
-    expect(toolNames).toContain("gittensory_rank_local_next_actions");
-    expect(toolNames).toContain("gittensory_compare_local_variants");
-    expect(toolNames).toContain("gittensory_explain_local_blockers");
-    expect(toolNames).toContain("gittensory_remediation_plan");
-    expect(toolNames).toContain("gittensory_prepare_pr_packet");
-    expect(toolNames).toContain("gittensory_agent_plan_next_work");
-    expect(toolNames).toContain("gittensory_agent_start_run");
-    expect(toolNames).toContain("gittensory_agent_get_run");
-    expect(toolNames).toContain("gittensory_agent_explain_next_action");
-    expect(toolNames).toContain("gittensory_agent_prepare_pr_packet");
+    expect(toolNames).toContain("loopover_get_repo_context");
+    expect(toolNames).toContain("loopover_get_maintainer_noise");
+    expect(toolNames).toContain("loopover_get_label_audit");
+    expect(toolNames).toContain("loopover_get_maintainer_lane");
+    expect(toolNames).toContain("loopover_get_repo_onboarding_pack");
+    expect(toolNames).toContain("loopover_get_issue_quality");
+    expect(toolNames).toContain("loopover_get_burden_forecast");
+    expect(toolNames).toContain("loopover_get_contributor_profile");
+    expect(toolNames).toContain("loopover_get_decision_pack");
+    expect(toolNames).toContain("loopover_explain_repo_decision");
+    expect(toolNames).toContain("loopover_preflight_pr");
+    expect(toolNames).toContain("loopover_find_opportunities");
+    expect(toolNames).toContain("loopover_retrieve_issue_context");
+    expect(toolNames).toContain("loopover_preflight_local_diff");
+    expect(toolNames).toContain("loopover_preview_local_pr_score");
+    expect(toolNames).toContain("loopover_explain_score_breakdown");
+    expect(toolNames).toContain("loopover_get_outcome_calibration");
+    expect(toolNames).toContain("loopover_get_registry_changes");
+    expect(toolNames).toContain("loopover_get_upstream_drift");
+    expect(toolNames).toContain("loopover_explain_review_risk");
+    expect(toolNames).toContain("loopover_compare_pr_variants");
+    expect(toolNames).toContain("loopover_local_status");
+    expect(toolNames).toContain("loopover_preflight_current_branch");
+    expect(toolNames).toContain("loopover_preview_current_branch_score");
+    expect(toolNames).toContain("loopover_rank_local_next_actions");
+    expect(toolNames).toContain("loopover_compare_local_variants");
+    expect(toolNames).toContain("loopover_explain_local_blockers");
+    expect(toolNames).toContain("loopover_remediation_plan");
+    expect(toolNames).toContain("loopover_prepare_pr_packet");
+    expect(toolNames).toContain("loopover_agent_plan_next_work");
+    expect(toolNames).toContain("loopover_agent_start_run");
+    expect(toolNames).toContain("loopover_agent_get_run");
+    expect(toolNames).toContain("loopover_agent_explain_next_action");
+    expect(toolNames).toContain("loopover_agent_prepare_pr_packet");
     for (const removed of [
-      "gittensory_get_contributor_fit",
-      "gittensory_get_contribution_strategy",
-      "gittensory_explain_reward_risk",
-      "gittensory_rank_next_actions",
-      "gittensory_explain_score_blockers",
-      "gittensory_explain_maintainer_noise",
-      "gittensory_get_role_context",
-      "gittensory_get_outcome_history",
-      "gittensory_explain_repo_fit",
-      "gittensory_explain_maintainer_lane",
+      "loopover_get_contributor_fit",
+      "loopover_get_contribution_strategy",
+      "loopover_explain_reward_risk",
+      "loopover_rank_next_actions",
+      "loopover_explain_score_blockers",
+      "loopover_explain_maintainer_noise",
+      "loopover_get_role_context",
+      "loopover_get_outcome_history",
+      "loopover_explain_repo_fit",
+      "loopover_explain_maintainer_lane",
     ]) {
       expect(toolNames).not.toContain(removed);
     }
@@ -5297,7 +5297,7 @@ describe("api routes", () => {
           id: 3,
           method: "tools/call",
           params: {
-            name: "gittensory_get_repo_context",
+            name: "loopover_get_repo_context",
             arguments: { owner: "entrius", repo: "allways-ui" },
           },
         }),
@@ -5319,7 +5319,7 @@ describe("api routes", () => {
           id: "score-preview-duplicate-risk",
           method: "tools/call",
           params: {
-            name: "gittensory_preview_local_pr_score",
+            name: "loopover_preview_local_pr_score",
             arguments: {
               repoFullName: "entrius/allways-ui",
               targetKey: "mcp-duplicate-risk",
@@ -5352,7 +5352,7 @@ describe("api routes", () => {
           id: "repo-context-no-totals",
           method: "tools/call",
           params: {
-            name: "gittensory_get_repo_context",
+            name: "loopover_get_repo_context",
             arguments: { owner: "owner", repo: "stable" },
           },
         }),
@@ -5368,7 +5368,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-issue-quality", method: "tools/call", params: { name: "gittensory_get_issue_quality", arguments: { owner: "ghost", repo: "missing" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-issue-quality", method: "tools/call", params: { name: "loopover_get_issue_quality", arguments: { owner: "ghost", repo: "missing" } } }),
       },
       env,
     );
@@ -5376,9 +5376,9 @@ describe("api routes", () => {
     await expect(mcpJson(missingIssueQuality)).resolves.toMatchObject({ result: { structuredContent: { status: "not_found", repoFullName: "ghost/missing" } } });
 
     for (const [name, args] of [
-      ["gittensory_get_decision_pack", { login: "needs-snapshot" }],
-      ["gittensory_explain_repo_decision", { login: "needs-snapshot", owner: "entrius", repo: "allways-ui" }],
-      ["gittensory_get_contributor_profile", { login: "unknown-user" }],
+      ["loopover_get_decision_pack", { login: "needs-snapshot" }],
+      ["loopover_explain_repo_decision", { login: "needs-snapshot", owner: "entrius", repo: "allways-ui" }],
+      ["loopover_get_contributor_profile", { login: "unknown-user" }],
     ] as const) {
       const response = await app.request(
         "/mcp",
@@ -5391,7 +5391,7 @@ describe("api routes", () => {
       );
       expect(response.status).toBe(200);
       const payload = (await mcpJson(response)) as { result: { structuredContent: Record<string, unknown> } };
-      if (name === "gittensory_get_contributor_profile") expect(payload.result.structuredContent).toMatchObject({ login: "unknown-user" });
+      if (name === "loopover_get_contributor_profile") expect(payload.result.structuredContent).toMatchObject({ login: "unknown-user" });
       else expect(payload.result.structuredContent).toMatchObject({ status: "needs_snapshot_refresh", freshness: "missing", rebuildEnqueued: true });
     }
 
@@ -5404,7 +5404,7 @@ describe("api routes", () => {
           jsonrpc: "2.0",
           id: "missing-repo-decision",
           method: "tools/call",
-          params: { name: "gittensory_explain_repo_decision", arguments: { login: "oktofeesh1", owner: "missing", repo: "repo" } },
+          params: { name: "loopover_explain_repo_decision", arguments: { login: "oktofeesh1", owner: "missing", repo: "repo" } },
         }),
       },
       env,
@@ -5422,7 +5422,7 @@ describe("api routes", () => {
           id: "bounty-preflight",
           method: "tools/call",
           params: {
-            name: "gittensory_preflight_pr",
+            name: "loopover_preflight_pr",
             arguments: {
               repoFullName: "entrius/allways-ui",
               title: "Fix dashboard cache refresh after reconnect",
@@ -5458,7 +5458,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "ghost", repo: "nothing" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-burden", method: "tools/call", params: { name: "loopover_get_burden_forecast", arguments: { owner: "ghost", repo: "nothing" } } }),
       },
       env,
     );
@@ -5476,7 +5476,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "cached-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "allways-ui" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "cached-burden", method: "tools/call", params: { name: "loopover_get_burden_forecast", arguments: { owner: "entrius", repo: "allways-ui" } } }),
       },
       env,
     );
@@ -5499,7 +5499,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "uncached-burden", method: "tools/call", params: { name: "gittensory_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-uncached-burden" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "uncached-burden", method: "tools/call", params: { name: "loopover_get_burden_forecast", arguments: { owner: "entrius", repo: "mcp-uncached-burden" } } }),
       },
       env,
     );
@@ -5511,15 +5511,15 @@ describe("api routes", () => {
     });
 
     for (const [name, args] of [
-      ["gittensory_get_repo_context", { owner: "entrius", repo: "allways-ui" }],
-      ["gittensory_get_issue_quality", { owner: "entrius", repo: "allways-ui" }],
-      ["gittensory_get_burden_forecast", { owner: "entrius", repo: "allways-ui" }],
-      ["gittensory_get_contributor_profile", { login: "oktofeesh1" }],
-      ["gittensory_get_decision_pack", { login: "oktofeesh1" }],
-      ["gittensory_explain_repo_decision", { login: "oktofeesh1", owner: "entrius", repo: "allways-ui" }],
-      ["gittensory_agent_plan_next_work", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],
+      ["loopover_get_repo_context", { owner: "entrius", repo: "allways-ui" }],
+      ["loopover_get_issue_quality", { owner: "entrius", repo: "allways-ui" }],
+      ["loopover_get_burden_forecast", { owner: "entrius", repo: "allways-ui" }],
+      ["loopover_get_contributor_profile", { login: "oktofeesh1" }],
+      ["loopover_get_decision_pack", { login: "oktofeesh1" }],
+      ["loopover_explain_repo_decision", { login: "oktofeesh1", owner: "entrius", repo: "allways-ui" }],
+      ["loopover_agent_plan_next_work", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],
       [
-        "gittensory_preflight_pr",
+        "loopover_preflight_pr",
         {
           repoFullName: "entrius/allways-ui",
           title: "Fix dashboard cache refresh after reconnect",
@@ -5527,10 +5527,10 @@ describe("api routes", () => {
           changedFiles: ["src/cache.ts", "test/cache.test.ts"],
         },
       ],
-      ["gittensory_get_registry_changes", {}],
-      ["gittensory_get_upstream_drift", {}],
+      ["loopover_get_registry_changes", {}],
+      ["loopover_get_upstream_drift", {}],
       [
-        "gittensory_preview_local_pr_score",
+        "loopover_preview_local_pr_score",
         {
           repoFullName: "entrius/allways-ui",
           targetKey: "mcp-local-fixture",
@@ -5543,7 +5543,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_explain_review_risk",
+        "loopover_explain_review_risk",
         {
           repoFullName: "entrius/allways-ui",
           contributorLogin: "oktofeesh1",
@@ -5553,7 +5553,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_compare_pr_variants",
+        "loopover_compare_pr_variants",
         {
           variants: [
             { repoFullName: "entrius/allways-ui", targetKey: "small", sourceTokenScore: 10, totalTokenScore: 12, sourceLines: 10 },
@@ -5562,7 +5562,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_preflight_local_diff",
+        "loopover_preflight_local_diff",
         {
           repoFullName: "entrius/allways-ui",
           title: "Fix dashboard cache refresh after reconnect",
@@ -5570,9 +5570,9 @@ describe("api routes", () => {
           changedLineCount: 42,
         },
       ],
-      ["gittensory_local_status", {}],
+      ["loopover_local_status", {}],
       [
-        "gittensory_preflight_current_branch",
+        "loopover_preflight_current_branch",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5589,7 +5589,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_preview_current_branch_score",
+        "loopover_preview_current_branch_score",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5598,7 +5598,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_rank_local_next_actions",
+        "loopover_rank_local_next_actions",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5607,7 +5607,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_explain_local_blockers",
+        "loopover_explain_local_blockers",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5616,7 +5616,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_prepare_pr_packet",
+        "loopover_prepare_pr_packet",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5629,7 +5629,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_draft_pr_body",
+        "loopover_draft_pr_body",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5642,7 +5642,7 @@ describe("api routes", () => {
         },
       ],
       [
-        "gittensory_compare_local_variants",
+        "loopover_compare_local_variants",
         {
           variants: [
             {
@@ -5663,7 +5663,7 @@ describe("api routes", () => {
           ],
         },
       ],
-      ["gittensory_get_bounty_advisory", { id: "bounty-1" }],
+      ["loopover_get_bounty_advisory", { id: "bounty-1" }],
     ] as const) {
       const response = await app.request(
         "/mcp",
@@ -5677,7 +5677,7 @@ describe("api routes", () => {
       expect(response.status).toBe(200);
       const payload = (await mcpJson(response)) as { result?: { content?: Array<{ text: string }>; structuredContent?: { actions?: Array<{ payload?: Record<string, unknown> }> } } };
       const text = payload.result?.content?.[0]?.text ?? "";
-      if (name === "gittensory_agent_plan_next_work") {
+      if (name === "loopover_agent_plan_next_work") {
         expect(payload.result?.structuredContent?.actions?.[0]?.payload?.recommendationEvidence).toMatchObject({
           confidence: expect.stringMatching(/^(high|medium|low)$/),
           sourceSummary: expect.any(String),
@@ -5685,16 +5685,16 @@ describe("api routes", () => {
         });
       }
       const privateRewardTools = new Set([
-        "gittensory_get_decision_pack",
-        "gittensory_explain_repo_decision",
-        "gittensory_preview_local_pr_score",
-        "gittensory_compare_pr_variants",
-        "gittensory_preview_current_branch_score",
-        "gittensory_rank_local_next_actions",
-        "gittensory_explain_local_blockers",
-        "gittensory_compare_local_variants",
-        "gittensory_agent_plan_next_work",
-        "gittensory_agent_explain_next_action",
+        "loopover_get_decision_pack",
+        "loopover_explain_repo_decision",
+        "loopover_preview_local_pr_score",
+        "loopover_compare_pr_variants",
+        "loopover_preview_current_branch_score",
+        "loopover_rank_local_next_actions",
+        "loopover_explain_local_blockers",
+        "loopover_compare_local_variants",
+        "loopover_agent_plan_next_work",
+        "loopover_agent_explain_next_action",
       ]);
       expect(text).not.toMatch(/farming|wallet|hotkey|guaranteed payout/i);
       if (!privateRewardTools.has(name)) expect(text).not.toMatch(/reward/i);
@@ -5710,7 +5710,7 @@ describe("api routes", () => {
           id: "agent-start",
           method: "tools/call",
           params: {
-            name: "gittensory_agent_start_run",
+            name: "loopover_agent_start_run",
             arguments: {
               actorLogin: "oktofeesh1",
               objective: "Plan next Gittensor action",
@@ -5726,10 +5726,10 @@ describe("api routes", () => {
     expect(agentStartPayload.result.structuredContent.run.status).toBe("queued");
 
     for (const [name, args] of [
-      ["gittensory_agent_get_run", { runId: agentStartPayload.result.structuredContent.run.id }],
-      ["gittensory_agent_explain_next_action", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],
+      ["loopover_agent_get_run", { runId: agentStartPayload.result.structuredContent.run.id }],
+      ["loopover_agent_explain_next_action", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],
       [
-        "gittensory_agent_prepare_pr_packet",
+        "loopover_agent_prepare_pr_packet",
         {
           login: "oktofeesh1",
           repoFullName: "entrius/allways-ui",
@@ -5812,7 +5812,7 @@ describe("api routes", () => {
         {
           method: "POST",
           headers: mcpHeaders(env),
-          body: JSON.stringify({ jsonrpc: "2.0", id: `review-risk-${args.title}`, method: "tools/call", params: { name: "gittensory_explain_review_risk", arguments: args } }),
+          body: JSON.stringify({ jsonrpc: "2.0", id: `review-risk-${args.title}`, method: "tools/call", params: { name: "loopover_explain_review_risk", arguments: args } }),
         },
         env,
       );
@@ -5831,7 +5831,7 @@ describe("api routes", () => {
           id: "sparse-variant-comparison",
           method: "tools/call",
           params: {
-            name: "gittensory_compare_pr_variants",
+            name: "loopover_compare_pr_variants",
             arguments: {
               variants: [
                 { repoFullName: "entrius/allways-ui", targetKey: "metadata-only" },
@@ -5855,7 +5855,7 @@ describe("api routes", () => {
           id: "tied-local-variant-comparison",
           method: "tools/call",
           params: {
-            name: "gittensory_compare_local_variants",
+            name: "loopover_compare_local_variants",
             arguments: {
               variants: [
                 { login: "oktofeesh1", repoFullName: "missing/b", branchName: "same", changedFiles: [] },
@@ -5877,7 +5877,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-bounty", method: "tools/call", params: { name: "gittensory_get_bounty_advisory", arguments: { id: "missing" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-bounty", method: "tools/call", params: { name: "loopover_get_bounty_advisory", arguments: { id: "missing" } } }),
       },
       env,
     );
@@ -5890,7 +5890,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-agent-run", method: "tools/call", params: { name: "gittensory_agent_get_run", arguments: { runId: "missing" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "missing-agent-run", method: "tools/call", params: { name: "loopover_agent_get_run", arguments: { runId: "missing" } } }),
       },
       env,
     );
@@ -5904,7 +5904,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: { ...mcpHeaders(sessionEnv), authorization: `Bearer ${mcpSessionToken}` },
-        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-session-tool", method: "tools/call", params: { name: "gittensory_get_decision_pack", arguments: { login: "other-user" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-session-tool", method: "tools/call", params: { name: "loopover_get_decision_pack", arguments: { login: "other-user" } } }),
       },
       sessionEnv,
     );
@@ -5922,7 +5922,7 @@ describe("api routes", () => {
           clientName: "loopover-<redacted-actor>-cli",
           clientVersion: "0.4.0",
           metadata: expect.objectContaining({
-            toolName: "gittensory_get_bounty_advisory",
+            toolName: "loopover_get_bounty_advisory",
             protocolVersion: "2025-03-26",
             compatibilityStatus: "incompatible",
             minimumSupportedVersion: "0.5.0",
@@ -5944,7 +5944,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: mcpHeaders(env),
-        body: JSON.stringify({ jsonrpc: "2.0", id: "profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "profile", method: "tools/call", params: { name: "loopover_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
       },
       env,
     );
@@ -5967,7 +5967,7 @@ describe("api routes", () => {
       {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, accept: "application/json, text/event-stream", "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-profile", method: "tools/call", params: { name: "gittensory_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "forbidden-profile", method: "tools/call", params: { name: "loopover_get_contributor_profile", arguments: { login: "oktofeesh1" } } }),
       },
       env,
     );
@@ -6213,7 +6213,7 @@ describe("api routes", () => {
           jsonrpc: "2.0",
           id: "stale-mcp-queued",
           method: "tools/call",
-          params: { name: "gittensory_get_decision_pack", arguments: { login: "stale-user" } },
+          params: { name: "loopover_get_decision_pack", arguments: { login: "stale-user" } },
         }),
       },
       env,
@@ -6268,7 +6268,7 @@ describe("api routes", () => {
           jsonrpc: "2.0",
           id: "stale-mcp-queue-down",
           method: "tools/call",
-          params: { name: "gittensory_get_decision_pack", arguments: { login: "mcp-stale-user" } },
+          params: { name: "loopover_get_decision_pack", arguments: { login: "mcp-stale-user" } },
         }),
       },
       queueDownEnv,

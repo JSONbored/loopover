@@ -10,7 +10,7 @@ export const Route = createFileRoute("/docs/github-app")({
       {
         name: "description",
         content:
-          "How the LoopOver GitHub App reviews pull requests once installed. Self-hosting is the only currently available path; a shared, centrally hosted App is planned as a future offering. The Gittensory Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
+          "How the LoopOver GitHub App reviews pull requests once installed. Self-hosting is the only currently available path; a shared, centrally hosted App is planned as a future offering. The LoopOver Orb Review Agent check plus a review comment posted as gittensory[bot]. Choose repos, configure sticky PR panels, advisory checks, and optional review-agent enforcement.",
       },
       { property: "og:title", content: "GitHub App configuration — LoopOver docs" },
       {
@@ -37,8 +37,8 @@ function GithubApp() {
         repos you select. Self-hosting your own App (see{" "}
         <Link to="/docs/maintainer-self-hosting">self-hosting setup</Link>) is the only currently
         available path. Each review produces two surfaces: the{" "}
-        <strong>Gittensory Orb Review Agent</strong> check run (and the advisory{" "}
-        <strong>Gittensory Context</strong> check), and a single review comment posted by{" "}
+        <strong>LoopOver Orb Review Agent</strong> check run (and the advisory{" "}
+        <strong>LoopOver Context</strong> check), and a single review comment posted by{" "}
         <code>gittensory[bot]</code> that updates in place as the PR evolves. The review behavior
         below this page's Install section (PR panel, checks, gate modes, config-as-code) is the same
         regardless of which connection mode your self-hosted App uses.
@@ -85,8 +85,8 @@ GET /v1/installations/:id/repair`}
           />
         </li>
         <li>
-          Leave <strong>Gittensory Context</strong> advisory while you tune copy and settings. Make{" "}
-          <strong>Gittensory Orb Review Agent</strong> required only after the repo explicitly
+          Leave <strong>LoopOver Context</strong> advisory while you tune copy and settings. Make{" "}
+          <strong>LoopOver Orb Review Agent</strong> required only after the repo explicitly
           enables blocking rules.
         </li>
       </ol>
@@ -118,24 +118,24 @@ GET /v1/installations/:id/repair`}
       <h2>Checks</h2>
       <p>
         The LoopOver app publishes its review as check runs.{" "}
-        <strong>Gittensory Orb Review Agent</strong> is the gate result, controlled by{" "}
+        <strong>LoopOver Orb Review Agent</strong> is the gate result, controlled by{" "}
         <code>reviewCheckMode</code> (<code>required</code> / <code>visible</code> /{" "}
-        <code>disabled</code>). <strong>Gittensory Context</strong> is the separate advisory
+        <code>disabled</code>). <strong>LoopOver Context</strong> is the separate advisory
         companion, controlled by its own <code>checkRunMode</code> (<code>off</code> /{" "}
         <code>enabled</code>) — these two switches are independent axes, not one setting for both
         checks. <code>checkRunDetailLevel</code> (<code>minimal</code> / <code>standard</code>) only
-        affects <strong>Gittensory Context</strong>'s output depth; it has no effect on the Orb
+        affects <strong>LoopOver Context</strong>'s output depth; it has no effect on the Orb
         Review Agent check.
       </p>
       <p>
-        <strong>Gittensory Context</strong> is advisory and should not be required in branch
-        protection. <strong>Gittensory Orb Review Agent</strong> is opt-in and can be made required
+        <strong>LoopOver Context</strong> is advisory and should not be required in branch
+        protection. <strong>LoopOver Orb Review Agent</strong> is opt-in and can be made required
         after a repo owner chooses blocking rules.
       </p>
       <p>
-        Branch protection should require <strong>Gittensory Orb Review Agent</strong> only after the
+        Branch protection should require <strong>LoopOver Orb Review Agent</strong> only after the
         repo has verified installation health, previewed the public panel, and configured at least
-        one <code>block</code> rule. Do not require <strong>Gittensory Context</strong>; it is there
+        one <code>block</code> rule. Do not require <strong>LoopOver Context</strong>; it is there
         to inform reviewers, not stop merges.
       </p>
 
@@ -145,7 +145,7 @@ GET /v1/installations/:id/repair`}
         <code>reviewCheckMode</code> (<code>required</code> / <code>visible</code> /{" "}
         <code>disabled</code>); each dimension then refines an already-enabled gate with a tri-state
         mode — <code>off</code> (not evaluated), <code>advisory</code> (surfaced, never blocks), or{" "}
-        <code>block</code> (can become a hard <strong>Gittensory Orb Review Agent</strong> blocker).
+        <code>block</code> (can become a hard <strong>LoopOver Orb Review Agent</strong> blocker).
         A configured blocker fails the gate for any author identically —
         confirmed-Gittensor-contributor status does not change <em>who</em> can be blocked; it's
         carried through only for on-chain scoring, a separate concern from the gate's own
@@ -349,7 +349,7 @@ LOOPOVER_REVIEW_REPOS="JSONbored/gittensory"`}
         For repos like <code>JSONbored/gittensory</code> and <code>awesome-claude</code>, enable PR
         comments, labels, Context, and Gate together to test the full product surface. If another
         maintainer agent can merge quickly, configure that agent to wait for{" "}
-        <code>Gittensory Orb Review Agent</code> before merge or close.
+        <code>LoopOver Orb Review Agent</code> before merge or close.
       </p>
 
       <h2>Install diagnostics</h2>

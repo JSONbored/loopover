@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
-import { GittensoryMcp } from "../../src/mcp/server";
+import { LoopoverMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { REPO_OUTCOME_PATTERNS_SIGNAL } from "../../src/services/repo-outcome-patterns";
@@ -11,37 +11,37 @@ import { createTestEnv } from "../helpers/d1";
 
 // Tools that ship an MCP-native output schema so modern clients can validate/render responses.
 const TOOLS_WITH_OUTPUT_SCHEMA = [
-  "gittensory_get_repo_context",
-  "gittensory_get_maintainer_noise",
-  "gittensory_get_label_audit",
-  "gittensory_get_maintainer_lane",
-  "gittensory_get_repo_onboarding_pack",
-  "gittensory_get_burden_forecast",
-  "gittensory_get_repo_outcome_patterns",
-  "gittensory_get_outcome_calibration",
-  "gittensory_get_contributor_profile",
-  "gittensory_get_decision_pack",
-  "gittensory_monitor_open_prs",
-  "gittensory_explain_repo_decision",
-  "gittensory_get_issue_quality",
-  "gittensory_validate_linked_issue",
-  "gittensory_check_before_start",
-  "gittensory_find_opportunities",
-  "gittensory_retrieve_issue_context",
-  "gittensory_lint_pr_text",
-  "gittensory_validate_config",
-  "gittensory_get_registry_changes",
-  "gittensory_get_upstream_drift",
-  "gittensory_local_status",
-  "gittensory_remediation_plan",
-  "gittensory_explain_score_breakdown",
-  "gittensory_get_eligibility_plan",
-  "gittensory_simulate_open_pr_pressure",
-  "gittensory_get_gate_precision",
+  "loopover_get_repo_context",
+  "loopover_get_maintainer_noise",
+  "loopover_get_label_audit",
+  "loopover_get_maintainer_lane",
+  "loopover_get_repo_onboarding_pack",
+  "loopover_get_burden_forecast",
+  "loopover_get_repo_outcome_patterns",
+  "loopover_get_outcome_calibration",
+  "loopover_get_contributor_profile",
+  "loopover_get_decision_pack",
+  "loopover_monitor_open_prs",
+  "loopover_explain_repo_decision",
+  "loopover_get_issue_quality",
+  "loopover_validate_linked_issue",
+  "loopover_check_before_start",
+  "loopover_find_opportunities",
+  "loopover_retrieve_issue_context",
+  "loopover_lint_pr_text",
+  "loopover_validate_config",
+  "loopover_get_registry_changes",
+  "loopover_get_upstream_drift",
+  "loopover_local_status",
+  "loopover_remediation_plan",
+  "loopover_explain_score_breakdown",
+  "loopover_get_eligibility_plan",
+  "loopover_simulate_open_pr_pressure",
+  "loopover_get_gate_precision",
 ];
 
 async function connectTestClient(env: Env = createTestEnv(), identity?: AuthIdentity) {
-  const mcpServer = new GittensoryMcp(env, identity).createServer();
+  const mcpServer = new LoopoverMcp(env, identity).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "gittensory-output-schema-test", version: "0.1.0" }, { capabilities: {} });
@@ -67,7 +67,7 @@ describe("MCP output schema discovery", () => {
 
 
   it("keeps draft PR body MCP text free of private scoring taxonomy", async () => {
-    const mcp = new GittensoryMcp(createTestEnv()) as unknown as {
+    const mcp = new LoopoverMcp(createTestEnv()) as unknown as {
       analyzeLocalBranch: () => Promise<unknown>;
       draftPrBody(input: Record<string, unknown>): Promise<{ summary: string; data: Record<string, unknown> }>;
       toolResult(payload: { summary: string; data: Record<string, unknown> }): { content: Array<{ type: "text"; text: string }>; structuredContent: Record<string, unknown> };
@@ -117,19 +117,19 @@ describe("MCP output schema discovery", () => {
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((t) => [t.name, t]));
 
-    const repoContext = byName.get("gittensory_get_repo_context");
+    const repoContext = byName.get("loopover_get_repo_context");
     const repoContextProps = Object.keys((repoContext?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(repoContextProps).toEqual(expect.arrayContaining(["repoFullName", "lane", "queueHealth", "configQuality"]));
 
-    const upstream = byName.get("gittensory_get_upstream_drift");
+    const upstream = byName.get("loopover_get_upstream_drift");
     const upstreamProps = Object.keys((upstream?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(upstreamProps).toEqual(expect.arrayContaining(["status", "highestSeverity"]));
 
-    const localStatus = byName.get("gittensory_local_status");
+    const localStatus = byName.get("loopover_local_status");
     const localStatusProps = Object.keys((localStatus?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(localStatusProps).toEqual(expect.arrayContaining(["apiAvailable", "supportedEndpoint"]));
 
-    const registryChanges = byName.get("gittensory_get_registry_changes");
+    const registryChanges = byName.get("loopover_get_registry_changes");
     const registryChangesProps = Object.keys((registryChanges?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(registryChangesProps).toEqual(expect.arrayContaining(["currentSnapshotId", "previousSnapshotId", "addedRepos", "removedRepos", "changedRepos", "summary"]));
     expect(registryChangesProps).not.toEqual(expect.arrayContaining(["previous", "current", "added", "removed", "changed", "warnings"]));
@@ -141,18 +141,18 @@ describe("MCP output schema discovery", () => {
     const names = new Set(tools.map((t) => t.name));
 
     // A representative slice of tools without output schemas remains intact.
-    expect(names.has("gittensory_preflight_pr")).toBe(true);
-    expect(names.has("gittensory_agent_plan_next_work")).toBe(true);
-    expect(names.has("gittensory_compare_pr_variants")).toBe(true);
+    expect(names.has("loopover_preflight_pr")).toBe(true);
+    expect(names.has("loopover_agent_plan_next_work")).toBe(true);
+    expect(names.has("loopover_compare_pr_variants")).toBe(true);
   });
 });
 
 // ── Structured content validates against the declared schema ─────────────────────
 
 describe("MCP tool calls return schema-valid structured content", () => {
-  it("gittensory_local_status returns validated structured content", async () => {
+  it("loopover_local_status returns validated structured content", async () => {
     const { client } = await connectTestClient();
-    const result = await client.callTool({ name: "gittensory_local_status", arguments: {} });
+    const result = await client.callTool({ name: "loopover_local_status", arguments: {} });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toBeDefined();
     const data = result.structuredContent as Record<string, unknown>;
@@ -160,19 +160,19 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.supportedEndpoint).toBe("/v1/local/branch-analysis");
   });
 
-  it("gittensory_get_upstream_drift returns validated structured content", async () => {
+  it("loopover_get_upstream_drift returns validated structured content", async () => {
     const { client } = await connectTestClient();
-    const result = await client.callTool({ name: "gittensory_get_upstream_drift", arguments: {} });
+    const result = await client.callTool({ name: "loopover_get_upstream_drift", arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(["current", "drift_detected", "stale", "unavailable"]).toContain(data.status);
   });
 
-  it("gittensory_get_registry_changes returns validated structured content", async () => {
+  it("loopover_get_registry_changes returns validated structured content", async () => {
     const env = createTestEnv();
     await seedRegistryChangeSnapshots(env);
     const { client } = await connectTestClient(env);
-    const result = await client.callTool({ name: "gittensory_get_registry_changes", arguments: {} });
+    const result = await client.callTool({ name: "loopover_get_registry_changes", arguments: {} });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toBeDefined();
     expect(result.structuredContent).toMatchObject({
@@ -187,9 +187,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
     ]);
   });
 
-  it("gittensory_get_repo_context returns validated structured content", async () => {
+  it("loopover_get_repo_context returns validated structured content", async () => {
     const { client } = await connectTestClient();
-    const result = await client.callTool({ name: "gittensory_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
@@ -199,9 +199,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
   // end users, unlike the shared LOOPOVER_MCP_TOKEN), so canAccessRepo must remain unconditionally trusted for
   // them even with MCP_READ_REPO_ALLOWLIST unset — mirroring the existing api/internal-trusted tests for the
   // write-side MCP_ACTUATION_REPO_ALLOWLIST guards.
-  it("gittensory_get_repo_context trusts the api static identity unconditionally, regardless of MCP_READ_REPO_ALLOWLIST (#2455)", async () => {
+  it("loopover_get_repo_context trusts the api static identity unconditionally, regardless of MCP_READ_REPO_ALLOWLIST (#2455)", async () => {
     const { client } = await connectTestClient(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }), { kind: "static", actor: "api" });
-    const result = await client.callTool({ name: "gittensory_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
@@ -209,25 +209,25 @@ describe("MCP tool calls return schema-valid structured content", () => {
 
   // Regression test for #2455: the shared, end-user-obtainable LOOPOVER_MCP_TOKEN must not read an arbitrary
   // repo's context by default.
-  it("gittensory_get_repo_context forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard/scoped opt-in (#2455)", async () => {
+  it("loopover_get_repo_context forbids the static mcp identity without an MCP_READ_REPO_ALLOWLIST wildcard/scoped opt-in (#2455)", async () => {
     const { client } = await connectTestClient(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }));
-    const result = await client.callTool({ name: "gittensory_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toMatch(/cannot access this repository/i);
   });
 
-  it("gittensory_get_repo_context allows the static mcp identity once the repo is explicitly allowlisted (#2455)", async () => {
+  it("loopover_get_repo_context allows the static mcp identity once the repo is explicitly allowlisted (#2455)", async () => {
     const { client } = await connectTestClient(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "octo/demo" }));
-    const result = await client.callTool({ name: "gittensory_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_repo_context", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
   });
 
-  it("gittensory_get_maintainer_noise returns a structured noise triage report for a repo", async () => {
+  it("loopover_get_maintainer_noise returns a structured noise triage report for a repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 1, title: "misc cleanup and various refactors", state: "open", user: { login: "alice" }, body: "" });
     const { client } = await connectTestClient(env);
-    const result = await client.callTool({ name: "gittensory_get_maintainer_noise", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_maintainer_noise", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
@@ -237,7 +237,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_get_maintainer_noise denies cached member-only session access", async () => {
+  it("loopover_get_maintainer_noise denies cached member-only session access", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim-org/private-repo", private: true, owner: { login: "victim-org" }, default_branch: "main" });
     await upsertPullRequestFromGitHub(env, "victim-org/private-repo", {
@@ -262,18 +262,18 @@ describe("MCP tool calls return schema-valid structured content", () => {
       },
     });
 
-    const result = await client.callTool({ name: "gittensory_get_maintainer_noise", arguments: { owner: "victim-org", repo: "private-repo" } });
+    const result = await client.callTool({ name: "loopover_get_maintainer_noise", arguments: { owner: "victim-org", repo: "private-repo" } });
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("maintainer access is required");
     expect(result.structuredContent).toBeUndefined();
   });
 
-  it("gittensory_get_label_audit returns a structured label-policy audit for a repo", async () => {
+  it("loopover_get_label_audit returns a structured label-policy audit for a repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     const { client } = await connectTestClient(env);
-    const result = await client.callTool({ name: "gittensory_get_label_audit", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_label_audit", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
@@ -282,12 +282,12 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_get_maintainer_lane returns a structured lane triage report for a repo", async () => {
+  it("loopover_get_maintainer_lane returns a structured lane triage report for a repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     await upsertPullRequestFromGitHub(env, "octo/demo", { number: 1, title: "Fix retry backoff", state: "open", user: { login: "alice" }, body: "" });
     const { client } = await connectTestClient(env);
-    const result = await client.callTool({ name: "gittensory_get_maintainer_lane", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_maintainer_lane", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.repoFullName).toBe("octo/demo");
@@ -297,7 +297,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_get_repo_onboarding_pack returns a structured preview for an installed repo", async () => {
+  it("loopover_get_repo_onboarding_pack returns a structured preview for an installed repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } }, 501);
     await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("octo/demo").run();
@@ -306,7 +306,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     // most other read tools, since LOOPOVER_MCP_TOKEN is an end-user-obtainable CLI credential (see
     // requireRepoOnboardingPackAccess, src/mcp/server.ts).
     const { client } = await connectTestClient(env, { kind: "static", actor: "api" });
-    const result = await client.callTool({ name: "gittensory_get_repo_onboarding_pack", arguments: { owner: "octo", repo: "demo" } });
+    const result = await client.callTool({ name: "loopover_get_repo_onboarding_pack", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data).toMatchObject({
@@ -317,9 +317,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
     });
   });
 
-  it("gittensory_validate_linked_issue reports multiplier eligibility for an uncached issue", async () => {
+  it("loopover_validate_linked_issue reports multiplier eligibility for an uncached issue", async () => {
     const { client } = await connectTestClient();
-    const result = await client.callTool({ name: "gittensory_validate_linked_issue", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
+    const result = await client.callTool({ name: "loopover_validate_linked_issue", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.status).toBe("ok");
@@ -330,13 +330,13 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_validate_linked_issue reports the multiplier would apply for a clean open issue", async () => {
+  it("loopover_validate_linked_issue reports the multiplier would apply for a clean open issue", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     await upsertIssueFromGitHub(env, "octo/demo", { number: 5, title: "Fix flaky retry backoff", state: "open", user: { login: "reporter" }, labels: [], body: "Reproduction steps and expected behaviour are described in detail." });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_validate_linked_issue",
+      name: "loopover_validate_linked_issue",
       arguments: { owner: "octo", repo: "demo", issueNumber: 5, plannedChange: { title: "Fix retry backoff", changedFiles: ["src/queue.ts"] } },
     });
     expect(result.isError).toBeFalsy();
@@ -347,9 +347,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.blockingReason).toBeUndefined();
   });
 
-  it("gittensory_check_before_start returns a recommendation for a clean repo", async () => {
+  it("loopover_check_before_start returns a recommendation for a clean repo", async () => {
     const { client } = await connectTestClient();
-    const result = await client.callTool({ name: "gittensory_check_before_start", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
+    const result = await client.callTool({ name: "loopover_check_before_start", arguments: { owner: "octo", repo: "demo", issueNumber: 1 } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data.status).toBe("ok");
@@ -359,12 +359,12 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_remediation_plan returns validated structured content", async () => {
+  it("loopover_remediation_plan returns validated structured content", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_remediation_plan",
+      name: "loopover_remediation_plan",
       arguments: {
         login: "octo",
         repoFullName: "octo/demo",
@@ -382,12 +382,12 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(typeof data.summary).toBe("string");
   });
 
-  it("gittensory_explain_score_breakdown returns validated structured content", async () => {
+  it("loopover_explain_score_breakdown returns validated structured content", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_explain_score_breakdown",
+      name: "loopover_explain_score_breakdown",
       arguments: {
         repoFullName: "octo/demo",
         contributorLogin: "octo",
@@ -405,7 +405,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(data.highestLeverageLever).toBeTruthy();
   });
 
-  it("gittensory_explain_score_breakdown applies trusted open-issue counts", async () => {
+  it("loopover_explain_score_breakdown applies trusted open-issue counts", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     for (const number of [1, 2, 3]) {
@@ -437,7 +437,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
 
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_explain_score_breakdown",
+      name: "loopover_explain_score_breakdown",
       arguments: {
         repoFullName: "octo/demo",
         contributorLogin: "alice",
@@ -457,23 +457,23 @@ describe("MCP tool calls return schema-valid structured content", () => {
     );
   });
 
-  it("gittensory_explain_score_breakdown requires contributorLogin", async () => {
+  it("loopover_explain_score_breakdown requires contributorLogin", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_explain_score_breakdown",
+      name: "loopover_explain_score_breakdown",
       arguments: { repoFullName: "octo/demo", sourceTokenScore: 40, totalTokenScore: 60, sourceLines: 80 },
     });
     expect(result.isError).toBe(true);
   });
 
-  it("gittensory_get_eligibility_plan returns validated structured content", async () => {
+  it("loopover_get_eligibility_plan returns validated structured content", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_get_eligibility_plan",
+      name: "loopover_get_eligibility_plan",
       arguments: {
         repoFullName: "octo/demo",
         linkedIssueMode: "none",
@@ -493,9 +493,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(typeof data.publicSummary).toBe("string");
   });
 
-  it("gittensory_lint_pr_text returns a deterministic verdict and fixes", async () => {
+  it("loopover_lint_pr_text returns a deterministic verdict and fixes", async () => {
     const { client } = await connectTestClient();
-    const weak = await client.callTool({ name: "gittensory_lint_pr_text", arguments: { commitMessages: ["wip"], prBody: "" } });
+    const weak = await client.callTool({ name: "loopover_lint_pr_text", arguments: { commitMessages: ["wip"], prBody: "" } });
     expect(weak.isError).toBeFalsy();
     const weakData = weak.structuredContent as Record<string, unknown>;
     expect(weakData.verdict).toBe("weak");
@@ -503,7 +503,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(weakData)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
 
     const strong = await client.callTool({
-      name: "gittensory_lint_pr_text",
+      name: "loopover_lint_pr_text",
       arguments: {
         commitMessages: ["feat(api): add cursor pagination to the labels endpoint for large repositories"],
         prBody: "Adds cursor-based pagination to the labels endpoint so labels beyond the first cached page are returned. Tested with vitest.",
@@ -513,10 +513,10 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect((strong.structuredContent as Record<string, unknown>).verdict).toBe("strong");
   });
 
-  it("gittensory_validate_config returns normalized manifest fields and status arms", async () => {
+  it("loopover_validate_config returns normalized manifest fields and status arms", async () => {
     const { client } = await connectTestClient();
     const ok = await client.callTool({
-      name: "gittensory_validate_config",
+      name: "loopover_validate_config",
       arguments: { content: "wantedPaths:\n  - src/\n" },
     });
     expect(ok.isError).toBeFalsy();
@@ -524,14 +524,14 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect((ok.structuredContent as Record<string, unknown>).normalized).toMatchObject({ wantedPaths: ["src/"] });
 
     const warn = await client.callTool({
-      name: "gittensory_validate_config",
+      name: "loopover_validate_config",
       arguments: { content: "gate:\n  pack: not-real\n  enabled: true\n" },
     });
     expect(warn.isError).toBeFalsy();
     expect((warn.structuredContent as Record<string, unknown>).status).toBe("warn");
 
     const error = await client.callTool({
-      name: "gittensory_validate_config",
+      name: "loopover_validate_config",
       arguments: { content: "{ not: valid json" },
     });
     expect(error.isError).toBeFalsy();
@@ -539,7 +539,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(error.structuredContent)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {
+  it("loopover_get_repo_outcome_patterns reports not-found, computed, and cached outcomes", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "computed", full_name: "owner/computed", private: false, owner: { login: "owner" }, default_branch: "main" });
     const generatedAt = new Date().toISOString();
@@ -553,20 +553,20 @@ describe("MCP tool calls return schema-valid structured content", () => {
     });
     const { client } = await connectTestClient(env);
 
-    const missing = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "ghost", repo: "missing" } });
+    const missing = await client.callTool({ name: "loopover_get_repo_outcome_patterns", arguments: { owner: "ghost", repo: "missing" } });
     expect(missing.isError).toBeFalsy();
     expect(missing.structuredContent).toMatchObject({ status: "not_found", repoFullName: "ghost/missing" });
 
-    const computed = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "computed" } });
+    const computed = await client.callTool({ name: "loopover_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "computed" } });
     expect(computed.isError).toBeFalsy();
     expect(computed.structuredContent).toMatchObject({ status: "ready", source: "computed", repoFullName: "owner/computed" });
 
-    const cached = await client.callTool({ name: "gittensory_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "cached" } });
+    const cached = await client.callTool({ name: "loopover_get_repo_outcome_patterns", arguments: { owner: "owner", repo: "cached" } });
     expect(cached.isError).toBeFalsy();
     expect(cached.structuredContent).toMatchObject({ status: "ready", source: "snapshot", freshness: "fresh", repoFullName: "owner/cached" });
   });
 
-  it("gittensory_get_outcome_calibration returns structured slop calibration for a repo", async () => {
+  it("loopover_get_outcome_calibration returns structured slop calibration for a repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
     await upsertPullRequestFromGitHub(env, "octo/demo", {
@@ -579,7 +579,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     await updatePullRequestSlopAssessment(env, "octo/demo", 1, { slopRisk: 0, slopBand: "clean" });
     const { client } = await connectTestClient(env);
     const result = await client.callTool({
-      name: "gittensory_get_outcome_calibration",
+      name: "loopover_get_outcome_calibration",
       arguments: { owner: "octo", repo: "demo", windowDays: 30 },
     });
     expect(result.isError).toBeFalsy();
@@ -611,7 +611,7 @@ describe("MCP output schemas do not declare private financial fields", () => {
   it("structured content from public-safe tools never includes redacted financial keys", async () => {
     const { client } = await connectTestClient();
 
-    for (const name of ["gittensory_local_status", "gittensory_get_upstream_drift", "gittensory_get_registry_changes"]) {
+    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_registry_changes"]) {
       const result = await client.callTool({ name, arguments: {} });
       const serialized = JSON.stringify(result.structuredContent ?? {});
       expect(serialized, `tool "${name}" structured content must not leak financial fields`).not.toMatch(
@@ -709,22 +709,22 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
 
     const local = { login: "oktofeesh1", repoFullName: "octo/demo" };
     const calls: Array<[string, Record<string, unknown>]> = [
-      ["gittensory_preflight_pr", { repoFullName: "octo/demo", title: "Add pagination" }],
-      ["gittensory_preflight_local_diff", { repoFullName: "octo/demo", title: "Add pagination" }],
-      ["gittensory_explain_review_risk", { repoFullName: "octo/demo", title: "Add pagination" }],
-      ["gittensory_preview_local_pr_score", { repoFullName: "octo/demo" }],
-      ["gittensory_compare_pr_variants", { variants: [{ repoFullName: "octo/demo" }] }],
-      ["gittensory_get_bounty_advisory", { id: "octo/demo#1" }],
-      ["gittensory_preflight_current_branch", local],
-      ["gittensory_preview_current_branch_score", local],
-      ["gittensory_rank_local_next_actions", local],
-      ["gittensory_explain_local_blockers", local],
-      ["gittensory_prepare_pr_packet", local],
-      ["gittensory_draft_pr_body", local],
-      ["gittensory_compare_local_variants", { variants: [local] }],
-      ["gittensory_agent_plan_next_work", { login: "oktofeesh1" }],
-      ["gittensory_agent_explain_next_action", { login: "oktofeesh1" }],
-      ["gittensory_agent_prepare_pr_packet", local],
+      ["loopover_preflight_pr", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["loopover_preflight_local_diff", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["loopover_explain_review_risk", { repoFullName: "octo/demo", title: "Add pagination" }],
+      ["loopover_preview_local_pr_score", { repoFullName: "octo/demo" }],
+      ["loopover_compare_pr_variants", { variants: [{ repoFullName: "octo/demo" }] }],
+      ["loopover_get_bounty_advisory", { id: "octo/demo#1" }],
+      ["loopover_preflight_current_branch", local],
+      ["loopover_preview_current_branch_score", local],
+      ["loopover_rank_local_next_actions", local],
+      ["loopover_explain_local_blockers", local],
+      ["loopover_prepare_pr_packet", local],
+      ["loopover_draft_pr_body", local],
+      ["loopover_compare_local_variants", { variants: [local] }],
+      ["loopover_agent_plan_next_work", { login: "oktofeesh1" }],
+      ["loopover_agent_explain_next_action", { login: "oktofeesh1" }],
+      ["loopover_agent_prepare_pr_packet", local],
     ];
     for (const [name, args] of calls) {
       const result = await client.callTool({ name, arguments: args });
@@ -733,11 +733,11 @@ describe("MCP output schemas validate on real tool calls (#550)", () => {
     }
 
     // Stateful agent run lifecycle: start_run mints a run, get_run reads it back.
-    const started = await client.callTool({ name: "gittensory_agent_start_run", arguments: { objective: "Ship a PR", actorLogin: "oktofeesh1" } });
+    const started = await client.callTool({ name: "loopover_agent_start_run", arguments: { objective: "Ship a PR", actorLogin: "oktofeesh1" } });
     expect(started.isError, `agent_start_run errored: ${JSON.stringify(started.content)}`).toBeFalsy();
     const runId = (started.structuredContent as { run?: { id?: string } }).run?.id;
     expect(runId).toBeDefined();
-    const fetched = await client.callTool({ name: "gittensory_agent_get_run", arguments: { runId } });
+    const fetched = await client.callTool({ name: "loopover_agent_get_run", arguments: { runId } });
     expect(fetched.isError, `agent_get_run errored: ${JSON.stringify(fetched.content)}`).toBeFalsy();
     expect(fetched.structuredContent).toBeDefined();
     vi.unstubAllGlobals();
@@ -758,7 +758,7 @@ function mockRateLimiter(status: number, body: Record<string, unknown> = {}): No
 }
 
 async function callSlopTool(env: Env, toolName: string, args: Record<string, unknown>) {
-  const server = new GittensoryMcp(env).createServer();
+  const server = new LoopoverMcp(env).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: "test", version: "0.0.1" }, { capabilities: {} });
@@ -769,8 +769,8 @@ async function callSlopTool(env: Env, toolName: string, args: Record<string, unk
 describe("MCP slop oracle blunting", () => {
   const slopArgs = { changedFiles: [{ path: "src/foo.ts", additions: 5 }] };
 
-  it("omits the exact slopRisk score and rubric from gittensory_check_slop_risk response", async () => {
-    const result = await callSlopTool(createTestEnv(), "gittensory_check_slop_risk", slopArgs);
+  it("omits the exact slopRisk score and rubric from loopover_check_slop_risk response", async () => {
+    const result = await callSlopTool(createTestEnv(), "loopover_check_slop_risk", slopArgs);
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data).not.toHaveProperty("slopRisk");
@@ -781,8 +781,8 @@ describe("MCP slop oracle blunting", () => {
     expect(text).not.toMatch(/\/100/);
   });
 
-  it("omits the exact slopRisk score and rubric from gittensory_check_issue_slop response", async () => {
-    const result = await callSlopTool(createTestEnv(), "gittensory_check_issue_slop", { title: "Fix bug", body: "Description." });
+  it("omits the exact slopRisk score and rubric from loopover_check_issue_slop response", async () => {
+    const result = await callSlopTool(createTestEnv(), "loopover_check_issue_slop", { title: "Fix bug", body: "Description." });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(data).not.toHaveProperty("slopRisk");
@@ -792,20 +792,20 @@ describe("MCP slop oracle blunting", () => {
 
   it("skips the tool rate-limit when RATE_LIMITER is absent (test/local env)", async () => {
     // createTestEnv() has no RATE_LIMITER — enforceToolRateLimit must return early without throwing.
-    const result = await callSlopTool(createTestEnv(), "gittensory_check_slop_risk", slopArgs);
+    const result = await callSlopTool(createTestEnv(), "loopover_check_slop_risk", slopArgs);
     expect(result.isError).toBeFalsy();
   });
 
   it("allows the call when the tool rate-limit returns 200", async () => {
     const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(200, { allowed: true, remaining: 19 }) });
-    const result = await callSlopTool(env, "gittensory_check_slop_risk", slopArgs);
+    const result = await callSlopTool(env, "loopover_check_slop_risk", slopArgs);
     expect(result.isError).toBeFalsy();
     expect((result.structuredContent as Record<string, unknown>).band).toBeDefined();
   });
 
   it("returns an error when the tool rate-limit returns 429", async () => {
     const env = createTestEnv({ RATE_LIMITER: mockRateLimiter(429, { retryAfterSeconds: 42 }) });
-    const result = await callSlopTool(env, "gittensory_check_slop_risk", slopArgs);
+    const result = await callSlopTool(env, "loopover_check_slop_risk", slopArgs);
     expect(result.isError).toBe(true);
     const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? "";
     expect(text).toMatch(/rate limit exceeded/i);

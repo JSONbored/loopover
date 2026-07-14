@@ -24,8 +24,8 @@ export function graphqlOperationName(query: string): string | null {
 
 export function graphqlCacheClassForQuery(query: string): GitHubGraphQlCacheClass | null {
   const operation = graphqlOperationName(query);
-  if (operation === "GittensoryRepoTotals") return "repo_totals";
-  if (operation === "GittensoryContributorActivity") return "contributor_activity";
+  if (operation === "LoopOverRepoTotals") return "repo_totals";
+  if (operation === "LoopOverContributorActivity") return "contributor_activity";
   return null;
 }
 

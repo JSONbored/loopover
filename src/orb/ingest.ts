@@ -1,4 +1,4 @@
-// Gittensory Orb (#1255) — central fleet-calibration collector receiver.
+// LoopOver Orb (#1255) — central fleet-calibration collector receiver.
 // Accepts anonymized, reversal-aware outcome batches from self-hosted instances (exportOrbBatch).
 // No raw repo names, owner identifiers, commit SHAs, or PR content — only HMAC-anonymized hashes +
 // aggregate calibration metadata (verdict, outcome, reversal, bucketed reason, cycle time).

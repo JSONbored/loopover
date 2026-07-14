@@ -49,7 +49,7 @@ export async function recordPublishedGateCheckSummary(
     ...(args.detailsUrl ? { detailsUrl: args.detailsUrl } : {}),
     payload: {
       deliveryId: args.deliveryId,
-      source: "gittensory_gate_check",
+      source: "loopover_gate_check",
     },
   });
 }

@@ -21,7 +21,7 @@ function consensusAdvisory(confidence: number): Advisory {
     repoFullName: "JSONbored/gittensory",
     conclusion: "action_required",
     severity: "critical",
-    title: "Gittensory review",
+    title: "LoopOver review",
     summary: "",
     findings: [finding],
     generatedAt: "2026-07-10T00:00:00.000Z",

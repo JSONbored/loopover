@@ -24,7 +24,7 @@ export const ISSUE_SLOP_WEIGHTS = {
 } as const;
 
 export const ISSUE_SLOP_RUBRIC_MARKDOWN = [
-  "# Gittensory issue slop triage rubric",
+  "# LoopOver issue slop triage rubric",
   "",
   "- `clean`: 0",
   "- `low`: 1-30",

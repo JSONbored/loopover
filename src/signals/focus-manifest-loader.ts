@@ -2,7 +2,7 @@ import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
 import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
-import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
+import { GITTENSORY_REPO_FOCUS_MANIFEST_YAML, resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import type { LocalManifestLoadResult } from "../selfhost/private-config";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
@@ -158,7 +158,7 @@ async function loadRepoFocusManifestWithCachePolicy(
   try {
     let content = await fetcher(repoFullName);
     if (content !== null && typeof content === "object") content = content.content;
-    if ((content === null || content === undefined) && isGittensorySelfRepo(repoFullName, env)) {
+    if ((content === null || content === undefined) && isLoopOverSelfRepo(repoFullName, env)) {
       content = GITTENSORY_REPO_FOCUS_MANIFEST_YAML;
     }
     manifest = content === null || content === undefined ? parseFocusManifest(null) : parseFocusManifestContent(content, "repo_file");
@@ -319,8 +319,8 @@ function snapshotAgeMs(generatedAt: string | null | undefined): number {
   return Number.isFinite(parsed) ? Date.now() - parsed : Number.POSITIVE_INFINITY;
 }
 
-function isGittensorySelfRepo(repoFullName: string, env: Env): boolean {
-  return repoFullName.toLowerCase() === resolveGittensorySelfRepoFullName(env).toLowerCase();
+function isLoopOverSelfRepo(repoFullName: string, env: Env): boolean {
+  return repoFullName.toLowerCase() === resolveLoopOverSelfRepoFullName(env).toLowerCase();
 }
 
 function normalizeLocalManifestFetch(raw: string | LocalManifestLoadResult | null): LocalManifestLoadResult {

@@ -59,7 +59,7 @@ describe("focus-manifest route auth", () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     const { token } = await createSessionForGitHubUser(env, { login: "new-user", id: 2468 });
-    const response = await app.request(FOCUS_MANIFEST_PATH, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(FOCUS_MANIFEST_PATH, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "insufficient_role" });
   });
@@ -70,7 +70,7 @@ describe("focus-manifest route auth", () => {
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     mockedPermission.mockResolvedValue("write");
     const { token } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
-    const cookie = `gittensory_session=${token}`;
+    const cookie = `loopover_session=${token}`;
 
     const getResponse = await app.request(OWNED_REPO_PATH, { headers: { cookie } }, env);
     expect(getResponse.status).toBe(200);
@@ -108,7 +108,7 @@ describe("focus-manifest route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "PUT",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ wantedPaths: ["src/"], settings: { agentDryRun: true, agentGlobalFreezeOverride: true } }),
       },
       env,
@@ -147,7 +147,7 @@ describe("focus-manifest route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "PUT",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify(body),
       },
       env,
@@ -178,7 +178,7 @@ describe("focus-manifest route auth", () => {
       OWNED_REPO_PATH,
       {
         method: "PUT",
-        headers: { cookie: `gittensory_session=${token}`, "content-type": "application/json" },
+        headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
         body: JSON.stringify({ settings: { autonomy: { merge: "auto", close: "auto", approve: "auto" } } }),
       },
       env,
@@ -195,8 +195,8 @@ describe("focus-manifest route auth", () => {
     await seedRegisteredInstalledRepo(env, 202, "other-owner", "other-repo");
     const { token: ownerToken } = await createSessionForGitHubUser(env, { login: "repo-owner", id: 201 });
     const { token: otherOwnerToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
-    const ownerCookie = `gittensory_session=${ownerToken}`;
-    const otherOwnerCookie = `gittensory_session=${otherOwnerToken}`;
+    const ownerCookie = `loopover_session=${ownerToken}`;
+    const otherOwnerCookie = `loopover_session=${otherOwnerToken}`;
 
     const crossRepoGet = await app.request(OWNED_REPO_PATH, { headers: { cookie: otherOwnerCookie } }, env);
     expect(crossRepoGet.status).toBe(403);
@@ -228,12 +228,12 @@ describe("focus-manifest route auth", () => {
     const { token: otherToken } = await createSessionForGitHubUser(env, { login: "other-owner", id: 202 });
 
     // Same-repo owner session must reach the refresh handler (was 403'd by the blanket session gate).
-    const refreshed = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${token}` } }, env);
+    const refreshed = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `loopover_session=${token}` } }, env);
     expect(refreshed.status).toBe(200);
     await expect(refreshed.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
 
     // Cross-repo owner session is still rejected -- by the route handler (forbidden_repo), not the blanket middleware.
-    const crossRepo = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${otherToken}` } }, env);
+    const crossRepo = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(crossRepo.status).toBe(403);
     await expect(crossRepo.json()).resolves.toMatchObject({ error: "forbidden_repo" });
   });
@@ -255,7 +255,7 @@ describe("focus-manifest route auth", () => {
     mockedPermission.mockResolvedValue("read");
     const { token } = await createSessionForGitHubUser(env, { login: "reader", id: 777 });
 
-    const response = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(`${OWNED_REPO_PATH}/refresh`, { method: "POST", headers: { cookie: `loopover_session=${token}` } }, env);
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({ error: "insufficient_repo_permission" });
@@ -266,7 +266,7 @@ describe("focus-manifest route auth", () => {
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "jsonbored" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     const { token } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 1 });
-    const response = await app.request(OWNED_REPO_PATH, { headers: { cookie: `gittensory_session=${token}` } }, env);
+    const response = await app.request(OWNED_REPO_PATH, { headers: { cookie: `loopover_session=${token}` } }, env);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ repoFullName: "repo-owner/owned-repo" });
   });

@@ -19,27 +19,27 @@ import { collectStatus, runDoctorChecks } from "../lib/status.js";
 
 // MCP stdio server for @loopover/miner (scaffold #5153). Mirrors the packages/gittensory-mcp
 // harness (MCP SDK server + stdio transport). Tools:
-//   - gittensory_miner_ping (#5153): trivial static health check, reads no AMS state.
-//   - gittensory_miner_get_portfolio_dashboard (#5155): read-only per-repo backlog dashboard, wrapping the
+//   - loopover_miner_ping (#5153): trivial static health check, reads no AMS state.
+//   - loopover_miner_get_portfolio_dashboard (#5155): read-only per-repo backlog dashboard, wrapping the
 //     existing collectPortfolioDashboard aggregator (no new logic; same data as `queue dashboard --json`).
-//   - gittensory_miner_list_claims (#5156): read-only listing of the local claim ledger (optional repo/status
+//   - loopover_miner_list_claims (#5156): read-only listing of the local claim ledger (optional repo/status
 //     filter passed through to listClaims); exposes no claim/release mutation.
-//   - gittensory_miner_get_audit_feed (#5158): read-only metadata-only event-ledger audit feed via
+//   - loopover_miner_get_audit_feed (#5158): read-only metadata-only event-ledger audit feed via
 //     collectEventLedgerAuditFeed() (same filters as `ledger list`; never returns payload_json).
-//   - gittensory_miner_get_run_state (#5160): read-only per-repo run-state via run-state.js's getRunState/
-//     listRunStates (read-only analog of ORB's gittensory_get_automation_state; no state-set mutation).
-//   - gittensory_miner_list_plans / gittensory_miner_get_plan (#5161): read-only access to the persisted
-//     plan store via plan-store.js's listPlans/loadPlan (distinct from ORB's stateless gittensory_plan_status).
-//   - gittensory_miner_get_governor_decisions (#5159): read-only governor decision-log projection via
+//   - loopover_miner_get_run_state (#5160): read-only per-repo run-state via run-state.js's getRunState/
+//     listRunStates (read-only analog of ORB's loopover_get_automation_state; no state-set mutation).
+//   - loopover_miner_list_plans / loopover_miner_get_plan (#5161): read-only access to the persisted
+//     plan store via plan-store.js's listPlans/loadPlan (distinct from ORB's stateless loopover_plan_status).
+//   - loopover_miner_get_governor_decisions (#5159): read-only governor decision-log projection via
 //     governor-ledger.js's readGovernorDecisions -- an explicit named-column read that excludes payload_json.
-//   - gittensory_miner_status (#5154): read-only status + doctor diagnostics via status.js's collectStatus/
+//   - loopover_miner_status (#5154): read-only status + doctor diagnostics via status.js's collectStatus/
 //     runDoctorChecks (names/booleans/paths only -- never any env-var value, token, key, or credential).
 
 // Read the version from this package's own package.json (always shipped) rather than a hand-synced
 // literal, so a release bump never has a second place to forget -- same approach as the mcp harness.
 const ownPackageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-/** Optional filters accepted by gittensory_miner_get_audit_feed (#5158). */
+/** Optional filters accepted by loopover_miner_get_audit_feed (#5158). */
 const auditFeedInputSchema = {
   repoFullName: z.string().min(1).optional(),
   since: z.number().int().nonnegative().optional(),
@@ -47,7 +47,7 @@ const auditFeedInputSchema = {
 };
 
 /** The static, non-secret payload the ping tool always returns, independent of any input or AMS state. */
-export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" };
+export const MINER_PING_STATUS = { status: "ok", tool: "loopover_miner_ping" };
 
 /**
  * Build the miner MCP server with its tools registered. `options.initPortfolioQueue`, `options.openClaimLedger`,
@@ -59,7 +59,7 @@ export const MINER_PING_STATUS = { status: "ok", tool: "gittensory_miner_ping" }
 export function createMinerMcpServer(options = {}) {
   const server = new McpServer({ name: "gittensory-miner", version: ownPackageJson.version });
   server.registerTool(
-    "gittensory_miner_ping",
+    "loopover_miner_ping",
     {
       description:
         "Health check for the gittensory-miner MCP server. Returns a static status object confirming the " +
@@ -69,7 +69,7 @@ export function createMinerMcpServer(options = {}) {
     async () => ({ content: [{ type: "text", text: JSON.stringify(MINER_PING_STATUS) }] }),
   );
   server.registerTool(
-    "gittensory_miner_get_portfolio_dashboard",
+    "loopover_miner_get_portfolio_dashboard",
     {
       description:
         "Read-only per-repo portfolio-queue backlog dashboard: status counts (queued/in_progress/done), totals, " +
@@ -89,7 +89,7 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_list_claims",
+    "loopover_miner_list_claims",
     {
       description:
         "Read-only listing of the local claim ledger: which issues this miner has claimed (repo, issue number, " +
@@ -114,7 +114,7 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_get_audit_feed",
+    "loopover_miner_get_audit_feed",
     {
       description:
         "Read-only, metadata-only audit feed from the local append-only event ledger: eventType, repoFullName, " +
@@ -148,12 +148,12 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_get_run_state",
+    "loopover_miner_get_run_state",
     {
       description:
         "Read-only per-repo miner run-state (idle/discovering/planning/preparing). Pass repoFullName for a single " +
         "repo (a null state means none has been recorded for it yet), or omit it to list every repo's state. The " +
-        "read-only analog of ORB's gittensory_get_automation_state; adds no state-set or mutation capability.",
+        "read-only analog of ORB's loopover_get_automation_state; adds no state-set or mutation capability.",
       inputSchema: {
         repoFullName: z.string().min(1).optional(),
       },
@@ -173,12 +173,12 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_list_plans",
+    "loopover_miner_list_plans",
     {
       description:
         "Read-only list of the miner's PERSISTED plan store (planId, plan DAG, status, updatedAt), optionally " +
         "filtered by status. Wraps plan-store.js's existing listPlans query -- no new logic, no mutation. NOTE: " +
-        "this is the store-backed AMS plan store; it is distinct from ORB's stateless gittensory_plan_status " +
+        "this is the store-backed AMS plan store; it is distinct from ORB's stateless loopover_plan_status " +
         "tool, which reads the caller's in-memory plan object rather than any persisted store.",
       inputSchema: {
         status: z.enum(PLAN_STATUSES).optional(),
@@ -197,13 +197,13 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_get_plan",
+    "loopover_miner_get_plan",
     {
       description:
         "Read-only fetch of one persisted plan record by planId (the full plan DAG, status, updatedAt), or an " +
         "explicit { planId, found: false } for an unknown id. Wraps plan-store.js's existing loadPlan lookup -- " +
         "no mutation, no DAG/planning logic. Store-backed AMS plan store; distinct from ORB's stateless " +
-        "gittensory_plan_status tool.",
+        "loopover_plan_status tool.",
       inputSchema: {
         planId: z.string().min(1),
       },
@@ -221,7 +221,7 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_get_governor_decisions",
+    "loopover_miner_get_governor_decisions",
     {
       description:
         "Read-only projection of the governor decision log: id, ts, eventType, repoFullName, actionClass, " +
@@ -246,7 +246,7 @@ export function createMinerMcpServer(options = {}) {
     },
   );
   server.registerTool(
-    "gittensory_miner_status",
+    "loopover_miner_status",
     {
       description:
         "Read-only miner status + doctor diagnostics. Returns { status, doctor }: status = package/engine versions " +

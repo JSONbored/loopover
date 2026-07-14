@@ -8,12 +8,12 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/roadmap")({
   head: () => ({
     meta: [
-      { title: "Roadmap — Gittensory" },
+      { title: "Roadmap — LoopOver" },
       {
         name: "description",
-        content: "What Gittensory is shipping next, and what we're still exploring.",
+        content: "What LoopOver is shipping next, and what we're still exploring.",
       },
-      { property: "og:title", content: "Gittensory roadmap" },
+      { property: "og:title", content: "LoopOver roadmap" },
       {
         property: "og:description",
         content: "Upcoming control-plane surfaces for Gittensor OSS contribution mining.",
@@ -119,7 +119,7 @@ function RoadmapPage() {
       <Reveal className="max-w-3xl">
         <Eyebrow>Roadmap</Eyebrow>
         <h1 className="mt-4 text-token-2xl font-medium tracking-tight text-foreground">
-          What&apos;s next for Gittensory
+          What&apos;s next for LoopOver
         </h1>
         <p className="mt-3 text-muted-foreground">
           This reflects the live roadmap issue #127 and phase epics #233-#238. Project-board linkage

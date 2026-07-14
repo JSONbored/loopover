@@ -24,10 +24,10 @@ export const Route = createFileRoute("/api/$op")({
   },
   head: ({ loaderData }) => {
     const op = loaderData;
-    if (!op) return { meta: [{ title: "Endpoint — Gittensory API" }] };
+    if (!op) return { meta: [{ title: "Endpoint — LoopOver API" }] };
     return {
       meta: [
-        { title: `${op.method.toUpperCase()} ${op.path} — Gittensory API` },
+        { title: `${op.method.toUpperCase()} ${op.path} — LoopOver API` },
         { name: "description", content: op.summary },
         { property: "og:title", content: `${op.method.toUpperCase()} ${op.path}` },
       ],

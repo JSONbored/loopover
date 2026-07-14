@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runGittensoryAiReview } from "../../src/services/ai-review";
+import { runLoopOverAiReview } from "../../src/services/ai-review";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import * as ragModule from "../../src/review/rag";
 import { RAG_DIMENSIONS } from "../../src/review/rag";
@@ -328,7 +328,7 @@ describe("RAG review attribution telemetry", () => {
   });
 });
 
-// ── End-to-end: flag-gated RAG context through runGittensoryAiReview ───────────────────────────────
+// ── End-to-end: flag-gated RAG context through runLoopOverAiReview ───────────────────────────────
 
 /** Capture the exact user prompt handed to the chat model so we can assert what the AI actually sees. */
 function capturingChatRun() {
@@ -362,7 +362,7 @@ describe("RAG wired into the AI reviewer (flag LOOPOVER_REVIEW_RAG)", () => {
     // chat-capturing AI, and assert the retrieved block is spliced into the user prompt.
     const { run, seenUser } = capturingChatRun();
     const env = aiReviewEnv({ AI: { run } as unknown as Ai });
-    const result = await runGittensoryAiReview(env, { ...baseReviewInput, ragContext });
+    const result = await runLoopOverAiReview(env, { ...baseReviewInput, ragContext });
     expect(result.status).toBe("ok");
     const user = seenUser[0] ?? "";
     expect(user).toContain("RELEVANT EXISTING CODE / DOCS");
@@ -393,7 +393,7 @@ describe("RAG wired into the AI reviewer (flag LOOPOVER_REVIEW_RAG)", () => {
     const adv: Advisory = {
       id: "adv-rag", targetType: "pull_request", targetKey: "acme/widgets#3", repoFullName: "acme/widgets",
       pullNumber: 3, headSha: "sha3", conclusion: "neutral", severity: "info",
-      title: "Gittensory advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
+      title: "LoopOver advisory available", summary: "ok", findings: [], generatedAt: "2026-06-20T00:00:00.000Z",
     };
     const result = await runAiReviewForAdvisory(env, {
       mode: "live",
@@ -420,11 +420,11 @@ describe("RAG wired into the AI reviewer (flag LOOPOVER_REVIEW_RAG)", () => {
     // The flag-OFF call site leaves ragContext undefined; the prompt must equal the no-RAG prompt.
     const off = capturingChatRun();
     const offEnv = aiReviewEnv({ AI: { run: off.run } as unknown as Ai });
-    await runGittensoryAiReview(offEnv, { ...baseReviewInput, ragContext: undefined });
+    await runLoopOverAiReview(offEnv, { ...baseReviewInput, ragContext: undefined });
 
     const none = capturingChatRun();
     const noneEnv = aiReviewEnv({ AI: { run: none.run } as unknown as Ai });
-    await runGittensoryAiReview(noneEnv, baseReviewInput);
+    await runLoopOverAiReview(noneEnv, baseReviewInput);
 
     expect(off.seenUser[0]).not.toContain("RELEVANT EXISTING CODE / DOCS");
     // undefined ragContext === absent: identical prompts, proving flag-OFF appends no section.
@@ -445,11 +445,11 @@ describe("RAG wired into the AI reviewer (flag LOOPOVER_REVIEW_RAG)", () => {
     // When the flag is on but retrieval yields "" (no index), the prompt must match the no-context prompt.
     const on = capturingChatRun();
     const onEnv = aiReviewEnv({ AI: { run: on.run } as unknown as Ai });
-    await runGittensoryAiReview(onEnv, { ...baseReviewInput, ragContext: "" });
+    await runLoopOverAiReview(onEnv, { ...baseReviewInput, ragContext: "" });
 
     const none = capturingChatRun();
     const noneEnv = aiReviewEnv({ AI: { run: none.run } as unknown as Ai });
-    await runGittensoryAiReview(noneEnv, baseReviewInput);
+    await runLoopOverAiReview(noneEnv, baseReviewInput);
 
     expect(on.seenUser[0]).not.toContain("RELEVANT EXISTING CODE / DOCS");
     expect(on.seenUser[0]).toBe(none.seenUser[0]);

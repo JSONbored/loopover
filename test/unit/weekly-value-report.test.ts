@@ -48,7 +48,7 @@ describe("weekly value reports", () => {
           ],
           surfaces: [{ surface: "mcp", count: 3 }],
           commands: [{ key: "packet", count: 1 }],
-          tools: [{ key: "gittensory_local_status", count: 1 }],
+          tools: [{ key: "loopover_local_status", count: 1 }],
         }),
         rollup("2026-05-31", {
           totalEvents: 8,

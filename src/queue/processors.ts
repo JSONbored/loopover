@@ -151,13 +151,13 @@ import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
   INTENT_ROUTABLE_COMMANDS,
-  type GittensoryMentionCommandName,
+  type LoopOverMentionCommandName,
   isAiCostBearingCommand,
   isAuthorizedCommandActor,
-  isGittensoryActionCommand,
+  isLoopOverActionCommand,
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
-  parseGittensoryMentionCommand,
+  parseLoopOverMentionCommand,
   sanitizePublicComment,
 } from "../github/commands";
 import { classifyPrCommandRequest } from "../github/pr-command-request";
@@ -465,7 +465,7 @@ import {
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
-import { runGittensoryLinkedIssueSatisfaction } from "../services/linked-issue-satisfaction-run";
+import { runLoopOverLinkedIssueSatisfaction } from "../services/linked-issue-satisfaction-run";
 import { decidePublicSurface } from "../signals/settings-preview";
 import {
   buildFocusManifestGuidance,
@@ -543,9 +543,9 @@ import { shouldComputeImpactMap } from "../review/impact-map-wire";
 import { shouldEmitFixHandoff } from "../review/fix-handoff";
 import { buildFixHandoffBlocks } from "../review/fix-handoff-render";
 import { buildE2eTestGenCommentBody, type E2eTestGenCommitOutcome } from "../review/e2e-test-gen-render";
-import { resolveE2eTestGenInstructions, runGittensoryE2eTestGeneration } from "../services/ai-e2e-test-gen";
+import { resolveE2eTestGenInstructions, runLoopOverE2eTestGeneration } from "../services/ai-e2e-test-gen";
 import { generateChatQaAnswer } from "../services/ai-chat-qa";
-import { classifyGittensoryIntent } from "../services/ai-intent-router";
+import { classifyLoopOverIntent } from "../services/ai-intent-router";
 import { commitE2eTestToPrBranch } from "../github/e2e-test-commit";
 import { shouldApplyRepoCultureProfile } from "../review/repo-culture-profile-wire";
 import { applyReviewMemorySuppression, getCachedReviewSuppressions, invalidateReviewSuppressionCache, shouldApplyReviewMemory } from "../review/review-memory-wire";
@@ -5383,7 +5383,7 @@ async function maybeHandleIssueCommentCommandWebhookEvent(
 
   if (
     eventName === "issue_comment" &&
-    (await maybeProcessGittensoryMentionCommand(env, deliveryId, payload))
+    (await maybeProcessLoopOverMentionCommand(env, deliveryId, payload))
   ) {
     await recordWebhookEvent(env, {
       deliveryId,
@@ -6739,7 +6739,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
       primaryIssueNumber,
       inputFingerprint,
     ).catch(() => null);
-    let result: Awaited<ReturnType<typeof runGittensoryLinkedIssueSatisfaction>>;
+    let result: Awaited<ReturnType<typeof runLoopOverLinkedIssueSatisfaction>>;
     if (cached) {
       result = { status: "ok", result: cached.result, estimatedNeurons: cached.estimatedNeurons };
       incr("loopover_linked_issue_satisfaction_cache_hit_total");
@@ -6763,7 +6763,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
         /* v8 ignore next -- reached only past this function's own `!args.advisory.headSha` early return, so headSha is always truthy here; the `?? null` is a type-level fallback for an unreachable branch. */
         metadata: { repoFullName: args.repoFullName, headSha: args.advisory.headSha ?? null, linkedIssueNumber: primaryIssueNumber },
       }).catch(() => undefined);
-      result = await runGittensoryLinkedIssueSatisfaction(env, {
+      result = await runLoopOverLinkedIssueSatisfaction(env, {
         repoFullName: args.repoFullName,
         prNumber: args.pr.number,
         issueText,
@@ -10404,7 +10404,7 @@ async function maybeProcessGateOverrideCommand(
   payload: GitHubWebhookPayload,
 ): Promise<boolean> {
   const comment = payload.comment;
-  const command = parseGittensoryMentionCommand(comment?.body);
+  const command = parseLoopOverMentionCommand(comment?.body);
   if (!command || command.name !== "gate-override") return false;
 
   const repoFullName = payload.repository?.full_name;
@@ -10473,7 +10473,7 @@ async function maybeProcessGateOverrideCommand(
     repoFullName,
     issue,
     actor,
-    commandName: "gate-override" as GittensoryMentionCommandName,
+    commandName: "gate-override" as LoopOverMentionCommandName,
     settings,
     pr,
   });
@@ -10661,7 +10661,7 @@ async function recordGateOverrideSkip(
   });
 }
 
-async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> { const command = parseGittensoryMentionCommand(payload.comment?.body);
+async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> { const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command) return false;
   if (command.name !== "resolve") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
@@ -10671,7 +10671,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   const [pr, settings] = await Promise.all([getPullRequest(env, req.repoFullName, req.pr.number), resolveRepositorySettings(env, req.repoFullName)]);
   const targetKey = `${req.repoFullName}#${req.pr.number}`;
   if (!pr) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: "cached_pr_missing", metadata: { deliveryId, repoFullName: req.repoFullName, reason: "cached_pr_missing" } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: "cached_pr_missing" } }); return true; }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as GittensoryMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resolve" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); await recordGithubProductUsage(env, "finding_resolved_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resolve") } }); return true; }
   const findingRef = normalizeResolveFindingRef(command.reason);
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
@@ -10706,7 +10706,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
  * shape. Returns true once it owns the event.
  */
 async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command || command.name !== "review") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
   const req = classifyPrCommandRequest(payload, getInstallationId(payload));
@@ -10724,7 +10724,7 @@ async function maybeProcessReviewCommand(env: Env, deliveryId: string, payload: 
   // above and DEFAULT_COMMAND_AUTHORIZATION_POLICY's own comment on this command), so the miner-status lookup
   // authorizePrActionActor gates behind this flag MUST run here, or a confirmed miner re-triggering review on
   // their own PR is wrongly denied (there is no other role they could match instead).
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "review" as GittensoryMentionCommandName, settings, pr, needsMinerDetection: true });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "review" as LoopOverMentionCommandName, settings, pr, needsMinerDetection: true });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.review_command_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "review") } });
     await recordGithubProductUsage(env, "review_command_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "review") } });
@@ -10766,7 +10766,7 @@ async function recordReviewCommandSkip(env: Env, deliveryId: string, repoFullNam
  * and falls through to the other command handlers.
  */
 async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command || command.name !== "pause") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
   const req = classifyPrCommandRequest(payload, getInstallationId(payload));
@@ -10780,7 +10780,7 @@ async function maybeProcessPauseCommand(env: Env, deliveryId: string, payload: G
     await recordAutoreviewPausedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as GittensoryMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "pause" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_paused_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
     await recordGithubProductUsage(env, "autoreview_paused_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "pause") } });
@@ -10809,7 +10809,7 @@ async function recordAutoreviewPausedSkip(env: Env, deliveryId: string, repoFull
  * record shape exactly. Returns true once it owns the event.
  */
 async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command || command.name !== "resume") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
   const req = classifyPrCommandRequest(payload, getInstallationId(payload));
@@ -10823,7 +10823,7 @@ async function maybeProcessResumeCommand(env: Env, deliveryId: string, payload: 
     await recordAutoreviewResumedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as GittensoryMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "resume" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.autoreview_resumed_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
     await recordGithubProductUsage(env, "autoreview_resumed_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "resume") } });
@@ -10875,7 +10875,7 @@ async function hasAutoreviewPausedMarker(env: Env, repoFullName: string, prNumbe
  * An unknown id gets a public-safe not-found note rather than a silent no-op. Returns true once it owns the event.
  */
 async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command || command.name !== "explain") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
   const { normalizeResolveFindingRef, selectWarningsForResolve } = await import("../review/review-memory-wire");
@@ -10890,7 +10890,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
     await recordFindingExplainedSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as GittensoryMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "explain" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.finding_explained_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "explain") } });
     await recordGithubProductUsage(env, "finding_explained_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind } });
@@ -10957,7 +10957,7 @@ async function recordFindingExplainedSkip(env: Env, deliveryId: string, repoFull
  * reply comment" precedent for on-demand actions.
  */
 async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, payload: GitHubWebhookPayload): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command || command.name !== "generate-tests") return false;
   const { classifyPrCommandRequest } = await import("../github/pr-command-request");
   const req = classifyPrCommandRequest(payload, getInstallationId(payload));
@@ -10971,7 +10971,7 @@ async function maybeProcessGenerateTestsCommand(env: Env, deliveryId: string, pa
     await recordGenerateTestsSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, "cached_pr_missing");
     return true;
   }
-  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as GittensoryMentionCommandName, settings, pr });
+  const { authorization } = await authorizePrActionActor({ env, deliveryId, installationId: req.installationId, repoFullName: req.repoFullName, issue: payload.issue!, actor: req.actor, commandName: "generate-tests" as LoopOverMentionCommandName, settings, pr });
   if (!authorization.authorized) {
     await recordAuditEvent(env, { eventType: "github_app.e2e_tests_generation_denied", actor: req.actor, targetKey, outcome: "denied", detail: authorization.reason, metadata: { deliveryId, repoFullName: req.repoFullName, allowedRoles: commandAuthorizationAllowedRoles(settings.commandAuthorization, "generate-tests") } });
     await recordGithubProductUsage(env, "e2e_tests_generation_denied", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "denied", metadata: { reason: authorization.reason, actorKind: authorization.actorKind } });
@@ -11043,7 +11043,7 @@ async function runE2eTestGenerationAndDeliver(
     storedKey && (!args.settings.aiReviewProvider || args.settings.aiReviewProvider === storedKey.provider)
       ? { provider: storedKey.provider, key: storedKey.key, model: args.settings.aiReviewModel ?? storedKey.model }
       : null;
-  const result = await runGittensoryE2eTestGeneration(withAdvisoryAiEnv(env, args.settings.advisoryAiRouting?.e2eTestGen === true), {
+  const result = await runLoopOverE2eTestGeneration(withAdvisoryAiEnv(env, args.settings.advisoryAiRouting?.e2eTestGen === true), {
     repoFullName: args.repoFullName,
     prNumber: args.pr.number,
     title: args.pr.title,
@@ -11443,7 +11443,7 @@ async function maybeProcessPrPanelRetrigger(
     !isCheckedPrPanelRetrigger(comment.body)
   )
     return false;
-  if (!isGittensoryPanelBotComment(env, comment.user)) return false;
+  if (!isLoopOverPanelBotComment(env, comment.user)) return false;
 
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
@@ -11637,7 +11637,7 @@ async function maybeProcessPrPanelGenerateTests(
     !isCheckedPrPanelGenerateTests(comment.body)
   )
     return false;
-  if (!isGittensoryPanelBotComment(env, comment.user)) return false;
+  if (!isLoopOverPanelBotComment(env, comment.user)) return false;
 
   const repoFullName = payload.repository?.full_name ?? null;
   const issue = payload.issue;
@@ -11669,7 +11669,7 @@ async function maybeProcessPrPanelGenerateTests(
     repoFullName,
     issue,
     actor,
-    commandName: "generate-tests" as GittensoryMentionCommandName,
+    commandName: "generate-tests" as LoopOverMentionCommandName,
     settings,
     pr,
     needsMinerDetection: false,
@@ -11790,7 +11790,7 @@ async function authorizePrActionActor(args: {
   repoFullName: string;
   issue: NonNullable<GitHubWebhookPayload["issue"]>;
   actor: string | null;
-  commandName: GittensoryMentionCommandName;
+  commandName: LoopOverMentionCommandName;
   settings: RepositorySettings;
   pr: PullRequestRecord;
   needsMinerDetection?: boolean;
@@ -11913,7 +11913,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function isGittensoryPanelBotComment(
+function isLoopOverPanelBotComment(
   env: Env,
   user: NonNullable<GitHubWebhookPayload["comment"]>["user"] | undefined,
 ): boolean {
@@ -11955,7 +11955,7 @@ const REVIEW_NAG_PING_EVENT_TYPE = "github_app.review_nag_ping";
 
 /**
  * Review-request nagging cooldown (#2463, anti-abuse): throttle a thread's OWN author repeatedly pinging
- * @loopover for review. Runs BEFORE maybeProcessGittensoryMentionCommand below so a throttled ping
+ * @loopover for review. Runs BEFORE maybeProcessLoopOverMentionCommand below so a throttled ping
  * short-circuits ahead of the normal answer-card dispatch — under the threshold this just records the ping
  * (still tagged with the THIS thread's own targetKey, so a per-thread audit trail is preserved) and falls
  * through unchanged; only crossing the threshold applies the repo's configured policy.
@@ -11979,10 +11979,10 @@ async function maybeThrottleReviewNagPing(
   deliveryId: string,
   payload: GitHubWebhookPayload,
 ): Promise<boolean> {
-  // Only a NEWLY-created comment counts as a ping (mirrors maybeProcessGittensoryMentionCommand) — an edited
+  // Only a NEWLY-created comment counts as a ping (mirrors maybeProcessLoopOverMentionCommand) — an edited
   // or deleted comment must not re-count or double-count.
   if (payload.action !== "created") return false;
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
+  const command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command) return false; // not an @loopover mention at all
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
@@ -12136,7 +12136,7 @@ async function maybeThrottleReviewNagPing(
 const MONITORED_MENTION_PING_EVENT_TYPE = "github_app.monitored_mention_ping";
 
 /** Word-boundary, case-insensitive check for `@login` in a comment body — the SAME precision level as
- *  `parseGittensoryMentionCommand`'s own `@loopover` detection (a literal match, not an intent classifier):
+ *  `parseLoopOverMentionCommand`'s own `@loopover` detection (a literal match, not an intent classifier):
  *  conservative and testable, per the feature's design goal. `login` already survived
  *  `normalizeAutoCloseExemptLogins`'s GitHub-login-format validation, but bot-shaped logins contain `[bot]`;
  *  escape before embedding so every configured login is matched literally. */
@@ -12333,7 +12333,7 @@ const COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS = 10 * 60_000;
  * can close a PR; this covers ANY authorized actor invoking ANY command and only ever holds (declines with a
  * notice), never closes. Off (`commandRateLimitPolicy: "off"`, the default) is a complete no-op.
  */
-async function maybeThrottleGittensoryCommand(
+async function maybeThrottleLoopOverCommand(
   env: Env,
   args: {
     deliveryId: string;
@@ -12341,7 +12341,7 @@ async function maybeThrottleGittensoryCommand(
     issueNumber: number;
     installationId: number;
     commenter: string;
-    command: GittensoryMentionCommandName;
+    command: LoopOverMentionCommandName;
     settings: RepositorySettings;
     mode: ReturnType<typeof resolveAgentActionMode>;
   },
@@ -12437,7 +12437,7 @@ const INTENT_ROUTING_RATE_LIMIT_EVENT_TYPE = "github_app.intent_routing_invocati
  * non-trivial trailing text that reaches the classifier consumes ONE tick here, using the SAME AI-cost-bearing
  * ceiling (`commandRateLimitAiMaxPerWindow`) and "off"/"hold" policy switch as every other AI-cost-bearing
  * command, with hold policy required before the cost-bearing classifier can run -- kept as its OWN counter (not folded into any single command's bucket via
- * `maybeThrottleGittensoryCommand`) because an unrecognized-verb mention isn't attributable to any one command
+ * `maybeThrottleLoopOverCommand`) because an unrecognized-verb mention isn't attributable to any one command
  * until AFTER classification runs, and a "no match" classification must still count for budget-ledger
  * consistency (req 5) even though it never becomes a real command dispatch. Fails OPEN when policy is off or any throttle trips: this
  * only ever skips the classifier call itself, never blocks the existing did-you-mean fallback it would
@@ -12486,7 +12486,7 @@ async function maybeThrottleIntentRouting(
   return invocationCount > maxPerWindow;
 }
 
-async function maybeProcessGittensoryMentionCommand(
+async function maybeProcessLoopOverMentionCommand(
   env: Env,
   deliveryId: string,
   payload: GitHubWebhookPayload,
@@ -12495,12 +12495,12 @@ async function maybeProcessGittensoryMentionCommand(
   // this an `edited` comment re-runs the agent + rewrites the card, and a `deleted` command still posts an answer
   // card for a command that no longer exists (#review-audit).
   if (payload.action !== "created") return false;
-  let command = parseGittensoryMentionCommand(payload.comment?.body);
+  let command = parseLoopOverMentionCommand(payload.comment?.body);
   if (!command) return false;
   // Action commands (gate-override + the #1960 PR control-surface verbs) are handled by their own dispatch
   // earlier in processGitHubWebhook; they never produce a Q&A answer card here. Bail so the rest of this
   // handler narrows to Q&A commands only.
-  if (isGittensoryActionCommand(command.name)) return false;
+  if (isLoopOverActionCommand(command.name)) return false;
   const repoFullName = payload.repository?.full_name;
   const issue = payload.issue;
   const installationId = getInstallationId(payload);
@@ -12638,7 +12638,7 @@ async function maybeProcessGittensoryMentionCommand(
           deliveryId,
         })
       : undefined;
-  let interpretedFrom: { question: string; matchedCommand: GittensoryMentionCommandName } | undefined;
+  let interpretedFrom: { question: string; matchedCommand: LoopOverMentionCommandName } | undefined;
   if (command.name === "help" && command.unrecognizedText && settings.advisoryAiRouting?.intentRouting === true) {
     const authorizedForIntentRouting = INTENT_ROUTABLE_COMMANDS.some((commandName) =>
       isAuthorizedCommandActor({
@@ -12654,7 +12654,7 @@ async function maybeProcessGittensoryMentionCommand(
       ? await maybeThrottleIntentRouting(env, { deliveryId, repoFullName, issueNumber: issue.number, commenter, settings })
       : true;
     if (!throttled) {
-      const classification = await classifyGittensoryIntent(env, {
+      const classification = await classifyLoopOverIntent(env, {
         text: command.unrecognizedText,
         advisoryAiRouting: settings.advisoryAiRouting,
         repoFullName,
@@ -12678,7 +12678,7 @@ async function maybeProcessGittensoryMentionCommand(
   // contains an action-command name, so `command.name` can never actually be one here), but restores
   // `command.name`'s narrowed type for every reference below.
   /* v8 ignore next */
-  if (isGittensoryActionCommand(command.name)) return false;
+  if (isLoopOverActionCommand(command.name)) return false;
 
   // Respect pause/dry-run/global-freeze like every other agent-driven write in this file (#2258) — the answer
   // card is a live public comment post, same as gate-override's confirmation comment.
@@ -12758,7 +12758,7 @@ async function maybeProcessGittensoryMentionCommand(
   }
 
   if (
-    await maybeThrottleGittensoryCommand(env, {
+    await maybeThrottleLoopOverCommand(env, {
       deliveryId,
       repoFullName,
       issueNumber: issue.number,
@@ -12955,7 +12955,7 @@ async function maybeProcessGittensoryMentionCommand(
 
 async function buildMentionCommandBundle(
   env: Env,
-  commandName: GittensoryMentionCommandName,
+  commandName: LoopOverMentionCommandName,
   context: {
     login: string;
     repoFullName: string;

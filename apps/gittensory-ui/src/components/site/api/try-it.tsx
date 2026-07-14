@@ -190,7 +190,7 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
             type={show ? "text" : "password"}
             value={token}
             onChange={(e) => saveToken(e.target.value)}
-            placeholder="Gittensory session token"
+            placeholder="LoopOver session token"
             className="flex-1 bg-transparent px-1 py-1 font-mono text-token-xs text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
             autoComplete="off"
             spellCheck={false}
@@ -282,7 +282,7 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
             <span>
               {offline
                 ? "You're offline. Live API calls are paused until your connection returns."
-                : "The Gittensory API isn't responding. We've paused live calls until it's back."}{" "}
+                : "The LoopOver API isn't responding. We've paused live calls until it's back."}{" "}
               <Link
                 to="/docs/troubleshooting"
                 hash="api-status"
@@ -314,7 +314,7 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
       {op.requiresAuth && !token && (
         <Callout variant="safety">
           <strong>No PATs.</strong> Signed-in browsers use the HttpOnly session cookie. Paste a
-          Gittensory token from <code>gittensory-mcp login</code> only for manual bearer testing.
+          LoopOver token from <code>gittensory-mcp login</code> only for manual bearer testing.
         </Callout>
       )}
 

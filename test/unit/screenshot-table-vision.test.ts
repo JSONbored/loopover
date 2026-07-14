@@ -147,7 +147,7 @@ describe("REGRESSION (#4366): a screenshot-table-vision finding can NEVER become
       headSha: "sha9",
       conclusion: "neutral",
       severity: "warning",
-      title: "Gittensory advisory available",
+      title: "LoopOver advisory available",
       summary: "1 advisory finding generated.",
       findings: buildScreenshotTableVisionFindings([{ pairIndex: 1, body: "Both images are the same screenshot." }]),
       generatedAt: "2026-07-07T00:00:00.000Z",

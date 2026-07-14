@@ -18,5 +18,5 @@ export async function loadMaintainerLaneReport(env: Env, fullName: string): Prom
 }
 
 export function maintainerLaneSummary(report: MaintainerLaneReport): string {
-  return `Gittensory maintainer lane for ${report.repoFullName}: maintainer_cut ${report.maintainerCutConfigured ? "configured" : "not configured"}; contributor intake ${report.contributorIntakeHealth.level}.`;
+  return `LoopOver maintainer lane for ${report.repoFullName}: maintainer_cut ${report.maintainerCutConfigured ? "configured" : "not configured"}; contributor intake ${report.contributorIntakeHealth.level}.`;
 }

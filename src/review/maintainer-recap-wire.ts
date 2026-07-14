@@ -10,7 +10,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { runMaintainerRecap, type MaintainerRecapRepoInput, type RunMaintainerRecapResult } from "../services/maintainer-recap";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { resolveGittensorySelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
+import { resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
 
 /** A manifest-sourced enable/cadence override (#2250) -- the `maintainerRecap` block of the gittensory
@@ -120,7 +120,7 @@ async function recapScanRepos(env: Env): Promise<string[]> {
 
 /**
  * Config-as-code override lookup (#2250): read the `maintainerRecap` block off the gittensory self-repo's
- * `.gittensory.yml` (resolveGittensorySelfRepoFullName) -- the digest is an operator-level setting, not a
+ * `.gittensory.yml` (resolveLoopOverSelfRepoFullName) -- the digest is an operator-level setting, not a
  * per-contributor-repo one, so ONE designated repo's manifest stands in for "the operator's own config" the
  * same way weekly-value-report/ops-alerts/selftune are operator-level, env-gated jobs. A manifest load failure
  * (network blip, malformed YAML) degrades to `{ present: false }` -- the caller then falls through to the env
@@ -129,7 +129,7 @@ async function recapScanRepos(env: Env): Promise<string[]> {
  */
 export async function resolveMaintainerRecapManifestOverride(env: Env): Promise<MaintainerRecapManifestOverride> {
   try {
-    const manifest = await loadRepoFocusManifest(env, resolveGittensorySelfRepoFullName(env));
+    const manifest = await loadRepoFocusManifest(env, resolveLoopOverSelfRepoFullName(env));
     const config = manifest.maintainerRecap;
     return { present: config.present, enabled: config.enabled, cadence: config.cadence };
   } catch (error) {

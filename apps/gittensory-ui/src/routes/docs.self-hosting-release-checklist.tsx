@@ -632,7 +632,7 @@ docker images ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0 --format '{{.Size}}
       </p>
       <CodeBlock
         lang="markdown"
-        code={`Gittensory Orb container image:
+        code={`LoopOver Orb container image:
 
 \`\`\`bash
 docker pull ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0

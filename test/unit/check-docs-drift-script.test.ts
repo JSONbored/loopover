@@ -5,15 +5,15 @@ import {
   extractCatalogIds,
   extractFocusManifestFields,
   extractGateModeFields,
-  extractGittensoryReviewFlags,
   extractRepositorySettingsFields,
+  extractLoopOverReviewFlags,
   FOCUS_MANIFEST_ALIAS_MANIFEST,
   GATE_MODE_MANIFEST,
   SETTINGS_ALIAS_MANIFEST,
 } from "../../scripts/check-docs-drift.mjs";
 
 describe("check-docs-drift script", () => {
-  describe("extractGittensoryReviewFlags", () => {
+  describe("extractLoopOverReviewFlags", () => {
     it("extracts only real field declarations, not a comment mentioning a flag name", () => {
       const fixture = `
         interface Env {
@@ -24,7 +24,7 @@ describe("check-docs-drift script", () => {
         }
       `;
 
-      const flags = extractGittensoryReviewFlags(fixture);
+      const flags = extractLoopOverReviewFlags(fixture);
 
       expect(flags.sort()).toEqual(["LOOPOVER_REVIEW_BAR", "LOOPOVER_REVIEW_BAZ", "LOOPOVER_REVIEW_FOO"]);
       expect(flags).not.toContain("LOOPOVER_REVIEW_SAFETY");
@@ -36,7 +36,7 @@ describe("check-docs-drift script", () => {
         LOOPOVER_REVIEW_FOO?: string;
       `;
 
-      expect(extractGittensoryReviewFlags(fixture)).toEqual(["LOOPOVER_REVIEW_FOO"]);
+      expect(extractLoopOverReviewFlags(fixture)).toEqual(["LOOPOVER_REVIEW_FOO"]);
     });
   });
 

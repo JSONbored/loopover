@@ -10,7 +10,7 @@
 //
 // Also hosts the AI-review grounding formatter (#2186): `formatImpactMapPromptSection` turns
 // `computeImpactMap`'s output into the bounded "IMPACT MAP" block spliced into the reviewer's user prompt via
-// `GittensoryAiReviewInput.impactMapContext` (src/services/ai-review.ts), exactly like `formatRetrievedContext`
+// `LoopOverAiReviewInput.impactMapContext` (src/services/ai-review.ts), exactly like `formatRetrievedContext`
 // does for RAG's own retrieval block.
 
 import { resolveManifestOnlyFeature } from "./feature-activation";

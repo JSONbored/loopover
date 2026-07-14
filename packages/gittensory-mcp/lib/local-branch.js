@@ -305,7 +305,7 @@ export function setupGuidanceForLocalScorer(status) {
   const safeStatus = sanitizeLocalScorerStatus(status);
   const code = safeStatus.code ?? inferScorerCode(safeStatus.reason);
   const guidance = [
-    "Gittensory used metadata-only analysis because no external scorer succeeded.",
+    "LoopOver used metadata-only analysis because no external scorer succeeded.",
   ];
   switch (code) {
     case "missing_scorer_command":
@@ -332,7 +332,7 @@ export function setupGuidanceForLocalScorer(status) {
       if (safeStatus.reason) guidance.push(`Last scorer error: ${safeStatus.reason}`);
       break;
   }
-  guidance.push("Local scorer output stays on your machine; Gittensory never uploads source contents.");
+  guidance.push("Local scorer output stays on your machine; LoopOver never uploads source contents.");
   return guidance;
 }
 

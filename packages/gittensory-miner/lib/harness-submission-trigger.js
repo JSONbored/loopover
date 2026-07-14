@@ -12,7 +12,7 @@ import { evaluateHarnessSubmissionTrigger } from "@loopover/engine";
 // `src/mcp/local-write-tools.ts`) needs -- but does not, and cannot, call that function itself, since the spec
 // builder lives in the private root `src/` tree, unreachable from this package (same cross-package-boundary
 // reason self-review-adapter.ts's slop injection exists). A real root-side/MCP call site (e.g. the existing
-// `gittensory_open_pr` tool, src/mcp/server.ts) takes `openPrInput` from a `ready: true` result and passes it
+// `loopover_open_pr` tool, src/mcp/server.ts) takes `openPrInput` from a `ready: true` result and passes it
 // to `buildOpenPrSpec` (or the equivalent tool call) to actually produce the runnable local-write spec. The
 // CLI/driver entrypoint that instantiates a real `CodingAgentDriver` and calls `runIterateLoop` end to end with
 // live credentials does not exist yet in this package -- that is separate, larger scope from this decision-to-
@@ -95,7 +95,7 @@ export function evaluateAndRecordHarnessSubmissionTrigger(candidate, deps) {
  * reasons are on `decision.reasons` and already on the ledger via the wrapped call either way. Does NOT call
  * `buildOpenPrSpec` itself (see this module's own doc comment for why it cannot) -- a real root-side/MCP call
  * site takes `openPrInput` from a `ready: true` result and passes it to that function or the equivalent
- * `gittensory_open_pr` MCP tool.
+ * `loopover_open_pr` MCP tool.
  *
  * Fails closed (throws) on a malformed candidate, mirroring evaluateAndRecordHarnessSubmissionTrigger's own
  * validation -- a missing PR title/base is a caller bug that must never silently degrade into a garbage spec.

@@ -138,7 +138,7 @@ function DigestStream({
   return (
     <div>
       <div className="mb-3">
-        <div className="font-display text-token-base font-semibold">Gittensory</div>
+        <div className="font-display text-token-base font-semibold">LoopOver</div>
         <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
           digest · {date}
         </div>
@@ -190,7 +190,7 @@ function SubscribeForm({ subscribed, onStored }: { subscribed: boolean; onStored
           return;
         }
         toast.success("Digest subscription stored", {
-          description: "Stored in Gittensory. Email delivery is not enabled yet.",
+          description: "Stored in LoopOver. Email delivery is not enabled yet.",
         });
         onStored();
       }}

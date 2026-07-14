@@ -1480,7 +1480,7 @@ describe("local branch analysis", () => {
 
     expect(analysis.lane.lane).toBe("unknown");
     expect(analysis.scoreBlockers).toEqual(expect.arrayContaining(["Repository is not registered in the local snapshot."]));
-    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "gittensory_not_registered" })]));
+    expect(analysis.localFindings).toEqual(expect.arrayContaining([expect.objectContaining({ code: "loopover_not_registered" })]));
     expect(analysis.rewardRisk.rewardUpside.relevantLane).toBe("maintainer_lane");
     expect(analysis.rewardRisk.scoreBlockers).toEqual(expect.arrayContaining(["Maintainer-lane work is not normal outside-contributor reward evidence."]));
   });
@@ -1699,7 +1699,7 @@ describe("local MCP git metadata collection", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -1735,7 +1735,7 @@ describe("local MCP git metadata collection", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -1781,7 +1781,7 @@ describe("local MCP git metadata collection", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     // Deliberately leave core.quotePath at its default (on): git's human --name-status then quotes
     // accented paths, which would diverge from the verbatim --numstat -z key and zero out the stats.
@@ -1895,7 +1895,7 @@ describe("local MCP git metadata collection", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-local-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
-    git(tempDir, "config", "user.name", "Gittensory Test");
+    git(tempDir, "config", "user.name", "LoopOver Test");
     git(tempDir, "config", "commit.gpgsign", "false");
     git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
     writeFileSync(join(tempDir, "README.md"), "fixture\n");
@@ -1937,7 +1937,7 @@ describe("local MCP git metadata collection", () => {
     mkdirSync(outside, { recursive: true });
     git(workspace, "init");
     git(workspace, "config", "user.email", "test@example.com");
-    git(workspace, "config", "user.name", "Gittensory Test");
+    git(workspace, "config", "user.name", "LoopOver Test");
     git(workspace, "config", "commit.gpgsign", "false");
     git(workspace, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
     writeFileSync(join(workspace, "README.md"), "fixture\n");

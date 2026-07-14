@@ -136,7 +136,7 @@ services:
       # Uncomment for Ollama AI (--profile ollama):
       # AI_PROVIDER: ollama
       # OLLAMA_AI_BASE_URL: http://ollama:11434/v1
-      # BROKERED mode — use the central Gittensory Orb App instead of creating your own GitHub App. Install the
+      # BROKERED mode — use the central LoopOver Orb App instead of creating your own GitHub App. Install the
       # Orb App on your repos + set ORB_ENROLLMENT_SECRET in .env (loaded above); the engine then brokers
       # short-lived GitHub tokens from the Orb on demand (no own App private key). See .env.example.
       # ORB_BROKER_URL: https://api.loopover.ai   # override only for a private Orb deployment

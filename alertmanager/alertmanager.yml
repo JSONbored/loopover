@@ -142,7 +142,7 @@ receivers:
 #
 #   # When the whole target is down, silence its derivative warnings (5xx, latency, queue).
 #   - source_matchers:
-#       - alertname="GittensoryTargetDown"
+#       - alertname="LoopOverTargetDown"
 #     target_matchers:
 #       - severity="warning"
 #     equal: ["job"]

@@ -14,6 +14,7 @@ import {
 } from "./otel";
 import { hashedInstallationIdWith } from "./review-tracing";
 import { queueDeadLetterReviveIntervalMs } from "./queue-common";
+import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity } from "../services/severity-threshold";
 
 type SentryNs = typeof import("@sentry/node");
 type SentryClient = NonNullable<ReturnType<SentryNs["init"]>>;
@@ -432,6 +433,41 @@ export async function buildSentryOpenTelemetryBridge(): Promise<OpenTelemetryBri
   };
 }
 
+/** The repo a capture's context belongs to, for per-repo severity-threshold lookup (#5119) -- mirrors
+ *  applyOperationalTags's own `repo`-over-`repository` normalization. `""` (never `undefined`) so
+ *  {@link resolveSentryMinSeverity} always has a lookup key: a non-repo-scoped capture's (empty) per-repo map
+ *  lookup simply misses and falls through to the global threshold, which is the correct behavior. */
+function contextRepoFullName(context: Record<string, unknown> | undefined): string {
+  if (!context) return "";
+  const repo = typeof context.repo === "string" ? context.repo : typeof context.repository === "string" ? context.repository : undefined;
+  return repo ?? "";
+}
+
+/** Resolve the minimum severity Sentry capture for `repoFullName`: SENTRY_REPO_MIN_SEVERITY (a JSON
+ *  `{repoFullName: severity}` map) wins, else the global SENTRY_MIN_SEVERITY, else `"error"` -- the quietest
+ *  safe default, matching today's de facto behavior (every capture path below was already error/fatal-only
+ *  before this resolver existed). Reads the real Node `process.env` directly: captureError/
+ *  captureReviewFailure/forwardStructuredLogToSentry take no `env` parameter (initSentry's own env argument is
+ *  not retained), so this is the only env self-host functions in this file can reach at capture time. */
+function resolveSentryMinSeverity(repoFullName: string): LoopoverSeverity {
+  const processEnv = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
+  return resolveSeverityThreshold(processEnv as unknown as Env, repoFullName, "SENTRY_MIN_SEVERITY", "SENTRY_REPO_MIN_SEVERITY");
+}
+
+/** Map a structured log's own `level` field (Sentry-native `debug`/`info`/`warning`/`warn`/`error`/`fatal`) onto
+ *  the shared 4-tier {@link LoopoverSeverity} taxonomy for threshold comparison. `debug` folds into `info` (the
+ *  taxonomy has no separate debug tier, matching PagerDutySeverity's shape for consistency -- #5119). A level
+ *  that ISN'T one of these recognized severity words (e.g. `"audit"` -- a log CATEGORY, not a severity grade)
+ *  is treated as the quietest tier (`info`), never promoted to `error` -- matching this function's pre-#5119
+ *  behavior of silently skipping anything that wasn't literally `error`/`fatal`. */
+function normalizeLoopoverSeverity(level: string): LoopoverSeverity {
+  const lower = level.toLowerCase();
+  if (lower === "critical" || lower === "fatal") return "critical";
+  if (lower === "error") return "error";
+  if (lower === "warning" || lower === "warn") return "warning";
+  return "info";
+}
+
 /** Name a captured Error before capture so its Sentry issue title reads "eventName: message" instead of the
  *  generic "Error: message" (or a caught exception's own class name, e.g. "HttpError: ..."). Mirrors
  *  forwardStructuredLogToSentry's `errorEvent.name = event` below, but never mutates the caught value: some
@@ -449,7 +485,9 @@ function namedCaptureError(error: unknown, eventName?: string): Error {
   return namedError;
 }
 
-/** Capture an error with optional structured context. No-op when Sentry is off. `eventName`, when given, becomes
+/** Capture an error with optional structured context. No-op when Sentry is off OR the repo's resolved severity
+ *  threshold (#5119) is above `error` (the fixed grade every call here represents) -- suppressed from Sentry,
+ *  still visible in Workers Logs/stdout via the console call that led here. `eventName`, when given, becomes
  *  the Sentry issue title's prefix (see {@link namedCaptureError}) AND the grouping fingerprint (#5010) --
  *  Sentry's default stack-trace-based grouping fragments the SAME logical failure into separate issues whenever
  *  it is captured from more than one call site (e.g. two different functions each constructing the identical
@@ -461,6 +499,7 @@ export function captureError(
   eventName?: string,
 ): void {
   if (!active || !Sentry) return;
+  if (!meetsSeverityThreshold("error", resolveSentryMinSeverity(contextRepoFullName(context)))) return;
   Sentry.withScope((scope) => {
     setOtelTraceScope(scope);
     if (context) { const safeContext = hashedInstallationContext(context); scope.setContext("gittensory", safeContext); applyOperationalTags(scope, safeContext); }
@@ -470,7 +509,8 @@ export function captureError(
 }
 
 /** Capture a failed review at ERROR level, tagged by repo/PR/SHA for triage. A review that cannot be produced is a
- *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off. `eventName`, when
+ *  real failure the maintainer must SEE — not a warning that hides in the noise. No-op when off OR the repo's
+ *  resolved severity threshold (#5119) is above `error` (this always captures at error grade). `eventName`, when
  *  given, becomes the Sentry issue title's prefix AND the grouping fingerprint -- see {@link captureError}'s
  *  identical discipline and #5010. */
 export function captureReviewFailure(
@@ -479,6 +519,7 @@ export function captureReviewFailure(
   eventName?: string,
 ): void {
   if (!active || !Sentry) return;
+  if (!meetsSeverityThreshold("error", resolveSentryMinSeverity(contextRepoFullName(context)))) return;
   Sentry.withScope((scope) => {
     scope.setLevel("error");
     setOtelTraceScope(scope);
@@ -562,10 +603,14 @@ function summarizeLogFields(obj: Record<string, unknown>): string {
     .join(", ");
 }
 
-/** Forward a structured console line to Sentry when it is an ERROR-level log. The engine logs operational
- *  failures (orb_broker_unavailable, gate-check errors, relay drops, …) as JSON strings, often via console.error.
- *  No-op when Sentry is off, the line isn't a JSON object string, or its level isn't error/fatal — routine logs
- *  (audit/info/no-level: job_complete, regate_sweep_throttled, …) are intentionally skipped. */
+/** Forward a structured console line to Sentry when its level meets the repo's resolved severity threshold
+ *  (#5119, default `error` — matches this function's pre-#5119 hardcoded error/fatal-only behavior byte for
+ *  byte). The engine logs operational failures (orb_broker_unavailable, gate-check errors, relay drops, …) as
+ *  JSON strings, often via console.error. No-op when Sentry is off, the line isn't a JSON object string, or it
+ *  carries no level at all (and isn't from the error sink) — a log with no severity signal is a data-completeness
+ *  gap, not a below-threshold decision, so it is always skipped regardless of any repo's configured threshold.
+ *  An operator can lower a specific repo's threshold (SENTRY_REPO_MIN_SEVERITY) to `warning` or `info` to see
+ *  routine logs from that repo while actively debugging it, without raising Sentry noise everywhere else. */
 export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = false): void {
   if (!active || !Sentry) return;
   if (typeof line !== "string" || line.charCodeAt(0) !== 123 /* "{" */) return;
@@ -579,11 +624,14 @@ export function forwardStructuredLogToSentry(line: unknown, fromErrorSink = fals
   const safeObj = hashedInstallationContext(obj);
   // A console.error sink is error-level by DEFAULT even when the JSON omits an explicit level (many engine error
   // logs do) — that's how those errors reach Sentry instead of printing to stderr and vanishing. An EXPLICIT level
-  // always wins, so a deliberate level:"warn" emitted via console.error is still skipped.
+  // always wins over the error-sink default.
   const explicitLevel = typeof obj.level === "string" ? obj.level : undefined;
   const level = explicitLevel ?? (fromErrorSink ? "error" : undefined);
-  if (level !== "error" && level !== "fatal") return;
-  const severity = level === "fatal" ? "fatal" : "error";
+  if (!level) return; // no severity signal at all — never forwarded, independent of any threshold
+  const loopoverSeverity = normalizeLoopoverSeverity(level);
+  if (!meetsSeverityThreshold(loopoverSeverity, resolveSentryMinSeverity(contextRepoFullName(safeObj)))) return;
+  // Sentry's own native level string (setLevel below) — critical maps back to "fatal", its Sentry-native spelling.
+  const severity = loopoverSeverity === "critical" ? "fatal" : loopoverSeverity === "warning" ? "warning" : loopoverSeverity === "info" ? "info" : "error";
   const event = typeof obj.event === "string" ? obj.event : undefined;
   // Lead the Sentry title with the real failure detail (message → error), not just the event slug, so an operator
   // sees WHAT broke straight from the issue list instead of having to open the context blob.

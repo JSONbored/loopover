@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { hostname } from "node:os";
 
 // Mock @sentry/node so the dynamic import inside initSentry() resolves to spies. Hoisted so vi.mock can see it.
@@ -1184,6 +1184,105 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
       'meta={"a":{"b":{"c":{"d":{"e":{"f":"[redacted]"}}}}}}',
     );
     expect(lastCapturedError().message).not.toContain("deep-secret");
+  });
+});
+
+describe("severity-threshold gating (#5119) — captureError/captureReviewFailure/forwardStructuredLogToSentry", () => {
+  const clearThresholdEnv = () => {
+    delete process.env.SENTRY_MIN_SEVERITY;
+    delete process.env.SENTRY_REPO_MIN_SEVERITY;
+  };
+  afterEach(clearThresholdEnv);
+
+  it("captureError: default threshold (error) changes nothing — an error-grade capture still fires", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureError(new Error("boom"), { repo: "acme/widgets" });
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureError: a repo threshold above error (critical) suppresses the capture", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "critical" });
+    captureError(new Error("boom"), { repo: "acme/widgets" });
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("captureError: a repo threshold above error does not suppress a DIFFERENT repo's capture", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "critical" });
+    captureError(new Error("boom"), { repo: "other/repo" });
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureError: the global threshold applies when context carries no repo", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_MIN_SEVERITY = "critical";
+    captureError(new Error("boom"));
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("captureError: reads `repository` when `repo` is absent from context", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "critical" });
+    captureError(new Error("boom"), { repository: "acme/widgets" });
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("captureReviewFailure: default threshold (error) changes nothing — still fires", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    captureReviewFailure(new Error("rev"), { repo: "acme/widgets" });
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureReviewFailure: a repo threshold above error (critical) suppresses the capture", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "critical" });
+    captureReviewFailure(new Error("rev"), { repo: "acme/widgets" });
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("forwardStructuredLogToSentry: default threshold (error) still forwards error/fatal and still skips warning/info — byte-identical to pre-#5119 behavior", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    forwardStructuredLogToSentry(JSON.stringify({ level: "error", event: "x", repo: "acme/widgets" }));
+    forwardStructuredLogToSentry(JSON.stringify({ level: "fatal", event: "y", repo: "acme/widgets" }));
+    forwardStructuredLogToSentry(JSON.stringify({ level: "warning", event: "z", repo: "acme/widgets" }));
+    forwardStructuredLogToSentry(JSON.stringify({ level: "info", event: "w", repo: "acme/widgets" }));
+    expect(mocks.captureException).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwardStructuredLogToSentry: lowering a repo's threshold to info surfaces its warning/info-grade logs (#5119's core deliverable)", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "info" });
+    forwardStructuredLogToSentry(JSON.stringify({ level: "warning", event: "z", repo: "acme/widgets" }));
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    expect(mocks.scope.setLevel).toHaveBeenLastCalledWith("warning");
+    forwardStructuredLogToSentry(JSON.stringify({ level: "info", event: "w", repo: "acme/widgets" }));
+    expect(mocks.captureException).toHaveBeenCalledTimes(2);
+    expect(mocks.scope.setLevel).toHaveBeenLastCalledWith("info");
+  });
+
+  it("forwardStructuredLogToSentry: lowering ONE repo's threshold does not affect a different repo's default gating", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_REPO_MIN_SEVERITY = JSON.stringify({ "acme/widgets": "info" });
+    forwardStructuredLogToSentry(JSON.stringify({ level: "warning", event: "z", repo: "other/repo" }));
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("forwardStructuredLogToSentry: an unrecognized level (a log CATEGORY like \"audit\", not a severity) never promotes to error grade even with a lowered threshold", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_MIN_SEVERITY = "info";
+    forwardStructuredLogToSentry(JSON.stringify({ level: "audit", event: "job_complete", repo: "acme/widgets" }));
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
+    expect(mocks.scope.setLevel).toHaveBeenLastCalledWith("info");
+  });
+
+  it("forwardStructuredLogToSentry: raising the global threshold to critical suppresses ordinary error-grade logs but still lets fatal through", async () => {
+    await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
+    process.env.SENTRY_MIN_SEVERITY = "critical";
+    forwardStructuredLogToSentry(JSON.stringify({ level: "error", event: "x" }));
+    expect(mocks.captureException).not.toHaveBeenCalled();
+    forwardStructuredLogToSentry(JSON.stringify({ level: "fatal", event: "y" }));
+    expect(mocks.captureException).toHaveBeenCalledTimes(1);
   });
 });
 

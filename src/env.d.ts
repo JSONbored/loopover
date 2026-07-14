@@ -256,6 +256,17 @@ declare global {
      *  Defaults to 60 when unset. This is on top of PagerDuty's own `dedup_key` coalescing (which prevents
      *  duplicate *incidents*, not duplicate *pages* for a still-open one). */
     PAGERDUTY_COOLDOWN_MINUTES?: string;
+    /** Sentry noise control (#5119): the minimum severity (`info` < `warning` < `error` < `critical`) that
+     *  reaches Sentry from captureError/captureReviewFailure/forwardStructuredLogToSentry (src/selfhost/sentry.ts),
+     *  for any repo not present in SENTRY_REPO_MIN_SEVERITY (a JSON `{repoFullName: severity}` map, same
+     *  deliberately-untyped pattern as PAGERDUTY_REPO_MIN_SEVERITY). Defaults to `error` when unset — matches
+     *  every capture path's pre-#5119 behavior exactly, so an operator who never touches these vars sees no
+     *  change. Lower a specific repo's threshold via the map (e.g. to `info`) for full visibility while
+     *  actively debugging it, without raising Sentry noise everywhere else. Shares one severity-threshold
+     *  resolver with PAGERDUTY_MIN_SEVERITY (src/services/severity-threshold.ts) — not a parallel concept. */
+    SENTRY_MIN_SEVERITY?: string;
+    /** Per-repo override map for SENTRY_MIN_SEVERITY — see its doc comment for the shape and precedence. */
+    SENTRY_REPO_MIN_SEVERITY?: string;
     GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN?: string;
     PRODUCT_USAGE_HASH_SALT?: string;
     /** Server-to-server API bearer token — bypasses per-repo write checks (src/auth/security.ts). */

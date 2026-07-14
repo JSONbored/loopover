@@ -354,10 +354,6 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/services/notify-pagerduty.ts",
   },
   {
-    name: "PAGERDUTY_MIN_SEVERITY",
-    firstReference: "src/services/notify-pagerduty.ts",
-  },
-  {
     name: "PAGERDUTY_ROUTING_KEY",
     firstReference: "src/services/notify-pagerduty.ts",
   },
@@ -573,7 +569,6 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `OTEL_TRACES_SAMPLER` | `src/selfhost/otel.ts` |",
   "| `OTEL_TRACES_SAMPLER_ARG` | `src/selfhost/otel.ts` |",
   "| `PAGERDUTY_COOLDOWN_MINUTES` | `src/services/notify-pagerduty.ts` |",
-  "| `PAGERDUTY_MIN_SEVERITY` | `src/services/notify-pagerduty.ts` |",
   "| `PAGERDUTY_ROUTING_KEY` | `src/services/notify-pagerduty.ts` |",
   "| `PGPOOL_MAX` | `src/selfhost/queue-common.ts` |",
   "| `PGVECTOR_ENABLED` | `src/server.ts` |",

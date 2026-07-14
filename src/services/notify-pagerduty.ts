@@ -1,5 +1,6 @@
 import { countRecentAuditEventsForActorAndTarget, recordAuditEvent } from "../db/repositories";
 import { errorMessage } from "../utils/json";
+import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity } from "./severity-threshold";
 
 // PagerDuty Events API v2 (https://developer.pagerduty.com/docs/events-api-v2/overview/). Experimental,
 // default-OFF (LOOPOVER_ENABLE_PAGERDUTY) — a self-host operator opts in per #4937's paging epic.
@@ -88,23 +89,18 @@ export function resolvePagerDutyRoutingKey(env: Env, repoFullName: string): Page
     : { status: "disabled", reason: fallback ? "invalid_global_key" : "missing_global_key" };
 }
 
-export type PagerDutySeverity = "critical" | "error" | "warning" | "info";
-
-const SEVERITY_RANK: Record<PagerDutySeverity, number> = { info: 0, warning: 1, error: 2, critical: 3 };
-
-function isPagerDutySeverity(value: unknown): value is PagerDutySeverity {
-  return value === "critical" || value === "error" || value === "warning" || value === "info";
-}
+/** @deprecated alias of {@link LoopoverSeverity} -- kept so existing imports (ops-wire.ts's
+ *  classifyAnomalySeverity/worstAnomaly) don't need a rename. Shares the codebase's one severity-threshold
+ *  concept (#5119) instead of a PagerDuty-only copy. */
+export type PagerDutySeverity = LoopoverSeverity;
 
 /** Resolve the minimum severity that pages for `repoFullName`: per-repo map entry, else the global override,
  *  else {@link DEFAULT_MIN_SEVERITY} — the quietest safe default, so an operator who never touches these vars
- *  still only gets paged for active-incident-grade conditions, never routine calibration nudges. */
+ *  still only gets paged for active-incident-grade conditions, never routine calibration nudges. Delegates to
+ *  the shared {@link resolveSeverityThreshold} resolver (#5119) so PagerDuty and Sentry share one
+ *  severity-threshold concept, not two parallel ones. */
 export function resolvePagerDutyMinSeverity(env: Env, repoFullName: string): PagerDutySeverity {
-  const map = repoJsonMap(env, "PAGERDUTY_REPO_MIN_SEVERITY");
-  const mapped = map[repoFullName.toLowerCase()];
-  if (isPagerDutySeverity(mapped)) return mapped;
-  const global = envString(env, "PAGERDUTY_MIN_SEVERITY");
-  return isPagerDutySeverity(global) ? global : DEFAULT_MIN_SEVERITY;
+  return resolveSeverityThreshold(env, repoFullName, "PAGERDUTY_MIN_SEVERITY", "PAGERDUTY_REPO_MIN_SEVERITY", DEFAULT_MIN_SEVERITY);
 }
 
 /** Coerce a JSON-map value or raw env string to a positive minute count; anything else (absent, zero,
@@ -171,7 +167,7 @@ export async function triggerPagerDutyIncident(
   }
 
   const minSeverity = resolvePagerDutyMinSeverity(env, params.repoFullName);
-  if (SEVERITY_RANK[params.severity] < SEVERITY_RANK[minSeverity]) {
+  if (!meetsSeverityThreshold(params.severity, minSeverity)) {
     await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "denied", "below_min_severity", {
       severity: params.severity,
       minSeverity,

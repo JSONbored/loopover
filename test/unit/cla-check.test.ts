@@ -113,4 +113,28 @@ describe("evaluateClaCheck (#2564)", () => {
       expect(out[0]?.code).toBe(CLA_CHECK_UNRESOLVED_CODE);
     });
   });
+
+  // #5838: a blank/whitespace-only consentPhrase must be treated as unset, not as an always-matching "" that
+  // silently satisfies CLA consent for every PR (`"".includes("")` is unconditionally true).
+  describe("empty/whitespace-only consentPhrase normalization (#5838)", () => {
+    it("an empty-string consentPhrase does NOT unconditionally satisfy consent — it behaves as if unset", () => {
+      const out = evaluateClaCheck(config({ consentPhrase: "", checkRunName: "CLA Assistant Lite" }), {
+        body: "no consent statement here",
+        checkRunConclusion: "failure",
+      });
+      expect(out).toHaveLength(1);
+      expect(out[0]?.code).toBe(CLA_CONSENT_MISSING_CODE);
+      expect(out[0]?.detail).toContain('the "CLA Assistant Lite" check must pass');
+      expect(out[0]?.detail).not.toContain("PR description must contain");
+    });
+
+    it("a whitespace-only consentPhrase with no other method configured yields no finding, exactly like null", () => {
+      expect(evaluateClaCheck(config({ consentPhrase: "   " }), { body: "anything at all" })).toEqual([]);
+    });
+
+    it("REGRESSION: a real non-empty consentPhrase still decides consent (either-method contract unchanged)", () => {
+      expect(evaluateClaCheck(config({ consentPhrase: "I agree" }), { body: "... I AGREE ..." })).toEqual([]);
+      expect(evaluateClaCheck(config({ consentPhrase: "I agree" }), { body: "nope" })).toHaveLength(1);
+    });
+  });
 });

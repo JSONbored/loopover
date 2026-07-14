@@ -752,9 +752,12 @@ describe("queue processors", () => {
           "we-promise/sure": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
         },
         { kind: "raw-github", url: "fixture://registry" },
-        "2026-05-25T00:00:00.000Z",
+        "2026-05-23T00:00:00.000Z",
       ),
     );
+    // repairDataFidelity now gates on isInstalled, not isRegistered (#5020).
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 9410);
+    await upsertRepositoryFromGitHub(env, { name: "sure", full_name: "we-promise/sure", private: true, owner: { login: "we-promise" } }, 9411);
 
     await upsertRepoSyncSegment(env, completeSegment("JSONbored/gittensory", "labels"));
     await upsertRepoSyncSegment(env, completeSegment("JSONbored/gittensory", "open_issues"));
@@ -768,6 +771,35 @@ describe("queue processors", () => {
         expect.objectContaining({ type: "generate-signal-snapshots", repoFullName: "JSONbored/gittensory" }),
       ]),
     );
+  });
+
+  it("dispatches fidelity repair by isInstalled, not isRegistered (#5020 regression)", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    // Installed but not gittensor-subnet-registered: cache hygiene for cached labels/issues/PRs has
+    // nothing to do with subnet economics, so this repo MUST still be covered.
+    await upsertRepositoryFromGitHub(env, { name: "installed-not-registered", full_name: "acme/installed-not-registered", private: false, owner: { login: "acme" } }, 9415);
+    // Subnet-registered but not installed on this instance: this repo must NOT be covered.
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "acme/registered-not-installed": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
+        { kind: "raw-github", url: "fixture://registry" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+
+    await processJob(env, { type: "repair-data-fidelity", requestedBy: "api" });
+
+    const repairedRepos = sent.map((message) => (message as { repoFullName?: string }).repoFullName);
+    expect(repairedRepos).toContain("acme/installed-not-registered");
+    expect(repairedRepos).not.toContain("acme/registered-not-installed");
   });
 
   it("marks fidelity repair completed when only signal refreshes are needed", async () => {
@@ -790,9 +822,12 @@ describe("queue processors", () => {
           "we-promise/sure": { emission_share: 0.02, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false },
         },
         { kind: "raw-github", url: "fixture://registry" },
-        "2026-05-25T00:00:00.000Z",
+        "2026-05-23T00:00:00.000Z",
       ),
     );
+    // repairDataFidelity now gates on isInstalled, not isRegistered (#5020).
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 9412);
+    await upsertRepositoryFromGitHub(env, { name: "sure", full_name: "we-promise/sure", private: true, owner: { login: "we-promise" } }, 9413);
     for (const repoFullName of ["JSONbored/gittensory", "we-promise/sure"]) {
       await upsertRepoSyncSegment(env, completeSegment(repoFullName, "labels"));
       await upsertRepoSyncSegment(env, completeSegment(repoFullName, "open_issues"));
@@ -838,9 +873,11 @@ describe("queue processors", () => {
       normalizeRegistryPayload(
         { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0, label_multipliers: {}, trusted_label_pipeline: false } },
         { kind: "raw-github", url: "fixture://registry" },
-        "2026-05-25T00:00:00.000Z",
+        "2026-05-23T00:00:00.000Z",
       ),
     );
+    // repairDataFidelity now gates on isInstalled, not isRegistered (#5020).
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 9414);
     await upsertRepoSyncSegment(env, completeSegment("JSONbored/gittensory", "labels"));
     await upsertRepoSyncSegment(env, completeSegment("JSONbored/gittensory", "open_issues"));
     await upsertRepoSyncSegment(env, completeSegment("JSONbored/gittensory", "open_pull_requests"));

@@ -4364,7 +4364,10 @@ export async function repairDataFidelity(
       segmentsByRepo.set(segment.repoFullName, complete);
     }
   }
-  const registeredRepos = repositories.filter((repo) => repo.isRegistered);
+  // #5020: cache hygiene for cached labels/issues/PRs has nothing to do with subnet economics -- scope to
+  // repos this instance actually operates on (isInstalled), matching #5021's retarget of the underlying
+  // backfill job this function dispatches.
+  const registeredRepos = repositories.filter((repo) => repo.isInstalled);
   const freshnessSlo = buildFreshnessSloReport({
     repoCount: registeredRepos.length,
     segments,

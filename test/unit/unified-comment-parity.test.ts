@@ -241,7 +241,7 @@ describe("converged comment ↔ legacy panel parity (#unified-comment)", () => {
       const beta = collapsibles.find((section) => section.title === "[BETA] Chat with LoopOver");
       expect(beta?.body).toContain("`@loopover ask <question>`");
       expect(beta?.body).toContain("`@loopover chat <question>`");
-      expect(beta?.body).toContain("https://example-selfhost.test/docs/gittensory-commands");
+      expect(beta?.body).toContain("https://example-selfhost.test/docs/loopover-commands");
       // Intent routing is off in this fixture, so its plain-language line must not appear.
       expect(beta?.body).not.toContain("Plain-language");
     });

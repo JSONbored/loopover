@@ -145,7 +145,7 @@ const BOILERPLATE_NIT_CODES = new Set([
   "no_linked_issue_without_rationale",
 ]);
 const BOILERPLATE_NIT_TITLE =
-  /local gittensory cache|registration is not available|config was not parsed|not registered/i;
+  /local loopover cache|registration is not available|config was not parsed|not registered/i;
 const MANUAL_HOLD_WARNING_CODES = new Set([
   "guardrail_hold",
   "oversized_pr",

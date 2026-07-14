@@ -160,7 +160,7 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
       <CodeBlock code={MAINTAINER_COMMAND_LIST} />
       <p>
         For syntax, default roles, PR action verbs, and the gate vs auto-review boundary, see the{" "}
-        <Link to="/docs/gittensory-commands">@loopover command reference</Link>.
+        <Link to="/docs/loopover-commands">@loopover command reference</Link>.
       </p>
 
       <Callout variant="safety">

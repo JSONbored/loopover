@@ -109,9 +109,9 @@ describe("operator dashboard payload", () => {
     });
     const unset = createTestEnv();
     delete (unset as Partial<Env>).GITHUB_APP_SLUG;
-    expect(operatorAgentConfig(unset)).toEqual({ slug: "gittensory", secrets: {} });
+    expect(operatorAgentConfig(unset)).toEqual({ slug: "loopover", secrets: {} });
     expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "" }))).toEqual({
-      slug: "gittensory",
+      slug: "loopover",
       secrets: {},
     });
   });

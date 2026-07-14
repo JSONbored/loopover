@@ -154,7 +154,7 @@ describe("buildFollowUpIssueSpec (#2177)", () => {
   });
 
   it("strips an embedded HTML-comment marker and fenced block before composing the body (public-safe)", () => {
-    const finding = "<!-- gittensory:fix-handoff -->\n**Fix handoff — Blocker at `src/a.ts:42`**\nNull check missing.\n\n```suggestion\nif (!x) return null;\n```";
+    const finding = "<!-- loopover:fix-handoff -->\n**Fix handoff — Blocker at `src/a.ts:42`**\nNull check missing.\n\n```suggestion\nif (!x) return null;\n```";
     const s = buildFollowUpIssueSpec({ repoFullName: "o/r", path: "src/a.ts", line: 42, finding });
     expect(s.command).not.toContain("<!--");
     expect(s.command).not.toContain("```");

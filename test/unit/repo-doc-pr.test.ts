@@ -186,7 +186,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
       if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
       if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
       if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "new-commit-sha" });
-      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/gittensory/repo-docs" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/loopover/repo-docs" });
       if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 42, html_url: "https://github.com/owner/widgets/pull/42" });
       return new Response("unexpected", { status: 500 });
     });
@@ -205,10 +205,10 @@ describe("openRepoDocPullRequest (#3000)", () => {
     expect(commitCall?.body).toMatchObject({ tree: "new-tree-sha", parents: ["base-commit-sha"] });
 
     const refCall = calls.find((c) => c.url.endsWith("/git/refs"));
-    expect(refCall?.body).toMatchObject({ ref: "refs/heads/gittensory/repo-docs", sha: "new-commit-sha" });
+    expect(refCall?.body).toMatchObject({ ref: "refs/heads/loopover/repo-docs", sha: "new-commit-sha" });
 
     const prCall = calls.find((c) => c.url.endsWith("/repos/owner/widgets/pulls") && c.method === "POST");
-    expect(prCall?.body).toMatchObject({ head: "gittensory/repo-docs", base: "main", title: "docs: generate AGENTS.md and CLAUDE.md from repo profile" });
+    expect(prCall?.body).toMatchObject({ head: "loopover/repo-docs", base: "main", title: "docs: generate AGENTS.md and CLAUDE.md from repo profile" });
     expect(prCall?.body.body as string).toContain("LoopOver opened this pull request");
   });
 
@@ -233,7 +233,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
       if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
       if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
       if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "new-commit-sha" });
-      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/gittensory/repo-docs" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/loopover/repo-docs" });
       if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 43, html_url: "https://github.com/owner/widgets/pull/43" });
       return new Response("unexpected", { status: 500 });
     });
@@ -268,7 +268,7 @@ describe("openRepoDocPullRequest (#3000)", () => {
       if (url.endsWith("/branches/main")) return Response.json({ commit: { sha: "base-commit-sha", commit: { tree: { sha: "base-tree-sha" } } } });
       if (url.endsWith("/git/trees") && method === "POST") return Response.json({ sha: "new-tree-sha" });
       if (url.endsWith("/git/commits") && method === "POST") return Response.json({ sha: "new-commit-sha" });
-      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/gittensory/repo-docs" });
+      if (url.endsWith("/git/refs") && method === "POST") return Response.json({ ref: "refs/heads/loopover/repo-docs" });
       if (url.endsWith("/repos/owner/widgets/pulls") && method === "POST") return Response.json({ number: 44, html_url: "https://github.com/owner/widgets/pull/44" });
       return new Response("unexpected", { status: 500 });
     });

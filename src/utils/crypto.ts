@@ -129,7 +129,7 @@ async function deriveDraftTokenAesKey(secret: string, salt: Uint8Array): Promise
   // salt is always a plain (never shared) ArrayBuffer view — the cast only narrows the TYPE for the UI
   // workspace's stricter DOM-lib HkdfParams, which excludes SharedArrayBuffer from ArrayBufferLike.
   return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: salt as Uint8Array<ArrayBuffer>, info: new TextEncoder().encode("gittensory:draft-user-token:v1") },
+    { name: "HKDF", hash: "SHA-256", salt: salt as Uint8Array<ArrayBuffer>, info: new TextEncoder().encode("loopover:draft-user-token:v1") },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,

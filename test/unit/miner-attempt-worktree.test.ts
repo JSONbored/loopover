@@ -65,13 +65,13 @@ describe("prepareAttemptWorktree / cleanupAttemptWorktree (#5132)", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.branchName).toBe("gittensory/attempt/attempt-1");
+    expect(result.branchName).toBe("loopover/attempt/attempt-1");
     expect(existsSync(result.worktreePath)).toBe(true);
     // The critical assertion: real repo content is actually present, not an empty directory.
     expect(readFileSync(join(result.worktreePath, "README.md"), "utf8")).toBe("hello\n");
     // And it's a real, distinct branch -- not just a copy of main.
     const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: result.worktreePath, encoding: "utf8" }).trim();
-    expect(branch).toBe("gittensory/attempt/attempt-1");
+    expect(branch).toBe("loopover/attempt/attempt-1");
   });
 
   it("removes a succeeded attempt's worktree but retains a failed one's, per the engine's own retention policy", async () => {

@@ -60,7 +60,7 @@ describe("buildFixHandoffBlock (#2175)", () => {
 
   it("includes the fix-handoff HTML comment marker so a harness can locate the block", () => {
     const block = buildFixHandoffBlock(finding());
-    expect(block.body).toContain("<!-- gittensory:fix-handoff -->");
+    expect(block.body).toContain("<!-- loopover:fix-handoff -->");
   });
 
   it("carries the finding's body as the instruction verbatim (already public-safe upstream)", () => {

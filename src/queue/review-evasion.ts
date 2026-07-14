@@ -117,7 +117,7 @@ async function evaluateCloseEnforcementGate(args: {
   if (closeAutonomy !== "auto") {
     await recordAuditEvent(env, {
       eventType,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "denied",
       detail:
@@ -134,7 +134,7 @@ async function evaluateCloseEnforcementGate(args: {
   if (mode === "dry_run") {
     await recordAuditEvent(env, {
       eventType,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "completed",
       detail: args.dryRun.detail,
@@ -149,7 +149,7 @@ async function evaluateCloseEnforcementGate(args: {
     if (args.paused) {
       await recordAuditEvent(env, {
         eventType,
-        actor: "gittensory",
+        actor: "loopover",
         targetKey,
         outcome: "denied",
         detail: args.paused.detail,
@@ -168,7 +168,7 @@ async function evaluateCloseEnforcementGate(args: {
     if (readiness !== "ready") {
       await recordAuditEvent(env, {
         eventType,
-        actor: "gittensory",
+        actor: "loopover",
         targetKey,
         outcome: "denied",
         detail: args.permissionReadiness.detail,
@@ -191,7 +191,7 @@ async function evaluateCloseEnforcementGate(args: {
   if (stale) {
     await recordAuditEvent(env, {
       eventType,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "denied",
       detail: `${pullRequestFreshnessDetail(freshness)}${args.freshness.detailSuffix}`,
@@ -309,7 +309,7 @@ async function closeDraftDodgeAttemptIfBlocked(
     ).catch(() => undefined);
     await recordAuditEvent(env, {
       eventType: "github_app.draft_dodge_closed",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "completed",
       detail: `closed draft-dodge attempt by ${pr.authorLogin ?? "unknown"} — prior gate failure on headSha ${pr.headSha} stands`,
@@ -444,7 +444,7 @@ async function recloseDisallowedReopenIfNeeded(
   if (await hasMaintainerPermission(reopener)) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "denied",
       detail: `${reopener} now holds maintainer permission — reopen re-close not executed`,
@@ -472,7 +472,7 @@ async function recloseDisallowedReopenIfNeeded(
   if (reopenerSuperseded) {
     await recordAuditEvent(env, {
       eventType: "github_app.reopen_reclosed",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${repoFullName}#${pr.number}`,
       outcome: "denied",
       detail: latestReopener.errored
@@ -501,7 +501,7 @@ async function recloseDisallowedReopenIfNeeded(
   /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
   await recordAuditEvent(env, {
     eventType: "github_app.reopen_reclosed",
-    actor: "gittensory",
+    actor: "loopover",
     targetKey: `${repoFullName}#${pr.number}`,
     outcome: closeError === null ? "completed" : "error",
     detail:
@@ -627,7 +627,7 @@ async function closeReviewEvasionSelfCloseIfActive(
   if (reopenError !== null) {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "error",
       detail: `FAILED to reopen ${pr.authorLogin}'s self-close for review-evasion enforcement -- the reopen API call did not succeed`,
@@ -644,7 +644,7 @@ async function closeReviewEvasionSelfCloseIfActive(
   if (closeError !== null) {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "error",
       detail: `FAILED to re-close review-evasion self-close by ${pr.authorLogin} -- the reopen already succeeded, so the PR is live on GitHub as OPEN; retrying via the queue rather than leaving it that way`,
@@ -695,7 +695,7 @@ async function closeReviewEvasionSelfCloseIfActive(
   }
   await recordAuditEvent(env, {
     eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-    actor: "gittensory",
+    actor: "loopover",
     targetKey,
     outcome: "completed",
     detail: `re-closed a review-evasion self-close by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
@@ -814,7 +814,7 @@ async function closeReviewEvasionDraftConversionIfActive(
   if (closeError !== null) {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "error",
       detail: `FAILED to close review-evasion draft-conversion by ${pr.authorLogin} -- the close API call did not succeed; the PR may still be open`,
@@ -846,7 +846,7 @@ async function closeReviewEvasionDraftConversionIfActive(
   }
   await recordAuditEvent(env, {
     eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-    actor: "gittensory",
+    actor: "loopover",
     targetKey,
     outcome: "completed",
     detail: `closed a review-evasion draft-conversion by ${pr.authorLogin} -- active review on headSha ${pr.headSha} was in progress`,
@@ -980,7 +980,7 @@ async function closeRepeatedDraftCyclingIfDetected(
   if (closeError !== null) {
     await recordAuditEvent(env, {
       eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-      actor: "gittensory",
+      actor: "loopover",
       targetKey,
       outcome: "error",
       detail: `FAILED to close repeated draft-cycling by ${pr.authorLogin} -- the close API call did not succeed; the PR may still be open`,
@@ -1012,7 +1012,7 @@ async function closeRepeatedDraftCyclingIfDetected(
   }
   await recordAuditEvent(env, {
     eventType: REVIEW_EVASION_CLOSED_EVENT_TYPE,
-    actor: "gittensory",
+    actor: "loopover",
     targetKey,
     outcome: "completed",
     detail: `closed repeated draft-cycling by ${pr.authorLogin} -- conversion #${draftConversionCount} on this PR`,

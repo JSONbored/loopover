@@ -43,9 +43,9 @@ export async function reviewTraceAttributes(
     attrs["github.pull_request.number"] = input.pullNumber;
   const installationHash = await hashedInstallationId(input.installationId);
   if (installationHash) attrs["github.installation_id_hash"] = installationHash;
-  if (input.operation) attrs["gittensory.operation"] = input.operation;
-  if (input.agent) attrs["gittensory.agent"] = input.agent;
-  if (input.decisionOutcome) attrs["gittensory.decision_outcome"] = input.decisionOutcome;
+  if (input.operation) attrs["loopover.operation"] = input.operation;
+  if (input.agent) attrs["loopover.agent"] = input.agent;
+  if (input.decisionOutcome) attrs["loopover.decision_outcome"] = input.decisionOutcome;
   return attrs;
 }
 

@@ -50,8 +50,8 @@ import { Route as DocsMcpClientsRouteImport } from './routes/docs.mcp-clients'
 import { Route as DocsMaintainerWorkflowRouteImport } from './routes/docs.maintainer-workflow'
 import { Route as DocsMaintainerSelfHostingRouteImport } from './routes/docs.maintainer-self-hosting'
 import { Route as DocsMaintainerInstallTrustRouteImport } from './routes/docs.maintainer-install-trust'
+import { Route as DocsLoopoverCommandsRouteImport } from './routes/docs.loopover-commands'
 import { Route as DocsHowReviewsWorkRouteImport } from './routes/docs.how-reviews-work'
-import { Route as DocsGittensoryCommandsRouteImport } from './routes/docs.gittensory-commands'
 import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
@@ -289,14 +289,14 @@ const DocsMaintainerInstallTrustRoute =
     path: '/maintainer-install-trust',
     getParentRoute: () => DocsRoute,
   } as any)
+const DocsLoopoverCommandsRoute = DocsLoopoverCommandsRouteImport.update({
+  id: '/loopover-commands',
+  path: '/loopover-commands',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsHowReviewsWorkRoute = DocsHowReviewsWorkRouteImport.update({
   id: '/how-reviews-work',
   path: '/how-reviews-work',
-  getParentRoute: () => DocsRoute,
-} as any)
-const DocsGittensoryCommandsRoute = DocsGittensoryCommandsRouteImport.update({
-  id: '/gittensory-commands',
-  path: '/gittensory-commands',
   getParentRoute: () => DocsRoute,
 } as any)
 const DocsGithubAppRoute = DocsGithubAppRouteImport.update({
@@ -424,8 +424,8 @@ export interface FileRoutesByFullPath {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
+  '/docs/loopover-commands': typeof DocsLoopoverCommandsRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -485,8 +485,8 @@ export interface FileRoutesByTo {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
+  '/docs/loopover-commands': typeof DocsLoopoverCommandsRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -550,8 +550,8 @@ export interface FileRoutesById {
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/github-app': typeof DocsGithubAppRoute
-  '/docs/gittensory-commands': typeof DocsGittensoryCommandsRoute
   '/docs/how-reviews-work': typeof DocsHowReviewsWorkRoute
+  '/docs/loopover-commands': typeof DocsLoopoverCommandsRoute
   '/docs/maintainer-install-trust': typeof DocsMaintainerInstallTrustRoute
   '/docs/maintainer-self-hosting': typeof DocsMaintainerSelfHostingRoute
   '/docs/maintainer-workflow': typeof DocsMaintainerWorkflowRoute
@@ -616,8 +616,8 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
-    | '/docs/gittensory-commands'
     | '/docs/how-reviews-work'
+    | '/docs/loopover-commands'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
@@ -677,8 +677,8 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
-    | '/docs/gittensory-commands'
     | '/docs/how-reviews-work'
+    | '/docs/loopover-commands'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
@@ -741,8 +741,8 @@ export interface FileRouteTypes {
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/github-app'
-    | '/docs/gittensory-commands'
     | '/docs/how-reviews-work'
+    | '/docs/loopover-commands'
     | '/docs/maintainer-install-trust'
     | '/docs/maintainer-self-hosting'
     | '/docs/maintainer-workflow'
@@ -1080,18 +1080,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsMaintainerInstallTrustRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/loopover-commands': {
+      id: '/docs/loopover-commands'
+      path: '/loopover-commands'
+      fullPath: '/docs/loopover-commands'
+      preLoaderRoute: typeof DocsLoopoverCommandsRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/how-reviews-work': {
       id: '/docs/how-reviews-work'
       path: '/how-reviews-work'
       fullPath: '/docs/how-reviews-work'
       preLoaderRoute: typeof DocsHowReviewsWorkRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/gittensory-commands': {
-      id: '/docs/gittensory-commands'
-      path: '/gittensory-commands'
-      fullPath: '/docs/gittensory-commands'
-      preLoaderRoute: typeof DocsGittensoryCommandsRouteImport
       parentRoute: typeof DocsRoute
     }
     '/docs/github-app': {
@@ -1283,8 +1283,8 @@ interface DocsRouteChildren {
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsGithubAppRoute: typeof DocsGithubAppRoute
-  DocsGittensoryCommandsRoute: typeof DocsGittensoryCommandsRoute
   DocsHowReviewsWorkRoute: typeof DocsHowReviewsWorkRoute
+  DocsLoopoverCommandsRoute: typeof DocsLoopoverCommandsRoute
   DocsMaintainerInstallTrustRoute: typeof DocsMaintainerInstallTrustRoute
   DocsMaintainerSelfHostingRoute: typeof DocsMaintainerSelfHostingRoute
   DocsMaintainerWorkflowRoute: typeof DocsMaintainerWorkflowRoute
@@ -1321,8 +1321,8 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsGithubAppRoute: DocsGithubAppRoute,
-  DocsGittensoryCommandsRoute: DocsGittensoryCommandsRoute,
   DocsHowReviewsWorkRoute: DocsHowReviewsWorkRoute,
+  DocsLoopoverCommandsRoute: DocsLoopoverCommandsRoute,
   DocsMaintainerInstallTrustRoute: DocsMaintainerInstallTrustRoute,
   DocsMaintainerSelfHostingRoute: DocsMaintainerSelfHostingRoute,
   DocsMaintainerWorkflowRoute: DocsMaintainerWorkflowRoute,

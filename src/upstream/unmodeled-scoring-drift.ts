@@ -7,7 +7,7 @@ import type { UpstreamDriftArea, UpstreamDriftReportRecord, UpstreamDriftSeverit
 import { sha256Hex } from "../utils/crypto";
 import { nowIso } from "../utils/json";
 
-const UNMODELED_SCORING_CONSTANTS_FINGERPRINT_SEED = "gittensory:upstream:unmodeled_scoring_constants:v1";
+const UNMODELED_SCORING_CONSTANTS_FINGERPRINT_SEED = "loopover:upstream:unmodeled_scoring_constants:v1";
 const SCORING_MODEL_FOLLOW_UP = ["src/scoring/model.ts", "src/upstream/ruleset.ts", "test/unit/upstream-ruleset.test.ts"];
 
 export async function unmodeledScoringConstantsFingerprint(): Promise<string> {

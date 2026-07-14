@@ -202,7 +202,7 @@ export async function runMaintainerRecapJob(
   if (!result.skipped) {
     await recordAuditEvent(env, {
       eventType: "maintainer_recap_generated",
-      actor: "gittensory",
+      actor: "loopover",
       route: "scheduled",
       targetKey: `maintainer-recap:${periodKey}`,
       outcome: "success",

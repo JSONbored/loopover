@@ -19,26 +19,26 @@ function matchPullRequestTarget(pathname) {
 }
 
 function mountOverlay(target) {
-  if (document.querySelector("[data-gittensory-pr-context]")) return;
+  if (document.querySelector("[data-loopover-pr-context]")) return;
   const container = document.createElement("aside");
   const host = findPullRequestSidebar();
-  container.className = `gittensory-overlay ${host ? "gittensory-overlay--sidebar" : "gittensory-overlay--floating"}`;
+  container.className = `loopover-overlay ${host ? "loopover-overlay--sidebar" : "loopover-overlay--floating"}`;
   container.dataset.loopoverPrContext = "true";
   container.innerHTML = `
-    <div class="gittensory-overlay__header">
-      <span class="gittensory-overlay__mark">G</span>
+    <div class="loopover-overlay__header">
+      <span class="loopover-overlay__mark">G</span>
       <span>LoopOver</span>
-      <span class="gittensory-overlay__privacy">Private</span>
-      <button type="button" class="gittensory-overlay__refresh" aria-label="Refresh LoopOver context">Refresh</button>
+      <span class="loopover-overlay__privacy">Private</span>
+      <button type="button" class="loopover-overlay__refresh" aria-label="Refresh LoopOver context">Refresh</button>
     </div>
-    <div class="gittensory-overlay__body">Loading private context...</div>
+    <div class="loopover-overlay__body">Loading private context...</div>
   `;
   if (host) {
     host.prepend(container);
   } else {
     document.body.appendChild(container);
   }
-  const refresh = container.querySelector(".gittensory-overlay__refresh");
+  const refresh = container.querySelector(".loopover-overlay__refresh");
   refresh?.addEventListener("click", () => load(container, target));
   void load(container, target);
 }
@@ -53,12 +53,12 @@ function findPullRequestSidebar() {
 }
 
 async function load(container, target) {
-  const body = container.querySelector(".gittensory-overlay__body");
+  const body = container.querySelector(".loopover-overlay__body");
   if (!body) return;
   body.textContent = "Loading private context...";
-  const response = await chrome.runtime.sendMessage({ type: "gittensory:pull-context", ...target });
+  const response = await chrome.runtime.sendMessage({ type: "loopover:pull-context", ...target });
   if (!response?.ok) {
-    body.innerHTML = `<div class="gittensory-overlay__error">${escapeHtml(response?.error || "Context unavailable")}</div>`;
+    body.innerHTML = `<div class="loopover-overlay__error">${escapeHtml(response?.error || "Context unavailable")}</div>`;
     return;
   }
   body.innerHTML = renderPullContext(response.payload);
@@ -79,26 +79,26 @@ function renderSection(section) {
   const actions = Array.isArray(section?.actions) ? section.actions : [];
   const tone = ["good", "warn", "neutral", "private"].includes(section?.tone) ? section.tone : "neutral";
   return `
-    <section class="gittensory-overlay__panel gittensory-overlay__panel--${tone}">
-      <div class="gittensory-overlay__panel-head">
+    <section class="loopover-overlay__panel loopover-overlay__panel--${tone}">
+      <div class="loopover-overlay__panel-head">
         <strong>${escapeHtml(section?.label || "Panel")}</strong>
         <span>${escapeHtml(section?.badge || "live")}</span>
       </div>
       ${rows.length > 0 ? `<dl>${rows.map((row) => `<div><dt>${escapeHtml(row.label || "")}</dt><dd>${escapeHtml(row.value || "")}</dd></div>`).join("")}</dl>` : ""}
-      ${items.length > 0 ? `<ul class="gittensory-overlay__list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
-      ${actions.length > 0 ? `<ol class="gittensory-overlay__actions">${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ol>` : ""}
+      ${items.length > 0 ? `<ul class="loopover-overlay__list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}
+      ${actions.length > 0 ? `<ol class="loopover-overlay__actions">${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ol>` : ""}
     </section>
   `;
 }
 
 function renderLegacyPanels(payload) {
   const panels = Array.isArray(payload?.panels) ? payload.panels : [];
-  if (panels.length === 0) return `<div class="gittensory-overlay__empty">No cached private context is available for this pull request.</div>`;
+  if (panels.length === 0) return `<div class="loopover-overlay__empty">No cached private context is available for this pull request.</div>`;
   return panels
     .map(
       (panel) => `
-        <section class="gittensory-overlay__panel gittensory-overlay__panel--neutral">
-          <div class="gittensory-overlay__panel-head">
+        <section class="loopover-overlay__panel loopover-overlay__panel--neutral">
+          <div class="loopover-overlay__panel-head">
             <strong>${escapeHtml(panel.label || "Panel")}</strong>
             <span>${escapeHtml(panel.badge || "live")}</span>
           </div>
@@ -134,15 +134,15 @@ function renderActions(body, actions) {
   const list = Array.isArray(actions) ? actions : [];
   if (list.length === 0) return;
   const container = document.createElement("section");
-  container.className = "gittensory-overlay__panel gittensory-overlay__panel--private";
+  container.className = "loopover-overlay__panel loopover-overlay__panel--private";
   container.innerHTML = `
-    <div class="gittensory-overlay__panel-head">
+    <div class="loopover-overlay__panel-head">
       <strong>Actions</strong>
       <span>extension</span>
     </div>
-    <div class="gittensory-overlay__action-buttons"></div>
+    <div class="loopover-overlay__action-buttons"></div>
   `;
-  const actionsNode = container.querySelector(".gittensory-overlay__action-buttons");
+  const actionsNode = container.querySelector(".loopover-overlay__action-buttons");
   if (!actionsNode) return;
   for (const action of list) {
     if (action?.id === "copy_public_safe_packet" && typeof action?.markdown === "string") {

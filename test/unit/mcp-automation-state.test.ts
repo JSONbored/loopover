@@ -511,10 +511,10 @@ describe("MCP loopover_decide_pending_action (#784)", () => {
 
 describe("MCP loopover_get_agent_audit_feed (#784)", () => {
   async function seedAudit(env: Env) {
-    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });
     await recordAuditEvent(env, { eventType: "agent.pending_action.rejected", actor: "owner", targetKey: "owner/repo#8", outcome: "completed", detail: "rejected merge", createdAt: "2026-06-18T11:00:00.000Z" });
     await recordAuditEvent(env, { eventType: "github_app.pr_visibility_skipped", actor: "x", targetKey: "owner/repo#9", outcome: "completed", createdAt: "2026-06-18T12:00:00.000Z" });
-    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "loopover", targetKey: "other/repo#1", outcome: "completed", createdAt: "2026-06-18T13:00:00.000Z" });
   }
 
   it("surfaces this repo's agent action + decision events newest-first, excluding non-agent and other-repo events", async () => {
@@ -565,8 +565,8 @@ describe("MCP loopover_get_agent_audit_feed (#784)", () => {
   it("scrubs forbidden terms from the free-form detail and preserves a null detail", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
-    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "gittensory", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
-    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "gittensory", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "reward estimate leaked", createdAt: "2026-06-18T10:00:00.000Z" });
+    await recordAuditEvent(env, { eventType: "agent.action.label", actor: "loopover", targetKey: "owner/repo#8", outcome: "completed", createdAt: "2026-06-18T09:00:00.000Z" });
     const client = await connect(env);
     const result = await client.callTool({ name: "loopover_get_agent_audit_feed", arguments: { owner: "owner", repo: "repo" } });
     const data = result.structuredContent as { events: Array<{ pullNumber: number | null; detail: string | null }> };

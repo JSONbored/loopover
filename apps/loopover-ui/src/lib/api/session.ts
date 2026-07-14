@@ -45,7 +45,7 @@ type AuthState =
 
 type SessionResponse = (AppSession & { status: "authenticated" }) | { status: "signed_out" };
 
-const SESSION_CHANGED_EVENT = "gittensory.session.changed";
+const SESSION_CHANGED_EVENT = "loopover.session.changed";
 
 async function fetchBrowserSession(): Promise<AppSession | null> {
   const origin = getApiOrigin().replace(/\/$/, "");

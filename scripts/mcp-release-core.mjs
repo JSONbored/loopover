@@ -1,4 +1,4 @@
-export const MCP_RELEASE_DUE_MARKER = "<!-- gittensory:mcp-release-due -->";
+export const MCP_RELEASE_DUE_MARKER = "<!-- loopover:mcp-release-due -->";
 
 const DIRECT_MCP_PATHS = [
   "packages/loopover-mcp/",

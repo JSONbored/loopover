@@ -4006,7 +4006,7 @@ async function listRepoFullNamesForInstallation(env: Env, installationId: number
   if (rows.length === INSTALLATION_REPO_LIST_LIMIT) {
     await recordAuditEvent(env, {
       eventType: "agent.global_open_item_cap.repo_list_truncated",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `installation:${installationId}`,
       outcome: "error",
       detail: `installation has >= ${INSTALLATION_REPO_LIST_LIMIT} repos; the global contributor-cap check may undercount repos not included here`,
@@ -4055,7 +4055,7 @@ export async function listOpenItemsForAuthorAcrossInstall(env: Env, installation
   if (prRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT) {
     await recordAuditEvent(env, {
       eventType: "agent.global_open_item_cap.author_items_truncated",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${authorLogin}@installation:${installationId}`,
       outcome: "error",
       detail: `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open pull requests across the install; the global contributor-cap check may undercount`,
@@ -4069,7 +4069,7 @@ export async function listOpenItemsForAuthorAcrossInstall(env: Env, installation
   if (issueRows.length === AUTHOR_OPEN_ITEM_LIST_LIMIT) {
     await recordAuditEvent(env, {
       eventType: "agent.global_open_item_cap.author_items_truncated",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `${authorLogin}@installation:${installationId}`,
       outcome: "error",
       detail: `author has >= ${AUTHOR_OPEN_ITEM_LIST_LIMIT} open issues across the install; the global contributor-cap check may undercount`,
@@ -6743,7 +6743,7 @@ async function hashProductUsageIdentifier(env: Env, kind: "actor" | "session", v
   if (!normalized) return null;
   const salt = env.PRODUCT_USAGE_HASH_SALT;
   if (!salt) return null;
-  return sha256Hex(`gittensory:product-usage:v1:${kind}:${salt}:${normalized}`);
+  return sha256Hex(`loopover:product-usage:v1:${kind}:${salt}:${normalized}`);
 }
 
 function boundedProductUsageField(value: unknown, maxLength: number): string | null {

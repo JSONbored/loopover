@@ -78,7 +78,7 @@ describe("MCP release changelog detection", () => {
 
     expect(report).toMatchObject({ due: true, proposedVersion: "0.4.0", releaseType: "minor" });
     expect(issue.title).toBe("MCP release due: 0.4.0");
-    expect(issue.body).toContain("<!-- gittensory:mcp-release-due -->");
+    expect(issue.body).toContain("<!-- loopover:mcp-release-due -->");
     expect(issue.body).toContain("- [ ] Run `npm run test:release:mcp`");
     expect(issue.body).toContain("- [ ] Tag `mcp-v0.4.0`");
   });
@@ -103,7 +103,7 @@ describe("MCP release changelog detection", () => {
     expect(
       isReleaseWatchIssue({
         title: "MCP release due: 0.4.0",
-        body: "<!-- gittensory:mcp-release-due -->",
+        body: "<!-- loopover:mcp-release-due -->",
         user: { login: "github-actions[bot]" },
       }),
     ).toBe(true);
@@ -111,7 +111,7 @@ describe("MCP release changelog detection", () => {
     expect(
       isReleaseWatchIssue({
         title: "MCP release due: 0.4.0",
-        body: "<!-- gittensory:mcp-release-due -->",
+        body: "<!-- loopover:mcp-release-due -->",
         user: { login: "public-contributor" },
       }),
     ).toBe(false);

@@ -56,12 +56,12 @@ describe("buildAgentActionAudit", () => {
       outcome: "completed",
       repoFullName: "owner/repo",
       targetKey: "owner/repo#7",
-      actor: "gittensory",
+      actor: "loopover",
       reason: "merge-readiness met",
     });
     expect(audit).toMatchObject({
       eventType: "agent.action.merge",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: "owner/repo#7",
       outcome: "completed",
       detail: "merge-readiness met",

@@ -28,7 +28,7 @@ const closeables: Array<{ close(): void }> = [];
 /** A stubbed successful prepareAttemptWorktree, for tests exercising code paths past worktree preparation
  *  that don't themselves care about real git plumbing (covered separately by miner-attempt-worktree.test.ts). */
 function fakeWorktreeResult(): Extract<PrepareAttemptWorktreeResult, { ok: true }> {
-  return { ok: true, worktreePath: "/fake/repo/.gittensory-worktrees/fake", repoPath: "/fake/repo", branchName: "gittensory/attempt/fake" };
+  return { ok: true, worktreePath: "/fake/repo/.loopover-worktrees/fake", repoPath: "/fake/repo", branchName: "loopover/attempt/fake" };
 }
 
 function fakeReviewContext() {
@@ -46,7 +46,7 @@ function fakeCodingTaskSpec() {
     ready: true as const,
     verdict: "go" as const,
     feasibility: { verdict: "go" as const, avoidReasons: [], raiseReasons: [], summary: "ready" },
-    acceptanceCriteriaPath: "/fake/repo/.gittensory-worktrees/fake/acceptance-criteria.json",
+    acceptanceCriteriaPath: "/fake/repo/.loopover-worktrees/fake/acceptance-criteria.json",
     instructions: "Resolve issue #7",
     title: "Uploads should retry on 5xx",
     body: "Uploads fail silently.",
@@ -1294,7 +1294,7 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
       ...readyPipelineOptions({
         resolveMinerGoalSpec: undefined, // use the real, non-injected resolver against the real repoRoot below
         checkMinerKillSwitch: undefined, // use the real resolver too, so it actually reacts to repoPaused
-        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "gittensory/attempt/real" }),
+        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "loopover/attempt/real" }),
         runMinerAttempt: runMinerAttemptSpy,
       }),
     });
@@ -1321,7 +1321,7 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
       ...readyPipelineOptions({
         resolveMinerGoalSpec: undefined,
         checkMinerKillSwitch: undefined,
-        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "gittensory/attempt/real" }),
+        prepareAttemptWorktree: async () => ({ ok: true, worktreePath: repoRoot, repoPath: repoRoot, branchName: "loopover/attempt/real" }),
         runMinerAttempt: runMinerAttemptSpy,
       }),
     });

@@ -283,7 +283,7 @@ function operatorAgentConfig(env: Env): { slug: string; secrets: Record<string, 
   const slug =
     typeof env.GITHUB_APP_SLUG === "string" && env.GITHUB_APP_SLUG.trim()
       ? env.GITHUB_APP_SLUG.trim()
-      : "gittensory";
+      : "loopover";
   return { slug, secrets: {} };
 }
 

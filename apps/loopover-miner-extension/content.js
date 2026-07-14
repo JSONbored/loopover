@@ -14,12 +14,12 @@ function matchGitHubIssueTarget(pathname) {
 }
 
 function mountOpportunityBadge(target) {
-  if (document.querySelector("[data-gittensory-miner-opportunity-badge]")) return;
+  if (document.querySelector("[data-loopover-miner-opportunity-badge]")) return;
   const host = findIssueSidebar();
   const container = document.createElement("aside");
   container.className = host
-    ? "gittensory-miner-opportunity-badge"
-    : "gittensory-miner-opportunity-badge gittensory-miner-opportunity-badge--floating";
+    ? "loopover-miner-opportunity-badge"
+    : "loopover-miner-opportunity-badge loopover-miner-opportunity-badge--floating";
   container.dataset.loopoverMinerOpportunityBadge = "true";
   container.hidden = true;
   if (host) {
@@ -41,7 +41,7 @@ function findIssueSidebar() {
 
 async function loadOpportunityBadge(container, target) {
   const response = await chrome.runtime.sendMessage({
-    type: "gittensory-miner:issue-context",
+    type: "loopover-miner:issue-context",
     owner: target.owner,
     repo: target.repo,
     issueNumber: target.issueNumber,

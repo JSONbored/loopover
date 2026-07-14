@@ -109,7 +109,7 @@ export interface StatsEvalDeps {
 }
 
 const EMPTY_EVAL: GateEvalReport = { rows: [], hasSignal: false };
-const emptyParity = (authoritative = "reviewbot", shadow = "gittensory"): GateParityReport => ({ authoritative, shadow, rows: [], hasSignal: false });
+const emptyParity = (authoritative = "reviewbot", shadow = "loopover"): GateParityReport => ({ authoritative, shadow, rows: [], hasSignal: false });
 
 /** Default deps: no-signal eval, no recommendations, empty parity. Keeps the payload shape with no engine. */
 export const defaultStatsEvalDeps: StatsEvalDeps = {

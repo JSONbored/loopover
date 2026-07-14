@@ -12,7 +12,7 @@ function codingTaskSpec(overrides: Record<string, unknown> = {}) {
     ready: true as const,
     verdict: "go" as const,
     feasibility: { verdict: "go" as const, avoidReasons: [], raiseReasons: [], summary: "ready" },
-    acceptanceCriteriaPath: "/fake/repo/.gittensory-worktrees/fake/acceptance-criteria.json",
+    acceptanceCriteriaPath: "/fake/repo/.loopover-worktrees/fake/acceptance-criteria.json",
     instructions: "Resolve issue #7",
     title: "Uploads should retry on 5xx",
     body: "Uploads fail silently.",
@@ -114,7 +114,7 @@ describe("buildAttemptLoopInput (#5132)", () => {
     const loopInput = buildAttemptLoopInput({
       codingTaskSpec: codingTaskSpec(),
       reviewContext: reviewContext(),
-      worktreePath: "/fake/repo/.gittensory-worktrees/fake",
+      worktreePath: "/fake/repo/.loopover-worktrees/fake",
       attemptId: "acme_widgets-7-12345",
       mode: "dry_run",
       repoFullName: "acme/widgets",
@@ -125,8 +125,8 @@ describe("buildAttemptLoopInput (#5132)", () => {
 
     expect(loopInput).toEqual({
       attemptId: "acme_widgets-7-12345",
-      workingDirectory: "/fake/repo/.gittensory-worktrees/fake",
-      acceptanceCriteriaPath: "/fake/repo/.gittensory-worktrees/fake/acceptance-criteria.json",
+      workingDirectory: "/fake/repo/.loopover-worktrees/fake",
+      acceptanceCriteriaPath: "/fake/repo/.loopover-worktrees/fake/acceptance-criteria.json",
       instructions: "Resolve issue #7",
       mode: "dry_run",
       maxIterations: DEFAULT_AMS_POLICY_SPEC.maxIterations,
@@ -206,9 +206,9 @@ describe("buildAttemptLoopInput (#5132)", () => {
       minerLogin: "alice",
       rejectionSignaled: false,
       amsPolicySpec: DEFAULT_AMS_POLICY_SPEC,
-      branchRef: "gittensory/attempt/a1",
+      branchRef: "loopover/attempt/a1",
     });
-    expect(loopInput.branchRef).toBe("gittensory/attempt/a1");
+    expect(loopInput.branchRef).toBe("loopover/attempt/a1");
   });
 
   it("omits body/labels/linkedIssues when the coding-task-spec itself omits them", () => {

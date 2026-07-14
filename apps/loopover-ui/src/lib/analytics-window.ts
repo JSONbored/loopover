@@ -1,7 +1,7 @@
 export const ANALYTICS_WINDOW_OPTIONS = [7, 30, 90] as const;
 export type AnalyticsWindowDays = (typeof ANALYTICS_WINDOW_OPTIONS)[number];
 export const DEFAULT_ANALYTICS_WINDOW_DAYS: AnalyticsWindowDays = 7;
-export const ANALYTICS_WINDOW_STORAGE_KEY = "gittensory.analytics.windowDays";
+export const ANALYTICS_WINDOW_STORAGE_KEY = "loopover.analytics.windowDays";
 
 export function parseAnalyticsWindowDays(value: unknown): AnalyticsWindowDays {
   const numeric = Number(value);

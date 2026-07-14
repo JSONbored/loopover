@@ -42,7 +42,7 @@ import { captureError } from "../selfhost/sentry";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
-const AGENT_ACTOR = "gittensory";
+const AGENT_ACTOR = "loopover";
 
 // Bound on audit_events.detail / the reason embedded in buildAgentActionAudit (#terminal-outcome-audit). A
 // heuristic close/hold reason is built by joining every blocker's title (agent-actions.ts), so an unbounded PR
@@ -520,7 +520,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
         // unaffected below.
         await recordAuditEvent(env, {
           eventType: "agent.action.merge_train_would_wait",
-          actor: "gittensory",
+          actor: "loopover",
           targetKey,
           outcome: "denied",
           detail: `merge train (audit mode): would wait for older mergeable sibling #${decision.blockingPr}`,

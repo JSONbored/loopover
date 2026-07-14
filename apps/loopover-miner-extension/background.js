@@ -4,9 +4,9 @@ import "./toolbar-badge.js";
 const badgeApi = globalThis.__loopoverMinerOpportunityBadge;
 const toolbarBadgeApi = globalThis.__loopoverMinerToolbarBadge;
 
-const PING_MESSAGE = "gittensory-miner:ping";
-const ISSUE_CONTEXT_MESSAGE = "gittensory-miner:issue-context";
-const SYNC_RANKED_CANDIDATES_MESSAGE = "gittensory-miner:sync-ranked-candidates";
+const PING_MESSAGE = "loopover-miner:ping";
+const ISSUE_CONTEXT_MESSAGE = "loopover-miner:issue-context";
+const SYNC_RANKED_CANDIDATES_MESSAGE = "loopover-miner:sync-ranked-candidates";
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || typeof message.type !== "string") return false;
@@ -85,7 +85,7 @@ async function loadRankedCandidates() {
 }
 
 const DEFAULT_MINER_UI_URL = "http://localhost:5174";
-const SYNC_ALARM_NAME = "gittensory-miner:sync-ranked-candidates";
+const SYNC_ALARM_NAME = "loopover-miner:sync-ranked-candidates";
 const SYNC_ALARM_PERIOD_MINUTES = 10;
 
 async function loadMinerUiUrl() {
@@ -158,7 +158,7 @@ async function refreshToolbarBadge() {
     await chrome.action.setBadgeText({ text: badge.text });
     await chrome.action.setBadgeBackgroundColor({ color: badge.backgroundColor });
   } catch (error) {
-    console.warn("gittensory-miner: failed to refresh toolbar badge", error);
+    console.warn("loopover-miner: failed to refresh toolbar badge", error);
   }
 }
 

@@ -39,7 +39,7 @@ export async function processDlqBatch(batch: MessageBatch<JobMessage>, env: Env,
     // Best-effort audit record — never block the ack on a write failure.
     await recordAuditEvent(env, {
       eventType: "github_app.dlq_dead_lettered",
-      actor: "gittensory",
+      actor: "loopover",
       targetKey: `dlq:${jobType}:${message.id}`,
       outcome: "error",
       detail: `Job of type '${jobType}' exhausted all retries and was dead-lettered.`,

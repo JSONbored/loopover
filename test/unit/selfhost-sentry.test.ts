@@ -105,7 +105,7 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
     const ev = scrubbedEvent({
       request: { headers: { authorization: "Bearer abc", "x-trace": "ok" } },
       contexts: {
-        gittensory: {
+        loopover: {
           jobId: "j1",
           apiKey: "shh",
           nested: { secretToken: "deep" },
@@ -115,9 +115,9 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
     }) as any;
     expect(ev.request.headers.authorization).toBe("[redacted]");
     expect(ev.request.headers["x-trace"]).toBe("ok");
-    expect(ev.contexts.gittensory.apiKey).toBe("[redacted]");
-    expect(ev.contexts.gittensory.jobId).toBe("j1");
-    expect(ev.contexts.gittensory.nested.secretToken).toBe("[redacted]");
+    expect(ev.contexts.loopover.apiKey).toBe("[redacted]");
+    expect(ev.contexts.loopover.jobId).toBe("j1");
+    expect(ev.contexts.loopover.nested.secretToken).toBe("[redacted]");
     expect(ev.extra.note).toBe("fine");
   });
 
@@ -153,7 +153,7 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
         cookies: { session: "abc" },
       },
       contexts: {
-        gittensory: {
+        loopover: {
           safeReason: "provider unavailable",
           pullRequestTitle: "PR title with private rubric",
           reviewText: "raw review body",
@@ -180,10 +180,10 @@ describe("scrubEvent — redact secrets before an event leaves the box", () => {
     expect(ev.request.headers["x-trace"]).toBe("ok");
     expect(ev.contexts.mystery).toBeUndefined();
     expect(ev.contexts.runtime.name).toBe("node");
-    expect(ev.contexts.gittensory.pullRequestTitle).toBe("[redacted]");
-    expect(ev.contexts.gittensory.reviewText).toBe("[redacted]");
-    expect(ev.contexts.gittensory.repoConfig).toBe("[redacted]");
-    expect(ev.contexts.gittensory.nested.apiKey).toBe("[redacted]");
+    expect(ev.contexts.loopover.pullRequestTitle).toBe("[redacted]");
+    expect(ev.contexts.loopover.reviewText).toBe("[redacted]");
+    expect(ev.contexts.loopover.repoConfig).toBe("[redacted]");
+    expect(ev.contexts.loopover.nested.apiKey).toBe("[redacted]");
     expect(ev.extra.diff).toBe("[redacted]");
     expect(ev.extra.note).not.toContain(fakeToken);
     expect(ev.extra.note).not.toMatch(/wallet|raw score|\/home\/alice/i);
@@ -525,7 +525,7 @@ describe("enabled when SENTRY_DSN is set", () => {
   it("captureError sends with context, tags operational fields, and without context skips setContext", async () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureError(new Error("boom"), { kind: "job_dead" });
-    expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("loopover", {
       kind: "job_dead",
     });
     expect(mocks.scope.setTag).toHaveBeenCalledWith("kind", "job_dead");
@@ -536,7 +536,7 @@ describe("enabled when SENTRY_DSN is set", () => {
       kind: "job_dead",
       installation_id: "not-an-installation",
     });
-    expect(mocks.scope.setContext).toHaveBeenCalledWith("gittensory", {
+    expect(mocks.scope.setContext).toHaveBeenCalledWith("loopover", {
       kind: "job_dead",
     });
     expect(mocks.scope.setTag).toHaveBeenCalledWith("kind", "job_dead");
@@ -583,7 +583,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     captureError(new Error("self-host queue processing lease expired"), { kind: "job_dead" }, "processing_timeout");
     expect(lastCapturedError().name).toBe("processing_timeout");
     expect(lastCapturedError().message).toBe("self-host queue processing lease expired");
-    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-error", "processing_timeout"]);
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["loopover-error", "processing_timeout"]);
   });
 
   it("captureError without an eventName leaves a caught exception's own name untouched, and never overrides Sentry's default grouping", async () => {
@@ -603,7 +603,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     await initSentry({ SENTRY_DSN: "d" } as unknown as NodeJS.ProcessEnv);
     captureReviewFailure(new Error("AI review inconclusive — no usable verdict for the PR head"), { repo: "o/r" }, "ai_review_inconclusive");
     expect(lastCapturedError().name).toBe("ai_review_inconclusive");
-    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-review-failure", "ai_review_inconclusive"]);
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["loopover-review-failure", "ai_review_inconclusive"]);
   });
 
   it("captureReviewFailure without an eventName never overrides Sentry's default grouping", async () => {
@@ -683,16 +683,16 @@ describe("enabled when SENTRY_DSN is set", () => {
 
   it("builds stable environment-aware monitor slugs", () => {
     expect(resolveSentryMonitorSlug("scheduled-loop", "Prod East/1")).toBe(
-      "gittensory-selfhost-prod-east-1-scheduled-loop",
+      "loopover-selfhost-prod-east-1-scheduled-loop",
     );
     expect(resolveSentryMonitorSlug("orb-export", " !!! ")).toBe(
-      "gittensory-selfhost-production-orb-export",
+      "loopover-selfhost-production-orb-export",
     );
     expect(resolveSentryMonitorSlug("orb-relay-drain", "x".repeat(60))).toBe(
-      `gittensory-selfhost-${"x".repeat(48)}-orb-relay-drain`,
+      `loopover-selfhost-${"x".repeat(48)}-orb-relay-drain`,
     );
     expect(resolveSentryMonitorSlug("queue-dead-letter-revive", "prod")).toBe(
-      "gittensory-selfhost-prod-queue-dead-letter-revive",
+      "loopover-selfhost-prod-queue-dead-letter-revive",
     );
   });
 
@@ -712,7 +712,7 @@ describe("enabled when SENTRY_DSN is set", () => {
 
     expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
       1,
-      { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+      { monitorSlug: "loopover-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
       expect.objectContaining({
         schedule: { type: "interval", value: 30, unit: "minute" },
         checkinMargin: 10,
@@ -724,7 +724,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive",
+        monitorSlug: "loopover-selfhost-prod-queue-dead-letter-revive",
         status: "ok",
         checkInId: "check-in-id",
         duration: expect.any(Number),
@@ -745,7 +745,7 @@ describe("enabled when SENTRY_DSN is set", () => {
 
       expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
         1,
-        { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+        { monitorSlug: "loopover-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
         expect.objectContaining({
           schedule: { type: "interval", value: 90, unit: "minute" },
           checkinMargin: 30,
@@ -768,7 +768,7 @@ describe("enabled when SENTRY_DSN is set", () => {
 
       expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
         1,
-        { monitorSlug: "gittensory-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
+        { monitorSlug: "loopover-selfhost-prod-queue-dead-letter-revive", status: "in_progress" },
         expect.objectContaining({
           schedule: { type: "interval", value: 1, unit: "minute" },
           checkinMargin: 5,
@@ -795,7 +795,7 @@ describe("enabled when SENTRY_DSN is set", () => {
 
     expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
       1,
-      { monitorSlug: "gittensory-selfhost-self-host-scheduled-loop", status: "in_progress" },
+      { monitorSlug: "loopover-selfhost-self-host-scheduled-loop", status: "in_progress" },
       expect.objectContaining({
         schedule: { type: "interval", value: 2, unit: "minute" },
         checkinMargin: 3,
@@ -807,7 +807,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        monitorSlug: "gittensory-selfhost-self-host-scheduled-loop",
+        monitorSlug: "loopover-selfhost-self-host-scheduled-loop",
         status: "ok",
         checkInId: "check-in-id",
         duration: expect.any(Number),
@@ -848,7 +848,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        monitorSlug: "gittensory-selfhost-prod-orb-export",
+        monitorSlug: "loopover-selfhost-prod-orb-export",
         status: "error",
         checkInId: "check-in-id",
         duration: expect.any(Number),
@@ -857,7 +857,7 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.scope.setLevel).toHaveBeenCalledWith("error");
     expect(mocks.scope.setTag).toHaveBeenCalledWith(
       "monitor",
-      "gittensory-selfhost-prod-orb-export",
+      "loopover-selfhost-prod-orb-export",
     );
     expect(mocks.scope.setTag).toHaveBeenCalledWith("jobType", "orb-export");
     expect(mocks.scope.setTag).toHaveBeenCalledWith(
@@ -866,12 +866,12 @@ describe("enabled when SENTRY_DSN is set", () => {
     );
     expect(mocks.scope.setTag).toHaveBeenCalledWith("subsystem", "scheduled");
     expect(mocks.scope.setFingerprint).toHaveBeenCalledWith([
-      "gittensory-sentry-monitor",
+      "loopover-sentry-monitor",
       "orb-export",
     ]);
     expect(mocks.scope.setContext).toHaveBeenCalledWith("sentry_monitor", {
       monitor: "orb-export",
-      monitorSlug: "gittensory-selfhost-prod-orb-export",
+      monitorSlug: "loopover-selfhost-prod-orb-export",
       jobType: "orb-export",
       repo: "JSONbored/gittensory",
       exported: 7,
@@ -894,7 +894,7 @@ describe("enabled when SENTRY_DSN is set", () => {
 
     expect(mocks.scope.setContext).toHaveBeenCalledWith("sentry_monitor", {
       monitor: "orb-relay-drain",
-      monitorSlug: "gittensory-selfhost-production-orb-relay-drain",
+      monitorSlug: "loopover-selfhost-production-orb-relay-drain",
     });
     expect((mocks.captureException.mock.calls.at(-1)?.[0] as Error).message).toBe(
       "relay failed",
@@ -978,7 +978,7 @@ describe("forwardStructuredLogToSentry — central console.log → Sentry error 
       installationId: 143010787,
     }));
     // Recurrences of one failure group into a single issue by event.
-    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["gittensory-log", "orb_broker_unavailable"]);
+    expect(mocks.scope.setFingerprint).toHaveBeenCalledWith(["loopover-log", "orb_broker_unavailable"]);
   });
 
   it("strips the synthetic wrapper stack so the issue culprit is not forwardStructuredLogToSentry", async () => {

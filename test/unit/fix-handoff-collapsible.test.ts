@@ -36,7 +36,7 @@ describe("buildFixHandoffCollapsible (#1962)", () => {
     const c = buildFixHandoffCollapsible(blocks);
     expect(c).not.toBeNull();
     expect(c?.title).toBe("Fix handoff");
-    expect(c?.body).toContain("<!-- gittensory:fix-handoff -->");
+    expect(c?.body).toContain("<!-- loopover:fix-handoff -->");
     expect(c?.body).toContain("`src/a.ts:10`");
     expect(c?.body).toContain("Possible null dereference on the fetched record.");
     expect(c?.body).toContain("Suggested change:");

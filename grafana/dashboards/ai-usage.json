@@ -15,7 +15,7 @@
         "label": "Provider",
         "type": "query",
         "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
-        "query": { "queryType": "table", "queryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider", "rawQueryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider" },
+        "query": { "refId": "A", "queryType": "table", "queryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider", "rawQueryText": "SELECT DISTINCT provider FROM ai_usage_events WHERE provider IS NOT NULL ORDER BY provider" },
         "includeAll": true,
         "allValue": "__ALL__",
         "multi": false,
@@ -28,7 +28,7 @@
         "label": "Feature",
         "type": "query",
         "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
-        "query": { "queryType": "table", "queryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature", "rawQueryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature" },
+        "query": { "refId": "A", "queryType": "table", "queryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature", "rawQueryText": "SELECT DISTINCT feature FROM ai_usage_events ORDER BY feature" },
         "includeAll": true,
         "allValue": "__ALL__",
         "multi": false,
@@ -42,6 +42,7 @@
         "type": "query",
         "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "query": {
+          "refId": "A",
           "queryType": "table",
           "queryText": "SELECT DISTINCT model FROM ai_usage_events WHERE (${provider:sqlstring} = '__ALL__' OR provider = ${provider:sqlstring}) ORDER BY model",
           "rawQueryText": "SELECT DISTINCT model FROM ai_usage_events WHERE (${provider:sqlstring} = '__ALL__' OR provider = ${provider:sqlstring}) ORDER BY model"

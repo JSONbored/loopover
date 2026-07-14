@@ -12,13 +12,23 @@ import { describe, expect, it } from "vitest";
 // resolved to nothing -- cascading into "No data"/zeroed panels wherever a panel's WHERE clause referenced
 // one of those variables. This test scans every dashboard file, not just the ones fixed today, so a future
 // dashboard can never reintroduce this by copying the variable shape without the fix.
+//
+// SECOND regression guard (same symptom, different field, found live 2026-07-14 after the fix above had
+// already shipped): even with queryText present and matching rawQueryText, every $variable dropdown STILL
+// resolved to nothing -- confirmed empirically via a live Grafana instance's own error log
+// ("Could not unmarshal query" / "cannot unmarshal object into Go struct field queryModel.queryText of type
+// string") and fixed by adding `refId` to the variable's `query` object, matching the shape every WORKING
+// panel target already uses (`{ refId, queryType, queryText, rawQueryText }`). Without `refId`, the plugin's
+// backend can't deserialize the query into its DataQuery model at all -- queryText being present didn't
+// matter, because the object never got that far. Confirmed the fix via a direct `/api/ds/query` POST with
+// and without `refId` on the same query.
 const dashboardsDir = join(process.cwd(), "grafana/dashboards");
 
 type TemplateVar = {
   name: string;
   type: string;
   datasource?: { type?: string };
-  query?: { queryText?: string; rawQueryText?: string } | string;
+  query?: { refId?: string; queryText?: string; rawQueryText?: string } | string;
 };
 
 function readDashboardFiles(): Array<{ file: string; vars: TemplateVar[] }> {
@@ -51,6 +61,24 @@ describe("Grafana dashboards: every query-type template variable actually execut
           violations.push(`${file}: $${v.name} is missing "queryText" in its query object (rawQueryText alone silently returns zero rows)`);
         } else if (queryText !== rawQueryText) {
           violations.push(`${file}: $${v.name}'s queryText and rawQueryText have diverged ("${queryText}" vs "${rawQueryText}")`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("every SQL-datasource query variable's `query` object carries refId, matching a working panel target's shape", () => {
+    const dashboards = readDashboardFiles();
+    expect(dashboards.length).toBeGreaterThan(3); // sanity: the scan found real dashboard files
+
+    const violations: string[] = [];
+    for (const { file, vars } of dashboards) {
+      for (const v of vars) {
+        if (v.type !== "query") continue;
+        if (typeof v.query !== "object" || v.query === null) continue;
+        if (v.datasource?.type !== "frser-sqlite-datasource") continue;
+        if (!v.query.refId) {
+          violations.push(`${file}: $${v.name} is missing "refId" in its query object (the plugin can't deserialize the query at all without it, regardless of queryText)`);
         }
       }
     }

@@ -17,6 +17,7 @@
         "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
         "description": "Dynamic, never hardcoded: built from the repositories tracked in this self-hoster's own reporting DB. Each option is an explicit repo:<owner>/<repo> GitHub search qualifier; the dashboard deliberately does not synthesize an org-wide \"All repos\" option because the GitHub datasource token may be able to read private repositories that are not tracked locally.",
         "query": {
+          "refId": "A",
           "queryType": "table",
           "queryText": "SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)",
           "rawQueryText": "SELECT 1 AS ord, repo AS \"__text\", 'repo:' || repo AS \"__value\" FROM (SELECT DISTINCT repo FROM review_targets ORDER BY repo)"

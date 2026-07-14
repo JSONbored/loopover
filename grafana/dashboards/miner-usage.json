@@ -35,6 +35,7 @@
           "uid": "ams-attempt-log"
         },
         "query": {
+          "refId": "A",
           "queryType": "table",
           "queryText": "SELECT DISTINCT provider FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND provider IS NOT NULL ORDER BY provider",
           "rawQueryText": "SELECT DISTINCT provider FROM attempt_log_events WHERE event_type = 'attempt_outcome_summary' AND provider IS NOT NULL ORDER BY provider"

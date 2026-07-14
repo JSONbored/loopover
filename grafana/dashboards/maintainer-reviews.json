@@ -16,7 +16,7 @@
         "label": "Repo",
         "type": "query",
         "datasource": { "type": "frser-sqlite-datasource", "uid": "loopover-db" },
-        "query": { "queryType": "table", "queryText": "SELECT DISTINCT repo FROM review_targets ORDER BY repo", "rawQueryText": "SELECT DISTINCT repo FROM review_targets ORDER BY repo" },
+        "query": { "refId": "A", "queryType": "table", "queryText": "SELECT DISTINCT repo FROM review_targets ORDER BY repo", "rawQueryText": "SELECT DISTINCT repo FROM review_targets ORDER BY repo" },
         "includeAll": true,
         "allValue": "__ALL__",
         "multi": false,

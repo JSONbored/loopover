@@ -186,10 +186,10 @@ export async function loadExtensionModules(options: ChromeMockOptions = {}) {
 
   return {
     ...harness,
-    opportunityExports: globalThis.__gittensoryMinerOpportunityBadgeTestExports as OpportunityBadgeExports,
-    toolbarApi: globalThis.__gittensoryMinerToolbarBadge as {
+    opportunityExports: globalThis.__loopoverMinerOpportunityBadgeTestExports as OpportunityBadgeExports,
+    toolbarApi: globalThis.__loopoverMinerToolbarBadge as {
       computeToolbarBadge: (rankedCandidates: unknown) => { text: string; backgroundColor: string };
     },
-    backgroundInternals: globalThis.__gittensoryMinerBackgroundInternals as BackgroundInternals,
+    backgroundInternals: globalThis.__loopoverMinerBackgroundInternals as BackgroundInternals,
   };
 }

@@ -108,8 +108,8 @@ const opportunityBadgeApi = {
   renderOpportunityBadgeMarkup,
 };
 
-globalThis.__gittensoryMinerOpportunityBadge = opportunityBadgeApi;
+globalThis.__loopoverMinerOpportunityBadge = opportunityBadgeApi;
 
 if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
-  globalThis.__gittensoryMinerOpportunityBadgeTestExports = opportunityBadgeApi;
+  globalThis.__loopoverMinerOpportunityBadgeTestExports = opportunityBadgeApi;
 }

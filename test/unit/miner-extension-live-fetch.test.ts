@@ -80,7 +80,7 @@ function loadBackgroundWithFakeChrome({
   const vmContext = createContext(context);
   new Script(backgroundScriptForVm()).runInContext(vmContext);
 
-  const internals = vmContext.__gittensoryMinerBackgroundInternals as {
+  const internals = vmContext.__loopoverMinerBackgroundInternals as {
     SYNC_RANKED_CANDIDATES_MESSAGE: string;
     DEFAULT_MINER_UI_URL: string;
     loadMinerUiUrl: () => Promise<string>;

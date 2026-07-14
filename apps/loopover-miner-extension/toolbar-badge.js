@@ -32,9 +32,9 @@ export function computeToolbarBadge(rankedCandidates) {
 }
 
 // Expose on a global too — the background service worker reads this the same way it reads
-// `__gittensoryMinerOpportunityBadge`, so the extension's VM-based test harness (which cannot evaluate ESM
+// `__loopoverMinerOpportunityBadge`, so the extension's VM-based test harness (which cannot evaluate ESM
 // `import` bindings) can drive it without a module loader.
-globalThis.__gittensoryMinerToolbarBadge = {
+globalThis.__loopoverMinerToolbarBadge = {
   computeToolbarBadge,
   TOOLBAR_BADGE_HAS_DATA_COLOR,
   TOOLBAR_BADGE_EMPTY_COLOR,

@@ -122,7 +122,7 @@ function loadBackground(
   new Script(opportunityBadgeScript).runInContext(vmContext);
   new Script(toolbarBadgeScript).runInContext(vmContext);
   new Script(backgroundScript).runInContext(vmContext);
-  const internals = vmContext.__gittensoryMinerBackgroundInternals as {
+  const internals = vmContext.__loopoverMinerBackgroundInternals as {
     refreshToolbarBadge: () => Promise<void>;
   };
   return {

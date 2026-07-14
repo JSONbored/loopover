@@ -231,7 +231,7 @@ describe("miner extension opportunity badge", () => {
     new Script(optionsScript).runInContext(vmContext);
     await flushPromises();
 
-    const internals = vmContext.__gittensoryMinerOptionsInternals as { MAX_RANKED_CANDIDATES_JSON_BYTES: number };
+    const internals = vmContext.__loopoverMinerOptionsInternals as { MAX_RANKED_CANDIDATES_JSON_BYTES: number };
     elements["#rankedCandidatesJson"].value = "x".repeat(internals.MAX_RANKED_CANDIDATES_JSON_BYTES + 1);
     await elements["#settings"].dispatchSubmit();
 
@@ -487,7 +487,7 @@ function loadBadgeInternals() {
   context.globalThis = context;
   const vmContext = createContext(context);
   new Script(badgeScript).runInContext(vmContext);
-  return vmContext.__gittensoryMinerOpportunityBadgeTestExports as {
+  return vmContext.__loopoverMinerOpportunityBadgeTestExports as {
     lookupRankedOpportunity: (ranked: unknown[], repoFullName: string, issueNumber: number) => Record<string, unknown> | null;
     formatOpportunityBadge: (entry: Record<string, unknown>) => { tier: string; score: string; why: string };
     formatLastSyncedLabel: (savedAt: unknown, nowMs: number) => string | null;
@@ -502,7 +502,7 @@ function loadContentInternals() {
   const badge = loadBadgeInternals();
   const context: Record<string, unknown> = {
     __LOOPOVER_MINER_EXTENSION_TEST__: true,
-    __gittensoryMinerOpportunityBadge: badge,
+    __loopoverMinerOpportunityBadge: badge,
     location: { pathname: "/JSONbored/gittensory/pull/146" },
     document: {
       querySelector: () => null,
@@ -514,7 +514,7 @@ function loadContentInternals() {
   context.globalThis = context;
   const vmContext = createContext(context);
   new Script(contentScript).runInContext(vmContext);
-  return vmContext.__gittensoryMinerContentInternals as {
+  return vmContext.__loopoverMinerContentInternals as {
     matchGitHubIssueTarget: (
       pathname: string,
     ) => { kind: "issue"; owner: string; repo: string; issueNumber: number } | null;
@@ -550,7 +550,7 @@ function loadBackgroundInternals({
   new Script(badgeScript).runInContext(vmContext);
   const backgroundForTest = backgroundScript.replace(/^import\s+["'][^"']+["'];\s*/gm, "");
   new Script(backgroundForTest).runInContext(vmContext);
-  return vmContext.__gittensoryMinerBackgroundInternals as {
+  return vmContext.__loopoverMinerBackgroundInternals as {
     loadIssueOpportunityContext: (message: {
       owner: string;
       repo: string;
@@ -579,7 +579,7 @@ function loadOptionsInternals() {
   context.globalThis = context;
   const vmContext = createContext(context);
   new Script(optionsScript).runInContext(vmContext);
-  return vmContext.__gittensoryMinerOptionsInternals as {
+  return vmContext.__loopoverMinerOptionsInternals as {
     parseWatchedRepos: (text: string) => string[];
     parseRankedCandidatesJson: (text: string) => unknown[];
     removeLegacyDiscoveryIndexUrl: () => Promise<void>;

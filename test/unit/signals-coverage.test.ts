@@ -930,11 +930,11 @@ describe("signal coverage edge cases", () => {
       expect(panel.rows).toHaveLength(7);
     });
 
-    it("renders the deterministic band as a static template label when only the deterministic tier is available", () => {
+    it("renders a concise value rating (#5101) and never dumps the finding sentences into the cell", () => {
       const comment = buildPublicPrIntelligenceComment({ ...improvementBaseArgs, improvementSignal: minorAssessment, env: {} });
-      expect(comment).toContain("| Improvement | ✅ Minor |");
-      expect(comment).toContain("Code changes are accompanied by test evidence.");
-      expect(comment).not.toContain("Value judgment");
+      expect(comment).toContain("| Improvement | ✅ Minor | value: minor |");
+      // #5101: the raw finding sentence is intentionally no longer rendered — the cell is a quick rating.
+      expect(comment).not.toContain("Code changes are accompanied by test evidence.");
       expect(comment).not.toContain("LLM value judgment");
 
       const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: minorAssessment });
@@ -943,12 +943,12 @@ describe("signal coverage edge cases", () => {
       expect(row.cells).toEqual([
         "Improvement",
         "✅ Minor",
-        "Code changes are accompanied by test evidence.",
+        "value: minor",
         "Advisory only — never blocks merge.",
       ]);
     });
 
-    it("renders the LLM tier's magnitude + rationale alongside the deterministic band when both tiers are available", () => {
+    it("tags the concise rating with the LLM's one-word magnitude (not the full rationale) when both tiers are available (#5101)", () => {
       const noneAssessment = { improvementScore: 0, band: "none" as const, findings: [] };
       const valueAssessment = { magnitude: "significant" as const, rationale: "This removes a whole class of retry bugs." };
       const comment = buildPublicPrIntelligenceComment({
@@ -959,21 +959,26 @@ describe("signal coverage edge cases", () => {
       });
       // The Result cell reflects the DETERMINISTIC band ("none"), never the LLM magnitude -- the two tiers are
       // deliberately never blended into one number/label (epic #4737 design constraint 1).
-      expect(comment).toContain("| Improvement | ℹ️ None detected |");
-      expect(comment).toContain("LLM value judgment: significant — This removes a whole class of retry bugs.");
+      expect(comment).toContain("| Improvement | ℹ️ None detected | value: none · LLM: significant |");
+      // #5101: only the one-word magnitude, never the full rationale paragraph, is surfaced.
+      expect(comment).toContain("· LLM: significant");
+      expect(comment).not.toContain("This removes a whole class of retry bugs.");
+      expect(comment).not.toContain("LLM value judgment");
 
       const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: noneAssessment, valueAssessment });
       const row = panel.rows.find((r) => r.key === "improvementSignal")!;
       expect(row.cells[1]).toBe("ℹ️ None detected");
-      expect(row.cells[2]).toBe("No structural-improvement signals were detected for this PR. LLM value judgment: significant — This removes a whole class of retry bugs.");
+      expect(row.cells[2]).toBe("value: none · LLM: significant");
     });
 
-    it("renders the insufficient-signal band and caps inline findings at 2 with a '+N more' summary beyond that", () => {
+    it("renders insufficient-signal as a concise value rating and drops all finding sentences, however many (#5101)", () => {
       const insufficientAssessment = { improvementScore: 0, band: "insufficient-signal" as const, findings: [] };
       const insufficientPanel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: insufficientAssessment });
       const insufficientRow = insufficientPanel.rows.find((r) => r.key === "improvementSignal")!;
       expect(insufficientRow.cells[1]).toBe("ℹ️ Insufficient signal");
-      expect(insufficientRow.cells[2]).toContain("Nothing measurable");
+      expect(insufficientRow.cells[2]).toBe("value: insufficient-signal");
+      // #5101: the old "Nothing measurable ..." paragraph is gone.
+      expect(insufficientRow.cells[2]).not.toContain("Nothing measurable");
 
       const manyFindingsAssessment = {
         improvementScore: 100,
@@ -987,12 +992,10 @@ describe("signal coverage edge cases", () => {
       };
       const manyFindingsPanel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: manyFindingsAssessment });
       const manyFindingsRow = manyFindingsPanel.rows.find((r) => r.key === "improvementSignal")!;
-      // Only the first two finding sentences render inline (none of the four fixtures above set `publicText`, so
-      // this also exercises the `finding.publicText ?? finding.detail` fallback); the remaining two are
-      // summarized by count rather than dumped inline (mirrors the "Nits"-style non-inline-dump convention).
-      expect(manyFindingsRow.cells[2]).toBe(
-        "2 function(s) have lower cyclomatic complexity after this pull request. 1 previously-duplicated code block(s) were consolidated or removed by this pull request. (+2 more.)",
-      );
+      // #5101: no matter how many findings, the cell is the concise value rating — finding sentences are never
+      // concatenated inline (the whole point of this issue's simplification).
+      expect(manyFindingsRow.cells[2]).toBe("value: significant");
+      expect(manyFindingsRow.cells[2]).not.toContain("cyclomatic complexity");
     });
 
     it("hides the row via review.fields.improvementSignal: false, exactly like its seven siblings", () => {
@@ -1037,9 +1040,10 @@ describe("signal coverage edge cases", () => {
       const panel = buildPublicPrPanelSignalRows({ ...improvementBaseArgs, improvementSignal: unsafeAssessment, valueAssessment: unsafeValueAssessment });
       const row = panel.rows.find((r) => r.key === "improvementSignal")!;
       expect(JSON.stringify(row)).not.toMatch(forbidden);
-      // With the one (unsafe) finding filtered out and the (unsafe) valueAssessment dropped, the deterministic
-      // "no signals" fallback text is what's left -- never an empty cell.
-      expect(row.cells[2]).toBe("No structural-improvement signals were detected for this PR.");
+      // #5101 makes this structurally leak-proof: the cell renders only closed-enum band/magnitude names, never
+      // the free-text finding detail or LLM rationale, so no sanitizer pass is even needed. The unsafe finding
+      // sentence and unsafe rationale simply never reach the cell.
+      expect(row.cells[2]).toBe("value: moderate · LLM: significant");
     });
   });
 
@@ -1087,21 +1091,22 @@ describe("signal coverage edge cases", () => {
     };
     const quadrantAssessment = { improvementScore: 10, band: "minor" as const, findings: [] };
 
-    it("prefixes the quadrant label onto the Improvement row's Evidence cell when slopBand is threaded alongside improvementSignal", () => {
+    it("uses the quadrant label as the Improvement row's Evidence rating when slopBand is threaded (#5101)", () => {
       const panel = buildPublicPrPanelSignalRows({ ...quadrantBaseArgs, improvementSignal: quadrantAssessment, slopBand: "low" });
       const row = panel.rows.find((r) => r.key === "improvementSignal")!;
-      expect(row.cells[2]).toBe("risk: low · value: minor — No structural-improvement signals were detected for this PR.");
+      // #5101: the quadrant IS the rating now — no trailing finding/rationale paragraph.
+      expect(row.cells[2]).toBe("risk: low · value: minor");
       // The Result cell (the deterministic band label) is untouched by the quadrant -- the two tiers never blend.
       expect(row.cells[1]).toBe("✅ Minor");
 
       const comment = buildPublicPrIntelligenceComment({ ...quadrantBaseArgs, improvementSignal: quadrantAssessment, slopBand: "low", env: {} });
-      expect(comment).toContain("risk: low · value: minor — No structural-improvement signals were detected for this PR.");
+      expect(comment).toContain("| Improvement | ✅ Minor | risk: low · value: minor |");
     });
 
-    it("leaves the Evidence cell exactly as #4744 shipped it when slopBand is omitted -- byte-identical for every caller that hasn't threaded it yet", () => {
+    it("falls back to the value band alone when slopBand is omitted -- never a fabricated risk reading (#5101)", () => {
       const panel = buildPublicPrPanelSignalRows({ ...quadrantBaseArgs, improvementSignal: quadrantAssessment });
       const row = panel.rows.find((r) => r.key === "improvementSignal")!;
-      expect(row.cells[2]).toBe("No structural-improvement signals were detected for this PR.");
+      expect(row.cells[2]).toBe("value: minor");
       expect(row.cells[2]).not.toContain("risk:");
     });
 

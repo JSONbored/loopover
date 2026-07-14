@@ -3016,7 +3016,7 @@ describe("queue processors", () => {
       // unified renderer's table only surfaces the first 3 of each row's 4 cells (Label/Result/Evidence, not
       // Action) — same as the adjacent "Gate result" row, which also never shows its own 4th cell here — so this
       // asserts against the 3 columns this renderer actually prints, not the row's full cells array.
-      expect(postedBody).toContain("| Improvement | ⚠️ ℹ️ None detected | No structural-improvement signals were detected for this PR. |");
+      expect(postedBody).toContain("| Improvement | ⚠️ ℹ️ None detected | value: none |");
       // Public-safe regardless: no internal trust/economics fields leak through this new row either.
       expect(postedBody).not.toMatch(/wallet|hotkey|coldkey|reward|trust score/i);
     } finally {
@@ -3191,11 +3191,10 @@ describe("queue processors", () => {
 
       expect(calls.comments).toBeGreaterThan(0);
       expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
-      // The quadrant prefix ("risk: low · value: none") threaded from the REAL slopBand computed this pass
-      // (missingTestEvidence only, slopRisk 15 -> band "low") ahead of the SAME evidence text #4744 already
-      // asserts verbatim -- proving processors.ts's new hoisted slopBand reaches the rendered comment, not
-      // just computed and discarded.
-      expect(postedBody).toContain("| Improvement | ⚠️ ℹ️ None detected | risk: low · value: none — No structural-improvement signals were detected for this PR. |");
+      // The quadrant rating ("risk: low · value: none") threaded from the REAL slopBand computed this pass
+      // (missingTestEvidence only, slopRisk 15 -> band "low") IS the concise Evidence cell (#5101) -- proving
+      // processors.ts's hoisted slopBand reaches the rendered comment, not just computed and discarded.
+      expect(postedBody).toContain("| Improvement | ⚠️ ℹ️ None detected | risk: low · value: none |");
       // Public-safe regardless: no internal trust/economics fields leak through the new quadrant clause either.
       expect(postedBody).not.toMatch(/wallet|hotkey|coldkey|reward|trust score/i);
     } finally {

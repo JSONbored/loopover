@@ -4735,22 +4735,6 @@ const IMPROVEMENT_BAND_LABELS: Record<ImprovementBand, string> = {
  *  (see the module comment above for why a full collapsible isn't wired up in this PR: at most one
  *  deterministic finding can fire today, since REES's complexity/duplication analyzers and a parsed Codecov
  *  number have no caller yet -- see `signals/improvement.ts`'s own header comment). */
-function improvementEvidenceText(
-  band: ImprovementBand,
-  safeFindings: SignalFinding[],
-  safeValueAssessment: { magnitude: ImprovementMagnitude; rationale: string } | undefined,
-): string {
-  const findingSentences = safeFindings.map((finding) => finding.publicText ?? finding.detail);
-  const deterministicPart =
-    band === "insufficient-signal"
-      ? "Nothing measurable for the structural-improvement analyzers on this PR (e.g. no code files changed)."
-      : findingSentences.length > 0
-        ? findingSentences.slice(0, 2).join(" ") + (findingSentences.length > 2 ? ` (+${findingSentences.length - 2} more.)` : "")
-        : "No structural-improvement signals were detected for this PR.";
-  const valuePart = safeValueAssessment ? ` LLM value judgment: ${safeValueAssessment.magnitude} — ${safeValueAssessment.rationale}` : "";
-  return `${deterministicPart}${valuePart}`;
-}
-
 /** The risk × value quadrant label (#4745): crosses the existing `SlopBand` (risk axis, `src/signals/slop.ts`)
  *  with the deterministic `ImprovementBand` (value axis, #4742) into one compact string, e.g.
  *  `"risk: low · value: moderate"` -- exactly the issue's own example wording. Both band types are closed
@@ -4789,22 +4773,23 @@ function buildImprovementSignalRow(
   slopBand?: SlopBand | undefined,
 ): PublicPrPanelSignalRow | null {
   if (!assessment) return null;
-  const safeFindings = assessment.findings.filter(
-    (finding) => !containsPrivatePublicTerm([finding.title, finding.detail, finding.publicText].filter(Boolean).join(" ")),
-  );
-  const safeValueAssessment = valueAssessment && !containsPrivatePublicTerm(valueAssessment.rationale) ? valueAssessment : undefined;
-  const evidence = improvementEvidenceText(assessment.band, safeFindings, safeValueAssessment);
-  // #4745: prefixes the risk × value quadrant onto the SAME Evidence cell instead of a new row/column --
-  // `assessment.band` is always defined here (the row already bailed out above when `assessment` is absent),
-  // so this only ever needs `slopBand` to produce the full quadrant; absent slopBand (slop wasn't computed
-  // this pass) leaves the evidence text exactly as it was before this PR, never a fabricated risk reading.
+  // #5101: the Evidence cell is a quick rating, not a paragraph. The risk × value quadrant (#4745) IS the
+  // score; it is tagged with only the LLM's one-word magnitude when present. The raw finding sentences and the
+  // full LLM rationale the old cell concatenated — a wall of text by construction — are intentionally dropped
+  // per maintainer feedback ("a quick, clean, simple score/rating ... not a paragraph"). Only closed-enum band
+  // names + the magnitude enum are interpolated, so the cell is public-safe with no free-text leak surface —
+  // the `containsPrivatePublicTerm` filtering the old free-text evidence needed is no longer required here.
   const quadrant = formatRiskValueQuadrant(slopBand, assessment.band);
+  const magnitudeTag = valueAssessment ? `LLM: ${valueAssessment.magnitude}` : undefined;
+  // Quadrant is absent only when slop wasn't computed this pass; fall back to the value band alone so the cell
+  // is never empty, still never fabricating a risk reading.
+  const rating = [quadrant ?? `value: ${assessment.band}`, magnitudeTag].filter(Boolean).join(" · ");
   return {
     key: "improvementSignal",
     cells: [
       "Improvement",
       IMPROVEMENT_BAND_LABELS[assessment.band],
-      quadrant ? `${quadrant} — ${evidence}` : evidence,
+      rating,
       "Advisory only — never blocks merge.",
     ],
   };

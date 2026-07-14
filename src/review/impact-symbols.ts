@@ -34,13 +34,21 @@ const JS_TS_RE = /\.(ts|tsx|js|jsx|mjs|cjs)$/i;
 // name is still useful context even though the import site may not use it). Deliberately narrower than
 // rag.ts's BOUNDARY_RE (which also matches un-exported declarations, since RAG chunking cares about ANY
 // logical boundary, not just the public API).
+//
+// The `enum` alternative is `(?:const\s+)?enum` and sits BEFORE the bare `const|let|var` one on purpose: an
+// `export const enum Foo` must be captured as the enum named `Foo`, not matched by `const|let|var` capturing
+// the literal word "enum" as the name. `class` allows an optional `abstract` prefix so `export abstract class
+// Foo` (and `export default abstract class Foo`) is captured, not silently dropped. Group order —
+// function(1), class(2), enum(3), const/let/var(4), interface(5), type(6) — keeps function/class in groups
+// 1/2 so boundaryKindForMatch stays a two-check-then-default; the reordering only moves groups that all map
+// to the "export" kind anyway.
 const EXPORTED_DECLARATION_RE =
-  /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s+([\w$]+)|class\s+([\w$]+)|(?:const|let|var)\s+([\w$]+)|interface\s+([\w$]+)|type\s+([\w$]+)|enum\s+([\w$]+))/;
+  /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s+([\w$]+)|(?:abstract\s+)?class\s+([\w$]+)|(?:const\s+)?enum\s+([\w$]+)|(?:const|let|var)\s+([\w$]+)|interface\s+([\w$]+)|type\s+([\w$]+))/;
 
 function boundaryKindForMatch(m: RegExpMatchArray): RagBoundary {
-  if (m[2] !== undefined) return "class"; // class NAME
+  if (m[2] !== undefined) return "class"; // (abstract) class NAME
   if (m[1] !== undefined) return "function"; // function NAME
-  return "export"; // const/let/var/interface/type/enum
+  return "export"; // (const) enum / const/let/var / interface / type
 }
 
 /**

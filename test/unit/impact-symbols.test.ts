@@ -49,6 +49,36 @@ describe("extractSymbolsFromPatch", () => {
     ]);
   });
 
+  it("extracts `export const enum Foo` as the enum name Foo, not a symbol literally named `enum`", () => {
+    // Regression: the bare `const|let|var` alternative used to match `const enum` first and capture the word
+    // "enum" as the name. The `(?:const\s+)?enum` alternative now takes precedence for this shape.
+    expect(extractSymbolsFromPatch("src/dir.ts", addPatch("export const enum Direction {"))).toEqual([
+      { name: "Direction", kind: "export" },
+    ]);
+  });
+
+  it("still treats a real `export const enumValue = 1` as a const boundary, not an enum", () => {
+    // `enum\s+` requires whitespace after `enum`, so an identifier that merely STARTS with "enum" falls
+    // through to the const/let/var alternative — the fix must not over-capture.
+    expect(extractSymbolsFromPatch("src/util.ts", addPatch("export const enumValue = 1;"))).toEqual([
+      { name: "enumValue", kind: "export" },
+    ]);
+  });
+
+  it("extracts `export abstract class Foo` (previously dropped entirely) as a class", () => {
+    // Regression: there was no `abstract` alternative, so an added/changed abstract base class contributed
+    // zero symbols to the impact map.
+    expect(extractSymbolsFromPatch("src/base.ts", addPatch("export abstract class Foo {"))).toEqual([
+      { name: "Foo", kind: "class" },
+    ]);
+  });
+
+  it("extracts `export default abstract class Foo` as a class (mirrors the default-prefix handling)", () => {
+    expect(extractSymbolsFromPatch("src/base.ts", addPatch("export default abstract class Foo {"))).toEqual([
+      { name: "Foo", kind: "class" },
+    ]);
+  });
+
   it("extracts multiple distinct symbols from the same patch", () => {
     const patch = [
       "@@ -1,2 +1,4 @@",

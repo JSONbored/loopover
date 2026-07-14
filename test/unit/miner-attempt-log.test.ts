@@ -50,9 +50,9 @@ describe("gittensory-miner attempt log (#4294)", () => {
       "/custom/config/attempt-log.sqlite3",
     );
     expect(resolveAttemptLogDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/attempt-log.sqlite3",
+      "/xdg/loopover-miner/attempt-log.sqlite3",
     );
-    expect(resolveAttemptLogDbPath({})).toMatch(/\/\.config\/gittensory-miner\/attempt-log\.sqlite3$/);
+    expect(resolveAttemptLogDbPath({})).toMatch(/\/\.config\/loopover-miner\/attempt-log\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and reads empty before any append", () => {

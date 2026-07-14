@@ -54,13 +54,13 @@ describe("gittensory-miner metrics CLI (#4838)", () => {
     expect(runMetrics([], { initPredictionLedger: () => ledger })).toBe(0);
 
     const text = String(log.mock.calls[0]?.[0]);
-    expect(text).toContain("# TYPE gittensory_miner_predictions_total counter");
+    expect(text).toContain("# TYPE loopover_miner_predictions_total counter");
     // Series are emitted in sorted conclusion order, so "close" precedes "merge".
-    expect(text).toContain('gittensory_miner_predictions_total{conclusion="close"} 1');
-    expect(text).toContain('gittensory_miner_predictions_total{conclusion="merge"} 2');
+    expect(text).toContain('loopover_miner_predictions_total{conclusion="close"} 1');
+    expect(text).toContain('loopover_miner_predictions_total{conclusion="merge"} 2');
     // No outcome-join exists yet, so both the correct and incorrect counters stay zero.
-    expect(text).toContain("gittensory_miner_prediction_correct_total 0");
-    expect(text).toContain("gittensory_miner_prediction_incorrect_total 0");
+    expect(text).toContain("loopover_miner_prediction_correct_total 0");
+    expect(text).toContain("loopover_miner_prediction_incorrect_total 0");
     // The output is a single, once-terminated document (no doubled trailing blank line).
     expect(text.endsWith("\n")).toBe(false);
   });
@@ -80,7 +80,7 @@ describe("gittensory-miner metrics CLI (#4838)", () => {
       if (prev === undefined) delete process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB;
       else process.env.LOOPOVER_MINER_PREDICTION_LEDGER_DB = prev;
     }
-    expect(String(log.mock.calls[0]?.[0])).toContain('gittensory_miner_predictions_total{conclusion="hold"} 1');
+    expect(String(log.mock.calls[0]?.[0])).toContain('loopover_miner_predictions_total{conclusion="hold"} 1');
   });
 
   it("runMetrics rejects unexpected arguments with a usage error", () => {

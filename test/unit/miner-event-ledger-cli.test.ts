@@ -155,33 +155,33 @@ describe("gittensory-miner event ledger CLI (#2290)", () => {
 });
 
 describe("gittensory-miner ledger metrics CLI (#4841)", () => {
-  it("renderEventLedgerMetrics emits one sorted gittensory_miner_events_total series per type", () => {
+  it("renderEventLedgerMetrics emits one sorted loopover_miner_events_total series per type", () => {
     const text = renderEventLedgerMetrics([
       metricEntry(1, "manage_pr_update"),
       metricEntry(2, "discovered_issue"),
       metricEntry(3, "manage_pr_update"),
     ]);
     expect(text).toContain(
-      "# HELP gittensory_miner_events_total Event-ledger entries the miner has recorded, by event type.",
+      "# HELP loopover_miner_events_total Event-ledger entries the miner has recorded, by event type.",
     );
-    expect(text).toContain("# TYPE gittensory_miner_events_total counter");
+    expect(text).toContain("# TYPE loopover_miner_events_total counter");
     // Series are emitted in sorted type order, so "discovered_issue" precedes "manage_pr_update".
-    expect(text).toContain('gittensory_miner_events_total{type="discovered_issue"} 1');
-    expect(text).toContain('gittensory_miner_events_total{type="manage_pr_update"} 2');
+    expect(text).toContain('loopover_miner_events_total{type="discovered_issue"} 1');
+    expect(text).toContain('loopover_miner_events_total{type="manage_pr_update"} 2');
     expect(text.indexOf("discovered_issue")).toBeLessThan(text.indexOf("manage_pr_update"));
     expect(text.endsWith("\n")).toBe(true);
   });
 
   it("renderEventLedgerMetrics still emits a well-formed document for an empty ledger", () => {
     expect(renderEventLedgerMetrics([])).toBe(
-      "# HELP gittensory_miner_events_total Event-ledger entries the miner has recorded, by event type.\n" +
-        "# TYPE gittensory_miner_events_total counter\n",
+      "# HELP loopover_miner_events_total Event-ledger entries the miner has recorded, by event type.\n" +
+        "# TYPE loopover_miner_events_total counter\n",
     );
   });
 
   it("renderEventLedgerMetrics escapes label-breaking characters in the event type", () => {
     expect(renderEventLedgerMetrics([metricEntry(1, 'weird"type')])).toContain(
-      'gittensory_miner_events_total{type="weird\\"type"} 1',
+      'loopover_miner_events_total{type="weird\\"type"} 1',
     );
   });
 
@@ -195,9 +195,9 @@ describe("gittensory-miner ledger metrics CLI (#4841)", () => {
     expect(runLedgerMetrics([], { initEventLedger: () => eventLedger })).toBe(0);
 
     const text = String(log.mock.calls[0]?.[0]);
-    expect(text).toContain("# TYPE gittensory_miner_events_total counter");
-    expect(text).toContain('gittensory_miner_events_total{type="discovered_issue"} 1');
-    expect(text).toContain('gittensory_miner_events_total{type="manage_pr_update"} 2');
+    expect(text).toContain("# TYPE loopover_miner_events_total counter");
+    expect(text).toContain('loopover_miner_events_total{type="discovered_issue"} 1');
+    expect(text).toContain('loopover_miner_events_total{type="manage_pr_update"} 2');
     // The output is a single, once-terminated document (no doubled trailing blank line).
     expect(text.endsWith("\n")).toBe(false);
   });
@@ -217,7 +217,7 @@ describe("gittensory-miner ledger metrics CLI (#4841)", () => {
       if (prev === undefined) delete process.env.LOOPOVER_MINER_EVENT_LEDGER_DB;
       else process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = prev;
     }
-    expect(String(log.mock.calls[0]?.[0])).toContain('gittensory_miner_events_total{type="plan_built"} 1');
+    expect(String(log.mock.calls[0]?.[0])).toContain('loopover_miner_events_total{type="plan_built"} 1');
   });
 
   it("runLedgerMetrics rejects unexpected arguments with a usage error", () => {
@@ -265,6 +265,6 @@ describe("gittensory-miner ledger metrics CLI (#4841)", () => {
     eventLedger.appendEvent({ type: "plan_built", payload: { steps: 1 } });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(runLedgerCli("metrics", [], { initEventLedger: () => eventLedger })).toBe(0);
-    expect(String(log.mock.calls[0]?.[0])).toContain('gittensory_miner_events_total{type="plan_built"} 1');
+    expect(String(log.mock.calls[0]?.[0])).toContain('loopover_miner_events_total{type="plan_built"} 1');
   });
 });

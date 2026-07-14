@@ -52,7 +52,7 @@ describe("GittensoryMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
   });
 
   it("keys off the real renderer's rate-limit-remaining gauge, not an invented metric name", () => {
-    expect(GOVERNOR_RATE_LIMIT_REMAINING_RATIO).toBe("gittensory_miner_governor_rate_limit_remaining_ratio");
+    expect(GOVERNOR_RATE_LIMIT_REMAINING_RATIO).toBe("loopover_miner_governor_rate_limit_remaining_ratio");
     expect(flat).toBe(`${GOVERNOR_RATE_LIMIT_REMAINING_RATIO} < 0.1`);
   });
 
@@ -61,7 +61,7 @@ describe("GittensoryMinerGovernorRateLimitPressureHigh alert (#5187)", () => {
   });
 
   it("never references any loopover_* server metric (a miner rule must not fire on server data)", () => {
-    expect(flat).not.toMatch(/loopover_/);
+    expect(flat).not.toMatch(/loopover_(?!miner_)/);
   });
 
   it("has warning severity and human-readable annotations", () => {
@@ -88,7 +88,7 @@ describe("GittensoryMinerGovernorCapUsageHigh alert (#5187)", () => {
   });
 
   it("keys off the real renderer's cap-usage gauge, thresholded at 90%", () => {
-    expect(GOVERNOR_CAP_USAGE_RATIO).toBe("gittensory_miner_governor_cap_usage_ratio");
+    expect(GOVERNOR_CAP_USAGE_RATIO).toBe("loopover_miner_governor_cap_usage_ratio");
     expect(flat).toBe(`${GOVERNOR_CAP_USAGE_RATIO} > 0.9`);
   });
 
@@ -98,7 +98,7 @@ describe("GittensoryMinerGovernorCapUsageHigh alert (#5187)", () => {
   });
 
   it("never references any loopover_* server metric (a miner rule must not fire on server data)", () => {
-    expect(flat).not.toMatch(/loopover_/);
+    expect(flat).not.toMatch(/loopover_(?!miner_)/);
   });
 
   it("only reads governor state -- the runbook never instructs a governor decision-logic change", () => {

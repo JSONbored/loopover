@@ -42,9 +42,9 @@ describe("gittensory-miner governor ledger (#2328)", () => {
       "/custom/config/governor-ledger.sqlite3",
     );
     expect(resolveGovernorLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/governor-ledger.sqlite3",
+      "/xdg/loopover-miner/governor-ledger.sqlite3",
     );
-    expect(resolveGovernorLedgerDbPath({})).toMatch(/\/\.config\/gittensory-miner\/governor-ledger\.sqlite3$/);
+    expect(resolveGovernorLedgerDbPath({})).toMatch(/\/\.config\/loopover-miner\/governor-ledger\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and reads empty before any append", () => {

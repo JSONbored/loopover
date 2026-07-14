@@ -41,7 +41,7 @@ describe("resolvePolicyVerdictCacheDbPath (#4843)", () => {
       join("/cfg", "policy-verdict-cache.sqlite3"),
     );
     expect(resolvePolicyVerdictCacheDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      join("/xdg", "gittensory-miner", "policy-verdict-cache.sqlite3"),
+      join("/xdg", "loopover-miner", "policy-verdict-cache.sqlite3"),
     );
   });
 });

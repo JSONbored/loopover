@@ -24,7 +24,7 @@ import type { Plugin } from "vite";
 // request never reaches any of them. This also means any FUTURE /api/* endpoint (e.g. a write action) is
 // covered automatically, with no per-endpoint auth wiring required.
 
-const COOKIE_NAME = "gittensory_miner_ui_token";
+const COOKIE_NAME = "loopover_miner_ui_token";
 
 export type AuthDeps = {
   /** Injectable so tests get a deterministic token instead of a real random one. */

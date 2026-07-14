@@ -26,7 +26,7 @@ export function resolveWorktreeAllocatorDbPath(env = process.env) {
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
     ? env.XDG_CONFIG_HOME.trim()
     : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return join(configHome, "loopover-miner", defaultDbFileName);
 }
 
 export function resolveWorktreeBaseDir(env = process.env) {
@@ -43,7 +43,7 @@ export function resolveWorktreeBaseDir(env = process.env) {
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
     ? env.XDG_CONFIG_HOME.trim()
     : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultWorktreeDirName);
+  return join(configHome, "loopover-miner", defaultWorktreeDirName);
 }
 
 function normalizeDbPath(dbPath) {

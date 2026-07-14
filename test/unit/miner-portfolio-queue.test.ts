@@ -54,9 +54,9 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
       "/custom/config/portfolio-queue.sqlite3",
     );
     expect(resolvePortfolioQueueDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/portfolio-queue.sqlite3",
+      "/xdg/loopover-miner/portfolio-queue.sqlite3",
     );
-    expect(resolvePortfolioQueueDbPath({})).toMatch(/\/\.config\/gittensory-miner\/portfolio-queue\.sqlite3$/);
+    expect(resolvePortfolioQueueDbPath({})).toMatch(/\/\.config\/loopover-miner\/portfolio-queue\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and reads empty before any write", () => {

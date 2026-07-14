@@ -25,7 +25,7 @@ export function resolveRepoCloneBaseDir(env = process.env) {
   if (explicitConfigDir) return join(explicitConfigDir, DEFAULT_CLONE_DIR_NAME);
 
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim() ? env.XDG_CONFIG_HOME.trim() : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", DEFAULT_CLONE_DIR_NAME);
+  return join(configHome, "loopover-miner", DEFAULT_CLONE_DIR_NAME);
 }
 
 // GitHub owner/repo names are restricted to alphanumerics, hyphens, underscores, and periods, and are never

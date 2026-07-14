@@ -626,7 +626,7 @@ groups:
   # renderMinerPredictionMetrics (packages/gittensory-engine/src/miner-prediction-metrics.ts, #4264, wired
   # into a command in #4838 over the calibration-report join built in #4849) to a file/pushgateway their
   # Prometheus scrapes. The rule is therefore DORMANT until such a target exists: an absent
-  # gittensory_miner_prediction_* series simply yields no result (and the `> 0` denominator guard also makes
+  # loopover_miner_prediction_* series simply yields no result (and the `> 0` denominator guard also makes
   # the 0/0 case undefined), so it loads cleanly via `selfhost:validate-observability` and never false-fires
   # on an install that has no miner scrape configured yet -- exactly like loopover-d1-storage stays silent
   # without the D1 probe.
@@ -636,7 +636,7 @@ groups:
         # Calibration = how often the miner's predicted gate conclusion matched the realized outcome. This is
         # the miner counterpart of loopover-jobs' LoopoverHighJobFailureRatio and uses the identical
         # bad/(bad+good) shape: the fraction of RESOLVED predictions that came back INCORRECT over the window.
-        # gittensory_miner_prediction_{correct,incorrect}_total only move for rows carrying a resolved outcome
+        # loopover_miner_prediction_{correct,incorrect}_total only move for rows carrying a resolved outcome
         # (renderMinerPredictionMetrics), so still-unresolved predictions never dilute the ratio. The trailing
         # `> 0` on the denominator guards the 0/0 = NaN case (no resolved predictions in the window -> the rule
         # stays inactive rather than firing on garbage), which is also what makes it degrade to silent when the
@@ -649,11 +649,11 @@ groups:
         # inline-documented-threshold convention (there are no recording rules here to hang a named constant on).
         expr: |
           (
-            sum(rate(gittensory_miner_prediction_incorrect_total[6h]))
+            sum(rate(loopover_miner_prediction_incorrect_total[6h]))
             /
             (
-              sum(rate(gittensory_miner_prediction_correct_total[6h]))
-              + sum(rate(gittensory_miner_prediction_incorrect_total[6h]))
+              sum(rate(loopover_miner_prediction_correct_total[6h]))
+              + sum(rate(loopover_miner_prediction_incorrect_total[6h]))
               > 0
             )
           ) > 0.5
@@ -663,13 +663,13 @@ groups:
         annotations:
           summary: "gittensory miner prediction calibration has drifted"
           description: "{{ $value | humanizePercentage }} of the miner's recently resolved gate predictions were incorrect over the last 6h (sustained 30m). Predicted-gate accuracy has drifted out of tolerance."
-          runbook: "Compare gittensory_miner_prediction_correct_total vs gittensory_miner_prediction_incorrect_total and review the miner's own calibration report (`gittensory-miner calibration`). Sustained drift usually means the predicted-gate heuristics need recalibration against the repo(s) the miner now targets, or a recent upstream gate-behavior change the predictor hasn't caught up to."
+          runbook: "Compare loopover_miner_prediction_correct_total vs loopover_miner_prediction_incorrect_total and review the miner's own calibration report (`gittensory-miner calibration`). Sustained drift usually means the predicted-gate heuristics need recalibration against the repo(s) the miner now targets, or a recent upstream gate-behavior change the predictor hasn't caught up to."
 
   # ── Miner portfolio-queue backlog health (#5186) ──────────────────────────
   # Same DORMANT-until-a-scrape-target-exists posture as gittensory-miner-prediction above: an operator runs
   # `gittensory-miner queue metrics` (packages/gittensory-miner/lib/portfolio-queue-cli.js's
   # renderPortfolioQueueMetrics) to a file/pushgateway their Prometheus scrapes. Absent
-  # gittensory_miner_portfolio_queue_* series simply yield no result, so this loads cleanly via
+  # loopover_miner_portfolio_queue_* series simply yield no result, so this loads cleanly via
   # `selfhost:validate-observability` and never false-fires on an install with no miner scrape configured.
   - name: gittensory-miner-portfolio-queue
     rules:
@@ -681,7 +681,7 @@ groups:
         # stuck, so a lease sits well past its own 30m default with nothing automatically reclaiming it.
         # 3600s (1h) is a generous multiple of DEFAULT_MAX_LEASE_MS so a healthy install's own reclaim sweep
         # always clears this long before the alert would fire; tune down if your reclaim cadence is tighter.
-        expr: gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds > 3600
+        expr: loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds > 3600
         for: 15m
         labels:
           severity: warning
@@ -695,7 +695,7 @@ groups:
         # LoopoverQueueBacklogHigh above -- a sustained high queued count means discovery is outpacing
         # claiming, mirroring the main product's own "queue > threshold for N minutes" shape. 200 is a
         # generous default for a single-host laptop-mode install; tune to your normal steady-state depth.
-        expr: gittensory_miner_portfolio_queue_items{status="queued"} > 200
+        expr: loopover_miner_portfolio_queue_items{status="queued"} > 200
         for: 30m
         labels:
           severity: warning
@@ -707,7 +707,7 @@ groups:
   # ── Governor rate-limit/budget threshold pressure (#5187) ─────────────────
   # Same DORMANT-until-a-scrape-target-exists posture as the two miner groups above: an operator runs
   # `gittensory-miner governor metrics` (packages/gittensory-miner/lib/governor-metrics-cli.js's
-  # renderGovernorMetrics) to a file/pushgateway their Prometheus scrapes. Absent gittensory_miner_governor_*
+  # renderGovernorMetrics) to a file/pushgateway their Prometheus scrapes. Absent loopover_miner_governor_*
   # series simply yield no result. Read-only: these rules alert on the governor's already-persisted rate-limit
   # (#5134/write-rate-limit.ts) and cap-usage (#5134/budget-cap.ts) state; they do not gate, retry, or modify
   # governor decision logic in any way (governor-chokepoint.js/governor-chokepoint-persisted.js are untouched).
@@ -719,7 +719,7 @@ groups:
         # 60s (the default policy's windowMs), so staying under 0.1 for a full 10m means the bucket has been
         # refilled to >90% capacity across at least ten separate windows in a row -- sustained heavy write
         # pressure, not one spike.
-        expr: gittensory_miner_governor_rate_limit_remaining_ratio < 0.1
+        expr: loopover_miner_governor_rate_limit_remaining_ratio < 0.1
         for: 10m
         labels:
           severity: warning
@@ -733,7 +733,7 @@ groups:
         # elapsed session ms) against DEFAULT_AMS_POLICY_SPEC.capLimits, the same fleet-wide default loop-cli.js
         # itself falls back to when a repo has no `.gittensory-ams.yml` override. 0.9 gives an operator a
         # heads-up before evaluateGovernorCaps' own exceeded/kill_switch verdict actually halts the run.
-        expr: gittensory_miner_governor_cap_usage_ratio > 0.9
+        expr: loopover_miner_governor_cap_usage_ratio > 0.9
         for: 10m
         labels:
           severity: warning

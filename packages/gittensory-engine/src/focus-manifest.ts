@@ -607,7 +607,7 @@ export type FocusManifestReviewConfig = {
    *  (default, absent) ⇒ byte-identical to today. Net-new vs the changed-files-summary (#1957) and effort-score
    *  (#1955) knobs. (#2047) */
   commentVerbosity: CommentVerbosity | null;
-  /** `review.e2e_test_delivery` (#4197, part of the #4189 epic): how a `@gittensory generate-tests` result is
+  /** `review.e2e_test_delivery` (#4197, part of the #4189 epic): how a `@loopover generate-tests` result is
    *  delivered once `features.e2eTests` is on. `"comment"` (default, null/absent) posts the generated test as
    *  a reply comment only — no write access to the PR branch. `"commit"` pushes it as a real commit onto the
    *  PR's own head branch (git/trees -> git/commits -> a ref UPDATE, mirroring `repo-doc-pr.ts`'s write
@@ -619,7 +619,7 @@ export type FocusManifestReviewConfig = {
   /** `review.e2e_test_auto_trigger` (#4196, part of the #4189 epic): opts THIS repo into the `manifest_missing_tests`
    *  auto-trigger, which promotes that advisory finding into an actual unprompted generation run whenever a PR looks
    *  like it needs tests -- separate from `features.e2eTests`, which only unlocks the maintainer-initiated paths
-   *  (the `@gittensory generate-tests` command and the PR-panel checkbox). Deliberately independent and OFF by
+   *  (the `@loopover generate-tests` command and the PR-panel checkbox). Deliberately independent and OFF by
    *  default: enabling `e2eTests` for on-demand use must never, by itself, start firing generation unprompted on
    *  every under-tested PR (the exact loophole this field closes) -- a maintainer who *wants* the auto-trigger opts
    *  in explicitly per repo. null/false (default, absent) ⇒ the auto-trigger never fires, even with e2eTests on;
@@ -692,7 +692,7 @@ export type E2eTestDeliveryMode = (typeof E2E_TEST_DELIVERY_MODES)[number];
 /** `review.auto_review.cadence` (#one-shot-review-cadence). `one_shot` = the AI-generated content (main review,
  *  slop advisory, linked-issue satisfaction) is produced once per PR and never automatically regenerated
  *  afterward — not on a new push, not on CI-check completion, not on a scheduled sweep tick; only an explicit
- *  maintainer retrigger (the PR-panel checkbox or `@gittensory review` as a maintainer) spends a fresh call.
+ *  maintainer retrigger (the PR-panel checkbox or `@loopover review` as a maintainer) spends a fresh call.
  *  `continuous` = the traditional behavior — every trigger re-runs AI content generation, subject to each
  *  feature's own head-SHA cache. Orthogonal to `aiReviewMode`'s enforcement-strictness axis (off/advisory/
  *  block) — the deterministic gate (CI status, mergeability, static-rule blockers) is NEVER affected by this
@@ -2090,7 +2090,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
     const contributorCapCancelCi = normalizeOptionalBoolean(r.contributorCapCancelCi, "settings.contributorCapCancelCi", warnings);
     if (contributorCapCancelCi !== null) out.contributorCapCancelCi = contributorCapCancelCi;
   }
-  // Review-request nagging cooldown (#2463): throttle a contributor repeatedly pinging @gittensory for review.
+  // Review-request nagging cooldown (#2463): throttle a contributor repeatedly pinging @loopover for review.
   const reviewNagPolicy = normalizeOptionalEnum(r.reviewNagPolicy, "settings.reviewNagPolicy", ["off", "hold", "close"] as const, warnings);
   if (reviewNagPolicy !== null) out.reviewNagPolicy = reviewNagPolicy;
   const reviewNagMaxPings = normalizeOptionalPositiveInteger(r.reviewNagMaxPings, "settings.reviewNagMaxPings", warnings);
@@ -2108,7 +2108,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
     if (reviewNagLabel !== null) out.reviewNagLabel = reviewNagLabel;
   }
   // Maintainer-mention nag moderation (#label-scoping): GitHub logins ALSO throttled under the review-nag
-  // cooldown above, on top of the bot's own @gittensory handle. Only set it when at least one VALID login
+  // cooldown above, on top of the bot's own @loopover handle. Only set it when at least one VALID login
   // survives normalization, so a malformed block never blanks the DB-configured list via the resolver's
   // `{...dbSettings, ...manifest.settings}` overlay (same reasoning as autoCloseExemptLogins below).
   if (r.reviewNagMonitoredMentions !== undefined) {
@@ -2178,7 +2178,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
   }
   const newAccountLabel = normalizeOptionalString(r.newAccountLabel, "settings.newAccountLabel", warnings);
   if (newAccountLabel !== null) out.newAccountLabel = newAccountLabel;
-  // Per-command @gittensory rate limit (#2560): generalizes review-nag's cooldown pattern to every command.
+  // Per-command @loopover rate limit (#2560): generalizes review-nag's cooldown pattern to every command.
   const commandRateLimitPolicy = normalizeOptionalEnum(r.commandRateLimitPolicy, "settings.commandRateLimitPolicy", ["off", "hold"] as const, warnings);
   if (commandRateLimitPolicy !== null) out.commandRateLimitPolicy = commandRateLimitPolicy;
   const commandRateLimitMaxPerWindow = normalizeOptionalPositiveInteger(r.commandRateLimitMaxPerWindow, "settings.commandRateLimitMaxPerWindow", warnings);

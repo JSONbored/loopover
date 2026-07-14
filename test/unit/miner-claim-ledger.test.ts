@@ -51,9 +51,9 @@ describe("gittensory-miner claim ledger (#2314)", () => {
       "/custom/config/claim-ledger.sqlite3",
     );
     expect(resolveClaimLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/claim-ledger.sqlite3",
+      "/xdg/loopover-miner/claim-ledger.sqlite3",
     );
-    expect(resolveClaimLedgerDbPath({})).toMatch(/\/\.config\/gittensory-miner\/claim-ledger\.sqlite3$/);
+    expect(resolveClaimLedgerDbPath({})).toMatch(/\/\.config\/loopover-miner\/claim-ledger\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and lists empty before any claim", () => {

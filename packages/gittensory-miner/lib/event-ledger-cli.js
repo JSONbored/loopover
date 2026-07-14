@@ -167,10 +167,10 @@ export function renderLedgerTable(events) {
 
 const EVENT_LEDGER_METRICS_USAGE = "Usage: gittensory-miner ledger metrics";
 
-// Prometheus metric name for the per-type event-ledger counter. Mirrors the `gittensory_miner_*_total` naming and
+// Prometheus metric name for the per-type event-ledger counter. Mirrors the `loopover_miner_*_total` naming and
 // the HELP/TYPE/label conventions of the engine's renderMinerPredictionMetrics
 // (packages/gittensory-engine/src/miner-prediction-metrics.ts) rather than importing across the package boundary.
-const MINER_EVENTS_TOTAL = "gittensory_miner_events_total";
+const MINER_EVENTS_TOTAL = "loopover_miner_events_total";
 
 /** HELP-text escaping — backslash + newline (mirrors miner-prediction-metrics.ts's escapeHelpText). */
 function escapeHelpText(help) {
@@ -184,7 +184,7 @@ function escapeLabelValue(value) {
 }
 
 /**
- * Render event-ledger activity as Prometheus text-exposition counters: one `gittensory_miner_events_total{type}`
+ * Render event-ledger activity as Prometheus text-exposition counters: one `loopover_miner_events_total{type}`
  * series per event type, so a self-hoster's own Grafana/alerting can scrape ledger activity instead of polling
  * `ledger list --json` (#4841). Pure + side-effect-free — the caller supplies the rows and prints the result;
  * deterministic (series emitted in sorted type order); always emits HELP/TYPE so an empty ledger is still a

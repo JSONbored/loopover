@@ -37,7 +37,7 @@ describe("gittensory-miner laptop init (#2329)", () => {
     expect(resolveLaptopStateDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" }))
       .toBe("/custom/state/laptop-state.sqlite3");
     expect(resolveLaptopStateDbPath({ XDG_CONFIG_HOME: "/xdg" }))
-      .toBe("/xdg/gittensory-miner/laptop-state.sqlite3");
+      .toBe("/xdg/loopover-miner/laptop-state.sqlite3");
   });
 
   it("fresh init creates the state dir and SQLite file", () => {

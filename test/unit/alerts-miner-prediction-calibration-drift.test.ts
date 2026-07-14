@@ -51,15 +51,15 @@ describe("GittensoryMinerPredictionCalibrationDrift alert (#5188)", () => {
   });
 
   it("keys off the miner renderer's real correct/incorrect counters, not invented metric names", () => {
-    expect(MINER_PREDICTION_CORRECT_TOTAL).toBe("gittensory_miner_prediction_correct_total");
-    expect(MINER_PREDICTION_INCORRECT_TOTAL).toBe("gittensory_miner_prediction_incorrect_total");
+    expect(MINER_PREDICTION_CORRECT_TOTAL).toBe("loopover_miner_prediction_correct_total");
+    expect(MINER_PREDICTION_INCORRECT_TOTAL).toBe("loopover_miner_prediction_incorrect_total");
     expect(flat).toContain(MINER_PREDICTION_CORRECT_TOTAL);
     expect(flat).toContain(MINER_PREDICTION_INCORRECT_TOTAL);
   });
 
   it("uses the incorrect/(correct+incorrect) drift ratio shape over a 6h window", () => {
     expect(flat).toMatch(
-      /sum\(rate\(gittensory_miner_prediction_incorrect_total\[6h\]\)\) \/ \( sum\(rate\(gittensory_miner_prediction_correct_total\[6h\]\)\) \+ sum\(rate\(gittensory_miner_prediction_incorrect_total\[6h\]\)\)/,
+      /sum\(rate\(loopover_miner_prediction_incorrect_total\[6h\]\)\) \/ \( sum\(rate\(loopover_miner_prediction_correct_total\[6h\]\)\) \+ sum\(rate\(loopover_miner_prediction_incorrect_total\[6h\]\)\)/,
     );
   });
 
@@ -70,7 +70,7 @@ describe("GittensoryMinerPredictionCalibrationDrift alert (#5188)", () => {
   });
 
   it("never references any loopover_* server metric (a miner rule must not fire on server data)", () => {
-    expect(flat).not.toMatch(/loopover_/);
+    expect(flat).not.toMatch(/loopover_(?!miner_)/);
   });
 
   it("has a sustain window, warning severity, and human-readable annotations", () => {

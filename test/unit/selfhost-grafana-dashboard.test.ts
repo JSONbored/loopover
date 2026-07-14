@@ -65,14 +65,6 @@ function grafanaSqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-// REGRESSION (#5716, 2026-07-14): the default/"All" sentinel is deliberately `__ALL__`, not Grafana's own
-// `$__all` global. Confirmed live against a real Grafana + frser-sqlite-datasource instance:
-// `${var:sqlstring}` does NOT sql-quote a value that itself starts with `$__` (Grafana treats it as a
-// macro reference, not literal data), so the previous `allValue: "$__all"` substituted into
-// `${repo:sqlstring} = '$__all' OR repo = ${repo:sqlstring}` produced the RAW unquoted token `$__all` on
-// both sides. SQLite then parsed that token as its own `$__all` named bind parameter (unbound), so every
-// "All"-filtered panel query either errored or silently returned zero rows. See 5f187c2dc for the fix on
-// the dashboard side and its sibling ai-usage/miner-usage test simulations.
 function expandGrafanaRange(query: string, repo = "__ALL__"): string {
   const from = Math.floor(Date.parse("2026-06-29T20:00:00Z") / 1000);
   const to = Math.floor(Date.parse("2026-06-29T22:00:00Z") / 1000);

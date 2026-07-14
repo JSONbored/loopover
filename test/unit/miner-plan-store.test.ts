@@ -46,8 +46,8 @@ describe("gittensory-miner plan store (#2318)", () => {
     expect(resolvePlanStoreDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
       "/custom/config/plan-store.sqlite3",
     );
-    expect(resolvePlanStoreDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/gittensory-miner/plan-store.sqlite3");
-    expect(resolvePlanStoreDbPath({})).toMatch(/\/\.config\/gittensory-miner\/plan-store\.sqlite3$/);
+    expect(resolvePlanStoreDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/loopover-miner/plan-store.sqlite3");
+    expect(resolvePlanStoreDbPath({})).toMatch(/\/\.config\/loopover-miner\/plan-store\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and loads null before any save", () => {

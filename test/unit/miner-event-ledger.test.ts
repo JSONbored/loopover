@@ -34,9 +34,9 @@ describe("gittensory-miner event ledger (#2290)", () => {
       "/custom/config/event-ledger.sqlite3",
     );
     expect(resolveEventLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/event-ledger.sqlite3",
+      "/xdg/loopover-miner/event-ledger.sqlite3",
     );
-    expect(resolveEventLedgerDbPath({})).toMatch(/\/\.config\/gittensory-miner\/event-ledger\.sqlite3$/);
+    expect(resolveEventLedgerDbPath({})).toMatch(/\/\.config\/loopover-miner\/event-ledger\.sqlite3$/);
   });
 
   it("creates the SQLite file with owner-only permissions and reads empty before any append", () => {

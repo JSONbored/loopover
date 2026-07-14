@@ -499,11 +499,11 @@ export function runQueueClaimBatch(args, options = {}) {
 
 const QUEUE_METRICS_USAGE = "Usage: gittensory-miner queue metrics";
 
-// Prometheus metric names for the portfolio-queue gauges (#5186). Mirrors the `gittensory_miner_*` naming and
+// Prometheus metric names for the portfolio-queue gauges (#5186). Mirrors the `loopover_miner_*` naming and
 // HELP/TYPE/label conventions of event-ledger-cli.js's renderEventLedgerMetrics / the engine's
 // renderMinerPredictionMetrics, rather than importing across the package boundary.
-export const QUEUE_ITEMS = "gittensory_miner_portfolio_queue_items";
-export const QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS = "gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds";
+export const QUEUE_ITEMS = "loopover_miner_portfolio_queue_items";
+export const QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS = "loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds";
 
 /** HELP-text escaping — backslash + newline (mirrors miner-prediction-metrics.ts's escapeHelpText). */
 function escapeMetricsHelpText(help) {

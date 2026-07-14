@@ -393,21 +393,21 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
         ],
         now,
       );
-      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="queued"} 2');
-      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="in_progress"} 1');
-      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="done"} 1');
-      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 600");
-      expect(output).toContain("# HELP gittensory_miner_portfolio_queue_items");
-      expect(output).toContain("# TYPE gittensory_miner_portfolio_queue_items gauge");
+      expect(output).toContain('loopover_miner_portfolio_queue_items{status="queued"} 2');
+      expect(output).toContain('loopover_miner_portfolio_queue_items{status="in_progress"} 1');
+      expect(output).toContain('loopover_miner_portfolio_queue_items{status="done"} 1');
+      expect(output).toContain("loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 600");
+      expect(output).toContain("# HELP loopover_miner_portfolio_queue_items");
+      expect(output).toContain("# TYPE loopover_miner_portfolio_queue_items gauge");
       expect(output.endsWith("\n")).toBe(true);
       expect(output.endsWith("\n\n")).toBe(false);
     });
 
     it("is well-formed (HELP/TYPE always present, lease age 0) for an empty queue", () => {
       const output = renderPortfolioQueueMetrics([], [], Date.parse("2026-07-13T12:00:00.000Z"));
-      expect(output).toContain("# TYPE gittensory_miner_portfolio_queue_items gauge");
-      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
-      expect(output).not.toContain('gittensory_miner_portfolio_queue_items{status=');
+      expect(output).toContain("# TYPE loopover_miner_portfolio_queue_items gauge");
+      expect(output).toContain("loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+      expect(output).not.toContain('loopover_miner_portfolio_queue_items{status=');
     });
 
     it("ignores a lease row with an unparseable leasedAt rather than corrupting the max", () => {
@@ -416,7 +416,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
         [{ leasedAt: null }, { leasedAt: "not-a-date" }],
         Date.parse("2026-07-13T12:00:00.000Z"),
       );
-      expect(output).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+      expect(output).toContain("loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
     });
 
     it("runQueueMetrics prints the rendered document from the real store", () => {
@@ -429,7 +429,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
         runQueueMetrics([], { initPortfolioQueue: () => portfolioQueue, nowMs: Date.parse("2026-07-13T12:00:00.000Z") }),
       ).toBe(0);
       const output = String(log.mock.calls[0]?.[0]);
-      expect(output).toContain('gittensory_miner_portfolio_queue_items{status="in_progress"} 1');
+      expect(output).toContain('loopover_miner_portfolio_queue_items{status="in_progress"} 1');
       expect(output.endsWith("\n")).toBe(false); // console.log adds its own trailing newline
     });
 
@@ -437,7 +437,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       const portfolioQueue = tempQueueStore();
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
       expect(runQueueMetrics([], { initPortfolioQueue: () => portfolioQueue })).toBe(0);
-      expect(String(log.mock.calls[0]?.[0])).toContain("gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
+      expect(String(log.mock.calls[0]?.[0])).toContain("loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds 0");
     });
 
     it("rejects unexpected positional args and surfaces a store failure", () => {

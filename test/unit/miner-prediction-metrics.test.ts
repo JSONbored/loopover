@@ -20,9 +20,9 @@ function dataLines(text: string): Record<string, string> {
 describe("miner prediction-calibration metrics (#4264)", () => {
   it("re-exports the renderer and metric-name constants from the engine barrel", () => {
     expect(typeof renderMinerPredictionMetrics).toBe("function");
-    expect(MINER_PREDICTIONS_TOTAL).toBe("gittensory_miner_predictions_total");
-    expect(MINER_PREDICTION_CORRECT_TOTAL).toBe("gittensory_miner_prediction_correct_total");
-    expect(MINER_PREDICTION_INCORRECT_TOTAL).toBe("gittensory_miner_prediction_incorrect_total");
+    expect(MINER_PREDICTIONS_TOTAL).toBe("loopover_miner_predictions_total");
+    expect(MINER_PREDICTION_CORRECT_TOTAL).toBe("loopover_miner_prediction_correct_total");
+    expect(MINER_PREDICTION_INCORRECT_TOTAL).toBe("loopover_miner_prediction_incorrect_total");
   });
 
   it("emits well-formed HELP/TYPE and zeroed counters for an empty ledger", () => {

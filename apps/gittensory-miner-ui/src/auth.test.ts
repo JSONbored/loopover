@@ -14,19 +14,19 @@ describe("isAuthenticatedRequest (#4858)", () => {
   });
 
   it("skips a malformed cookie pair with no '=' separator, without throwing", () => {
-    expect(isAuthenticatedRequest(`malformed; gittensory_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
+    expect(isAuthenticatedRequest(`malformed; loopover_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
   });
 
   it("skips a cookie pair with an empty name (leading '=')", () => {
-    expect(isAuthenticatedRequest(`=novalue; gittensory_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
+    expect(isAuthenticatedRequest(`=novalue; loopover_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
   });
 
   it("rejects the auth cookie when its value doesn't match the server's token", () => {
-    expect(isAuthenticatedRequest("gittensory_miner_ui_token=wrong-value", TOKEN)).toBe(false);
+    expect(isAuthenticatedRequest("loopover_miner_ui_token=wrong-value", TOKEN)).toBe(false);
   });
 
   it("accepts the auth cookie when its value matches the server's token exactly", () => {
-    expect(isAuthenticatedRequest(`gittensory_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
+    expect(isAuthenticatedRequest(`loopover_miner_ui_token=${TOKEN}`, TOKEN)).toBe(true);
   });
 });
 
@@ -41,7 +41,7 @@ describe("handleAuthRequest (#4858)", () => {
   });
 
   it("falls through (null) for an authenticated /api/* request", () => {
-    expect(handleAuthRequest("/api/portfolio-queue", `gittensory_miner_ui_token=${TOKEN}`, TOKEN)).toBeNull();
+    expect(handleAuthRequest("/api/portfolio-queue", `loopover_miner_ui_token=${TOKEN}`, TOKEN)).toBeNull();
   });
 
   it("returns a 401 JSON body for an unauthenticated /api/* request", () => {
@@ -101,7 +101,7 @@ describe("authPlugin (#4858)", () => {
     middleware({ url: "/", headers: {} }, res, () => {
       calledNext = true;
     });
-    expect(headers["Set-Cookie"]).toBe(`gittensory_miner_ui_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
+    expect(headers["Set-Cookie"]).toBe(`loopover_miner_ui_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
     expect(calledNext).toBe(true);
   });
 
@@ -128,18 +128,18 @@ describe("authPlugin (#4858)", () => {
     const middleware = captureMiddleware();
     const { res, headers } = fakeResponse();
     let calledNext = false;
-    middleware({ url: "/api/portfolio-queue", headers: { cookie: `gittensory_miner_ui_token=${TOKEN}` } }, res, () => {
+    middleware({ url: "/api/portfolio-queue", headers: { cookie: `loopover_miner_ui_token=${TOKEN}` } }, res, () => {
       calledNext = true;
     });
     expect(calledNext).toBe(true);
-    expect(headers["Set-Cookie"]).toBe(`gittensory_miner_ui_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
+    expect(headers["Set-Cookie"]).toBe(`loopover_miner_ui_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
   });
 
   it("uses deps.generateToken so a fixed test token is deterministic across requests", () => {
     const middleware = captureMiddleware({ generateToken: () => "fixed-token-123" });
     const { res } = fakeResponse();
     let calledNext = false;
-    middleware({ url: "/api/ledgers", headers: { cookie: "gittensory_miner_ui_token=fixed-token-123" } }, res, () => {
+    middleware({ url: "/api/ledgers", headers: { cookie: "loopover_miner_ui_token=fixed-token-123" } }, res, () => {
       calledNext = true;
     });
     expect(calledNext).toBe(true);

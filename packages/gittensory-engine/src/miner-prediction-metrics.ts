@@ -6,20 +6,20 @@
 // Scoped as an on-demand RENDERER, not a live HTTP registry: gittensory-miner is a local CLI, not a daemon, so a
 // caller renders this to stdout for its own scrape/cron setup and reads the ledger itself (no data collection of
 // its own lives here — this stays a pure, side-effect-free function like the rest of gittensory-engine). It mirrors
-// the metric-naming (`gittensory_miner_*_total`) and HELP/TYPE/label conventions of src/selfhost/metrics.ts rather
+// the metric-naming (`loopover_miner_*_total`) and HELP/TYPE/label conventions of src/selfhost/metrics.ts rather
 // than importing across the package boundary.
 //
 // Counters emitted:
-// - `gittensory_miner_predictions_total{conclusion="..."}` — predictions recorded, one series per predicted
+// - `loopover_miner_predictions_total{conclusion="..."}` — predictions recorded, one series per predicted
 //   conclusion (e.g. merge/close/hold).
-// - `gittensory_miner_prediction_correct_total` — predictions whose realized outcome matched the prediction.
-// - `gittensory_miner_prediction_incorrect_total` — predictions whose realized outcome differed.
+// - `loopover_miner_prediction_correct_total` — predictions whose realized outcome matched the prediction.
+// - `loopover_miner_prediction_incorrect_total` — predictions whose realized outcome differed.
 // The correct/incorrect counters only move for rows carrying a resolved outcome; unresolved rows count toward
 // `predictions_total` only, so the surface is meaningful before outcome-pairing exists and grows once it does.
 
-export const MINER_PREDICTIONS_TOTAL = "gittensory_miner_predictions_total";
-export const MINER_PREDICTION_CORRECT_TOTAL = "gittensory_miner_prediction_correct_total";
-export const MINER_PREDICTION_INCORRECT_TOTAL = "gittensory_miner_prediction_incorrect_total";
+export const MINER_PREDICTIONS_TOTAL = "loopover_miner_predictions_total";
+export const MINER_PREDICTION_CORRECT_TOTAL = "loopover_miner_prediction_correct_total";
+export const MINER_PREDICTION_INCORRECT_TOTAL = "loopover_miner_prediction_incorrect_total";
 
 /** One prediction-ledger row for metrics: its predicted `conclusion`, plus an optional realized-outcome pairing
  *  (`correct`: true = matched, false = differed, null/undefined = not yet resolved). */

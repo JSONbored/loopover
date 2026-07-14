@@ -45,8 +45,8 @@ function fakeBinDir(name: string): string {
 describe("gittensory-miner status/doctor (#2288)", () => {
   it("resolves the state dir from the config-dir override, XDG, then the home default", () => {
     expect(resolveMinerStateDir({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" })).toBe("/custom/state");
-    expect(resolveMinerStateDir({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/gittensory-miner");
-    expect(resolveMinerStateDir({})).toMatch(/\/\.config\/gittensory-miner$/);
+    expect(resolveMinerStateDir({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/loopover-miner");
+    expect(resolveMinerStateDir({})).toMatch(/\/\.config\/loopover-miner$/);
   });
 
   it("collectStatus reports the installed versions, state dir, and config-file discovery", () => {

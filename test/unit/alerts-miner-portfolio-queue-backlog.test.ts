@@ -52,7 +52,7 @@ describe("GittensoryMinerPortfolioQueueItemStuck alert (#5186)", () => {
 
   it("keys off the real renderer's oldest-lease-age gauge, not an invented metric name", () => {
     expect(QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS).toBe(
-      "gittensory_miner_portfolio_queue_oldest_in_progress_lease_age_seconds",
+      "loopover_miner_portfolio_queue_oldest_in_progress_lease_age_seconds",
     );
     expect(flat).toContain(QUEUE_OLDEST_IN_PROGRESS_LEASE_AGE_SECONDS);
   });
@@ -63,7 +63,7 @@ describe("GittensoryMinerPortfolioQueueItemStuck alert (#5186)", () => {
   });
 
   it("never references any loopover_* server metric (a miner rule must not fire on server data)", () => {
-    expect(flat).not.toMatch(/loopover_/);
+    expect(flat).not.toMatch(/loopover_(?!miner_)/);
   });
 
   it("has warning severity and human-readable annotations", () => {
@@ -84,7 +84,7 @@ describe("GittensoryMinerPortfolioQueueBacklogHigh alert (#5186)", () => {
   });
 
   it("keys off the real renderer's items gauge, scoped to the queued status label", () => {
-    expect(QUEUE_ITEMS).toBe("gittensory_miner_portfolio_queue_items");
+    expect(QUEUE_ITEMS).toBe("loopover_miner_portfolio_queue_items");
     expect(flat).toBe(`${QUEUE_ITEMS}{status="queued"} > 200`);
   });
 
@@ -94,6 +94,6 @@ describe("GittensoryMinerPortfolioQueueBacklogHigh alert (#5186)", () => {
   });
 
   it("never references any loopover_* server metric (a miner rule must not fire on server data)", () => {
-    expect(flat).not.toMatch(/loopover_/);
+    expect(flat).not.toMatch(/loopover_(?!miner_)/);
   });
 });

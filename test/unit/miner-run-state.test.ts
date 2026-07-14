@@ -46,9 +46,9 @@ describe("gittensory-miner run-state store (#2289)", () => {
       "/custom/config/run-state.sqlite3",
     );
     expect(resolveRunStateDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/run-state.sqlite3",
+      "/xdg/loopover-miner/run-state.sqlite3",
     );
-    expect(resolveRunStateDbPath({})).toMatch(/\/\.config\/gittensory-miner\/run-state\.sqlite3$/);
+    expect(resolveRunStateDbPath({})).toMatch(/\/\.config\/loopover-miner\/run-state\.sqlite3$/);
   });
 
   it("creates the SQLite table on first use and reads null before any write", () => {

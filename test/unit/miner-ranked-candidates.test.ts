@@ -49,9 +49,9 @@ describe("gittensory-miner ranked-candidates store (#4859 prerequisite)", () => 
       "/custom/config/ranked-candidates.sqlite3",
     );
     expect(resolveRankedCandidatesDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/gittensory-miner/ranked-candidates.sqlite3",
+      "/xdg/loopover-miner/ranked-candidates.sqlite3",
     );
-    expect(resolveRankedCandidatesDbPath({})).toMatch(/\/\.config\/gittensory-miner\/ranked-candidates\.sqlite3$/);
+    expect(resolveRankedCandidatesDbPath({})).toMatch(/\/\.config\/loopover-miner\/ranked-candidates\.sqlite3$/);
   });
 
   it("creates the SQLite table on first use, with owner-only file permissions, and reads [] before any save", () => {

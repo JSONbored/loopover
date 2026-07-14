@@ -38,7 +38,7 @@ export function resolveOrbExportDbPath(env = process.env) {
     typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
       ? env.XDG_CONFIG_HOME.trim()
       : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return join(configHome, "loopover-miner", defaultDbFileName);
 }
 
 function normalizeDbPath(dbPath) {

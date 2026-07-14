@@ -34,8 +34,8 @@ describe("miner prediction ledger (#4263)", () => {
   it("resolvePredictionLedgerDbPath honors the explicit DB, config-dir, XDG, then home default", () => {
     expect(resolvePredictionLedgerDbPath({ LOOPOVER_MINER_PREDICTION_LEDGER_DB: "/custom/pred.sqlite3" })).toBe("/custom/pred.sqlite3");
     expect(resolvePredictionLedgerDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/state" })).toBe(join("/state", "prediction-ledger.sqlite3"));
-    expect(resolvePredictionLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "gittensory-miner", "prediction-ledger.sqlite3"));
-    expect(resolvePredictionLedgerDbPath({})).toMatch(/gittensory-miner[\\/]prediction-ledger\.sqlite3$/);
+    expect(resolvePredictionLedgerDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "loopover-miner", "prediction-ledger.sqlite3"));
+    expect(resolvePredictionLedgerDbPath({})).toMatch(/loopover-miner[\\/]prediction-ledger\.sqlite3$/);
   });
 
   it("appends a verdict and reads it back with codes + engine version intact", () => {

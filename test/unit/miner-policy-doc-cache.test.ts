@@ -39,7 +39,7 @@ describe("resolvePolicyDocCacheDbPath (#4842)", () => {
       join("/cfg", "policy-doc-cache.sqlite3"),
     );
     expect(resolvePolicyDocCacheDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      join("/xdg", "gittensory-miner", "policy-doc-cache.sqlite3"),
+      join("/xdg", "loopover-miner", "policy-doc-cache.sqlite3"),
     );
   });
 });

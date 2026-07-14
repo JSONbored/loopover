@@ -26,8 +26,8 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 
 const GOVERNOR_METRICS_USAGE = "Usage: gittensory-miner governor metrics";
 
-export const GOVERNOR_RATE_LIMIT_REMAINING_RATIO = "gittensory_miner_governor_rate_limit_remaining_ratio";
-export const GOVERNOR_CAP_USAGE_RATIO = "gittensory_miner_governor_cap_usage_ratio";
+export const GOVERNOR_RATE_LIMIT_REMAINING_RATIO = "loopover_miner_governor_rate_limit_remaining_ratio";
+export const GOVERNOR_CAP_USAGE_RATIO = "loopover_miner_governor_cap_usage_ratio";
 
 /** HELP-text escaping — backslash + newline (mirrors miner-prediction-metrics.ts's escapeHelpText). */
 function escapeMetricsHelpText(help) {

@@ -25,7 +25,7 @@ export function resolveLocalStoreDbPath(defaultDbFileName, explicitEnvVarName, e
   const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
     ? env.XDG_CONFIG_HOME.trim()
     : join(homedir(), ".config");
-  return join(configHome, "gittensory-miner", defaultDbFileName);
+  return join(configHome, "loopover-miner", defaultDbFileName);
 }
 
 /** Trim and validate a caller-supplied (or resolved-default) DB path, throwing `invalidPathError` if it is empty. */

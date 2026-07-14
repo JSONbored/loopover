@@ -112,14 +112,14 @@ export type AdvisoryAiRoutingConfig = {
   e2eTestGen: boolean;
   planner: boolean;
   summaries: boolean;
-  /** Grounded `@gittensory chat <question>` LLM Q&A (#4595). Ollama-first: declines when off or when
+  /** Grounded `@loopover chat <question>` LLM Q&A (#4595). Ollama-first: declines when off or when
    *  env.AI_ADVISORY is unconfigured and {@link chatQaFrontierFallback} is not also enabled. Default false. */
   chatQa: boolean;
   /** Opt-in ONLY (#4595 follow-up): when true, chat falls back to the shared frontier env.AI chain if
    *  env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless {@link chatQa} is also true.
    *  Default false. */
   chatQaFrontierFallback: boolean;
-  /** Closed-set intent-classification router for unrecognized `@gittensory` mentions (#4596). Ollama-only,
+  /** Closed-set intent-classification router for unrecognized `@loopover` mentions (#4596). Ollama-only,
    *  same as chatQa. Default false. */
   intentRouting: boolean;
 };
@@ -407,13 +407,13 @@ export type RepositorySettings = {
    *  explicit `false` (opt back out) is distinguishable from "not configured" for that fallback. */
   contributorCapCancelCi?: boolean | null | undefined;
   /** Review-request nagging cooldown (#2463, anti-abuse): throttle a contributor repeatedly pinging
-   *  `@gittensory` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
+   *  `@loopover` (any command) on this repo. `"off"` (default) is a no-op; `"hold"` posts a deterministic
    *  cooldown reply and takes no further action; `"close"` additionally closes the thread (PR threads only in
    *  v1 — a plain issue thread degrades to `"hold"` behavior until #2493's `closeIssue` primitive lands).
    *  Always populated by the DB layer (default `"off"`); optional so existing settings fixtures/callers need
    *  not be touched. */
   reviewNagPolicy?: "off" | "hold" | "close" | undefined;
-  /** Review-nag cooldown (#2463): how many `@gittensory` pings a contributor may make on this repo within
+  /** Review-nag cooldown (#2463): how many `@loopover` pings a contributor may make on this repo within
    *  {@link reviewNagCooldownDays} before the (N+1)th is throttled. Always populated by the DB layer (default
    *  `3`); optional so existing settings fixtures/callers need not be touched. Only meaningful when
    *  {@link reviewNagPolicy} is not `"off"`. */
@@ -428,9 +428,9 @@ export type RepositorySettings = {
    *  fixtures/callers need not be touched. */
   reviewNagLabel?: string | null | undefined;
   /** Maintainer-mention nag moderation: GitHub logins to ALSO throttle under the review-nag cooldown when the
-   *  thread author repeatedly @-mentions them (on top of the bot's own `@gittensory` handle) -- e.g. a
+   *  thread author repeatedly @-mentions them (on top of the bot's own `@loopover` handle) -- e.g. a
    *  maintainer login instead of the bot, for a contributor who keeps tagging a specific person for review.
-   *  Counted independently per mentioned login and independently of the `@gittensory` counter, but reuses the
+   *  Counted independently per mentioned login and independently of the `@loopover` counter, but reuses the
    *  SAME {@link reviewNagPolicy}/{@link reviewNagMaxPings}/{@link reviewNagCooldownDays}/{@link reviewNagLabel}
    *  thresholds/action/label -- one cooldown policy, multiple watched mention targets. `[]`/undefined (default)
    *  = no logins watched, zero behavior change. Never fires for the repo owner, admin logins, automation bots,
@@ -481,8 +481,8 @@ export type RepositorySettings = {
    *  configurable-with-fallback shape. Always populated by the DB layer (default `"new-account"`); optional so
    *  existing settings fixtures/callers need not be touched. */
   newAccountLabel?: string | undefined;
-  /** Per-command @gittensory rate limit (#2560, anti-abuse): generalizes the review-nag cooldown's counting
-   *  pattern (the audit-events ledger) to EVERY `@gittensory` command, keyed by `(actor, command, targetKey)` --
+  /** Per-command @loopover rate limit (#2560, anti-abuse): generalizes the review-nag cooldown's counting
+   *  pattern (the audit-events ledger) to EVERY `@loopover` command, keyed by `(actor, command, targetKey)` --
    *  independent of, and complementary to, review-nag's own narrower thread-author-only scope. `"off"` (default)
    *  is a no-op; `"hold"` posts a deterministic cooldown reply and skips the command's own dispatch. Always
    *  populated by the DB layer (default `"off"`); optional so existing settings fixtures/callers need not be

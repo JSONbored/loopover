@@ -54,9 +54,9 @@ describe("gittensory-miner shared local-store helper (#4272)", () => {
     ).toBe("/custom/config/thing.sqlite3");
     expect(
       resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", { XDG_CONFIG_HOME: "/xdg" }),
-    ).toBe("/xdg/gittensory-miner/thing.sqlite3");
+    ).toBe("/xdg/loopover-miner/thing.sqlite3");
     expect(resolveLocalStoreDbPath("thing.sqlite3", "LOOPOVER_MINER_THING_DB", {})).toMatch(
-      /\/\.config\/gittensory-miner\/thing\.sqlite3$/,
+      /\/\.config\/loopover-miner\/thing\.sqlite3$/,
     );
   });
 

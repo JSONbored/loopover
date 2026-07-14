@@ -234,7 +234,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     );
     expect(store.getSnapshot("acme/widgets", "abc123")).toBeNull();
     const removeCall = calls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall?.args).toEqual(["worktree", "remove", "--force", "/repo/.gittensory-replay-snapshots/abc123"]);
+    expect(removeCall?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc123"]);
   });
 
   it("removes the worktree and rethrows the ORIGINAL error (not a cleanup error) when a git read after the worktree exists fails", async () => {
@@ -395,9 +395,9 @@ describe("exportReplaySnapshot (#3010)", () => {
 describe("removeReplaySnapshotWorktree (#3010)", () => {
   it("delegates to the shared removeWorktree primitive", async () => {
     const { exec, calls } = scriptedExec([{ match: () => true, result: ok() }]);
-    const result = await removeReplaySnapshotWorktree(exec, "/repo", "/repo/.gittensory-replay-snapshots/abc123");
+    const result = await removeReplaySnapshotWorktree(exec, "/repo", "/repo/.loopover-replay-snapshots/abc123");
     expect(result).toEqual({ ok: true, removed: true });
-    expect(calls[0]?.args).toEqual(["worktree", "remove", "--force", "/repo/.gittensory-replay-snapshots/abc123"]);
+    expect(calls[0]?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc123"]);
   });
 });
 
@@ -407,7 +407,7 @@ describe("openReplaySnapshotStore (#3010) — round-trip persistence", () => {
     const saved = store.saveSnapshot({
       repoFullName: "acme/widgets",
       commitSha: "abc123",
-      worktreePath: "/repo/.gittensory-replay-snapshots/abc123",
+      worktreePath: "/repo/.loopover-replay-snapshots/abc123",
       targetDate: "2026-01-05T00:00:00+00:00",
       commits: [{ sha: "abc123", date: "2026-01-05T00:00:00+00:00", subject: "t" }],
       tags: [{ name: "v1", date: "2026-01-01T00:00:00+00:00", targetSha: "abc000" }],
@@ -423,7 +423,7 @@ describe("openReplaySnapshotStore (#3010) — round-trip persistence", () => {
     const saved = store.saveSnapshot({
       repoFullName: "acme/widgets",
       commitSha: "abc123",
-      worktreePath: "/repo/.gittensory-replay-snapshots/abc123",
+      worktreePath: "/repo/.loopover-replay-snapshots/abc123",
       targetDate: "2026-01-05T00:00:00+00:00",
       commits: [],
       tags: [],

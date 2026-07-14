@@ -282,7 +282,7 @@ describe("buildCodingTaskSpec (#5132)", () => {
     expect(result.instructions).toContain("Detected target-repo stack:");
     expect(result.instructions).toMatch(/javascript|typescript/i);
     expect(result.instructions).toContain("npm");
-    expect(result.instructions).toContain("Do not assume LoopOver/gittensory CI conventions");
+    expect(result.instructions).toContain("Do not assume LoopOver/loopover CI conventions");
     expect(result.instructions).toContain("- test: `");
     expect(result.instructions).toContain("- build: `");
     expect(result.instructions).toContain("- lint: `");
@@ -304,7 +304,7 @@ describe("buildCodingTaskSpec (#5132)", () => {
     expect(result.ready).toBe(true);
     if (!result.ready) throw new Error("expected ready");
     expect(result.instructions).toContain("Detected target-repo stack: stack not detected:");
-    expect(result.instructions).toContain("Do not assume LoopOver/gittensory CI conventions");
+    expect(result.instructions).toContain("Do not assume LoopOver/loopover CI conventions");
     expect(result.instructions).not.toContain("Run these commands before finishing:");
   });
 

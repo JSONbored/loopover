@@ -415,6 +415,16 @@ export {
 // live gate does), not this file's full internal surface.
 export { buildCollisionReport, type CollisionCluster, type CollisionReport } from "./signals/predicted-gate-engine.js";
 export type { CollisionItem } from "./types/predicted-gate-types.js";
+// #542 public/private boundary primitive, moved out of src/signals/redaction.ts (#4883) -- confirmed-pure,
+// dependency-free redaction vocabulary with high fan-in; the src module now re-exports it from here.
+export {
+  isPublicSafeText,
+  PUBLIC_LOCAL_PATH_INLINE,
+  PUBLIC_LOCAL_PATH_PREFIX_PATTERN,
+  PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
+  PUBLIC_UNSAFE_PATTERN,
+  PUBLIC_UNSAFE_TERMS,
+} from "./signals/redaction.js";
 export * from "./plan-export.js";
 export { countPlanStepsByStatus } from "./plan-step-stats.js";
 export { countPlanSteps } from "./plan-step-count.js";

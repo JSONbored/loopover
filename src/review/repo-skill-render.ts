@@ -13,8 +13,8 @@
 import type { RepoProfile, RepoProfileContributionWorkflow } from "./repo-profile";
 import type { GeneratedDocMarkers } from "./generated-doc-refresh";
 
-export const REPO_SKILL_MARKER_START = "<!-- loopover-skill-doc:start -->";
-export const REPO_SKILL_MARKER_END = "<!-- loopover-skill-doc:end -->";
+export const REPO_SKILL_MARKER_START = "<!-- gittensory-skill-doc:start -->";
+export const REPO_SKILL_MARKER_END = "<!-- gittensory-skill-doc:end -->";
 export const REPO_SKILL_MARKERS: GeneratedDocMarkers = { start: REPO_SKILL_MARKER_START, end: REPO_SKILL_MARKER_END };
 
 function hasBlockingGate(contributionWorkflow: RepoProfileContributionWorkflow): boolean {

@@ -14,8 +14,8 @@ import type { GeneratedDocMarkers } from "./generated-doc-refresh";
 /** HTML-comment marker pair bracketing the machine-generated section of every AGENTS.md this engine writes.
  *  Content outside this pair (added by a maintainer before the start marker or after the end marker) is treated
  *  as permanently manual and is never touched by a refresh (#3004) -- see generated-doc-refresh.ts. */
-export const REPO_DOC_MARKER_START = "<!-- loopover-repo-doc:start -->";
-export const REPO_DOC_MARKER_END = "<!-- loopover-repo-doc:end -->";
+export const REPO_DOC_MARKER_START = "<!-- gittensory-repo-doc:start -->";
+export const REPO_DOC_MARKER_END = "<!-- gittensory-repo-doc:end -->";
 export const REPO_DOC_MARKERS: GeneratedDocMarkers = { start: REPO_DOC_MARKER_START, end: REPO_DOC_MARKER_END };
 
 const MAX_RENDERED_TOP_LEVEL_DIRECTORIES = 12;

@@ -13,7 +13,7 @@ export const DEFAULT_OUTPUT_PATH = "apps/loopover-ui/src/lib/command-reference.t
 
 const PUBLIC_CATALOG_NAME = "PUBLIC_MENTION_COMMAND_CATALOG";
 const MAINTAINER_CATALOG_NAME = "MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG";
-const ACTION_CATALOG_NAME = "GITTENSORY_ACTION_COMMAND_CATALOG";
+const ACTION_CATALOG_NAME = "LOOPOVER_ACTION_COMMAND_CATALOG";
 
 // Self-defense floor: 10 public + 9 maintainer-only commands exist today. If extraction ever finds fewer
 // than 15 total entries across both catalogs, the extraction regex is almost certainly broken -- fail

@@ -20,7 +20,7 @@ declare global {
      *  NEVER gate-blocking (slop advisory, e2e test-gen, issue planner, AI summaries) — separate from the review
      *  chain, the embed provider, and the vision provider, since none of these need frontier-model accuracy.
      *  Built at boot from AI_ADVISORY_BASE_URL/AI_ADVISORY_MODEL. Which capability actually routes through it is
-     *  config-driven (`.gittensory.yml`, global default + per-repo override), not hardcoded here. Absent ⇒ every
+     *  config-driven (`.loopover.yml`, global default + per-repo override), not hardcoded here. Absent ⇒ every
      *  advisory capability falls back to `env.AI` (byte-identical to before this binding existed). */
     AI_ADVISORY?: Ai;
     /** Self-host RAG vector adapter. Cloudflare no longer binds Vectorize for hosted reviews; the Node runtime
@@ -153,7 +153,7 @@ declare global {
     /** Install-wide default for the per-repo contributorCapCancelCi setting (#2462): "true"/"1"/"yes"/"on"
      *  (case-insensitive) enables cancelling in-flight CI runs on a contributor_cap close for every repo that
      *  hasn't explicitly configured its own value. Unset/blank/anything else = off (the existing behavior). A
-     *  repo's own `contributorCapCancelCi` (DB or `.gittensory.yml`) always takes precedence over this. */
+     *  repo's own `contributorCapCancelCi` (DB or `.loopover.yml`) always takes precedence over this. */
     CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT?: string;
     /** The retired review App's webhook secret. Optional: that App has been fully deleted (its installation was
      *  suspended, then removed); GitHub can no longer deliver to POST /v1/github/webhook for it either way — the
@@ -198,7 +198,7 @@ declare global {
      *  permitted to query GET /v1/public/github/repos/:owner/:repo/stats. Default "" (unset) denies all repos
      *  because this unauthenticated route proxies the live GitHub API with the deployment's server-side token.
      *  Set this to the exact public repos that should expose website chrome stats. Mirrors
-     *  GITTENSORY_PUBLIC_STATS_REPOS's comma-separated shape (src/review/public-stats.ts). See
+     *  LOOPOVER_PUBLIC_STATS_REPOS's comma-separated shape (src/review/public-stats.ts). See
      *  src/github/public.ts. */
     PUBLIC_REPO_STATS_ALLOWLIST?: string;
     /** #703: owner-gated global to apply upstream sigmoid time-decay in score previews. Default off. */
@@ -213,16 +213,16 @@ declare global {
      *  suppressed regardless of per-repo mode (the cloud→self-host parallel-run kill switch). Unset = live. */
     SELFHOST_DEPLOYMENT_MODE?: string;
     /** Self-host container-private per-repo config dir. When set, the focus-manifest loader reads
-     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.gittensory.yml`, so review policy (gate,
+     *  `{dir}/{owner}__{repo}.{yml,yaml,json}` INSTEAD of the public `.loopover.yml`, so review policy (gate,
      *  autonomy, labels, model/effort) is set privately and contributors can't read or game it. Unset ⇒ public
      *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
     LOOPOVER_REPO_CONFIG_DIR?: string;
-    GITTENSORY_AUTO_FILE_DRIFT_ISSUES?: string;
-    GITTENSORY_DRIFT_ISSUE_REPO?: string;
-    GITTENSORY_DRIFT_ISSUE_TOKEN?: string;
+    LOOPOVER_AUTO_FILE_DRIFT_ISSUES?: string;
+    LOOPOVER_DRIFT_ISSUE_REPO?: string;
+    LOOPOVER_DRIFT_ISSUE_TOKEN?: string;
     /** Comma-separated GitHub logins assigned to filed upstream-drift issues (default: the gittensory
      *  maintainer). Lets a self-host operator route drift issues to their own team. */
-    GITTENSORY_DRIFT_ISSUE_ASSIGNEES?: string;
+    LOOPOVER_DRIFT_ISSUE_ASSIGNEES?: string;
     /** Comma-separated GitHub bot logins ADDITIONALLY trusted to author review-thread blockers via scanner
      *  comments (src/github/backfill.ts isTrustedScannerReviewThreadAuthor), merged with the built-in baseline
      *  (superagent[bot], superagent-security[bot], superagent-security-dev[bot], brin[bot]). Lets a self-host
@@ -267,7 +267,7 @@ declare global {
     SENTRY_MIN_SEVERITY?: string;
     /** Per-repo override map for SENTRY_MIN_SEVERITY — see its doc comment for the shape and precedence. */
     SENTRY_REPO_MIN_SEVERITY?: string;
-    GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN?: string;
+    LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN?: string;
     PRODUCT_USAGE_HASH_SALT?: string;
     /** Server-to-server API bearer token — bypasses per-repo write checks (src/auth/security.ts). */
     LOOPOVER_API_TOKEN?: string;
@@ -298,12 +298,12 @@ declare global {
      *  panel. Default OFF — unset/false keeps the legacy panel byte-identical. */
     LOOPOVER_REVIEW_UNIFIED_COMMENT?: string;
     /** Inline comments (#inline-comments): when truthy (AND the repo is in LOOPOVER_REVIEW_REPOS AND the repo's
-     *  `.gittensory.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
+     *  `.loopover.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
      *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —
      *  unset/false keeps the review path byte-identical (the model is never asked for inline findings). */
     LOOPOVER_REVIEW_INLINE_COMMENTS?: string;
     /** Fix-handoff blocks (#2176, config slice of #1962): when truthy (AND the repo is in LOOPOVER_REVIEW_REPOS
-     *  AND the repo's `.gittensory.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
+     *  AND the repo's `.loopover.yml` sets `review.fixHandoff: true`), a review finding is ALSO rendered as a
      *  structured, machine-readable "apply this fix" block (src/review/fix-handoff-render.ts) for the
      *  contributor's OWN local agent to consume — content only, no server-side write, no execution. Default
      *  OFF — unset/false keeps the review path byte-identical (no block is ever built). */
@@ -342,7 +342,7 @@ declare global {
      *  is never active for any repo regardless of a per-repo `features.improvementSignal` override. */
     LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL?: string;
     /** #one-shot-review-cadence: the operator's FLEET-WIDE default for AI review re-trigger cadence, consulted
-     *  only when a repo's `.gittensory.yml review.auto_review.cadence` is unset (a per-repo value always wins
+     *  only when a repo's `.loopover.yml review.auto_review.cadence` is unset (a per-repo value always wins
      *  regardless of this flag — see resolveAiReviewCadence). Default OFF (unset/false) ⇒ "one_shot": the
      *  AI-generated content (main review, slop advisory, linked-issue satisfaction) freezes after its first
      *  pass for every repo, and only an explicit maintainer retrigger spends a fresh call. Truthy ⇒
@@ -371,13 +371,13 @@ declare global {
      *  structured `sweep_liveness_stale` log (Sentry-visible), and re-enqueues a targeted `agent-regate-sweep`
      *  for just that repo. Default OFF — unset/false means the cron tick enqueues NO watchdog job (does no new
      *  work), so the worker is byte-identical to today. */
-    GITTENSORY_SWEEP_WATCHDOG?: string;
+    LOOPOVER_SWEEP_WATCHDOG?: string;
     /** Self-heal: when truthy, a short-interval cron list-diffs GitHub's open PR numbers against the local
      *  table for every acting-autonomy repo and catches up (fetch + upsert + regate) any PR number GitHub has
      *  that the local table doesn't — a silently-lost "opened" webhook, caught within minutes instead of the
      *  6-hour backfillRegisteredRepositories freshness window. Default OFF — unset/false means the cron tick
      *  enqueues NO reconciliation job, so the worker is byte-identical to today. */
-    GITTENSORY_PR_RECONCILIATION?: string;
+    LOOPOVER_PR_RECONCILIATION?: string;
     /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
      *  section — at review time the codebase vector index is queried for code/docs semantically related to the
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference
@@ -387,7 +387,7 @@ declare global {
      *  the repo (a cold/missing index degrades to no context). */
     LOOPOVER_REVIEW_RAG?: string;
     /** Deterministic impact map (#2184, part of #1971): operator-level kill-switch, ANDed with the per-repo
-     *  `.gittensory.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
+     *  `.loopover.yml review.impact_map` opt-in (see review/impact-map-wire's isImpactMapEnabled /
      *  shouldComputeImpactMap). Default OFF — unset/false performs NO symbol extraction, NO RAG query, and adds
      *  NO comment/prompt section, byte-identical to today. */
     LOOPOVER_REVIEW_IMPACT_MAP?: string;
@@ -395,12 +395,12 @@ declare global {
      *  QUALITY-CULTURE PROFILE" reference block — typical merged-PR size + common accepted labels, derived
      *  deterministically from this repo's OWN `recent_merged_pull_requests` history (see
      *  review/repo-culture-profile.ts + repo-culture-profile-wire.ts). Also requires the per-repo
-     *  `.gittensory.yml` `review.culture_profile: true` opt-in — this is the global kill-switch only. Default
+     *  `.loopover.yml` `review.culture_profile: true` opt-in — this is the global kill-switch only. Default
      *  OFF — unset/false performs NO extra D1 read and keeps the reviewer prompt byte-identical (the new branch
      *  is unreachable when off). ADVISORY GROUNDING ONLY: never a gate/scoring input. */
     LOOPOVER_REVIEW_CULTURE_PROFILE?: string;
     /** Review memory (#2179, part of #1964): operator-level kill-switch for repeat-false-positive suppression,
-     *  ANDed with the per-repo `.gittensory.yml review.memory` opt-in (see review/review-memory-wire's
+     *  ANDed with the per-repo `.loopover.yml review.memory` opt-in (see review/review-memory-wire's
      *  isReviewMemoryEnabled / shouldApplyReviewMemory). Default OFF — unset/false performs NO suppression-
      *  store read and NO matching, byte-identical to today. ADVISORY-ONLY: never applied to gate blockers. */
     LOOPOVER_REVIEW_MEMORY?: string;
@@ -438,23 +438,23 @@ declare global {
     LOOPOVER_REVIEW_SELFTUNE?: string;
     /** Experimental `gittensor` plugin (the `experimental:` manifest block, first key): the operator-level
      *  kill-switch for gittensory's original subnet mining-registry/scoring integration, now opt-in rather than
-     *  a core dependency. ANDed with the per-repo `.gittensory.yml experimental.gittensor` opt-in -- neither
+     *  a core dependency. ANDed with the per-repo `.loopover.yml experimental.gittensor` opt-in -- neither
      *  alone is sufficient, and unlike `features:` there is no LOOPOVER_REVIEW_REPOS allowlist fallback.
      *  Default OFF -- flag-OFF (or every repo unset), refresh-registry is never enqueued (see src/index.ts) and
      *  a self-host box makes zero outbound contact with the gittensor subnet registry. See
      *  src/review/gittensor-wire.ts. */
-    GITTENSORY_EXPERIMENTAL_GITTENSOR?: string;
+    LOOPOVER_EXPERIMENTAL_GITTENSOR?: string;
     /** Maintainer recap digest (#1963, #2248): when truthy, a cross-repo RecapReport -- gittensory's OWN
      *  gate-precision + outcome-calibration data folded across every scanned repo (buildMaintainerRecap,
-     *  #2239) -- is delivered to Discord on a cron cadence. GITTENSORY_RECAP_CADENCE ("daily" | "weekly",
-     *  default "weekly"; an invalid value falls back to "weekly") picks how often; GITTENSORY_RECAP_HOUR
-     *  (0-23, default 14) and GITTENSORY_RECAP_DAY (0-6, Sunday=0, default 1/Monday, only consulted when
+     *  #2239) -- is delivered to Discord on a cron cadence. LOOPOVER_RECAP_CADENCE ("daily" | "weekly",
+     *  default "weekly"; an invalid value falls back to "weekly") picks how often; LOOPOVER_RECAP_HOUR
+     *  (0-23, default 14) and LOOPOVER_RECAP_DAY (0-6, Sunday=0, default 1/Monday, only consulted when
      *  weekly) pick when, so the tick fires at most once per period. Default OFF -- unset/false means the
      *  cron enqueues NO recap job, byte-identical to today. See src/review/maintainer-recap-wire.ts. */
-    GITTENSORY_MAINTAINER_RECAP?: string;
-    GITTENSORY_RECAP_CADENCE?: string;
-    GITTENSORY_RECAP_HOUR?: string;
-    GITTENSORY_RECAP_DAY?: string;
+    LOOPOVER_MAINTAINER_RECAP?: string;
+    LOOPOVER_RECAP_CADENCE?: string;
+    LOOPOVER_RECAP_HOUR?: string;
+    LOOPOVER_RECAP_DAY?: string;
     /** #1941: route the live CI aggregate (the gate's check/status read) through ONE GraphQL statusCheckRollup
      *  query instead of the paginated /check-runs + /status + /check-suites REST reads, moving that hot path onto
      *  the separate GraphQL rate-limit bucket. Default OFF (byte-identical, proven REST aggregate); when ON the
@@ -471,7 +471,7 @@ declare global {
      *  worker is byte-identical to today. Exposes review-disposition counts + a reversal-grounded accuracy
      *  percentage + an estimated-time-saved figure ONLY — never PR content, authors, scores, or reward internals.
      *  See review/public-stats.ts. */
-    GITTENSORY_PUBLIC_STATS?: string;
+    LOOPOVER_PUBLIC_STATS?: string;
     /** Proof of Power (#1059): comma-separated allowlist of repo full-names ("owner/repo") whose OWN historical
      *  review ledger (audit_events "published a review surface" + pull_requests terminal state) counts toward
      *  the public stats counter. DELIBERATELY SEPARATE from LOOPOVER_REVIEW_REPOS (the live per-PR-feature
@@ -482,7 +482,7 @@ declare global {
      *  public counter, including the unrelated cross-fleet self-hoster aggregate (getOrbGlobalStats), which does
      *  not depend on this var at all. Default "" (unset) → the own-ledger side reports zero (fails safe, same
      *  privacy stance as before) but the Orb aggregate still reports normally. See review/public-stats.ts. */
-    GITTENSORY_PUBLIC_STATS_REPOS?: string;
+    LOOPOVER_PUBLIC_STATS_REPOS?: string;
     /** Convergence (port): public OAuth draft-submission flow ported from reviewbot. When truthy, the
      *  /v1/drafts endpoints accept a contributor draft -> GitHub OAuth -> fork PR against the content repo.
      *  Default OFF — unset/false makes every draft endpoint 404 and writes nothing (byte-identical worker). */
@@ -521,20 +521,20 @@ declare global {
      *  guards short-circuit so the advisory finding, gate conclusion, close reason, slop, and panels are
      *  unchanged). Once a winner closes, the next-lowest OPEN sibling becomes the winner on re-eval. See
      *  src/signals/duplicate-winner.ts. */
-    GITTENSORY_DUPLICATE_WINNER?: string;
+    LOOPOVER_DUPLICATE_WINNER?: string;
     /** Open-PR file-path collision (#2653): when truthy, a live PR review enriches its own and its open
      *  siblings' `changedFiles` from the `pull_request_files` cache (a plain D1 read — no extra GitHub calls)
      *  before building the collision report, so two independently-open PRs touching the same file are flagged
      *  the same way two title-similar PRs already are. A contributor's own two PRs sharing a file are never
      *  flagged (see the same-author guard in buildCollisionReport). Default OFF — unset/false leaves every
      *  PullRequestRecord's changedFiles unset, byte-identical to today. See src/signals/engine.ts prItem. */
-    GITTENSORY_OPEN_PR_FILE_COLLISION?: string;
+    LOOPOVER_OPEN_PR_FILE_COLLISION?: string;
     /** Waste elimination for known automation authors (settings/automation-bot-skip.ts): skip AI review, gate
      *  evaluation, and public-surface publish entirely for a PR/event genuinely triggered by release-please's
      *  github-actions[bot], Renovate, or Dependabot. Default-ON, unlike most flags above — see that module's
      *  own doc comment for why. A repo can override via its own repository_settings.skip_automation_bot_authors
      *  column ("off"/"enabled"), independent of this global default. */
-    GITTENSORY_SKIP_AUTOMATION_BOT_PRS?: string;
+    LOOPOVER_SKIP_AUTOMATION_BOT_PRS?: string;
     /** D1 size/row-count observability probe (#3810): the Cloudflare account id that owns the D1 database to
      *  monitor. Presence of this AND the two vars below IS the enablement switch (see isD1SizeProbeEnabled,
      *  src/selfhost/d1-size-probe.ts) -- unset/blank ⇒ the probe never runs, byte-identical to today. Most

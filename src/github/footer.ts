@@ -10,10 +10,10 @@
 
 /** The LoopOver product site (marketing on-ramp / attribution target) -- the DEFAULT only. A
  *  self-hoster with `PUBLIC_SITE_ORIGIN` set gets their own domain instead, both here and in
- *  `gittensoryFooter` below (#4613). */
-export const GITTENSORY_SITE_URL = "https://loopover.ai";
+ *  `loopoverFooter` below (#4613). */
+export const LOOPOVER_SITE_URL = "https://loopover.ai";
 
-/** Minimal env slice `gittensoryFooter` needs, narrowed from the full `Env` the same way this file's
+/** Minimal env slice `loopoverFooter` needs, narrowed from the full `Env` the same way this file's
  *  `maintainerControlPanelUrl` already narrows its own `env` param inline -- so every file that renders
  *  the footer only has to thread this one field down from wherever the real `Env` is in scope, not the
  *  whole worker binding type. */
@@ -23,7 +23,7 @@ export type LoopOverFooterEnv = { PUBLIC_SITE_ORIGIN?: string | undefined };
  *  check-run `details_url` so the merge-box "Details" link lands on the repo's review panel instead of GitHub's
  *  generic check page, and as the in-comment control-panel link. Returns null only if URL construction throws. */
 export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | undefined }, repoFullName: string): string | null {
-  const origin = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
+  const origin = env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL;
   try {
     const url = new URL("/app", origin);
     url.searchParams.set("view", "maintainer");
@@ -42,11 +42,11 @@ export function maintainerControlPanelUrl(env: { PUBLIC_SITE_ORIGIN?: string | u
  *  literal path string only if origin resolution itself throws (an operator-misconfigured PUBLIC_SITE_ORIGIN
  *  should degrade the link, not crash comment rendering). */
 export function commandReferenceUrl(env: LoopOverFooterEnv): string {
-  const origin = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
+  const origin = env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL;
   try {
     return new URL("/docs/gittensory-commands", origin).toString();
   } catch {
-    return `${GITTENSORY_SITE_URL}/docs/gittensory-commands`;
+    return `${LOOPOVER_SITE_URL}/docs/gittensory-commands`;
   }
 }
 
@@ -66,12 +66,12 @@ export function gittensorRepoEarnUrl(repoFullName: string): string {
  *  distinction lives in the review BODY (full panel vs. minimal), not here.
  *  Uses only "earn" wording — never reward/payout/score (forbidden in public comments).
  *  `env.PUBLIC_SITE_ORIGIN` (same resolution as `maintainerControlPanelUrl` above) lets a self-hoster's
- *  own domain replace `GITTENSORY_SITE_URL` in the "Checked by LoopOver" attribution link (#4613) --
+ *  own domain replace `LOOPOVER_SITE_URL` in the "Checked by LoopOver" attribution link (#4613) --
  *  the Gittensor register link (`GITTENSOR_HOME_URL`) is a separate, shared network and is never rebranded. */
-export function gittensoryFooter(env: LoopOverFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
-  const siteUrl = env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL;
+export function loopoverFooter(env: LoopOverFooterEnv, opts: { earnUrl?: string | undefined; customText?: string | undefined } = {}): string {
+  const siteUrl = env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL;
   const earnUrl = opts.earnUrl ?? GITTENSOR_HOME_URL;
-  // Maintainer-customized footer (via `.gittensory.yml review.footer.text`): the maintainer's public-safe
+  // Maintainer-customized footer (via `.loopover.yml review.footer.text`): the maintainer's public-safe
   // lead replaces the default CTA copy, but the Gittensor register link + LoopOver attribution are
   // ALWAYS appended — the growth surface is preserved regardless of customization.
   if (opts.customText) {

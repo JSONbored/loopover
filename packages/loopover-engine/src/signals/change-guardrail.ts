@@ -19,7 +19,7 @@ export function canonicalize(value: string): string {
 // once chained — `[^/]*` groups separated by a literal that class doesn't exclude (e.g. "-", not "/") back-
 // track ambiguously, and `.*` groups back-track ambiguously EVEN when "/"-separated, since `.*` crosses `/`
 // freely. Re-benchmarked against `path` lengths GitHub can plausibly deliver via a deeply nested file path in a
-// malicious PR (both `path` and, via `.gittensory.yml`'s contentLane.*Glob fields, the glob itself can be
+// malicious PR (both `path` and, via `.loopover.yml`'s contentLane.*Glob fields, the glob itself can be
 // attacker-influenced in the same PR):
 //   2 wildcard groups (any mix of `*`/`**`, any arrangement): sub-second even at a wildly implausible 32,000-
 //                       char adversarial path (worst case observed: ~400ms) — quadratic, bounded, never a

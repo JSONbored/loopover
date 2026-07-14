@@ -110,7 +110,7 @@ curl http://localhost:8787/ready
       />
       <Callout variant="note">
         Both scripts pin a version: the image script accepts a tag/digest argument or{" "}
-        <code>GITTENSORY_IMAGE</code>; the prebuilt script derives <code>SENTRY_RELEASE</code>/
+        <code>LOOPOVER_IMAGE</code>; the prebuilt script derives <code>SENTRY_RELEASE</code>/
         <code>LOOPOVER_VERSION</code> from the checked-out commit (
         <code>git rev-parse --short=8 HEAD</code>) unless you set <code>SENTRY_RELEASE</code>{" "}
         yourself. A plain{" "}

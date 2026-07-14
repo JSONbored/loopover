@@ -65,7 +65,7 @@ function renderCiWorkflowFiles(ciWorkflowFiles: string[]): string {
  * adds before the start marker or after the end marker in the delivered file is never part of this output and
  * is therefore never touched.
  *
- * `siteUrl` is resolved by the caller from `env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL` (#4613), so a
+ * `siteUrl` is resolved by the caller from `env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL` (#4613), so a
  * self-hoster's own domain reaches the attribution link instead of `loopover.ai`. Threading it as a
  * plain string argument (rather than an `env` slice) keeps this function's purity/determinism contract intact --
  * the SAME `(profile, siteUrl)` pair always renders the SAME output, which is all the diff-aware refresh in

@@ -4,9 +4,9 @@
 #
 # WHERE TO COPY (pick one):
 #   PUBLIC REPO — repo root as `.loopover.yml` (or `.github/loopover.yml`). Contributors can read it.
-#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml` (global default),
-#     `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.loopover.yml` (per-repo override), or
-#     `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml` (lowest-priority cross-repo base, #1959).
+#   PRIVATE SELF-HOST — `${LOOPOVER_REPO_CONFIG_DIR}/.loopover.yml` (global default),
+#     `${LOOPOVER_REPO_CONFIG_DIR}/owner__repo/.loopover.yml` (per-repo override), or
+#     `${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml` (lowest-priority cross-repo base, #1959).
 #     Never commit real policy here to a public repo — use the private mount for thresholds,
 #     allowlists, and autonomy.
 #

@@ -5,7 +5,7 @@
 // index.ts's cron gate, which skips the registry fetch entirely when nothing is opted in).
 //
 // Mirrors impact-map-wire.ts's isImpactMapEnabled/shouldComputeImpactMap: a single GLOBAL env kill-switch the
-// operator controls, ANDed with an EXPLICIT per-repo `.gittensory.yml experimental.gittensor` manifest `true`
+// operator controls, ANDed with an EXPLICIT per-repo `.loopover.yml experimental.gittensor` manifest `true`
 // (resolveManifestOnlyFeature's shape -- no allowlist fallback, unlike the converged `features:` block). Both
 // OFF by default: with the env flag unset, no repo is ever treated as gittensor-opted-in. Cloud never consults
 // any of this -- registry/sync.ts only calls gittensorEnabledRepoFullNames on the self-host branch, so the
@@ -16,18 +16,18 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveManifestOnlyFeature } from "./feature-activation";
 
 /** True when the gittensor subnet-scoring plugin is enabled at the operator level. Flag-OFF (default) -> no
- *  repo is ever gittensor-opted-in regardless of what any `.gittensory.yml` says, and
+ *  repo is ever gittensor-opted-in regardless of what any `.loopover.yml` says, and
  *  {@link gittensorEnabledRepoFullNames} short-circuits before reading a single manifest. Truthy follows the
  *  codebase convention (`/^(1|true|yes|on)$/i`, same as isImpactMapEnabled / isSelfTuneEnabled). */
-export function isGittensorPluginEnabled(env: { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_EXPERIMENTAL_GITTENSOR ?? "");
+export function isGittensorPluginEnabled(env: { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_EXPERIMENTAL_GITTENSOR ?? "");
 }
 
 /** Resolve whether the gittensor plugin is active for THIS repo: the operator's global env kill-switch AND an
  *  explicit per-repo manifest opt-in. Neither alone is sufficient -- mirrors every other manifestOnly feature
  *  gate in this codebase (env kill-switch first, then the manifest narrows it further). */
 export function shouldEnableGittensorForRepo(
-  env: { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined },
+  env: { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined },
   manifestGittensorEnabled: boolean | null | undefined,
 ): boolean {
   return resolveManifestOnlyFeature(isGittensorPluginEnabled(env), manifestGittensorEnabled);
@@ -45,7 +45,7 @@ export function shouldEnableGittensorForRepo(
  * Flag-OFF (default) short-circuits before listing repos or loading a single manifest, so a plain self-host
  * instance makes zero local reads for this and zero outbound gittensor-registry requests (see index.ts).
  */
-export async function gittensorEnabledRepoFullNames(env: Env & { GITTENSORY_EXPERIMENTAL_GITTENSOR?: string | undefined }): Promise<Set<string>> {
+export async function gittensorEnabledRepoFullNames(env: Env & { LOOPOVER_EXPERIMENTAL_GITTENSOR?: string | undefined }): Promise<Set<string>> {
   if (!isGittensorPluginEnabled(env)) return new Set();
   const repos = await listRepositories(env);
   const enabled = new Set<string>();

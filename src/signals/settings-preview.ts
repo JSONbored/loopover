@@ -265,7 +265,7 @@ export function buildRepoSettingsPreview(args: {
   issues: IssueRecord[];
   pullRequests: PullRequestRecord[];
   sample: PublicSurfaceSample;
-  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
+  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `loopoverFooter` (#4613). */
   env: LoopOverFooterEnv;
 }): RepoSettingsPreview {
   const { settings, repo, repoFullName } = args;

@@ -14,7 +14,7 @@ import { type AiReviewActualUsage, BEST_REVIEW_MODELS, clampNumber, coerceAiText
 import { recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import { sanitizePublicComment } from "../github/commands";
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
-import { gittensoryFooter, type LoopOverFooterEnv } from "../github/footer";
+import { loopoverFooter, type LoopOverFooterEnv } from "../github/footer";
 import type { GitHubWebhookPayload } from "../types";
 
 /** True when the issue-planning command is enabled. Flag-OFF (default) → every export below is unreachable from
@@ -182,7 +182,7 @@ export function buildIssuePlanComment(
       plan,
       "",
       "---",
-      gittensoryFooter(args.env),
+      loopoverFooter(args.env),
     ].join("\n"),
   );
 }

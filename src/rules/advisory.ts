@@ -231,7 +231,7 @@ export function buildPullRequestAdvisory(
     /** Duplicate-winner adjudication (#dup-winner). When true AND this PR is the cluster winner (the lowest
      *  open sibling number), the `duplicate_pr_risk` finding is suppressed so the winner is not gate-blocked /
      *  closed as a duplicate. Default/false ⇒ every duplicate sibling keeps the finding (byte-identical). The
-     *  caller sets this to `env.GITTENSORY_DUPLICATE_WINNER === "true"`. */
+     *  caller sets this to `env.LOOPOVER_DUPLICATE_WINNER === "true"`. */
     duplicateWinnerEnabled?: boolean;
     /** Author logins of the linked issues (one entry per resolved issue, may be null when unknown). Used to
      *  surface a `self_authored_linked_issue` finding when the PR author also opened the linked issue. Absent
@@ -942,7 +942,7 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   if (code === "secret_leak") return true;
   // A maintainer pre-merge check (#review-pre-merge-checks) marked `enforce: true` produces this DETERMINISTIC
   // finding when it fails (a required title/description phrase or label is missing). It always blocks: the
-  // per-check `enforce` flag in `.gittensory.yml` IS the opt-in (mirroring secret_leak — the finding only exists
+  // per-check `enforce` flag in `.loopover.yml` IS the opt-in (mirroring secret_leak — the finding only exists
   // when the maintainer configured an enforced check). The advisory variant (`pre_merge_check_failed`) is a plain
   // warning and is never blocked here. No AI judgment is involved, so this can never cause an AI false-close.
   if (code === "pre_merge_check_required") return true;

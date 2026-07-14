@@ -24,7 +24,7 @@ export type ClaCheckConfig = {
 };
 
 /**
- * Evaluate `.gittensory.yml gate.claMode` + `gate.cla` (consentPhrase / checkRunName) against a PR —
+ * Evaluate `.loopover.yml gate.claMode` + `gate.cla` (consentPhrase / checkRunName) against a PR —
  * DETERMINISTICALLY, mirroring the pre-merge-checks title/description phrase-match pattern (review/pre-merge-checks.ts)
  * exactly: a case-insensitive substring match against already-resolved PR data, no AI judgment. Consent is
  * satisfied when EITHER configured method holds (an "either" contract, not "all", because a repo may only be able

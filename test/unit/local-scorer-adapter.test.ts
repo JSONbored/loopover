@@ -89,9 +89,9 @@ describe("local scorer adapter", () => {
     expect(payload).not.toHaveProperty("repoRoot");
     expect(JSON.stringify(payload)).not.toMatch(/BEGIN (RSA )?PRIVATE KEY/);
 
-    process.env.GITTENSORY_UPLOAD_SOURCE = "true";
+    process.env.LOOPOVER_UPLOAD_SOURCE = "true";
     expect(() => collectLocalBranchMetadata({ cwd: process.cwd(), repoFullName: "JSONbored/gittensory", login: "local" })).toThrow(/not supported/);
-    delete process.env.GITTENSORY_UPLOAD_SOURCE;
+    delete process.env.LOOPOVER_UPLOAD_SOURCE;
   });
 
   it("runs the packaged reference scorer against metadata only", async () => {

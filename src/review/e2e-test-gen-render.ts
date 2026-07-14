@@ -10,7 +10,7 @@
 // the test source is plausible Playwright before this ever sees it, and that #4195's caller already
 // resolved authorization — this file only turns already-decided content into a public-safe comment body.
 import { AGENT_COMMAND_COMMENT_MARKER } from "../github/comments";
-import { gittensoryFooter, type LoopOverFooterEnv } from "../github/footer";
+import { loopoverFooter, type LoopOverFooterEnv } from "../github/footer";
 
 /** Outcome of an attempted `commit`-mode delivery (#4197), or its absence entirely (comment-only mode, or
  *  generation itself produced nothing usable — see `buildE2eTestGenCommentBody`'s own null-testSource
@@ -29,7 +29,7 @@ export type E2eTestGenCommentInput = {
   /** Present only when `commit` delivery mode was configured AND generation produced a usable test. Absent
    *  for comment-only delivery — the generated test always renders as a suggestion in that case. */
   commit?: E2eTestGenCommitOutcome | undefined;
-  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `gittensoryFooter` (#4613). */
+  /** Resolved by the caller from `env.PUBLIC_SITE_ORIGIN` -- see `loopoverFooter` (#4613). */
   env: LoopOverFooterEnv;
 };
 
@@ -58,7 +58,7 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
       `> The model's output didn't parse as valid ${framework} source — try again, or add the test by hand.`,
       "",
       "---",
-      gittensoryFooter(input.env),
+      loopoverFooter(input.env),
     ].join("\n");
   }
   if (input.commit?.status === "committed") {
@@ -70,7 +70,7 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
       `> [View the commit](${input.commit.htmlUrl}) (\`${input.commit.commitSha.slice(0, 7)}\`). This is a suggestion, not a guarantee — review it like any other test before merging.`,
       "",
       "---",
-      gittensoryFooter(input.env),
+      loopoverFooter(input.env),
     ].join("\n");
   }
   const declineNote =
@@ -96,6 +96,6 @@ export function buildE2eTestGenCommentBody(input: E2eTestGenCommentInput): strin
     fence,
     "",
     "---",
-    gittensoryFooter(input.env),
+    loopoverFooter(input.env),
   ].join("\n");
 }

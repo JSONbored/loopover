@@ -8,8 +8,8 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("isPrReconciliationEnabled — default OFF, truthy convention", () => {
   it("matches the codebase's shared truthy-string convention", () => {
-    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isPrReconciliationEnabled({ GITTENSORY_PR_RECONCILIATION: off })).toBe(false);
-    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isPrReconciliationEnabled({ GITTENSORY_PR_RECONCILIATION: on })).toBe(true);
+    for (const off of [undefined, "", "false", "no", "0", "off"]) expect(isPrReconciliationEnabled({ LOOPOVER_PR_RECONCILIATION: off })).toBe(false);
+    for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) expect(isPrReconciliationEnabled({ LOOPOVER_PR_RECONCILIATION: on })).toBe(true);
   });
 });
 

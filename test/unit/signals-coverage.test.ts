@@ -1373,7 +1373,7 @@ describe("signal coverage edge cases", () => {
     expect(passingGateComment).toContain("> | Gate result | ✅ Passing | No configured blocker found. | No action. |");
     expect(passingGateComment).toContain("Public GitHub metadata was checked");
 
-    // .gittensory.yml review overrides: custom footer lead, an intro note, and a hidden row.
+    // .loopover.yml review overrides: custom footer lead, an intro note, and a hidden row.
     const customizedComment = buildPublicPrIntelligenceComment({env: {},
       repo: directRepo,
       pr: { ...currentPr, linkedIssues: [99], body: "Fixes #99" },

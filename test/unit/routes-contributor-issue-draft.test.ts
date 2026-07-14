@@ -97,7 +97,7 @@ describe("contributor-issue-drafts route auth", () => {
 
   it("requires live GitHub write permission before session issue creation", async () => {
     const app = createApp();
-    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "", GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "service-token" });
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "", LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "service-token" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
       number: 5,
@@ -185,7 +185,7 @@ describe("contributor-issue-drafts route auth", () => {
 
   it("returns dry-run drafts for authorized static-token callers", async () => {
     const app = createApp();
-    const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
     const response = await app.request(
       DRAFTS_PATH,
       { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ dryRun: true, limit: 2 }) },

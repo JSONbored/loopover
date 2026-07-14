@@ -2,7 +2,7 @@
 // content-lane-wire.ts hard-selected METAGRAPHED_LANE_SPEC for every repo in the LOOPOVER_REVIEW_REPOS
 // allowlist; a different self-hosted maintainer's registry could only be onboarded by editing gittensory's own
 // TypeScript source. This mirrors resolveConvergedFeature's precedence (review/feature-activation.ts): env
-// kill-switch → per-repo `.gittensory.yml` config → allowlist default — but resolves to a whole spec OBJECT (or
+// kill-switch → per-repo `.loopover.yml` config → allowlist default — but resolves to a whole spec OBJECT (or
 // null/inactive) instead of a boolean, so it lives alongside the content-lane engine rather than in
 // feature-activation.ts itself, which only knows about boolean converged features.
 import { globToRegExp } from "../../signals/change-guardrail";
@@ -12,8 +12,8 @@ import { type ContentLaneEnv, isContentLaneEnabled } from "./flag";
 import { assessProviderDocument, assessSubnetDocument, METAGRAPHED_LANE_SPEC, type RegistryLaneSpec } from "./registry-logic";
 
 /**
- * Code-registered, PR-reviewed domain validators a maintainer's `.gittensory.yml` `contentLane.validatorId` can
- * reference by name — mirrors the existing `GatePolicyPack` pattern (`gate.pack` in `.gittensory.yml`, branched
+ * Code-registered, PR-reviewed domain validators a maintainer's `.loopover.yml` `contentLane.validatorId` can
+ * reference by name — mirrors the existing `GatePolicyPack` pattern (`gate.pack` in `.loopover.yml`, branched
  * on in `rules/predicted-gate.ts`): config picks a string id that selects one of a small, code-reviewed set of
  * behavior bundles, rather than a maintainer supplying arbitrary logic through config. Semantic validation stays
  * a deliberate, bounded, one-time code contribution (a new validator module + a one-line registration here,
@@ -49,7 +49,7 @@ export function buildRegistryLaneSpecFromConfig(config: FocusManifestContentLane
 
 /**
  * True when `config.validatorId` is set but does not match any REGISTRY_VALIDATORS entry — most likely an
- * operator typo in `.gittensory.yml`'s `contentLane.validatorId` (e.g. "metagraph" instead of "metagraphed").
+ * operator typo in `.loopover.yml`'s `contentLane.validatorId` (e.g. "metagraph" instead of "metagraphed").
  * `buildRegistryLaneSpecFromConfig` above already degrades this to structural-only gating silently (never a
  * crash — a brand-new registry with no validator contributed yet is a legitimate config), which makes a typo
  * indistinguishable from a deliberate choice. Checked as a SEPARATE pure function so a caller (see
@@ -63,7 +63,7 @@ export function unregisteredValidatorId(config: FocusManifestContentLaneConfig |
   return Object.hasOwn(REGISTRY_VALIDATORS, config.validatorId) ? null : config.validatorId;
 }
 
-/** The validatorId strings a maintainer's `.gittensory.yml` `contentLane.validatorId` can currently reference —
+/** The validatorId strings a maintainer's `.loopover.yml` `contentLane.validatorId` can currently reference —
  *  exposed so a caller can render a helpful "known validators are: X, Y" hint alongside an
  *  `unregisteredValidatorId` warning, without reaching into REGISTRY_VALIDATORS directly. */
 export function registeredValidatorIds(): string[] {

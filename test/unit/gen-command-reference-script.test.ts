@@ -83,7 +83,7 @@ describe("gen-command-reference script (#3046)", () => {
         const MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG = [
           ${maintainerIds}
         ] as const;
-        const GITTENSORY_ACTION_COMMAND_CATALOG = [
+        const LOOPOVER_ACTION_COMMAND_CATALOG = [
           ${actionIds}
         ] as const;
       `);

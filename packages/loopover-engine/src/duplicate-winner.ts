@@ -1,5 +1,5 @@
 /**
- * Duplicate-winner adjudication (#dup-winner). Flag-gated by GITTENSORY_DUPLICATE_WINNER.
+ * Duplicate-winner adjudication (#dup-winner). Flag-gated by LOOPOVER_DUPLICATE_WINNER.
  *
  * When several OPEN PRs link the same issue (a duplicate cluster), the legacy behavior gate-blocks +
  * auto-closes EVERY sibling as a duplicate — no winner survives. With the flag ON, exactly ONE winner is

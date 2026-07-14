@@ -964,7 +964,7 @@ describe("api routes", () => {
     expect(settingsMalformed.status).toBe(400);
 
     // REGRESSION (#4372 security finding): agentGlobalFreezeOverride is an operator-only emergency lever
-    // (set via the private .gittensory.yml, never the maintainer-facing settings API) — a maintainer PUT
+    // (set via the private .loopover.yml, never the maintainer-facing settings API) — a maintainer PUT
     // must silently strip it, not persist it, even when explicitly sent alongside otherwise-valid fields.
     const freezeOverrideAttempt = await app.request(
       "/v1/repos/entrius/allways-ui/settings",

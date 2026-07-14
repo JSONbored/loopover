@@ -108,7 +108,7 @@ async function buildEvalRow(env: Env, repoFullName: string): Promise<GateEvalRow
  *  allowlist to fall back to — every agent-configured repo is already IN by default once the global flag is
  *  on. So this doesn't fit `resolveConvergedFeature`'s env-kill-switch → override → allowlist-default shape;
  *  there is no allowlist. Instead, deliberately FORCE-OFF-ONLY (mirroring the `safety` feature's asymmetric
- *  precedent, #2269, just in the opposite direction): an explicit per-repo `.gittensory.yml`
+ *  precedent, #2269, just in the opposite direction): an explicit per-repo `.loopover.yml`
  *  `review.selftune: false` excludes that one repo from the tuning pass even though it's otherwise
  *  agent-configured. There is no `true` override — forcing a NON-agent-configured repo INTO the tuning pass
  *  would bypass its owner's separate, broader acting-autonomy consent (`isAgentConfigured`), an unrelated

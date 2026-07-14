@@ -555,8 +555,8 @@ function splitCommand(command) {
 }
 
 function assertSourceUploadDisabled() {
-  if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false")) {
-    throw new Error("GITTENSORY_UPLOAD_SOURCE=true is not supported in v1; local MCP sends metadata only.");
+  if (/^(1|true|yes)$/i.test(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false")) {
+    throw new Error("LOOPOVER_UPLOAD_SOURCE=true is not supported in v1; local MCP sends metadata only.");
   }
 }
 

@@ -1,4 +1,4 @@
-// Self-heal (flag-gated by GITTENSORY_PR_RECONCILIATION). A "PR opened" webhook that silently vanishes (no
+// Self-heal (flag-gated by LOOPOVER_PR_RECONCILIATION). A "PR opened" webhook that silently vanishes (no
 // error, no audit event, no trace anywhere — see reconcileOpenPullRequests's doc comment for the 2026-07-06
 // incident that motivated this) previously wasn't caught until backfillRegisteredRepositories's opportunistic
 // resync, which skips any repo whose sync is "fresh" (up to 6 hours). This module runs a much tighter, dedicated
@@ -22,8 +22,8 @@ import { isConvergenceRepoAllowed, listConvergenceRepos } from "./cutover-gate";
 
 /** True when fast open-PR reconciliation is enabled. Flag-OFF (default) → the caller never invokes it, so the
  *  cron enqueues no reconciliation job and the queue processor no-ops on a stale in-flight one. */
-export function isPrReconciliationEnabled(env: { GITTENSORY_PR_RECONCILIATION?: string | undefined }): boolean {
-  return /^(1|true|yes|on)$/i.test(env.GITTENSORY_PR_RECONCILIATION ?? "");
+export function isPrReconciliationEnabled(env: { LOOPOVER_PR_RECONCILIATION?: string | undefined }): boolean {
+  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_PR_RECONCILIATION ?? "");
 }
 
 /** The same acting-autonomy repo set fanOutAgentRegateSweepJobs sweeps (mirrors sweep-watchdog.ts's own copy of

@@ -13,7 +13,7 @@ export const PRE_MERGE_CHECK_BLOCKING_CODE = "pre_merge_check_required";
 export const PRE_MERGE_CHECK_UNRESOLVED_CODE = "pre_merge_check_unresolved";
 
 /**
- * Evaluate the maintainer's `.gittensory.yml review.pre_merge_checks` against a PR — DETERMINISTICALLY, with no AI
+ * Evaluate the maintainer's `.loopover.yml review.pre_merge_checks` against a PR — DETERMINISTICALLY, with no AI
  * judgment. A check with `whenPaths` applies only when a changed path matches; it PASSES only when EVERY configured
  * assertion holds (the title contains `titleContains`, the body contains `descriptionContains`, and the
  * `requireLabel` label is present — all case-insensitive). Each FAILED check yields ONE finding:

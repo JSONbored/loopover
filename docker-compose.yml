@@ -806,9 +806,9 @@ services:
       # Default SQLite app DB path maps app /data/loopover.sqlite to exporter /appdb/loopover.sqlite.
       # If you override DATABASE_PATH, set this to the matching /appdb/<file> path. When DATABASE_URL points at
       # Postgres, the exporter reads Postgres with psql and still writes the same redacted SQLite reporting DB
-      # for Grafana. Set GITTENSORY_REPORTING_SOURCE_DATABASE_URL only if the reporting reader uses a different URL.
+      # for Grafana. Set LOOPOVER_REPORTING_SOURCE_DATABASE_URL only if the reporting reader uses a different URL.
       LOOPOVER_REPORTING_SOURCE_DB: "${LOOPOVER_REPORTING_SOURCE_DB:-/appdb/loopover.sqlite}"
-      GITTENSORY_REPORTING_SOURCE_DATABASE_URL: "${GITTENSORY_REPORTING_SOURCE_DATABASE_URL:-}"
+      LOOPOVER_REPORTING_SOURCE_DATABASE_URL: "${LOOPOVER_REPORTING_SOURCE_DATABASE_URL:-}"
       DATABASE_URL: "${DATABASE_URL:-}"
       LOOPOVER_REPORTING_DIR: /reporting
       LOOPOVER_REPORTING_DB: "${LOOPOVER_REPORTING_DB:-/reporting/loopover-reporting.sqlite}"
@@ -857,11 +857,11 @@ services:
       # (a single-file mount pins to the pre-`git pull` inode and silently never picks up a script update).
       - ./scripts:/scripts:ro
     environment:
-      GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB: "${GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
-      GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB: "${GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"
+      LOOPOVER_AMS_ATTEMPT_LOG_SOURCE_DB: "${LOOPOVER_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
+      LOOPOVER_AMS_PREDICTION_LEDGER_SOURCE_DB: "${LOOPOVER_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"
       LOOPOVER_REPORTING_DIR: /reporting
-      GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB: "${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}"
-      GITTENSORY_AMS_PREDICTION_LEDGER_REPORTING_DB: "${GITTENSORY_AMS_PREDICTION_LEDGER_REPORTING_DB:-/reporting/ams-prediction-ledger.sqlite}"
+      LOOPOVER_AMS_ATTEMPT_LOG_REPORTING_DB: "${LOOPOVER_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}"
+      LOOPOVER_AMS_PREDICTION_LEDGER_REPORTING_DB: "${LOOPOVER_AMS_PREDICTION_LEDGER_REPORTING_DB:-/reporting/ams-prediction-ledger.sqlite}"
       LOOPOVER_AMS_REPORTING_EXPORT_INTERVAL_SECONDS: "${LOOPOVER_AMS_REPORTING_EXPORT_INTERVAL_SECONDS:-30}"
     command:
       - /bin/sh
@@ -878,7 +878,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "db=\"$${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
+          "db=\"$${LOOPOVER_AMS_ATTEMPT_LOG_REPORTING_DB:-/reporting/ams-attempt-log.sqlite}\"; test -s \"$$db\" && sqlite3 \"$$db\" 'PRAGMA quick_check;' | grep -q '^ok$'",
         ]
       interval: 30s
       timeout: 5s
@@ -1104,13 +1104,13 @@ services:
     environment:
       DATABASE_PATH: /data/loopover.sqlite
       DATABASE_URL: "${DATABASE_URL:-}"
-      GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-}"
+      LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "${LOOPOVER_BACKUP_SOURCE_DATABASE_URL:-}"
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       BACKUP_RETAIN: ${BACKUP_RETAIN:-7}
       # Opt-in restore drill (verify-backup.sh): restore the newest dump into a THROWAWAY database, never the
       # live one. Both must be set, and the scratch URL must differ from the backup source.
       VERIFY_RESTORE_SCRATCH: "${VERIFY_RESTORE_SCRATCH:-}"
-      GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: "${GITTENSORY_VERIFY_SCRATCH_DATABASE_URL:-}"
+      LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: "${LOOPOVER_VERIFY_SCRATCH_DATABASE_URL:-}"
     volumes:
       # RW (not :ro) so SQLite's online-backup can use the WAL index; the script only ever reads the DB.
       - loopover-data:/data

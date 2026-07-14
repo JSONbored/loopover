@@ -3,7 +3,7 @@
 // (#2270) once that lands, rather than each feature growing its own duplicate whitelist. A maintainer-named
 // GitHub login here is NEVER throttled or closed by either mechanism, on top of the standing owner/admin/
 // automation-bot exemption every such mechanism already honors. Config-driven and layered the same as other
-// settings (`.gittensory.yml` > DB), never hard-coded for any repo. Mirrors contributor-blacklist.ts's shape
+// settings (`.loopover.yml` > DB), never hard-coded for any repo. Mirrors contributor-blacklist.ts's shape
 // (normalize → validated list + warnings), minus the reason/evidence metadata a ban carries that an exemption
 // doesn't need.
 // A trailing `[bot]` is a real, common GitHub App-actor login shape (e.g. `dependabot[bot]`, `sentry[bot]`) --
@@ -14,7 +14,7 @@
 const GITHUB_LOGIN = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}(?:\[bot\])?$/;
 const MAX_ENTRIES = 500;
 
-/** Normalize a raw exempt-logins value (DB JSON or `.gittensory.yml`) into a validated, de-duplicated list of
+/** Normalize a raw exempt-logins value (DB JSON or `.loopover.yml`) into a validated, de-duplicated list of
  *  GitHub logins. Never throws: malformed entries are dropped with a warning. De-dup is case-insensitive (the
  *  FIRST occurrence's casing is kept). */
 export function normalizeAutoCloseExemptLogins(input: unknown): { logins: string[]; warnings: string[] } {

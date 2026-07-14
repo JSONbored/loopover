@@ -15,15 +15,15 @@ This runbook records the **post-port** operating model for the reviewbot → git
 - `#982` — dashboard / observability
 - `#1030` — decommission legacy reviewbot identity + repo, keep gittensory as the single project
 
-The old vendor/embed plan is obsolete. The review system now lives in **gittensory-native codepaths** guarded by `GITTENSORY_REVIEW_*` flags. There is no `REVIEWBOT_ENGINE_ENABLED` path in this repository.
+The old vendor/embed plan is obsolete. The review system now lives in **gittensory-native codepaths** guarded by `LOOPOVER_REVIEW_*` flags. There is no `REVIEWBOT_ENGINE_ENABLED` path in this repository.
 
 ## Current architecture
 
 - **Single project:** gittensory is the only source repo for the converged review system.
 - **Native port:** review features live under `src/review/**`, `src/queue/processors.ts`, and related first-party modules.
-- **Public comment path:** the unified in-place PR comment is driven by the native bridge and the `GITTENSORY_REVIEW_UNIFIED_COMMENT` flag.
+- **Public comment path:** the unified in-place PR comment is driven by the native bridge and the `LOOPOVER_REVIEW_UNIFIED_COMMENT` flag.
 - **Infra model:** D1 / Queue / AI / optional Vectorize / optional R2 / optional Browser bindings are declared directly in gittensory.
-- **Config model:** rollout is controlled by `GITTENSORY_REVIEW_*` flags plus the per-repo allowlist `GITTENSORY_REVIEW_REPOS`.
+- **Config model:** rollout is controlled by `LOOPOVER_REVIEW_*` flags plus the per-repo allowlist `LOOPOVER_REVIEW_REPOS`.
 - **Parity model:** parity is measured as a shadow/deploy-time comparison against authoritative legacy audit rows; local checkout validation proves structure and safety, not historical decision identity.
 
 ## What issue `#1030` means in this repo
@@ -48,15 +48,15 @@ Those are operator actions. This repo should document them clearly and avoid imp
 
 Primary native review flags and surfaces:
 
-- `GITTENSORY_REVIEW_UNIFIED_COMMENT` — single public PR comment
-- `GITTENSORY_REVIEW_SAFETY` — prompt-injection defang + secret scan
-- `GITTENSORY_REVIEW_GROUNDING` — CI + full-file grounding
-- `GITTENSORY_REVIEW_RAG` — retrieval-augmented context
-- `GITTENSORY_REVIEW_REPUTATION` — internal spend gate
-- `GITTENSORY_REVIEW_OPS` — operator stats / anomaly surfaces
-- `GITTENSORY_REVIEW_SELFTUNE` — tightening-only self-tuning loop
-- `GITTENSORY_REVIEW_PARITY_AUDIT` — shadow parity recording
-- `GITTENSORY_REVIEW_REPOS` — per-repo cutover allowlist
+- `LOOPOVER_REVIEW_UNIFIED_COMMENT` — single public PR comment
+- `LOOPOVER_REVIEW_SAFETY` — prompt-injection defang + secret scan
+- `LOOPOVER_REVIEW_GROUNDING` — CI + full-file grounding
+- `LOOPOVER_REVIEW_RAG` — retrieval-augmented context
+- `LOOPOVER_REVIEW_REPUTATION` — internal spend gate
+- `LOOPOVER_REVIEW_OPS` — operator stats / anomaly surfaces
+- `LOOPOVER_REVIEW_SELFTUNE` — tightening-only self-tuning loop
+- `LOOPOVER_REVIEW_PARITY_AUDIT` — shadow parity recording
+- `LOOPOVER_REVIEW_REPOS` — per-repo cutover allowlist
 
 These replace the old notion of a separate reviewbot engine toggle.
 

@@ -7,7 +7,7 @@
 
 * **miner:** the miner's default config directory and every gittensory_miner_* Prometheus metric name changed; no dual-read/alias, per the epic's full-cutover mandate ([#5705](https://github.com/JSONbored/gittensory/issues/5705)). A self-hoster's existing ~/.config/gittensory-miner state does not migrate automatically.
 * **github:** the bot no longer recognizes @gittensory as a command trigger anywhere -- only @loopover works. Any saved PR-comment template, bookmark, or muscle-memory referencing @gittensory <command> must be updated to @loopover <command>.
-* **miner:** every GITTENSORY_MINER_*/GITTENSORY_API_TOKEN_FILE/ GITTENSORY_MCP_TOKEN_FILE/GITTENSORY_MEM_LIMIT/GITTENSORY_REPORTING_* env var an existing self-hosted AMS/miner deployment sets must be renamed to its LOOPOVER_ equivalent -- the old names are no longer read.
+* **miner:** every LOOPOVER_MINER_*/LOOPOVER_API_TOKEN_FILE/ LOOPOVER_MCP_TOKEN_FILE/LOOPOVER_MEM_LIMIT/LOOPOVER_REPORTING_* env var an existing self-hosted AMS/miner deployment sets must be renamed to its LOOPOVER_ equivalent -- the old names are no longer read.
 * remove gittensory-engine's settings.gateCheckMode yml back-compat parsing ([#5373](https://github.com/JSONbored/gittensory/issues/5373)) (#5463)
 
 ### Features
@@ -38,7 +38,7 @@
 * **miner:** build a real SelfReviewContext fetcher ([#5145](https://github.com/JSONbored/gittensory/issues/5145)) ([#5235](https://github.com/JSONbored/gittensory/issues/5235)) ([7a423be](https://github.com/JSONbored/gittensory/commit/7a423be3648342232e9274e39ef39c691feca967))
 * **miner:** extract and persist real coding-agent token usage ([#5658](https://github.com/JSONbored/gittensory/issues/5658)) ([1e0ac6c](https://github.com/JSONbored/gittensory/commit/1e0ac6c9b1d932f2f83b34efdfea24710988c606))
 * **miner:** persist coding-agent provider + real cost on the attempt log ([#5637](https://github.com/JSONbored/gittensory/issues/5637)) ([941c300](https://github.com/JSONbored/gittensory/commit/941c300691982c65b534e86bdedf03a85f8712b4))
-* **miner:** rename GITTENSORY_MINER_*/GITTENSORY_* env vars to LOOPOVER_MINER_*/LOOPOVER_* ([#5707](https://github.com/JSONbored/gittensory/issues/5707)) ([6714f0c](https://github.com/JSONbored/gittensory/commit/6714f0cac5ab37477c7f56332cde969788c7996e)), closes [#5705](https://github.com/JSONbored/gittensory/issues/5705)
+* **miner:** rename LOOPOVER_MINER_*/LOOPOVER_* env vars to LOOPOVER_MINER_*/LOOPOVER_* ([#5707](https://github.com/JSONbored/gittensory/issues/5707)) ([6714f0c](https://github.com/JSONbored/gittensory/commit/6714f0cac5ab37477c7f56332cde969788c7996e)), closes [#5705](https://github.com/JSONbored/gittensory/issues/5705)
 * **miner:** wire attempt-metering.ts into the iterate loop for a real mid-attempt budget abort ([#5437](https://github.com/JSONbored/gittensory/issues/5437)) ([30a6ffb](https://github.com/JSONbored/gittensory/commit/30a6ffbc7b7625d0fdc4ce01320ca7a5da4c986b))
 * **miner:** wire claim-conflict resolution end-to-end ([#5480](https://github.com/JSONbored/gittensory/issues/5480)) ([7109bf2](https://github.com/JSONbored/gittensory/commit/7109bf267eba84733c441fa8e137c1a5d310983d))
 * **miner:** wire the real runMinerAttempt call into attempt-cli.js ([#5261](https://github.com/JSONbored/gittensory/issues/5261)) ([f3f1f2b](https://github.com/JSONbored/gittensory/commit/f3f1f2b59565fc83ce2f7f84d3b186a533221087))

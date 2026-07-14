@@ -912,9 +912,9 @@ describe("queue processors", () => {
           comment: { id: 1, body: "@loopover help — also @JSONbored can you look?", user: { login: "chatty", type: "User" }, author_association: "NONE" },
         },
       });
-      const gittensoryPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
+      const loopoverPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.review_nag_ping'").first<{ n: number }>();
       const mentionPings = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.monitored_mention_ping'").first<{ n: number }>();
-      expect(gittensoryPings?.n).toBe(1);
+      expect(loopoverPings?.n).toBe(1);
       expect(mentionPings?.n).toBe(1);
     });
 
@@ -2563,11 +2563,11 @@ describe("queue processors", () => {
   });
 
   it("#dup-winner: flag ON spares the lowest open sibling — no duplicate block, slop not penalized for the cluster", async () => {
-    // GITTENSORY_DUPLICATE_WINNER ON. A same-issue cluster of OPEN PRs (#91 winner, #92 loser) under
+    // LOOPOVER_DUPLICATE_WINNER ON. A same-issue cluster of OPEN PRs (#91 winner, #92 loser) under
     // duplicatePrGateMode: block. The winner (#91, lowest open number) must NOT be gate-blocked or slop-
     // penalized as a duplicate — it is judged on its own merits. This drives the flag-ON branch of the
     // processors gate path (isDupWinner) + the advisory duplicate-finding suppression.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_DUPLICATE_WINNER: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_DUPLICATE_WINNER: "true" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
@@ -2686,7 +2686,7 @@ describe("queue processors", () => {
   });
 
   it("REGRESSION (#dup-winner-slop-drift): maybePublishPrPublicSurface's slop penalty uses the LIVE-reconciled siblings, not a raw stale-cached read — a stale-cached-open lower sibling that is actually CLOSED on GitHub must not deny this PR winner status / slop-penalize it for the cluster", async () => {
-    // GITTENSORY_DUPLICATE_WINNER ON. PR #95 (this PR, being reviewed) links issue #1; PR #90 (LOWER-numbered,
+    // LOOPOVER_DUPLICATE_WINNER ON. PR #95 (this PR, being reviewed) links issue #1; PR #90 (LOWER-numbered,
     // same linked issue) is cached `open` in the DB (a missed/delayed `closed` webhook), but GitHub's LIVE state
     // for #90 is actually `closed`. Before the fix, maybePublishPrPublicSurface's own duplicate-winner election
     // read the raw, un-reconciled `listPullRequests` result (still showing #90 as open) and so wrongly denied
@@ -2694,7 +2694,7 @@ describe("queue processors", () => {
     // "low") even though the gate's OWN reconciled otherOpenPullRequests (used to build the advisory/gate
     // disposition) had already correctly dropped #90. After the fix, both paths agree: #95 is the winner (no
     // open siblings once reconciled) and carries NO duplicate-cluster slop penalty (slop_band "clean").
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITTENSORY_DUPLICATE_WINNER: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_DUPLICATE_WINNER: "true" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
@@ -5714,7 +5714,7 @@ describe("queue processors", () => {
     errors.mockRestore();
   });
 
-  it("sweep-liveness-watchdog job no-ops when GITTENSORY_SWEEP_WATCHDOG is OFF (does no scan, no re-enqueue)", async () => {
+  it("sweep-liveness-watchdog job no-ops when LOOPOVER_SWEEP_WATCHDOG is OFF (does no scan, no re-enqueue)", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({ JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue }); // flag unset → OFF
     await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9310);
@@ -5726,9 +5726,9 @@ describe("queue processors", () => {
     expect(sent).toEqual([]);
   });
 
-  it("sweep-liveness-watchdog job runs the liveness scan and re-enqueues a stale repo when GITTENSORY_SWEEP_WATCHDOG is ON", async () => {
+  it("sweep-liveness-watchdog job runs the liveness scan and re-enqueues a stale repo when LOOPOVER_SWEEP_WATCHDOG is ON", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
-    const env = createTestEnv({ GITTENSORY_SWEEP_WATCHDOG: "true", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
+    const env = createTestEnv({ LOOPOVER_SWEEP_WATCHDOG: "true", JOBS: { async send(m: import("../../src/types").JobMessage) { sent.push(m); } } as unknown as Queue });
     await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9311);
     await upsertRepositorySettings(env, { repoFullName: "owner/stale-repo", autonomy: { merge: "auto" } });
     await upsertPullRequestFromGitHub(env, "owner/stale-repo", { number: 1, title: "PR1", state: "open", user: { login: "c" }, head: { sha: "a1" }, labels: [], body: "" });
@@ -5738,7 +5738,7 @@ describe("queue processors", () => {
     expect(sent).toEqual([expect.objectContaining({ type: "agent-regate-sweep", repoFullName: "owner/stale-repo", installationId: 9311 })]);
   });
 
-  it("reconcile-open-prs job no-ops when GITTENSORY_PR_RECONCILIATION is OFF (does no scan)", async () => {
+  it("reconcile-open-prs job no-ops when LOOPOVER_PR_RECONCILIATION is OFF (does no scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9410);
     await upsertRepositorySettings(env, { repoFullName: "owner/stale-repo", autonomy: { merge: "auto" } });
@@ -5749,8 +5749,8 @@ describe("queue processors", () => {
     expect(reconcileSpy).not.toHaveBeenCalled();
   });
 
-  it("reconcile-open-prs job runs the reconciliation scan when GITTENSORY_PR_RECONCILIATION is ON", async () => {
-    const env = createTestEnv({ GITTENSORY_PR_RECONCILIATION: "true" });
+  it("reconcile-open-prs job runs the reconciliation scan when LOOPOVER_PR_RECONCILIATION is ON", async () => {
+    const env = createTestEnv({ LOOPOVER_PR_RECONCILIATION: "true" });
     await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9411);
     await upsertRepositorySettings(env, { repoFullName: "owner/stale-repo", autonomy: { merge: "auto" } });
     const reconcileSpy = vi.spyOn(backfillModule, "reconcileOpenPullRequests").mockResolvedValue({ repoFullName: "owner/stale-repo", remoteOpenCount: 0, localOpenCount: 0, missingNumbers: [] });
@@ -6275,7 +6275,7 @@ describe("queue processors", () => {
         },
       });
 
-      // JSONbored/gittensory falls back to its own bundled manifest (GITTENSORY_REPO_FOCUS_MANIFEST_YAML) when
+      // JSONbored/gittensory falls back to its own bundled manifest (LOOPOVER_REPO_FOCUS_MANIFEST_YAML) when
       // no other manifest source responds, which REPLACES this test's DB-configured single-mapping override
       // with its own bug/feature (exclusive) + priority (additive) mapping list -- so the linked issue's
       // gittensor:priority label composes with the title-derived "fix" -> gittensor:bug, rather than replacing
@@ -6640,7 +6640,7 @@ describe("queue processors", () => {
       // Deliberately NOT "JSONbored/gittensory" (unlike its two sibling tests above): this repo's own
       // `.loopover.yml` now enables propagation for itself (#priority-linked-issue-gate-ownership
       // dogfooding), and `resolveRepositorySettings` falls back to the bundled
-      // `GITTENSORY_REPO_FOCUS_MANIFEST_YAML` copy of it whenever a live manifest fetch is unavailable
+      // `LOOPOVER_REPO_FOCUS_MANIFEST_YAML` copy of it whenever a live manifest fetch is unavailable
       // (`isLoopOverSelfRepo`, `src/signals/focus-manifest-loader.ts`) -- exactly the case in this test's
       // stubbed fetch. Using gittensory's own literal repo name here would make this "propagation is off by
       // DEFAULT" test silently stop being a default-behavior test at all.

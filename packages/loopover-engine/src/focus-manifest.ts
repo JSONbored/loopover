@@ -63,7 +63,7 @@ export type FocusManifestLinkedIssuePolicy = "required" | "preferred" | "optiona
 export type FocusManifestIssueDiscoveryPolicy = "encouraged" | "neutral" | "discouraged";
 
 /**
- * Maintainer-authored gate configuration declared as code in `.gittensory.yml` under `gate:`. Each
+ * Maintainer-authored gate configuration declared as code in `.loopover.yml` under `gate:`. Each
  * field is `null` when the maintainer did not set it, so the resolver can layer the manifest OVER the
  * DB-backed RepositorySettings (manifest > DB > safe defaults) without clobbering unset values. All
  * of these flow through the SAME confirmed-contributor-gated `evaluateGateCheck` path — the manifest
@@ -203,7 +203,7 @@ export type FocusManifestGateConfig = {
    *  action (reusing the existing cross-repo banned-contributors ledger once wired) rather than a 5th mode
    *  value. THIS FIELD IS CURRENTLY INERT -- the similarity/containment detection engine that would actually
    *  compute a copycat finding does not exist yet (tracked as later, separate PRs against #1969); parsing and
-   *  threading this config end-to-end first proves the plumbing and lets an operator's `.gittensory.yml`
+   *  threading this config end-to-end first proves the plumbing and lets an operator's `.loopover.yml`
    *  already declare intent without waiting on the detection engine. */
   copycatMode: CopycatGateMode | null;
   /** `gate.copycat.minScore` (#1969): containment/similarity score (0-100) at/above which `copycatMode` acts.
@@ -217,7 +217,7 @@ export type FocusManifestGateConfig = {
 export type CopycatGateMode = "off" | "warn" | "label" | "block";
 
 // The converged per-PR review features a self-host operator toggles PER-REPO under `features:` in the private
-// `.gittensory.yml`. Each feature ALSO has a GLOBAL env flag (LOOPOVER_REVIEW_*) that stays a master
+// `.loopover.yml`. Each feature ALSO has a GLOBAL env flag (LOOPOVER_REVIEW_*) that stays a master
 // kill-switch (the feature never runs when its env flag is off, regardless of this block). See
 // review/feature-activation.ts for the resolver (env kill-switch → per-repo override → env-allowlist default).
 // NOTE: only the per-PR REVIEW features whose every activation site is migrated are listed here. grounding
@@ -240,7 +240,7 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // before/after render of the PR's own web-visible files carries no security-hardening or full-file-fetch
 // rationale either, so it gets the standard override, not an asymmetric one. Before #4616 it had NO
 // `features:` override at all (env flag AND allowlist only) despite being documented right next to its six
-// siblings in `.gittensory.yml.example` — a self-hoster who guessed `features.screenshots: true` (a natural
+// siblings in `.loopover.yml.example` — a self-hoster who guessed `features.screenshots: true` (a natural
 // guess given the sibling keys) found it silently did nothing. `features.screenshots` is layered UNDER the
 // separate, richer `review.visual.*` block (route/preview-URL config, #3609/#3610, and `review.visual.enabled:
 // false` as an always-available additional force-off, #4083) — that block still narrows/disables capture
@@ -301,7 +301,7 @@ export type FocusManifestRepoDocGenerationScope = "agents" | "skills";
 
 /**
  * Per-repo opt-in for the repo-doc generation roadmap (#2993/#3002), declared as code under
- * `repoDocGeneration:`. Purely a `.gittensory.yml` surface -- there is no DB-backed dashboard counterpart,
+ * `repoDocGeneration:`. Purely a `.loopover.yml` surface -- there is no DB-backed dashboard counterpart,
  * so precedence is simply "the manifest value, or the default below when unset" (no DB layer to overlay).
  * Defaults to fully disabled: a repo with no `repoDocGeneration:` block, or an explicit `enabled: false`,
  * is never touched by the generator. `allowOverwriteExisting` is a SEPARATE opt-in specifically for a repo
@@ -342,7 +342,7 @@ export type FocusManifestReviewRecapConfig = {
 /**
  * Config-as-code override for the CROSS-repo maintainer recap digest's cron knobs (#1963, #2250), declared
  * under `maintainerRecap:`. Distinct from `reviewRecap:` above (that is the single-repo digest's own window/
- * enable knob); this instead overrides the GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars
+ * enable knob); this instead overrides the LOOPOVER_MAINTAINER_RECAP / LOOPOVER_RECAP_CADENCE env vars
  * that gate the cron-scheduled cross-repo digest (buildMaintainerRecap, #2239 / #2248) — read from the
  * gittensory self-repo's manifest (resolveLoopOverSelfRepoFullName), since the digest is an operator-level
  * setting, not a per-contributor-repo one. Mirrors `reviewRecap:` exactly: no DB-backed counterpart, so the
@@ -359,10 +359,10 @@ export type FocusManifestMaintainerRecapConfig = {
 };
 
 /**
- * Generic repository-settings override declared in `.gittensory.yml` under `settings:`. A partial of
+ * Generic repository-settings override declared in `.loopover.yml` under `settings:`. A partial of
  * {@link RepositorySettings} — every behaviour a maintainer can toggle in the dashboard can be set here
  * as code. Unset fields are omitted so the resolver layers it OVER the DB-backed settings
- * (`.gittensory.yml` > dashboard settings > safe defaults). The friendly `gate:` block is a typed alias
+ * (`.loopover.yml` > dashboard settings > safe defaults). The friendly `gate:` block is a typed alias
  * for the gate-related subset and wins over `settings:` for those fields.
  */
 export type FocusManifestSettings = Partial<
@@ -442,7 +442,7 @@ export type FocusManifestSettings = Partial<
 > & {
   // `typeLabels`/`linkedIssueLabelPropagation`/`linkedIssueHardRules` are declared PARTIAL here (not via the `Pick<RepositorySettings,
   // ...>` above, which would force a complete, defaults-filled object) so `resolveEffectiveSettings` can merge
-  // them field-by-field against the DB value — a `.gittensory.yml` override naming only one key (e.g. just
+  // them field-by-field against the DB value — a `.loopover.yml` override naming only one key (e.g. just
   // `typeLabels.priority`) must inherit the OTHER keys from the DB-persisted value, not silently reset them to
   // the built-in default (#priority-linked-issue-gate), and can add arbitrary categories beyond the built-in
   // three (#label-modularity). `mappings` is still a complete replacement when present (arrays don't have
@@ -673,7 +673,7 @@ export type FocusManifestReviewConfig = {
    *  maintainer-only slice. null (default, absent) ⇒ byte-identical to today. */
   linkedIssueSatisfaction: LinkedIssueSatisfactionMode | null;
   /** Runtime provenance when the container-private shared base (`review.shared_config`, #2046) filled review
-   *  fields from `LOOPOVER_REPO_CONFIG_DIR/_shared/.gittensory.yml`. Never parsed from maintainer YAML —
+   *  fields from `LOOPOVER_REPO_CONFIG_DIR/_shared/.loopover.yml`. Never parsed from maintainer YAML —
    *  set by the private-config loader only. null (default) ⇒ no shared overlay was applied. */
   sharedConfigSource: string | null;
 };
@@ -957,7 +957,7 @@ const MAX_GLOBSTAR_SLASH_ALTERNATIVES = 128;
 // 128 KiB, not 64 KiB: loopover.full.yml (our own reference doc, parsed by config-templates.test.ts as a
 // round-trip check) organically grows every time a new review.* knob ships and had already reached 65522/65536
 // bytes on main before this comment was written -- one doc line from any PR would trip the old ceiling. A real
-// per-repo .gittensory.yml never needs anywhere near this size, so the DoS-guard intent is unaffected (#2006).
+// per-repo .loopover.yml never needs anywhere near this size, so the DoS-guard intent is unaffected (#2006).
 export const MAX_FOCUS_MANIFEST_BYTES = 128 * 1024;
 
 const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
@@ -1865,7 +1865,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
   // agentGlobalFreezeOverride is deliberately NOT in the generic boolean loop above (#4372/#4391/operator-only-
   // freeze-fix): it is an OPERATOR-ONLY emergency lever ("re-activate this one repo while the fleet-wide kill-
   // switch stays on elsewhere"), and every OTHER settings field in that loop is readable from BOTH the public,
-  // maintainer-owned `.gittensory.yml` committed in the repo's own git history (source: "repo_file") AND the
+  // maintainer-owned `.loopover.yml` committed in the repo's own git history (source: "repo_file") AND the
   // operator's private, container-local self-host config (source: "api_record") -- see loadRepoFocusManifestWithCachePolicy
   // in focus-manifest-loader.ts for how each source is produced. A repo MAINTAINER must never be able to grant
   // their own repo an exemption from the operator's fleet-wide freeze via their own committed yml (that is
@@ -2058,7 +2058,7 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[],
   // instead of configuring a nonsensical cap. Valid counts clamp to the fixed live-verification budget. UNLIKE
   // contributorBlacklist above, an explicit yml `null` here is
   // load-bearing (not the same as omitting the key): the documented `yml > DB > null` precedence means a
-  // maintainer must be able to force a DB-configured cap back to "no cap" via `.gittensory.yml` without deleting
+  // maintainer must be able to force a DB-configured cap back to "no cap" via `.loopover.yml` without deleting
   // the DB row. `normalizeOptionalPositiveInteger` collapses "absent" and "null" to the same silent `null`
   // return, so that distinction has to be made HERE, before calling it: a literal `null` sets the key to `null`
   // (clears); omitted (`undefined`) leaves the key unset (preserves the DB value via the resolver's spread); an
@@ -3165,7 +3165,7 @@ export function parseFocusManifestContent(content: string | null | undefined, so
 
 /**
  * Format a manifest's parse `warnings[]` into one grouped, deduped, order-preserving notice for the review
- * surface — an acceptance criterion of #1670: an invalid/malformed `.gittensory.yml` value should fail
+ * surface — an acceptance criterion of #1670: an invalid/malformed `.loopover.yml` value should fail
  * clearly instead of silently falling back to a default. Empty/no warnings ⇒ `null` (byte-identical, no
  * notice). Pure; reuses the warnings every parser already accumulates rather than a parallel schema. (#2056)
  */

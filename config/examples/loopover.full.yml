@@ -5,7 +5,7 @@
 # WHERE TO COPY (pick one):
 #   PUBLIC REPO — repo root as `.loopover.yml` (or `.github/loopover.yml`). Use for work-area
 #     guidance (`wantedPaths`, test expectations) that contributors may read.
-#   PRIVATE SELF-HOST — `${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml` or a per-repo file under
+#   PRIVATE SELF-HOST — `${LOOPOVER_REPO_CONFIG_DIR}/.loopover.yml` or a per-repo file under
 #     `owner__repo/`. Use for anti-abuse thresholds, maintainer allowlists, autonomy, and anything
 #     contributors must not see or game. See `TEMPLATES.md` for public-vs-private split.
 #
@@ -53,7 +53,7 @@
 #
 # NOTE: some capabilities (safety scanning, CI/full-file grounding, RAG,
 # reputation control, the unified comment) are switched on at the deployment
-# level by the operator's GITTENSORY_REVIEW_* feature flags AND a per-repo
+# level by the operator's LOOPOVER_REVIEW_* feature flags AND a per-repo
 # cutover allowlist. This file tunes behavior; it does not enable those
 # deployment-wide capabilities.
 # ============================================================================
@@ -418,8 +418,8 @@ gate:
 # deterministic gate policy above. Omit the block to keep the byte-identical
 # defaults.
 #
-# SELF-HOST ONLY (`review.shared_config`, #2046): when `GITTENSORY_REPO_CONFIG_DIR` is mounted,
-# place a shared review base at `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml` (see
+# SELF-HOST ONLY (`review.shared_config`, #2046): when `LOOPOVER_REPO_CONFIG_DIR` is mounted,
+# place a shared review base at `${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml` (see
 # `config/examples/shared.loopover.yml`). Per-repo `review:` keys overlay it field-by-field —
 # repo value wins when set, shared fills gaps, defaults stay byte-identical. Absent shared base is
 # the common case and changes nothing. A malformed shared base warns and is ignored (never blocks a
@@ -486,7 +486,7 @@ review:
   # When true, the unified review comment gains a compact "review effort: N/5 (~M min)" chip.
 
   # Bool | null. Default: null/false — byte-identical (#2184, part of #1971). Also requires the operator's
-  # GITTENSORY_REVIEW_IMPACT_MAP env flag to be on — this manifest field alone cannot enable it. When both are
+  # LOOPOVER_REVIEW_IMPACT_MAP env flag to be on — this manifest field alone cannot enable it. When both are
   # on, a deterministic impact map (which other repo files plausibly need re-checking, from the RAG index +
   # changed symbols) is computed, rendered as a compact section in the unified review comment, and fed to the
   # AI reviewer as additive reference context.
@@ -494,12 +494,12 @@ review:
 
   # When true, the AI reviewer's prompt gains an additive "repo quality-culture profile" reference block --
   # typical merged-PR size + common accepted labels, derived from this repo's own merge history. Reference-only
-  # grounding; never a gate/scoring input. Requires operator flag GITTENSORY_REVIEW_CULTURE_PROFILE. Bool or
+  # grounding; never a gate/scoring input. Requires operator flag LOOPOVER_REVIEW_CULTURE_PROFILE. Bool or
   # null. Default: null/false — byte-identical. (#2995)
   # culture_profile: false
 
   # Per-repo FORCE-OFF for the self-improvement/auto-tune cron pass (#4104) -- `false` excludes this repo from
-  # tuning even though it's otherwise agent-configured and the operator's GITTENSORY_REVIEW_SELFTUNE flag is on.
+  # tuning even though it's otherwise agent-configured and the operator's LOOPOVER_REVIEW_SELFTUNE flag is on.
   # Deliberately FORCE-OFF-ONLY (no `true` override): unlike most `review.*` toggles above, this does NOT live
   # under a per-repo allowlist -- selftune's own scoping is whether the repo already opted into the
   # acting-autonomy surface, a separate consent boundary this key must not bypass. Bool or null. Default:
@@ -507,7 +507,7 @@ review:
   # selftune: false
 
   # Repeat-false-positive suppression (#2179, part of #1964). Bool | null. Default: null/false — byte-identical
-  # (no suppression-store read, no matching). Also requires the operator's GITTENSORY_REVIEW_MEMORY env flag to
+  # (no suppression-store read, no matching). Also requires the operator's LOOPOVER_REVIEW_MEMORY env flag to
   # be on -- this manifest field alone cannot enable it. When both are on, an advisory (non-blocking) AI finding
   # is matched against this repo's stored review_suppression signals (a maintainer's own past false-positive
   # dismissals) before it is surfaced, and demoted/dropped on a match. ADVISORY-ONLY: never applied to gate
@@ -548,7 +548,7 @@ review:
   # e2e_test_auto_trigger: false
 
   # Inline-comment layer toggles (#1956 / #1958). Bool | null. Default: null/false — byte-identical.
-  # Requires operator flag GITTENSORY_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
+  # Requires operator flag LOOPOVER_REVIEW_INLINE_COMMENTS + cutover allowlist + review.inline_comments: true.
   # inline_comments: false
   # When true, the AI reviewer ALSO leaves quiet, non-blocking inline PR comments on specific changed lines.
   # suggestions: false
@@ -557,7 +557,7 @@ review:
   # inline_comments_per_category: 3
 
   # Fix-handoff blocks (#2176). Bool | null. Default: null/false — byte-identical.
-  # Requires operator flag GITTENSORY_REVIEW_FIX_HANDOFF + cutover allowlist AND this toggle.
+  # Requires operator flag LOOPOVER_REVIEW_FIX_HANDOFF + cutover allowlist AND this toggle.
   # fixHandoff: false
 
   # Read-only auto-merge readiness summary (#2051). Bool | null. Default: null/false — byte-identical.
@@ -981,7 +981,7 @@ settings:
 #       instructions: "Flag any migration missing a matching down-path note."
 #   # When true, the AI reviewer ALSO leaves quiet, non-blocking inline PR comments on specific changed
 #   # lines, in addition to the decision summary. Bool or null. Default: null/false (no inline comments).
-#   # Operator-gated too (GITTENSORY_REVIEW_INLINE_COMMENTS + allowlist).
+#   # Operator-gated too (LOOPOVER_REVIEW_INLINE_COMMENTS + allowlist).
 #   inline_comments: false
 #   # When true, an inline finding whose fix is precise enough to anchor to one line is ALSO rendered as
 #   # a one-click GitHub suggestion block. Only takes effect when inline_comments is already on. Bool or
@@ -995,7 +995,7 @@ settings:
 #   # compact "review effort: N/5 (~M min)" chip -- a deterministic, no-AI complexity/time estimate from the
 #   # changed files' added-line volume and file-type mix. Bool or null. Default: null/false.
 #   effort_score: false
-#   # When true (AND the operator's GITTENSORY_REVIEW_IMPACT_MAP env flag is also on), a deterministic
+#   # When true (AND the operator's LOOPOVER_REVIEW_IMPACT_MAP env flag is also on), a deterministic
 #   # impact map -- which other repo files plausibly need re-checking, from the RAG index + changed
 #   # symbols -- is computed, rendered as a compact unified-comment section, and fed to the AI reviewer
 #   # as additive reference context. Bool or null. Default: null/false (#2184, part of #1971).
@@ -1003,14 +1003,14 @@ settings:
 #   # When true, the AI reviewer's prompt gains an additive "repo quality-culture profile" reference block --
 #   # typical merged-PR size + common accepted labels, derived from this repo's OWN recent merge history
 #   # (recent_merged_pull_requests). Reference-only grounding, never a gate/scoring input; requires the operator
-#   # flag GITTENSORY_REVIEW_CULTURE_PROFILE. Bool or null. Default: null/false. (#2995)
+#   # flag LOOPOVER_REVIEW_CULTURE_PROFILE. Bool or null. Default: null/false. (#2995)
 #   culture_profile: false
 #   # Per-repo FORCE-OFF for the self-improvement/auto-tune cron pass (#4104) -- false excludes this repo from
 #   # tuning even though it's otherwise agent-configured and the operator flag is on. FORCE-OFF-ONLY, no true
 #   # override -- selftune's own scoping is the acting-autonomy consent boundary, not a per-repo allowlist. Bool
 #   # or null. Default: null/true -- no change to today's agent-configured-repos-only behavior.
 #   selftune: false
-#   # When true (AND the operator's GITTENSORY_REVIEW_MEMORY env flag is also on), an advisory (non-blocking)
+#   # When true (AND the operator's LOOPOVER_REVIEW_MEMORY env flag is also on), an advisory (non-blocking)
 #   # AI finding is matched against this repo's stored review_suppression signals (a maintainer's own past
 #   # false-positive dismissals) before it is surfaced, and demoted/dropped on a match. ADVISORY-ONLY: never
 #   # applied to gate blockers -- it can never change the merge/close disposition. Bool or null.
@@ -1051,7 +1051,7 @@ settings:
 #     openai_compatible_model: null  # Overrides OPENAI_COMPATIBLE_AI_MODEL for this repo. String or null. (#3902)
 #     anthropic_model: null  # Overrides ANTHROPIC_AI_MODEL for this repo's BYOK Messages API reviewer. String or null. (#3902)
 #   # Per-repo before/after screenshot-capture config (#3609 preview / #3610 routes). Only takes effect when
-#   # the operator has ALSO enabled GITTENSORY_REVIEW_SCREENSHOTS + this repo's cutover allowlist -- this
+#   # the operator has ALSO enabled LOOPOVER_REVIEW_SCREENSHOTS + this repo's cutover allowlist -- this
 #   # config narrows/redirects that feature, it never turns it on by itself. All-null/empty/default ⇒
 #   # byte-identical to today (GitHub-native preview discovery, automatic file-to-route inference).
 #   visual:
@@ -1098,7 +1098,7 @@ settings:
 #     # renders per side, ~4s wall-clock per side measured in practice. Bool. Default: false (no scroll capture).
 #     gif: false
 #     # Config-as-code enable/disable for this repo, layered ON TOP OF (never a replacement for) the
-#     # GITTENSORY_REVIEW_SCREENSHOTS + per-repo cutover-allowlist env-var gate above (#4083). Bool or null.
+#     # LOOPOVER_REVIEW_SCREENSHOTS + per-repo cutover-allowlist env-var gate above (#4083). Bool or null.
 #     # Default: null (unset) ⇒ defers entirely to that env-var gate's own decision -- byte-identical to today.
 #     # Explicit `false` (set once at the global-default `.loopover.yml`, or overridden per-repo here) forces
 #     # capture off for this repo even when the env-var gate would otherwise allow it. Explicit `true` opts this
@@ -1142,9 +1142,9 @@ settings:
 #     auto_pause_after_reviewed_commits: 3
 
 # Per-repo activation overrides for the converged review features that ship behind a deployment-wide
-# GITTENSORY_REVIEW_* env kill-switch (rag/reputation/unifiedComment/safety/grounding/e2eTests/screenshots/
+# LOOPOVER_REVIEW_* env kill-switch (rag/reputation/unifiedComment/safety/grounding/e2eTests/screenshots/
 # improvementSignal). Each key is `true` (force on for this repo, subject to the env flag still being
-# enabled), `false` (force off), or omitted (falls back to the GITTENSORY_REVIEW_REPOS allowlist default --
+# enabled), `false` (force off), or omitted (falls back to the LOOPOVER_REVIEW_REPOS allowlist default --
 # an operator who sets nothing keeps today's behavior). Exception: `safety` is force-on-only -- an untrusted
 # repo-controlled `false` is treated as "no opinion" rather than an active force-off (#2269), since a
 # lower-trust actor must never be able to silently defeat the operator's own security-hardening enablement.
@@ -1172,8 +1172,8 @@ settings:
 
 # Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles gittensory's own
 # converged review capabilities. Each key here couples this instance to an external system and is OFF unless
-# BOTH a deployment-wide GITTENSORY_EXPERIMENTAL_* env kill-switch AND an explicit per-repo `true` are set (no
-# GITTENSORY_REVIEW_REPOS allowlist fallback -- unlike `features:`, there is no default-on path). `gittensor`
+# BOTH a deployment-wide LOOPOVER_EXPERIMENTAL_* env kill-switch AND an explicit per-repo `true` are set (no
+# LOOPOVER_REVIEW_REPOS allowlist fallback -- unlike `features:`, there is no default-on path). `gittensor`
 # is the first plugin: gittensory's original subnet mining-registry/scoring integration (per-repo emission
 # share, maintainer cut, label multipliers pulled from the gittensor subnet's registry), now opt-in rather
 # than a core dependency -- a self-host instance that never sets this has zero footprint from it: no fetch
@@ -1220,7 +1220,7 @@ settings:
 # that folds gate-precision + outcome-calibration across every scanned repo into one report (distinct from
 # the single-repo reviewRecap above). Operator-level, not per-repo -- only meaningful on the gittensory
 # self-repo's own manifest (the repo this instance identifies as); a present block there wins over the
-# GITTENSORY_MAINTAINER_RECAP / GITTENSORY_RECAP_CADENCE env vars, which stay the fallback when absent.
+# LOOPOVER_MAINTAINER_RECAP / LOOPOVER_RECAP_CADENCE env vars, which stay the fallback when absent.
 # maintainerRecap:
 #   enabled: true         # Bool. Default: false (env vars decide instead).
 #   cadence: weekly        # daily | weekly. Default: weekly. Invalid values fall back to weekly.

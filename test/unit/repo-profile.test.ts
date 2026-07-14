@@ -262,7 +262,7 @@ describe("extractRepoProfile (#2999)", () => {
     await seedChunk(env, "src/widget.ts", "x");
     // Legacy checkRunMode says "enabled", but reviewCheckMode -- the actual runtime authority for check
     // publication (#2852) -- says "disabled". gatePublishesCheck must follow reviewCheckMode, not the
-    // legacy back-compat-only field, or a repo that disabled the check via .gittensory.yml's
+    // legacy back-compat-only field, or a repo that disabled the check via .loopover.yml's
     // gate.checkMode still gets reported as publishing one.
     await upsertRepositorySettings(env, {
       repoFullName: REPO,

@@ -50,7 +50,7 @@ export function autonomyRequiresApproval(level: AutonomyLevel): boolean {
 /**
  * Parse/validate an arbitrary value into an AutonomyPolicy: keep only known action classes mapped to known
  * levels, drop everything else. Deny-by-default by omission. Used for the DB row, the API body, and the
- * `.gittensory.yml` settings block. Pure.
+ * `.loopover.yml` settings block. Pure.
  */
 export function normalizeAutonomyPolicy(input: unknown): AutonomyPolicy {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return {};

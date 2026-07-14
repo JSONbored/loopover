@@ -22,7 +22,7 @@ import { buildLaneAdvice, buildConfigQuality, buildContributorIntakeHealth, buil
 
 const FORBIDDEN = /wallet|hotkey|raw trust score|payout|reward estimate|farming|private reviewability|public score estimate/i;
 
-const GITTENSORY_MANIFEST = parseFocusManifestContent(
+const LOOPOVER_MANIFEST = parseFocusManifestContent(
   JSON.stringify({
     wantedPaths: ["src/", "apps/loopover-ui/", "packages/loopover-mcp/"],
     testExpectations: ["npm run test:ci"],
@@ -113,7 +113,7 @@ describe("contributor issue drafts", () => {
     const configQuality = buildConfigQuality(repo, issues, pullRequests, repoFullName);
     const labelAudit = buildLabelAudit(repo, [], issues, pullRequests, repoFullName);
     const contributorIntakeHealth = buildContributorIntakeHealth(repo, issues, pullRequests, repoFullName, collisions, queueCounts);
-    const manifest = { ...GITTENSORY_MANIFEST, present: false, source: "none" as const, warnings: [] };
+    const manifest = { ...LOOPOVER_MANIFEST, present: false, source: "none" as const, warnings: [] };
     const candidates = buildContributorIssueDraftCandidates({
       repoFullName,
       repo,
@@ -162,9 +162,9 @@ describe("contributor issue drafts", () => {
         }),
       ),
     );
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     const manifest = {
-      ...GITTENSORY_MANIFEST,
+      ...LOOPOVER_MANIFEST,
       wantedPaths: ["src/unique-path-119/"],
       testExpectations: ["npm run test:ci"],
     };
@@ -292,7 +292,7 @@ describe("contributor issue drafts", () => {
         }),
       ),
     );
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     const repoFullName = "other-owner/other-repo";
     const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
     const marker = contributorIssueDraftMarker(fingerprint);
@@ -330,7 +330,7 @@ describe("contributor issue drafts", () => {
     };
 
     // DB-freeze arm: a frozen agent forces dryRun even though the caller asked to create.
-    const frozenEnv = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const frozenEnv = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     await repositories.setGlobalAgentFrozen(frozenEnv, true);
     seedCandidate();
     const frozen = await generateContributorIssueDrafts(frozenEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
@@ -339,7 +339,7 @@ describe("contributor issue drafts", () => {
     expect(calls.some((c) => c.startsWith("POST"))).toBe(false); // no issue POST reached the network
 
     // env-brake arm: AGENT_ACTIONS_PAUSED short-circuits before the DB freeze read.
-    const pausedEnv = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
+    const pausedEnv = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
     seedCandidate();
     const paused = await generateContributorIssueDrafts(pausedEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
     expect(paused.dryRun).toBe(true);
@@ -362,7 +362,7 @@ describe("contributor issue drafts", () => {
 
   it("records skipped_create_failed when GitHub returns a non-ok response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
 
     const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", {
@@ -386,7 +386,7 @@ describe("contributor issue drafts", () => {
     );
     const auditSpy = vi.spyOn(repositories, "recordAuditEvent").mockResolvedValue(undefined);
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", {
       dryRun: false,
       create: true,
@@ -481,7 +481,7 @@ describe("contributor issue drafts", () => {
 
   it("returns null for invalid repo names when creating GitHub issues", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ number: 1, html_url: "https://example.com/1" })));
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     const result = await generateContributorIssueDrafts(env, "invalid", {
       dryRun: false,
@@ -493,7 +493,7 @@ describe("contributor issue drafts", () => {
 
   it("treats malformed GitHub create responses as skipped_create_failed", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ html_url: "https://github.com/x/y/issues/1" })));
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", {
       dryRun: false,
@@ -536,7 +536,7 @@ describe("contributor issue drafts", () => {
     );
     const auditSpy = vi.spyOn(repositories, "recordAuditEvent").mockResolvedValue(undefined);
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
-    const env = createTestEnv({ GITTENSORY_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
     const result = await generateContributorIssueDrafts(env, "JSONbored/gittensory", {
       dryRun: false,
       create: true,

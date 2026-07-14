@@ -24,9 +24,9 @@ describe("loopover-mcp CLI — review-pr", () => {
     tempDir = createPacketRepo();
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
@@ -104,9 +104,9 @@ describe("loopover-mcp CLI — review-pr", () => {
     tempDir = createPacketRepo();
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
@@ -153,9 +153,9 @@ describe("loopover-mcp CLI — review-pr", () => {
       },
     });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
@@ -209,9 +209,9 @@ describe("loopover-mcp CLI — review-pr", () => {
       },
     });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
@@ -251,9 +251,9 @@ describe("loopover-mcp CLI — review-pr", () => {
     tempDir = createPacketRepo();
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
     const bodyPath = join(tempDir, "pr-body.md");
     writeFileSync(bodyPath, "Fixes #1968\n\nValidated with npm test.", "utf8");
@@ -284,9 +284,9 @@ describe("loopover-mcp CLI — review-pr", () => {
     tempDir = createPacketRepo();
     const url = await startFixtureServer({ slopRiskStatus: 500 });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(
@@ -347,9 +347,9 @@ describe("loopover-mcp CLI — review-pr", () => {
     tempDir = createPacketRepo();
     const url = await startFixtureServer({ prTextLintStatus: 503 });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const json = JSON.parse(

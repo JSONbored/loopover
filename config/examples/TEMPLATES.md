@@ -2,7 +2,7 @@
 
 Copy-paste templates for the per-repo review manifest. Every file in this directory uses the
 **same schema** whether it lives in a public repo root or a self-host private mount
-(`GITTENSORY_REPO_CONFIG_DIR`).
+(`LOOPOVER_REPO_CONFIG_DIR`).
 
 > **Filename note:** the canonical manifest filename is **`.loopover.yml`**. The *template*
 > filenames catalogued below (e.g. `loopover.minimal.yml`) are a separate, unrelated naming
@@ -29,9 +29,9 @@ in sync with those files.
 | Layer | Path | Who can read it | Typical contents |
 |-------|------|-----------------|------------------|
 | **Public** | `.loopover.yml` or `.github/loopover.yml` in git | Contributors | `wantedPaths`, test expectations, public review presentation |
-| **Private global** | `${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml` | Operator only | Shared autonomy baseline, contributor caps, maintainer allowlists |
-| **Private per-repo** | `${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.loopover.yml` | Operator only | Repo-specific CI context names, AI mode, overrides |
-| **Private shared base** | `${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml` | Operator only | Lowest-priority cross-repo house policy for an operator running many repos (#1959) — see [README's "Shared base layer" section](./README.md#shared-base-layer-multi-repo-operators-1959) |
+| **Private global** | `${LOOPOVER_REPO_CONFIG_DIR}/.loopover.yml` | Operator only | Shared autonomy baseline, contributor caps, maintainer allowlists |
+| **Private per-repo** | `${LOOPOVER_REPO_CONFIG_DIR}/owner__repo/.loopover.yml` | Operator only | Repo-specific CI context names, AI mode, overrides |
+| **Private shared base** | `${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml` | Operator only | Lowest-priority cross-repo house policy for an operator running many repos (#1959) — see [README's "Shared base layer" section](./README.md#shared-base-layer-multi-repo-operators-1959) |
 
 When **either** a private global or private per-repo file exists, the loader **never fetches** the
 public repo file for that review — mount private policy deliberately. See [README.md](./README.md)
@@ -61,7 +61,7 @@ mkdir -p loopover-config/myorg__myrepo
 cp config/examples/repo-override.loopover.yml loopover-config/myorg__myrepo/.loopover.yml
 ```
 
-Point `GITTENSORY_REPO_CONFIG_DIR` at that directory (default `/config` in `docker-compose.yml` maps
+Point `LOOPOVER_REPO_CONFIG_DIR` at that directory (default `/config` in `docker-compose.yml` maps
 `./loopover-config`).
 
 ## Fleet examples (without committing private policy)

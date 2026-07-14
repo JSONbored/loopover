@@ -33,7 +33,7 @@ normalize_backup_retain() {
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 RETAIN=$(normalize_backup_retain "${BACKUP_RETAIN:-7}")
 DB=${DATABASE_PATH:-/data/loopover.sqlite}
-PG_DB="${GITTENSORY_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
+PG_DB="${LOOPOVER_BACKUP_SOURCE_DATABASE_URL:-${DATABASE_URL:-}}"
 OUT=${BACKUP_OUT_DIR:-/backups}
 PGPASSFILE_CREATED=""
 MANIFEST_TMP=""

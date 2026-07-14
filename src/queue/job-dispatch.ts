@@ -200,7 +200,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       await runReviewRecapJob(env, message.repoFullName, message.windowDays);
       return;
     case "generate-maintainer-recap": {
-      // Convergence (maintainer recap digest, flag GITTENSORY_MAINTAINER_RECAP, #1963/#2248, config-as-code
+      // Convergence (maintainer recap digest, flag LOOPOVER_MAINTAINER_RECAP, #1963/#2248, config-as-code
       // override #2250). Defense-in-depth: the cron only ENQUEUES this when enabled, but a stale in-flight job
       // that lands after a flag-flip (env OR manifest) must still no-op, so disabled does zero work here too.
       const maintainerRecapOverride = await resolveMaintainerRecapManifestOverride(env);
@@ -275,13 +275,13 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       if (isOpsEnabled(env)) await runOpsAlerts(env);
       return;
     case "sweep-liveness-watchdog":
-      // Self-heal (flag GITTENSORY_SWEEP_WATCHDOG). Defense-in-depth: the cron only ENQUEUES this when the flag
+      // Self-heal (flag LOOPOVER_SWEEP_WATCHDOG). Defense-in-depth: the cron only ENQUEUES this when the flag
       // is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so flag-OFF does zero
       // work here too. Fails safe internally — never throws into the queue.
       if (isSweepWatchdogEnabled(env)) await runSweepLivenessWatchdog(env);
       return;
     case "reconcile-open-prs":
-      // Self-heal (flag GITTENSORY_PR_RECONCILIATION). Defense-in-depth: the cron only ENQUEUES this when the
+      // Self-heal (flag LOOPOVER_PR_RECONCILIATION). Defense-in-depth: the cron only ENQUEUES this when the
       // flag is ON, but a stale in-flight job that lands after a flag-flip must still no-op, so flag-OFF does
       // zero work here too. Fails safe internally — never throws into the queue.
       if (isPrReconciliationEnabled(env)) await runOpenPrReconciliation(env);

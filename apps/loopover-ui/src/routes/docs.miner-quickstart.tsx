@@ -69,7 +69,7 @@ gittensory-mcp doctor --json`}
       />
       <Callout variant="safety">
         Session tokens are <strong>LoopOver tokens backed by GitHub identity</strong>, not your
-        GitHub PATs. Source upload stays disabled (<code>GITTENSORY_UPLOAD_SOURCE=false</code>) and
+        GitHub PATs. Source upload stays disabled (<code>LOOPOVER_UPLOAD_SOURCE=false</code>) and
         local absolute paths are redacted from anything that leaves your machine. Log out anytime
         with <code>gittensory-mcp logout</code>.
       </Callout>

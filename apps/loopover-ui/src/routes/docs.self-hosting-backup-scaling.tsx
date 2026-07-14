@@ -172,12 +172,12 @@ docker compose --profile backup run --rm backup sh /scripts/verify-backup.sh /ba
         lang="bash"
         code={`docker compose --profile backup run --rm \\
   -e VERIFY_RESTORE_SCRATCH=1 \\
-  -e GITTENSORY_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/loopover_verify \\
+  -e LOOPOVER_VERIFY_SCRATCH_DATABASE_URL=postgres://user:pass@host:5432/loopover_verify \\
   backup sh /scripts/verify-backup.sh`}
       />
       <Callout variant="warn">
         The scratch restore runs <code>pg_restore --clean</code> against{" "}
-        <code>GITTENSORY_VERIFY_SCRATCH_DATABASE_URL</code>, so point it at a dedicated database you
+        <code>LOOPOVER_VERIFY_SCRATCH_DATABASE_URL</code>, so point it at a dedicated database you
         can afford to drop. The script refuses to run when that URL equals the live backup source.
       </Callout>
 

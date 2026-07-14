@@ -276,4 +276,4 @@ This completes the read-only AMS MCP tool surface (status, portfolio, claims, ev
 
 ## Version check
 
-On every invocation the CLI starts an async npm registry lookup (5s timeout). When the installed package is behind `@loopover/miner@latest`, it prints a one-line upgrade command to stderr without blocking or failing the requested command. Set `GITTENSORY_NPM_REGISTRY_URL` to point at a mirror, same as `@loopover/mcp`.
+On every invocation the CLI starts an async npm registry lookup (5s timeout). When the installed package is behind `@loopover/miner@latest`, it prints a one-line upgrade command to stderr without blocking or failing the requested command. Set `LOOPOVER_NPM_REGISTRY_URL` to point at a mirror, same as `@loopover/mcp`.

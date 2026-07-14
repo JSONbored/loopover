@@ -12,7 +12,7 @@ function isLocalRegistryHost(hostname) {
 }
 
 export function resolveNpmRegistryUrl(env = process.env) {
-  const raw = env.GITTENSORY_NPM_REGISTRY_URL?.trim();
+  const raw = env.LOOPOVER_NPM_REGISTRY_URL?.trim();
   if (!raw) return defaultNpmRegistryUrl;
 
   let url;

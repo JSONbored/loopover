@@ -32,12 +32,12 @@ describe("loopover-mcp CLI — doctor", () => {
     writeFileSync(join(secretConfigDir, "config.json"), JSON.stringify({ apiUrl: url }), { mode: 0o600 });
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: secretConfigDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: secretConfigDir,
         GITTENSOR_ROOT: secretRoot,
         GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-malformed.mjs")}`,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as {
       status: string;
@@ -87,11 +87,11 @@ describe("loopover-mcp CLI — doctor", () => {
     git(tempDir, "remote", "set-url", "origin", "git@github.com:owner/repo$(touch /tmp/av_pwned).git");
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
       GITTENSOR_SCORE_PREVIEW_CMD: `node ${join(process.cwd(), "test/fixtures/local-scorer/scorer-success.mjs")}`,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const payload = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--json"], env)) as { nextCommand: { command: string } };
@@ -108,12 +108,12 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
+        LOOPOVER_API_URL: url,
         LOOPOVER_API_TOKEN: "",
-        GITTENSORY_TOKEN: "",
+        LOOPOVER_TOKEN: "",
         LOOPOVER_MCP_TOKEN: "",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as {
       status: string;
@@ -137,10 +137,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ latestVersion: "9.9.9" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { package: { state: string; latestVersion: string; updateAvailable: boolean; upgradeCommand: string; npxFallback: string } };
 
@@ -158,10 +158,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ latestVersion: mcpPackageJson.version, minMcpVersion: "0.5.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as {
       package: { state: string; updateAvailable: boolean; upgradeCommand?: string };
@@ -186,10 +186,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const aheadUrl = await startFixtureServer({ latestVersion: "0.5.0-rc.1" });
     const ahead = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: aheadUrl,
-        GITTENSORY_NPM_REGISTRY_URL: aheadUrl,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: aheadUrl,
+        LOOPOVER_NPM_REGISTRY_URL: aheadUrl,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { package: { state: string; updateAvailable: boolean } };
     expect(ahead.package).toMatchObject({ state: "ahead", updateAvailable: false });
@@ -199,10 +199,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const staleUrl = await startFixtureServer({ latestVersion: `${oneMinorAboveLocal}-rc.1` });
     const stale = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: staleUrl,
-        GITTENSORY_NPM_REGISTRY_URL: staleUrl,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: staleUrl,
+        LOOPOVER_NPM_REGISTRY_URL: staleUrl,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { package: { state: string } };
     expect(stale.package.state).toBe("stale");
@@ -213,10 +213,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ npmStatus: 500, compatibilityStatus: 404 });
     const status = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { package: { state: string; updateAvailable: boolean } };
     expect(status.package.state).toBe("unavailable");
@@ -224,10 +224,10 @@ describe("loopover-mcp CLI — doctor", () => {
 
     const doctor = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { status: string; checks: Array<{ name: string; status: string; remediation?: string }> };
     expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "version", status: "warn" })]));
@@ -239,10 +239,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ latestVersion: oneMinorAboveLocal });
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { checks: Array<{ name: string; status: string; remediation?: string }> };
     const version = payload.checks.find((check) => check.name === "version");
@@ -256,20 +256,20 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ compatibilityStatus: 404 });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { apiCompatibility: { status: string } };
     expect(payload.apiCompatibility.status).toBe("unavailable");
 
     const doctor = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { checks: Array<{ name: string; status: string }> };
     expect(doctor.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "api_compatibility", status: "warn" })]));
@@ -280,10 +280,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { apiCompatibility: { status: string; source: string; minVersion: string } };
     expect(payload.apiCompatibility).toMatchObject({ status: "compatible", source: "health", minVersion: "0.4.0" });
@@ -294,10 +294,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: oneMinorAboveLocal });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_NPM_REGISTRY_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_NPM_REGISTRY_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       }),
     ) as { package: { state: string; latestStatus: string; latestVersion: string; upgradeCommand: string } };
     expect(payload.package).toMatchObject({
@@ -312,10 +312,10 @@ describe("loopover-mcp CLI — doctor", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer({ minMcpVersion: "9.0.0" });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
     const status = JSON.parse(await runAsync(["status", "--json"], env)) as { apiCompatibility: { status: string; minVersion: string; upgradeCommand: string } };
     expect(status.apiCompatibility).toMatchObject({
@@ -350,11 +350,11 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
-        GITTENSORY_UPLOAD_SOURCE: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_UPLOAD_SOURCE: "true",
       }),
     ) as {
       sourceUploadSupported: boolean;
@@ -367,7 +367,7 @@ describe("loopover-mcp CLI — doctor", () => {
     expect(outputSafety).toMatchObject({ status: "fail" });
     expect(outputSafety?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "source_upload", status: "fail" })]));
     expect(payload.nextCommand).toMatchObject({
-      command: "unset GITTENSORY_UPLOAD_SOURCE",
+      command: "unset LOOPOVER_UPLOAD_SOURCE",
       reason: expect.stringContaining("metadata"),
     });
   });
@@ -377,10 +377,10 @@ describe("loopover-mcp CLI — doctor", () => {
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as {
       checklist: Array<{ id: string; status: string; checks?: Array<{ name: string; status: string; detail: string }> }>;
@@ -401,10 +401,10 @@ describe("loopover-mcp CLI — doctor", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer({ latestVersion: "9.9.9", minMcpVersion: "9.0.0" });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_NPM_REGISTRY_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_NPM_REGISTRY_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
     const statusOutput = await runAsync(["status"], env);
     const statusJsonOutput = await runAsync(["status", "--json"], env);
@@ -426,9 +426,9 @@ describe("loopover-mcp CLI — doctor", () => {
     // No token configured -> the auth check fails -> status "needs_attention".
     const payload = JSON.parse(
       await runAsync(["doctor", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { status: string; checks: Array<{ name: string; status: string }> };
     expect(payload.status).toBe("needs_attention");
@@ -445,10 +445,10 @@ describe("loopover-mcp CLI — doctor", () => {
         encoding: "utf8",
         env: {
           ...process.env,
-          GITTENSORY_API_TIMEOUT_MS: "1000",
-          GITTENSORY_API_URL: url,
-          GITTENSORY_CONFIG_DIR: tempDir,
-          GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+          LOOPOVER_API_TIMEOUT_MS: "1000",
+          LOOPOVER_API_URL: url,
+          LOOPOVER_CONFIG_DIR: tempDir,
+          LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -468,10 +468,10 @@ describe("loopover-mcp CLI — doctor", () => {
     // runAsync resolves only on a zero exit code, so reaching the assertion proves exit 0.
     const payload = JSON.parse(
       await runAsync(["doctor", "--exit-code", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { status: string };
     expect(payload.status).toMatch(/ok|warnings/);

@@ -306,54 +306,54 @@ export async function runAiReviewForAdvisory(
     // review + grounding + RAG use these instead of re-reading the stored rows — so a review that fired before
     // detail-sync still sees the REAL diff (FIX B). Omitted (e.g. unit tests) → fall back to the stored read.
     files?: Awaited<ReturnType<typeof listPullRequestFiles>> | undefined;
-    // `.gittensory.yml` review.profile (#review-profile), resolved by the caller from the (already-cached)
+    // `.loopover.yml` review.profile (#review-profile), resolved by the caller from the (already-cached)
     // manifest. Threaded in (not loaded here) so the AI review path makes no extra manifest fetch — absent ⇒
     // null ⇒ balanced ⇒ the reviewer prompt is byte-identical.
     reviewProfile?: ReviewProfile | null | undefined;
-    // `.gittensory.yml` review.security_focus (#review-security-focus), resolved by the caller from the
+    // `.loopover.yml` review.security_focus (#review-security-focus), resolved by the caller from the
     // (already-cached) manifest. Orthogonal to reviewProfile — composes with it rather than replacing it.
     // Absent/false ⇒ the reviewer prompt is byte-identical.
     reviewSecurityFocus?: boolean | undefined;
-    // `.gittensory.yml` review.path_instructions (#review-path-instructions), resolved by the caller from the
+    // `.loopover.yml` review.path_instructions (#review-path-instructions), resolved by the caller from the
     // cached manifest. The CONFIG (not a fetch) is threaded in; the per-PR glob match against `files` happens
     // here (pure), so the AI path makes no extra manifest fetch. Absent/empty ⇒ byte-identical reviewer prompt.
     reviewPathInstructions?: ReviewPathInstruction[] | undefined;
-    // `.gittensory.yml` review.instructions (#review-instructions): a repo-level maintainer brief, resolved by the
+    // `.loopover.yml` review.instructions (#review-instructions): a repo-level maintainer brief, resolved by the
     // caller from the cached manifest, handed to the reviewer on EVERY review (bounded + public-safe at parse time).
     // Absent/null ⇒ byte-identical reviewer prompt.
     reviewInstructions?: string | null | undefined;
-    // `.gittensory.yml` review.exclude_paths (#review-exclude-paths), resolved by the caller from the cached
+    // `.loopover.yml` review.exclude_paths (#review-exclude-paths), resolved by the caller from the cached
     // manifest. Globs whose files are dropped from the AI review (diff + grounding + RAG) — generated/lockfiles
     // the maintainer doesn't want reviewed. Empty ⇒ every file is reviewed (byte-identical). The gate is unaffected.
     reviewExcludePaths?: string[] | undefined;
-    // `.gittensory.yml` review.path_filters (#2043): include + `!`-negation globs applied AFTER exclude_paths to
+    // `.loopover.yml` review.path_filters (#2043): include + `!`-negation globs applied AFTER exclude_paths to
     // positively scope the AI review. Empty ⇒ every non-excluded file is reviewed (byte-identical). Gate unaffected.
     reviewPathFilters?: string[] | undefined;
-    // `.gittensory.yml` review.inline_comments (#inline-comments), resolved by the caller from the cached manifest
+    // `.loopover.yml` review.inline_comments (#inline-comments), resolved by the caller from the cached manifest
     // (the per-repo toggle). Precedence (#4099): the operator flag is a master kill-switch, never bypassable by
     // config; an explicit true/false here now fully controls the feature, bypassing the cutover allowlist; unset
     // stays byte-identical to every repo's behavior before this change (the allowlist alone was never sufficient
     // on its own). Absent ⇒ the reviewer prompt is byte-identical (no findings) for every repo untouched by this.
     reviewInlineComments?: boolean | undefined;
-    // `.gittensory.yml` review.finding_categories (#1958), resolved by the caller from the cached manifest. ANDed
+    // `.loopover.yml` review.finding_categories (#1958), resolved by the caller from the cached manifest. ANDed
     // here with reviewInlineComments (a category has nothing to categorize without an inline finding) to decide
     // whether to ASK the model to self-categorize each inlineFindings item. Absent/false ⇒ byte-identical prompt.
     reviewFindingCategories?: boolean | undefined;
-    // `.gittensory.yml` review.ai_model (#selfhost-ai-model-override), resolved by the caller from the cached
+    // `.loopover.yml` review.ai_model (#selfhost-ai-model-override), resolved by the caller from the cached
     // manifest. Self-host only — overrides that repo's claude-code/codex model+effort, taking priority over the
     // operator's global env vars. Absent/all-null ⇒ byte-identical (global env var, then provider default).
     reviewSelfHostAiModel?: SelfHostAiModelConfig | undefined;
-    // `.gittensory.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest. ANDed
+    // `.loopover.yml` review.impact_map (#2184/#2186), resolved by the caller from the cached manifest. ANDed
     // here with the operator's LOOPOVER_REVIEW_IMPACT_MAP flag (shouldComputeImpactMap) to decide whether to
     // compute the deterministic impact map and splice it into the reviewer prompt as additive reference
     // context. Absent/false ⇒ byte-identical reviewer prompt (no impact-map computation, no RAG query for it).
     reviewImpactMap?: boolean | undefined;
-    // `.gittensory.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
+    // `.loopover.yml` review.culture_profile (#2995), resolved by the caller from the cached manifest. ANDed
     // here with the LOOPOVER_REVIEW_CULTURE_PROFILE global flag to decide whether to append the repo's
     // quality-culture reference block (typical merged-PR size + common labels) to the reviewer prompt. Absent/
     // false ⇒ byte-identical (no section, no extra D1 read).
     reviewCultureProfile?: boolean | undefined;
-    // `.gittensory.yml` `features.improvementSignal` (#4744, first real caller of #4738's activation wiring),
+    // `.loopover.yml` `features.improvementSignal` (#4744, first real caller of #4738's activation wiring),
     // resolved by the caller via `convergedFeatureActive`/`resolveConvergedFeature` -- NOT resolved internally
     // here (unlike reputation/rag/grounding above), mirroring reviewProfile/reviewImpactMap/reviewCultureProfile
     // above, which are ALL caller-resolved rather than looked up internally (see `ModelReview.valueAssessment`'s
@@ -433,7 +433,7 @@ export async function runAiReviewForAdvisory(
   // (byte-identical to today) regardless of the global flags.
   const convergedRepoAllowed = isConvergenceRepoAllowed(env, args.repoFullName);
   // Per-repo feature overrides (phase 2): reputation + RAG + grounding (#4100) honor the container-private
-  // `.gittensory.yml` `features:` block, falling back to the `convergedRepoAllowed` allowlist when unset
+  // `.loopover.yml` `features:` block, falling back to the `convergedRepoAllowed` allowlist when unset
   // (byte-identical default). The (cached) manifest is loaded once and shared, and ONLY when at least one of the
   // three features is globally enabled — so a deploy with all three flags off does no extra read (preserves the
   // no-op default).
@@ -666,7 +666,7 @@ export async function runAiReviewForAdvisory(
       enrichment,
       profile: args.reviewProfile ?? null,
       // Per-repo dual-AI combine/onMerge/reviewers overrides (#2567), resolved by resolveEffectiveSettings from
-      // `.gittensory.yml gate.aiReview.*` onto `args.settings`. Absent ⇒ undefined ⇒ runLoopOverAiReview falls
+      // `.loopover.yml gate.aiReview.*` onto `args.settings`. Absent ⇒ undefined ⇒ runLoopOverAiReview falls
       // back to the operator's AI_REVIEW_PLAN (byte-identical to today). `onMerge` is clamped to the operator's
       // floor INSIDE runLoopOverAiReview (resolveEffectiveAiReviewOnMerge), not here.
       combine: args.settings.aiReviewCombine ?? undefined,

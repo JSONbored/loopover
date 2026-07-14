@@ -8,7 +8,7 @@ import {
 
 // MinerGoalSpec (#2293 / #2301). The type surface for `.gittensory-miner.yml` — the per-repo config a
 // maintainer/repo-owner drops in to tell an autonomous miner what to look for and how to behave when targeting
-// their repo. This is the MINER-side analogue of the review-side `.gittensory.yml` focus manifest (see
+// their repo. This is the MINER-side analogue of the review-side `.loopover.yml` focus manifest (see
 // `src/signals/focus-manifest.ts`'s `FocusManifest`): a small typed config object paired with explicit
 // safe-defaults and a tolerant parser that degrades malformed input to those defaults with warnings rather than
 // throwing.
@@ -61,7 +61,7 @@ export type MinerExecutionPolicy = {
 export type MinerGoalSpec = {
   /**
    * Whether this repo permits autonomous miners at all. Explicit OPT-OUT, not opt-in: a public repo with no
-   * `.gittensory-miner.yml` is still minable, mirroring `.gittensory.yml`'s "safe by default" stance. Set `false`
+   * `.gittensory-miner.yml` is still minable, mirroring `.loopover.yml`'s "safe by default" stance. Set `false`
    * to halt all miner targeting of this repo. Default: true.
    */
   minerEnabled: boolean;
@@ -437,7 +437,7 @@ export function parseMinerGoalSpecContent(content: string | null | undefined): P
 }
 
 /**
- * The documented `.gittensory-miner` file-discovery order (first match wins), mirroring how `.gittensory.yml` is
+ * The documented `.gittensory-miner` file-discovery order (first match wins), mirroring how `.loopover.yml` is
  * discovered: repo-root YAML, then `.github/` YAML, then the JSON variants.
  */
 export const MINER_GOAL_SPEC_FILENAMES = [

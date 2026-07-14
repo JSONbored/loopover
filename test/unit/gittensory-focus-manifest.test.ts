@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  GITTENSORY_REPO_FOCUS_MANIFEST_YAML,
+  LOOPOVER_REPO_FOCUS_MANIFEST_YAML,
   GITTENSOR_SELF_REPO_DEFAULT,
   resolveLoopOverSelfRepoFullName,
 } from "../../src/config/gittensory-repo-focus-manifest";
@@ -21,24 +21,24 @@ const FORBIDDEN_PUBLIC_LANGUAGE =
 describe("resolveLoopOverSelfRepoFullName", () => {
   it("defaults to the LoopOver repo when drift issue repo is unset or invalid", () => {
     expect(resolveLoopOverSelfRepoFullName({})).toBe(GITTENSOR_SELF_REPO_DEFAULT);
-    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "invalid" })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
-    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  " })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
+    expect(resolveLoopOverSelfRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "invalid" })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
+    expect(resolveLoopOverSelfRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "  " })).toBe(GITTENSOR_SELF_REPO_DEFAULT);
   });
 
   it("returns a configured owner/repo drift target when present", () => {
-    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
-    expect(resolveLoopOverSelfRepoFullName({ GITTENSORY_DRIFT_ISSUE_REPO: "  org/repo  " })).toBe("org/repo");
+    expect(resolveLoopOverSelfRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "acme/widget" })).toBe("acme/widget");
+    expect(resolveLoopOverSelfRepoFullName({ LOOPOVER_DRIFT_ISSUE_REPO: "  org/repo  " })).toBe("org/repo");
   });
 });
 
 describe("LoopOver repo focus manifest", () => {
   it("keeps bundled YAML aligned with the committed .loopover.yml file", () => {
     const onDisk = readFileSync(resolve(process.cwd(), ".loopover.yml"), "utf8").trim();
-    expect(GITTENSORY_REPO_FOCUS_MANIFEST_YAML.trim()).toBe(onDisk);
+    expect(LOOPOVER_REPO_FOCUS_MANIFEST_YAML.trim()).toBe(onDisk);
   });
 
   it("valid manifest fixture parses and compiles policy", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("src/");
     expect(manifest.wantedPaths).toContain("review-enrichment/");
@@ -60,7 +60,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("retired static-site surfaces no longer create manifest path holds", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const guidance = buildFocusManifestGuidance({
       manifest,
       changedPaths: ["site/docs/index.html"],
@@ -70,7 +70,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("focused control-panel UI changes align with wanted paths", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const guidance = buildFocusManifestGuidance({
       manifest,
       changedPaths: ["apps/loopover-ui/src/routes/app.operator.tsx"],
@@ -79,7 +79,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("recommendation influence prefers in-scope backend and UI paths without legacy blocked surfaces", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const backend = buildFocusManifestGuidance({ manifest, changedPaths: ["src/api/routes.ts"] });
     const controlPanel = buildFocusManifestGuidance({ manifest, changedPaths: ["apps/loopover-ui/src/app.tsx"] });
     const retiredSite = buildFocusManifestGuidance({ manifest, changedPaths: ["site/index.html"] });
@@ -90,7 +90,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("public/private boundary regression keeps maintainer notes out of public guidance", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const guidance = buildFocusManifestGuidance({ manifest, changedPaths: ["src/x.ts"] });
     for (const step of guidance.publicNextSteps) {
       expect(isFocusManifestPublicSafe(step)).toBe(true);
@@ -100,7 +100,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("enables linked-issue label propagation with bug/feature relaxed and priority strict (#priority-linked-issue-gate-ownership)", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     const propagation = manifest.settings.linkedIssueLabelPropagation;
     expect(propagation?.enabled).toBe(true);
     expect(propagation?.mode).toBe("exclusive_type_label");
@@ -112,7 +112,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("loads bundled manifest for the LoopOver repo when fetch is unavailable", async () => {
-    const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/gittensory" });
     const manifest = await loadRepoFocusManifest(env, "JSONbored/gittensory", { fetcher: async () => null });
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("packages/");
@@ -120,7 +120,7 @@ describe("LoopOver repo focus manifest", () => {
   });
 
   it("does not treat legacy lovable-only and CNAME paths as manifest holds", () => {
-    const manifest = parseFocusManifestContent(GITTENSORY_REPO_FOCUS_MANIFEST_YAML, "repo_file");
+    const manifest = parseFocusManifestContent(LOOPOVER_REPO_FOCUS_MANIFEST_YAML, "repo_file");
     for (const changedPath of ["CNAME", "vendor/lovable/widget.ts"]) {
       const guidance = buildFocusManifestGuidance({ manifest, changedPaths: [changedPath] });
       expect(guidance.findings.map((finding) => finding.code)).not.toContain("manifest_malformed");

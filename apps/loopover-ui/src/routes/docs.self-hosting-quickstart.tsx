@@ -117,7 +117,7 @@ curl http://localhost:8787/ready`}
       <CodeBlock
         lang="bash"
         code={`./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
-GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+LOOPOVER_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
       />
       <p>
         <code>ghcr.io/jsonbored/gittensory-selfhost</code> (the pre-rename name) is no longer

@@ -39,7 +39,7 @@ import {
   maybeAutoClearHoldOnly,
 } from "./auto-tune";
 import { computeGateEval } from "./parity";
-import { GITTENSORY_NATIVE_SOURCE } from "./parity-wire";
+import { LOOPOVER_NATIVE_SOURCE } from "./parity-wire";
 
 /** PURE: parse the PR number an "Reverts #N / Reverts owner/repo#N" body refers to (GitHub's revert PRs).
  *  Mirrors reviewbot runtime.ts parseRevertedPrNumber. Returns undefined when the body isn't a revert. */
@@ -617,7 +617,7 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const report: GateEvalReport = await computeGateEval(env, {
       days: BREAKER_EVAL_WINDOW_DAYS,
       nowMs,
-      source: GITTENSORY_NATIVE_SOURCE,
+      source: LOOPOVER_NATIVE_SOURCE,
     });
     // #2352: a SEPARATE, miner-scoped pass so a miner fleet's own self-review accuracy trips the SAME breaker
     // independently of the maintainer's overall (mixed) accuracy. Re-keying every row's `project` with the
@@ -626,7 +626,7 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
     const minerReportRaw = await computeGateEval(env, {
       days: BREAKER_EVAL_WINDOW_DAYS,
       nowMs,
-      source: GITTENSORY_NATIVE_SOURCE,
+      source: LOOPOVER_NATIVE_SOURCE,
       minerOnly: true,
     });
     const minerReport: GateEvalReport = {

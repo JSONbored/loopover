@@ -86,8 +86,8 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITTENSOR_UPSTREAM_REPO: "entrius/gittensor",
     GITTENSOR_UPSTREAM_REF: "test",
     GITTENSOR_REGISTRY_URL: "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
-    GITTENSORY_AUTO_FILE_DRIFT_ISSUES: "false",
-    GITTENSORY_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
+    LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "false",
+    LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
     PUBLIC_API_ORIGIN: "https://api.loopover.ai",
     PUBLIC_SITE_ORIGIN: "https://loopover.ai",
     INTERNAL_JOB_TOKEN: "dev-internal-token",
@@ -130,11 +130,11 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory,acme/widgets",
     // Default-ON in production (settings/automation-bot-skip.ts); most tests don't involve a bot actor at
     // all, so this default doesn't change their behavior. Tests exercising this feature override it directly.
-    GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "true",
+    LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "true",
     // Default OFF, matching wrangler.jsonc — a new required `vars` entry needs an explicit base value here
     // (Partial<Env> alone leaves it optional under exactOptionalPropertyTypes, which Env's required field
     // rejects). Tests exercising the experimental gittensor plugin override it directly.
-    GITTENSORY_EXPERIMENTAL_GITTENSOR: "false",
+    LOOPOVER_EXPERIMENTAL_GITTENSOR: "false",
     ...overrides,
   };
 }

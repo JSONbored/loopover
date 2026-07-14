@@ -170,10 +170,10 @@ function runVerify(
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         BACKUP_OUT_DIR: join(root, "backups"),
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "",
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "",
         DATABASE_URL: "",
         VERIFY_RESTORE_SCRATCH: "",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: "",
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: "",
         ...env,
       },
     });
@@ -189,7 +189,7 @@ describe("self-host verify-backup script", () => {
     const root = tmpRoot();
     writePgDump(root, "gittensory-20240101T000000Z.dump", true);
 
-    const r = runVerify(root, [], { GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
+    const r = runVerify(root, [], { LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
 
     expect(r.status).toBe(0);
     expect(r.out).toContain("postgres archive OK");
@@ -201,7 +201,7 @@ describe("self-host verify-backup script", () => {
     const root = tmpRoot();
     writePgDump(root, "gittensory-bad.dump", false);
 
-    const r = runVerify(root, [], { GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
+    const r = runVerify(root, [], { LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
 
     expect(r.status).toBe(1);
     expect(r.out).toContain("pg_restore --list failed");
@@ -211,7 +211,7 @@ describe("self-host verify-backup script", () => {
     const root = tmpRoot();
     mkdirSync(join(root, "backups", "postgres"), { recursive: true });
 
-    const r = runVerify(root, [], { GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
+    const r = runVerify(root, [], { LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/db" }, { pg_restore: PG_RESTORE });
 
     expect(r.status).toBe(1);
     expect(r.out).toContain("no Postgres .dump found");
@@ -224,12 +224,12 @@ describe("self-host verify-backup script", () => {
     const r = runVerify(
       root,
       [],
-      { GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live", VERIFY_RESTORE_SCRATCH: "1" },
+      { LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live", VERIFY_RESTORE_SCRATCH: "1" },
       { pg_restore: PG_RESTORE, psql: fakePsql({}) },
     );
 
     expect(r.status).toBe(1);
-    expect(r.out).toContain("needs GITTENSORY_VERIFY_SCRATCH_DATABASE_URL");
+    expect(r.out).toContain("needs LOOPOVER_VERIFY_SCRATCH_DATABASE_URL");
   });
 
   it("refuses the scratch restore when the scratch URL is byte-for-byte the live database", () => {
@@ -241,9 +241,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: live,
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: live,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: live,
       },
       { pg_restore: PG_RESTORE, psql: fakePsql({ [sanitizedUrl(live)]: "same-cluster@10.0.0.5:5432/live" }) },
     );
@@ -265,9 +265,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: live,
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
       },
       {
         pg_restore: PG_RESTORE,
@@ -292,9 +292,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: "postgres://u:p@h/scratch",
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: "postgres://u:p@h/scratch",
       },
       // No identity entries at all: the scratch identity query fails, so the guard must abort rather than
       // silently assume the databases differ.
@@ -314,9 +314,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
       },
       // Scratch resolves fine, but the live URL has no mapping — its identity query fails.
       { pg_restore: PG_RESTORE, psql: fakePsql({ [sanitizedUrl(scratch)]: "gittensory@10.0.0.9:5432/scratch" }) },
@@ -336,9 +336,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: live,
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
       },
       {
         pg_restore: PG_RESTORE,
@@ -367,9 +367,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: live,
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
         PG_CAPTURE_FILE: captureFile,
       },
       {
@@ -422,9 +422,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
         PG_CAPTURE_FILE: captureFile,
       },
       // No identity entries: db_identity(scratch) fails before ever reaching db_identity(live) or the
@@ -454,9 +454,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "postgres://u:p@h/live",
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
         PG_CAPTURE_FILE: captureFile,
       },
       { pg_restore: PG_RESTORE, psql: fakePsql({}) },
@@ -485,9 +485,9 @@ describe("self-host verify-backup script", () => {
       root,
       [],
       {
-        GITTENSORY_BACKUP_SOURCE_DATABASE_URL: live,
+        LOOPOVER_BACKUP_SOURCE_DATABASE_URL: live,
         VERIFY_RESTORE_SCRATCH: "1",
-        GITTENSORY_VERIFY_SCRATCH_DATABASE_URL: scratch,
+        LOOPOVER_VERIFY_SCRATCH_DATABASE_URL: scratch,
         PG_CAPTURE_FILE: captureFile,
       },
       {

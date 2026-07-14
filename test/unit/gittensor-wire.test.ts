@@ -32,27 +32,27 @@ function poisonDbPrepare(env: Env, pattern: RegExp): void {
 describe("isGittensorPluginEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {
     expect(isGittensorPluginEnabled({})).toBe(false);
-    expect(isGittensorPluginEnabled({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "false" })).toBe(false);
-    expect(isGittensorPluginEnabled({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" })).toBe(true);
-    expect(isGittensorPluginEnabled({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "1" })).toBe(true);
-    expect(isGittensorPluginEnabled({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "on" })).toBe(true);
-    expect(isGittensorPluginEnabled({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "yes" })).toBe(true);
+    expect(isGittensorPluginEnabled({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "false" })).toBe(false);
+    expect(isGittensorPluginEnabled({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" })).toBe(true);
+    expect(isGittensorPluginEnabled({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "1" })).toBe(true);
+    expect(isGittensorPluginEnabled({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "on" })).toBe(true);
+    expect(isGittensorPluginEnabled({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "yes" })).toBe(true);
   });
 });
 
 describe("shouldEnableGittensorForRepo", () => {
   it("requires BOTH the operator env flag AND the per-repo manifest opt-in", () => {
-    expect(shouldEnableGittensorForRepo({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" }, true)).toBe(true);
+    expect(shouldEnableGittensorForRepo({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" }, true)).toBe(true);
   });
 
   it("is OFF when the operator flag is on but the manifest didn't opt in", () => {
-    expect(shouldEnableGittensorForRepo({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" }, false)).toBe(false);
-    expect(shouldEnableGittensorForRepo({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" }, null)).toBe(false);
-    expect(shouldEnableGittensorForRepo({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" }, undefined)).toBe(false);
+    expect(shouldEnableGittensorForRepo({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" }, false)).toBe(false);
+    expect(shouldEnableGittensorForRepo({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" }, null)).toBe(false);
+    expect(shouldEnableGittensorForRepo({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" }, undefined)).toBe(false);
   });
 
   it("is OFF when the manifest opted in but the operator flag is off (repo cannot self-enable)", () => {
-    expect(shouldEnableGittensorForRepo({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "false" }, true)).toBe(false);
+    expect(shouldEnableGittensorForRepo({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "false" }, true)).toBe(false);
     expect(shouldEnableGittensorForRepo({}, true)).toBe(false);
   });
 
@@ -71,26 +71,26 @@ describe("gittensorEnabledRepoFullNames", () => {
   });
 
   it("is empty when the flag is on but no repos are locally known", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await expect(gittensorEnabledRepoFullNames(env)).resolves.toEqual(new Set());
   });
 
   it("excludes a repo whose manifest never sets experimental.gittensor", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegisteredRepo(env, "owner/unopted");
     await upsertRepoFocusManifest(env, "owner/unopted", { wantedPaths: ["src/"] });
     await expect(gittensorEnabledRepoFullNames(env)).resolves.toEqual(new Set());
   });
 
   it("excludes a repo that explicitly sets experimental.gittensor: false", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegisteredRepo(env, "owner/optedout");
     await upsertRepoFocusManifest(env, "owner/optedout", { experimental: { gittensor: false } });
     await expect(gittensorEnabledRepoFullNames(env)).resolves.toEqual(new Set());
   });
 
   it("includes only the repos that explicitly opt in, lowercased, out of a mixed set", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegisteredRepo(env, "Owner/OptedIn");
     await upsertRepoFocusManifest(env, "Owner/OptedIn", { experimental: { gittensor: true } });
     await seedRegisteredRepo(env, "owner/other");
@@ -99,21 +99,21 @@ describe("gittensorEnabledRepoFullNames", () => {
   });
 
   it("is not gated by isRegistered — a not-yet-registered but opted-in repo is still included (avoids the chicken-and-egg deadlock)", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegisteredRepo(env, "owner/notyetregistered"); // seeded with is_registered=0
     await upsertRepoFocusManifest(env, "owner/notyetregistered", { experimental: { gittensor: true } });
     await expect(gittensorEnabledRepoFullNames(env)).resolves.toEqual(new Set(["owner/notyetregistered"]));
   });
 
   it("excludes registry-only repos whose cached manifests opt in (regression for the unscoped registry activation bypass)", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegistryOnlyRepo(env, "attacker/external");
     await upsertRepoFocusManifest(env, "attacker/external", { experimental: { gittensor: true } });
     await expect(gittensorEnabledRepoFullNames(env)).resolves.toEqual(new Set());
   });
 
   it("fails safe per-repo: a manifest-load error is swallowed and the pass still resolves", async () => {
-    const env = createTestEnv({ GITTENSORY_EXPERIMENTAL_GITTENSOR: "true" });
+    const env = createTestEnv({ LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
     await seedRegisteredRepo(env, "owner/blip");
     // loadRepoFocusManifest's cache read hits signal_snapshots; poison it so the per-repo try/catch fires.
     poisonDbPrepare(env, /"signal_snapshots"/i);

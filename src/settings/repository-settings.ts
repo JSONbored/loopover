@@ -28,7 +28,7 @@ export function applySelfTuneOverrideToSettings(
   return floorScore > current ? { ...settings, qualityGateMinScore: floorScore } : settings; // raise only
 }
 
-/** Effective repository settings: DB values overlaid with `.gittensory.yml` (config-as-code), then — when the
+/** Effective repository settings: DB values overlaid with `.loopover.yml` (config-as-code), then — when the
  *  self-improvement loop is enabled (`LOOPOVER_REVIEW_SELFTUNE`, default OFF) — with the repo's promoted,
  *  soak-passed, tightening-only auto-tune override. Flag-OFF (default) ⇒ no override read, byte-identical to before. */
 export async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {

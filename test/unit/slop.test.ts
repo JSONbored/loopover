@@ -176,7 +176,7 @@ describe("buildSlopAssessment", () => {
   });
 
   it("with slopGateMinScore tuned down to 30, missing-test-only (15) does NOT block — an intended behavior reversal (#deweight)", () => {
-    // A repo that explicitly tuned the slop block threshold DOWN to 30 (via .gittensory.yml / the DB column)
+    // A repo that explicitly tuned the slop block threshold DOWN to 30 (via .loopover.yml / the DB column)
     // used to block a missing-test-only PR (old score 30 ≥ 30) and now will not (new score 15 < 30). The gate
     // predicate is `slopRisk >= slopGateMinScore`; we assert the slop score against that tuned threshold.
     const tunedDownThreshold = 30;

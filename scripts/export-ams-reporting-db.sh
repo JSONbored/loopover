@@ -16,13 +16,13 @@ set -eu
 # Bump whenever this script's own mapping/redaction logic changes (not just when a source table gains a column):
 # the incremental fast-path below only fingerprints SOURCE ROW COUNT + latest timestamp, so a logic-only edit
 # would otherwise serve the previous run's output forever.
-SCRIPT_VERSION="${GITTENSORY_AMS_REPORTING_SCRIPT_VERSION:-1}"
+SCRIPT_VERSION="${LOOPOVER_AMS_REPORTING_SCRIPT_VERSION:-1}"
 
 OUT_DIR="${LOOPOVER_REPORTING_DIR:-/reporting}"
-ATTEMPT_LOG_SOURCE_DB="${GITTENSORY_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
-ATTEMPT_LOG_OUT_DB="${GITTENSORY_AMS_ATTEMPT_LOG_REPORTING_DB:-$OUT_DIR/ams-attempt-log.sqlite}"
-PREDICTION_LEDGER_SOURCE_DB="${GITTENSORY_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"
-PREDICTION_LEDGER_OUT_DB="${GITTENSORY_AMS_PREDICTION_LEDGER_REPORTING_DB:-$OUT_DIR/ams-prediction-ledger.sqlite}"
+ATTEMPT_LOG_SOURCE_DB="${LOOPOVER_AMS_ATTEMPT_LOG_SOURCE_DB:-/ams-ledgers/attempt-log.sqlite3}"
+ATTEMPT_LOG_OUT_DB="${LOOPOVER_AMS_ATTEMPT_LOG_REPORTING_DB:-$OUT_DIR/ams-attempt-log.sqlite}"
+PREDICTION_LEDGER_SOURCE_DB="${LOOPOVER_AMS_PREDICTION_LEDGER_SOURCE_DB:-/ams-ledgers/prediction-ledger.sqlite3}"
+PREDICTION_LEDGER_OUT_DB="${LOOPOVER_AMS_PREDICTION_LEDGER_REPORTING_DB:-$OUT_DIR/ams-prediction-ledger.sqlite}"
 
 mkdir -p "$OUT_DIR"
 

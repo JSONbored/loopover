@@ -1161,11 +1161,11 @@ describe("queue processors", () => {
       reviewCheckMode: "required",
       aiReviewMode: "advisory",
       autonomy: { close: "auto", label: "auto" },
-      // The banned login is per-repo DB config; the label is the configurable `.gittensory.yml` value below —
+      // The banned login is per-repo DB config; the label is the configurable `.loopover.yml` value below —
       // nothing is hard-coded.
       contributorBlacklist: [{ login: "baduser", reason: "plagiarism" }],
     });
-    // The label is configurable via `.gittensory.yml` (default "slop"); set a custom one to prove it's not hardcoded.
+    // The label is configurable via `.loopover.yml` (default "slop"); set a custom one to prove it's not hardcoded.
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { blacklistLabel: "spam" } }, "repo_file");
     const seen = { closed: false, labels: [] as string[], comments: [] as string[] };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2345,7 +2345,7 @@ describe("queue processors", () => {
       aiReviewMode: "advisory",
       autonomy: { close: "auto", label: "auto" },
       contributorOpenPrCap: 2,
-      // The label is the configurable `.gittensory.yml` value below — nothing is hard-coded.
+      // The label is the configurable `.loopover.yml` value below — nothing is hard-coded.
     });
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { contributorCapLabel: "spam-cap" } }, "repo_file");
     const seen = { closed: false, labels: [] as string[], comments: [] as string[] };

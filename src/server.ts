@@ -286,8 +286,8 @@ async function main(): Promise<void> {
   // (#terminal-outcome-audit).
   setSelfHostedMetricsMode(true);
   // Container-private per-repo config (self-host): register the LOOPOVER_REPO_CONFIG_DIR reader so the focus-
-  // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.gittensory.yml`
-  // global default, over the public `.gittensory.yml` (review policy stays private; see
+  // manifest loader prefers a mounted `{owner}__{repo}.yml`, deep-merged over an optional root `.loopover.yml`
+  // global default, over the public `.loopover.yml` (review policy stays private; see
   // config/examples/README.md). Unset dir ⇒ null reader ⇒ unchanged public-fetch behavior.
   const repoConfigDir = nonBlank(process.env.LOOPOVER_REPO_CONFIG_DIR);
   setLocalManifestReader(makeLocalManifestReader(repoConfigDir));
@@ -510,7 +510,7 @@ async function main(): Promise<void> {
   // planner, AI summaries) are NEVER gate-blocking and share the review chain's frontier-only env.AI today
   // purely because no cheaper alternative existed -- unlike AI_EMBED/AI_VISION, which each back a single
   // narrow capability, this one binding is shared across all four, gated per-capability by
-  // `.gittensory.yml` (global default + per-repo override, see focus-manifest.ts) so routing stays
+  // `.loopover.yml` (global default + per-repo override, see focus-manifest.ts) so routing stays
   // config-driven, not hardcoded. Unset ⇒ absent ⇒ every advisory capability falls back to env.AI, byte-
   // identical to before this binding existed.
   const advisoryAi = process.env.AI_ADVISORY_BASE_URL

@@ -19,7 +19,7 @@ const defaultApiUrl = "https://gittensory-api.aethereal.dev";
 const legacyDefaultApiUrls = new Set(["https://gittensory-api.zeronode.workers.dev"]);
 const packageName = ownPackageJson.name;
 const packageVersion = ownPackageJson.version;
-const npmRegistryUrl = (process.env.GITTENSORY_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
+const npmRegistryUrl = (process.env.LOOPOVER_NPM_REGISTRY_URL ?? "https://registry.npmjs.org").replace(/\/+$/, "");
 const upgradeCommand = `npm install -g ${packageName}@latest`;
 const npxFallbackCommand = `npx ${packageName}@latest <command>`;
 const compatibilityPath = "/v1/mcp/compatibility";
@@ -147,18 +147,18 @@ const AGENT_PROFILES = {
   },
 };
 const configPath =
-  process.env.GITTENSORY_CONFIG_PATH ??
-  (process.env.GITTENSORY_CONFIG_DIR
-    ? join(process.env.GITTENSORY_CONFIG_DIR, "config.json")
+  process.env.LOOPOVER_CONFIG_PATH ??
+  (process.env.LOOPOVER_CONFIG_DIR
+    ? join(process.env.LOOPOVER_CONFIG_DIR, "config.json")
     : join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "loopover", "config.json"));
-const cacheDir = process.env.GITTENSORY_CACHE_DIR ?? join(dirname(configPath), "cache");
+const cacheDir = process.env.LOOPOVER_CACHE_DIR ?? join(dirname(configPath), "cache");
 const decisionPackCacheDir = join(cacheDir, "decision-packs");
 const config = loadConfig();
-const requestedProfileName = cliOptionValue(cliArgs, "profile") ?? process.env.GITTENSORY_PROFILE;
+const requestedProfileName = cliOptionValue(cliArgs, "profile") ?? process.env.LOOPOVER_PROFILE;
 const activeProfileName = selectProfileName(config, requestedProfileName);
 const activeProfile = config.profiles?.[activeProfileName] ?? {};
 const configuredApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
-const apiUrl = (process.env.GITTENSORY_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
+const apiUrl = (process.env.LOOPOVER_API_URL ?? (configuredApiUrl && !legacyDefaultApiUrls.has(configuredApiUrl) ? configuredApiUrl : defaultApiUrl)).replace(/\/+$/, "");
 
 const ownerRepoShape = {
   owner: z.string().min(1),
@@ -1852,8 +1852,8 @@ async function runCli(args) {
     const suggestion = suggestCommand(command);
     throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
   }
-  const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-  if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const result = await analyzeCurrentBranch({
     login: contributorLogin,
     cwd: options.cwd,
@@ -1924,8 +1924,8 @@ function printReviewPrHelp() {
 
 async function reviewPrCli(options) {
   if (options.help === true) return printReviewPrHelp();
-  const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-  if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   let prBody = options.body;
   if (options.bodyFile) prBody = readCliTextFile(options.bodyFile, "Body");
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
@@ -2161,8 +2161,8 @@ async function issueSlopCli(args) {
 }
 
 async function decisionPackCli(options) {
-  const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-  if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const payload = await getDecisionPackWithCache(login);
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -2174,8 +2174,8 @@ async function decisionPackCli(options) {
 }
 
 async function repoDecisionCli(options) {
-  const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-  if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const repoFullName = options.repo;
   if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
   const [owner, repo] = repoFullName.split("/", 2);
@@ -2221,8 +2221,8 @@ async function runAgentCli(args) {
   if (subcommand === "--help" || subcommand === "help") return printAgentHelp();
   const options = parseOptions(args.slice(1));
   if (subcommand === "plan") {
-    const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-    if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     const payload = await apiPost("/v1/agent/plan-next-work", stripUndefined({ login, repoFullName: options.repo, objective: options.objective, surface: "mcp" }));
     return outputAgentPayload(payload, options, `LoopOver agent plan: ${payload.summary ?? payload.run?.status ?? "ready"}`);
   }
@@ -2240,8 +2240,8 @@ async function runAgentCli(args) {
     return outputAgentPayload({ ...payload, topAction }, options, topAction ? `Top action: ${topAction.recommendation}` : "No top action is available yet.");
   }
   if (subcommand === "packet") {
-    const login = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
-    if (!login) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
+    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     const payload = await agentPreparePrPacket({
       login,
       cwd: options.cwd,
@@ -2571,15 +2571,15 @@ function printHelp() {
   loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
 
   Environment:
-  GITTENSORY_API_URL
-  GITTENSORY_PROFILE
-  GITTENSORY_CONFIG_PATH or GITTENSORY_CONFIG_DIR
-  GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, GITTENSORY_TOKEN, or a session from loopover-mcp login
+  LOOPOVER_API_URL
+  LOOPOVER_PROFILE
+  LOOPOVER_CONFIG_PATH or LOOPOVER_CONFIG_DIR
+  LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_TOKEN, or a session from loopover-mcp login
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
   GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS
-  GITTENSORY_UPLOAD_SOURCE=false
+  LOOPOVER_UPLOAD_SOURCE=false
 `);
 }
 
@@ -2613,7 +2613,7 @@ function printProfileHelp() {
   loopover-mcp profile switch <name> [--json]
   loopover-mcp profile remove <name> [--json]
 
-Use --profile <name> or GITTENSORY_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
+Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
 `);
 }
 
@@ -2871,7 +2871,7 @@ async function doctor(options) {
     add("api_health", health.status === "ok" ? "pass" : "warn", `API responded from ${apiUrl}.`);
   } catch (error) {
     health = { status: "unreachable" };
-    add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check GITTENSORY_API_URL or network access.");
+    add("api_health", "fail", error instanceof Error ? error.message : "health_check_failed", "Check LOOPOVER_API_URL or network access.");
   }
 
   const compatibility = await inspectApiCompatibility(health);
@@ -2885,7 +2885,7 @@ async function doctor(options) {
   } else if (pkg.state === "ahead") {
     add("version", "pass", `Installed ${packageVersion} is ahead of npm latest ${pkg.latestVersion}.`);
   } else if (pkg.state === "skipped") {
-    add("version", "pass", "npm version check was skipped (GITTENSORY_SKIP_NPM_VERSION_CHECK).");
+    add("version", "pass", "npm version check was skipped (LOOPOVER_SKIP_NPM_VERSION_CHECK).");
   } else {
     add("version", "pass", `Installed ${packageVersion} matches npm latest ${pkg.latestVersion}.`);
   }
@@ -2918,8 +2918,8 @@ async function doctor(options) {
     }
   }
 
-  if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false")) {
-    add("source_upload", "fail", "GITTENSORY_UPLOAD_SOURCE is enabled.", "Unset GITTENSORY_UPLOAD_SOURCE. Source upload is unsupported in v1.");
+  if (/^(1|true|yes)$/i.test(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false")) {
+    add("source_upload", "fail", "LOOPOVER_UPLOAD_SOURCE is enabled.", "Unset LOOPOVER_UPLOAD_SOURCE. Source upload is unsupported in v1.");
   } else {
     add("source_upload", "pass", "Source upload is disabled and unsupported in v1.");
   }
@@ -3064,7 +3064,7 @@ function doctorNextCommand(byName, context) {
   const sourceUpload = byName.get("source_upload");
   if (sourceUpload?.status === "fail") {
     return {
-      command: "unset GITTENSORY_UPLOAD_SOURCE",
+      command: "unset LOOPOVER_UPLOAD_SOURCE",
       reason: "Disable source upload first; the local MCP wrapper only sends metadata.",
     };
   }
@@ -3184,7 +3184,7 @@ function getApiToken() {
 }
 
 function getEnvApiToken() {
-  return process.env.GITTENSORY_API_TOKEN ?? process.env.GITTENSORY_TOKEN ?? process.env.GITTENSORY_MCP_TOKEN;
+  return process.env.LOOPOVER_API_TOKEN ?? process.env.LOOPOVER_TOKEN ?? process.env.LOOPOVER_MCP_TOKEN;
 }
 
 function selectedProfileName(options = {}) {
@@ -3229,7 +3229,7 @@ function selectProfileName(currentConfig, requestedName) {
 }
 
 function resolvedApiUrlSource() {
-  if (process.env.GITTENSORY_API_URL) return "environment";
+  if (process.env.LOOPOVER_API_URL) return "environment";
   const profileApiUrl = typeof activeProfile.apiUrl === "string" ? activeProfile.apiUrl.replace(/\/+$/, "") : undefined;
   if (profileApiUrl && !legacyDefaultApiUrls.has(profileApiUrl)) return "profile";
   const globalApiUrl = typeof config.apiUrl === "string" ? config.apiUrl.replace(/\/+$/, "") : undefined;
@@ -3238,8 +3238,8 @@ function resolvedApiUrlSource() {
 }
 
 function resolvedConfigPathSource() {
-  if (process.env.GITTENSORY_CONFIG_PATH) return "GITTENSORY_CONFIG_PATH";
-  if (process.env.GITTENSORY_CONFIG_DIR) return "GITTENSORY_CONFIG_DIR";
+  if (process.env.LOOPOVER_CONFIG_PATH) return "LOOPOVER_CONFIG_PATH";
+  if (process.env.LOOPOVER_CONFIG_DIR) return "LOOPOVER_CONFIG_DIR";
   if (process.env.XDG_CONFIG_HOME) return "XDG_CONFIG_HOME";
   return "default";
 }
@@ -3251,11 +3251,11 @@ function resolvedTokenSource() {
 }
 
 function sourceUploadState() {
-  const enabled = /^(1|true|yes)$/i.test(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false");
+  const enabled = /^(1|true|yes)$/i.test(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false");
   return {
     default: false,
     enabled,
-    source: enabled ? "GITTENSORY_UPLOAD_SOURCE" : "default",
+    source: enabled ? "LOOPOVER_UPLOAD_SOURCE" : "default",
     supported: false,
   };
 }
@@ -3272,7 +3272,7 @@ function configCommand(options) {
     profileCount: profileList(config).length,
     configured: existsSync(configPath),
     configPathSource: resolvedConfigPathSource(),
-    cacheDirSource: process.env.GITTENSORY_CACHE_DIR ? "GITTENSORY_CACHE_DIR" : "default",
+    cacheDirSource: process.env.LOOPOVER_CACHE_DIR ? "LOOPOVER_CACHE_DIR" : "default",
     tokenConfigured: Boolean(getApiToken()),
     tokenSource: resolvedTokenSource(),
     sourceUpload: sourceUploadState(),
@@ -3289,7 +3289,7 @@ function configCommand(options) {
   process.stdout.write(`Token: ${payload.tokenConfigured ? `configured (${payload.tokenSource})` : "not configured"}\n`);
   process.stdout.write(
     payload.sourceUpload.enabled
-      ? `Source upload: enabled via ${payload.sourceUpload.source} (unsupported; unset GITTENSORY_UPLOAD_SOURCE)\n`
+      ? `Source upload: enabled via ${payload.sourceUpload.source} (unsupported; unset LOOPOVER_UPLOAD_SOURCE)\n`
       : "Source upload: disabled (unsupported)\n",
   );
 }
@@ -3839,9 +3839,9 @@ function sanitizeDiagnosticText(value, extraPaths = []) {
   if (value === undefined || value === null) return value;
   let text = String(value);
   const sensitiveValues = [
-    process.env.GITTENSORY_API_TOKEN,
-    process.env.GITTENSORY_MCP_TOKEN,
-    process.env.GITTENSORY_TOKEN,
+    process.env.LOOPOVER_API_TOKEN,
+    process.env.LOOPOVER_MCP_TOKEN,
+    process.env.LOOPOVER_TOKEN,
     config.session?.token,
     ...profileSessions(config).map((entry) => entry.session.token),
   ].filter((candidate) => typeof candidate === "string" && candidate.length > 0);
@@ -3850,8 +3850,8 @@ function sanitizeDiagnosticText(value, extraPaths = []) {
   }
   const localPaths = [
     configPath,
-    process.env.GITTENSORY_CONFIG_PATH,
-    process.env.GITTENSORY_CONFIG_DIR,
+    process.env.LOOPOVER_CONFIG_PATH,
+    process.env.LOOPOVER_CONFIG_DIR,
     process.cwd(),
     homedir(),
     ...extraPaths,
@@ -3956,13 +3956,13 @@ async function apiPost(path, body) {
 async function apiFetch(path, init, options = {}) {
   const token = options.token ?? getApiToken();
   if (options.auth !== false && !token) {
-    const error = new Error("Run `loopover-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
+    const error = new Error("Run `loopover-mcp login`, or set LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, or LOOPOVER_TOKEN before starting the MCP wrapper.");
     error.status = 401;
     error.code = "missing_auth";
     throw error;
   }
   const controller = new AbortController();
-  const timeoutMs = Number(process.env.GITTENSORY_API_TIMEOUT_MS ?? options.timeoutMs ?? 30000);
+  const timeoutMs = Number(process.env.LOOPOVER_API_TIMEOUT_MS ?? options.timeoutMs ?? 30000);
   const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000);
   const response = await fetch(`${apiUrl}${path}`, {
     ...init,
@@ -3996,7 +3996,7 @@ async function apiFetch(path, init, options = {}) {
 }
 
 async function fetchLatestPackageVersion() {
-  if (/^(1|true|yes)$/i.test(process.env.GITTENSORY_SKIP_NPM_VERSION_CHECK ?? "false")) return { status: "skipped" };
+  if (/^(1|true|yes)$/i.test(process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK ?? "false")) return { status: "skipped" };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   const response = await fetch(`${npmRegistryUrl}/@loopover%2fmcp/latest`, {

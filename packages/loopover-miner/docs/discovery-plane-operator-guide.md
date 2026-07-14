@@ -46,7 +46,7 @@ Until the contract issue lands, treat these as **documentation placeholders** fo
 | `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | unset | Hosted index base URL. Required when the plane is enabled; ignored when opt-in is off. |
 | `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | unset / `false` | Separate opt-in for anonymized operational telemetry ([#4301](https://github.com/JSONbored/gittensory/issues/4301)). Plane queries can stay on while telemetry stays off. |
 
-**Truthy-string convention** (when implemented): `/^(1|true|yes|on)$/i`, matching other `GITTENSORY_*` flags in this repo.
+**Truthy-string convention** (when implemented): `/^(1|true|yes|on)$/i`, matching other `LOOPOVER_*` flags in this repo.
 
 **Operator checklist (enabled plane):**
 

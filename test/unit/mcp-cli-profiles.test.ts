@@ -22,9 +22,9 @@ describe("gittensory-mcp CLI — profiles", () => {
       onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
     });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     const firstLogin = JSON.parse(await runAsync(["login", "--profile", "JSONbored", "--github-token", "github-jsonbored", "--json"], env)) as { profile: string; login: string };
@@ -77,7 +77,7 @@ describe("gittensory-mcp CLI — profiles", () => {
         2,
       ),
     );
-    const env = { GITTENSORY_CONFIG_DIR: tempDir, GITTENSORY_SKIP_NPM_VERSION_CHECK: "true" };
+    const env = { LOOPOVER_CONFIG_DIR: tempDir, LOOPOVER_SKIP_NPM_VERSION_CHECK: "true" };
 
     const lines = run(["profile", "list", "--format", "ndjson"], env).trim().split("\n");
     expect(lines).toHaveLength(2);
@@ -100,15 +100,15 @@ describe("gittensory-mcp CLI — profiles", () => {
       onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
     });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     await runAsync(["login", "--profile", "jsonbored", "--github-token", "github-jsonbored", "--json"], env);
     await runAsync(["profile", "switch", "jsonbored", "--json"], env);
-    const whoami = JSON.parse(await runAsync(["whoami", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: string; login: string };
-    const status = JSON.parse(await runAsync(["status", "--json"], { ...env, GITTENSORY_TOKEN: "session-okto" })) as { profile: { tokenSource: string }; auth: { login: string } };
+    const whoami = JSON.parse(await runAsync(["whoami", "--json"], { ...env, LOOPOVER_TOKEN: "session-okto" })) as { profile: string; login: string };
+    const status = JSON.parse(await runAsync(["status", "--json"], { ...env, LOOPOVER_TOKEN: "session-okto" })) as { profile: { tokenSource: string }; auth: { login: string } };
 
     expect(whoami).toMatchObject({ profile: "jsonbored", login: "oktofeesh1" });
     expect(status).toMatchObject({ auth: { login: "oktofeesh1" }, profile: { tokenSource: "environment" } });
@@ -135,7 +135,7 @@ describe("gittensory-mcp CLI — profiles", () => {
       ),
     );
 
-    const removed = JSON.parse(await runAsync(["profile", "remove", "default", "--json"], { GITTENSORY_CONFIG_DIR: tempDir })) as { status: string; removedProfile: string; activeProfile: string };
+    const removed = JSON.parse(await runAsync(["profile", "remove", "default", "--json"], { LOOPOVER_CONFIG_DIR: tempDir })) as { status: string; removedProfile: string; activeProfile: string };
     const saved = JSON.parse(readFileSync(configPath, "utf8")) as { activeProfile: string; profiles?: Record<string, unknown>; session?: unknown };
 
     expect(removed).toMatchObject({ status: "removed", removedProfile: "default", activeProfile: "beta" });
@@ -154,9 +154,9 @@ describe("gittensory-mcp CLI — profiles", () => {
       onApiRequest: (request) => requests.push({ url: request.url, authorization: request.headers.authorization }),
     });
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
 
     await runAsync(["login", "--profile", "alpha", "--github-token", "github-jsonbored", "--json"], env);
@@ -187,10 +187,10 @@ describe("gittensory-mcp CLI — profiles", () => {
     const url = await startFixtureServer();
     const status = JSON.parse(
       await runAsync(["status", "--json"], {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
-        GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
+        LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
       }),
     ) as { package: { name: string; version: string; latestStatus: string }; api: { status: string }; auth: { login: string } };
 
@@ -209,10 +209,10 @@ describe("gittensory-mcp CLI — profiles", () => {
     const url = await startFixtureServer({ onApiRequest: (request) => requests.push({ url: request.url, headers: request.headers }) });
 
     await runAsync(["status", "--json"], {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     });
 
     const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");

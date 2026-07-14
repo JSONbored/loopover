@@ -1,7 +1,7 @@
 # Self-host private config — layout, precedence, and examples
 
 This directory ships **generic, safe** examples for the self-host **private** config directory
-(`GITTENSORY_REPO_CONFIG_DIR`, default `/config` in the Docker image / `docker-compose.yml`). It
+(`LOOPOVER_REPO_CONFIG_DIR`, default `/config` in the Docker image / `docker-compose.yml`). It
 contains no real policy, thresholds, logins, or repo names — copy what you need into your own
 mounted config directory and edit it there (never in this repo).
 
@@ -21,11 +21,11 @@ The canonical manifest filename is **`.loopover.yml`**.
 For a repo `owner/repo`, the reader tries, in priority order:
 
 ```
-${GITTENSORY_REPO_CONFIG_DIR}/owner__repo/.loopover.yml     # 1. owner-qualified folder (recommended)
-${GITTENSORY_REPO_CONFIG_DIR}/repo/.loopover.yml            # 2. bare repo-name folder
-${GITTENSORY_REPO_CONFIG_DIR}/owner__repo.yml               # 3. flat file (back-compat, brand-agnostic)
-${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml                 # 4. global default, shared by every repo
-${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml         # 5. shared base (#1959), lowest priority
+${LOOPOVER_REPO_CONFIG_DIR}/owner__repo/.loopover.yml     # 1. owner-qualified folder (recommended)
+${LOOPOVER_REPO_CONFIG_DIR}/repo/.loopover.yml            # 2. bare repo-name folder
+${LOOPOVER_REPO_CONFIG_DIR}/owner__repo.yml               # 3. flat file (back-compat, brand-agnostic)
+${LOOPOVER_REPO_CONFIG_DIR}/.loopover.yml                 # 4. global default, shared by every repo
+${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml         # 5. shared base (#1959), lowest priority
 ```
 
 `.yaml` and `.json` are accepted everywhere `.yml` is. Every one of these files uses the **exact
@@ -41,10 +41,10 @@ From highest to lowest priority:
 
 1. **Private per-repo file**, deep-merged over **2** and **3** when more than one exists (see
    below) — or used alone when it is the only private layer present.
-2. **Private global default** (`${GITTENSORY_REPO_CONFIG_DIR}/.loopover.yml`) — deep-merged
+2. **Private global default** (`${LOOPOVER_REPO_CONFIG_DIR}/.loopover.yml`) — deep-merged
    under **1** when both exist; used alone when a repo has no per-repo file of its own and no
    shared base is mounted.
-3. **Private shared base** (`${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml`, #1959) — the
+3. **Private shared base** (`${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml`, #1959) — the
    lowest-priority private layer, deep-merged under both **1** and **2**. An operator running many
    repos writes a house review policy (e.g. a default `review.tone`, `path_filters`, or
    `exclude_paths`) here **once** instead of copy-pasting it into every repo's per-repo file or
@@ -62,7 +62,7 @@ only the interaction *among* the three private layers is new (the per-repo/globa
 shipped first; the shared base is the newest, lowest layer, #1959).
 
 This chain governs *per-repo review policy* only. A separate, lower-level set of **deployment
-environment variables** (`GITTENSORY_REVIEW_*` flags, AI provider keys/models, self-host runtime
+environment variables** (`LOOPOVER_REVIEW_*` flags, AI provider keys/models, self-host runtime
 knobs, etc.) configures the deployment itself and sits **underneath** all 5 layers above — a
 `.loopover.yml`/private-config value never overrides an operator's env-level kill-switch, it only
 narrows what's already permitted. See the generated, always-current
@@ -150,7 +150,7 @@ common `exclude_paths` — **once**, instead of copy-pasting it into every repo'
 even the global default. That policy lives at:
 
 ```
-${GITTENSORY_REPO_CONFIG_DIR}/_shared/.loopover.yml
+${LOOPOVER_REPO_CONFIG_DIR}/_shared/.loopover.yml
 ```
 
 (`.yaml`/`.json` also accepted, same lookup order as every other candidate — see
@@ -294,6 +294,6 @@ array-replace overlay semantics above) — it does not merge with it.
 
 Never commit real policy into this directory or into these example files: no maintainer usernames,
 no repo names, no thresholds beyond illustrative placeholders, no secrets or tokens. The
-`.gittensory.yml`-named template files shipped alongside this README (see the catalog in
+`.loopover.yml`-named template files shipped alongside this README (see the catalog in
 [TEMPLATES.md](./TEMPLATES.md)) are deliberately generic and inert — copy one into your own mounted
-`GITTENSORY_REPO_CONFIG_DIR`, name the copy `.loopover.yml`, and edit the copy, not this one.
+`LOOPOVER_REPO_CONFIG_DIR`, name the copy `.loopover.yml`, and edit the copy, not this one.

@@ -14,7 +14,7 @@
 // surface).
 import type { Context } from "hono";
 import { PRODUCT_USER_AGENT, timeoutFetch } from "../github/client";
-import { GITTENSORY_SITE_URL } from "../github/footer";
+import { LOOPOVER_SITE_URL } from "../github/footer";
 import { isOrbBrokerEnabled, issueOrbEnrollment } from "./broker";
 
 type GitHubUser = { login: string; id?: number };
@@ -120,7 +120,7 @@ function shell(heading: string, inner: string): string {
 // file-family over (github/footer.ts): env.PUBLIC_SITE_ORIGIN when set, else the public gittensory dashboard
 // (#4615).
 function landingPage(env: Env, heading: string, message: string): string {
-  const dashboardOrigin = (env.PUBLIC_SITE_ORIGIN ?? GITTENSORY_SITE_URL).replace(/\/$/, "");
+  const dashboardOrigin = (env.PUBLIC_SITE_ORIGIN ?? LOOPOVER_SITE_URL).replace(/\/$/, "");
   return shell(heading, `<p>${message}</p><a href="${dashboardOrigin}">Open the dashboard</a>`);
 }
 

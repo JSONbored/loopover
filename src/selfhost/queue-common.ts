@@ -102,7 +102,7 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   //
   // runOpenPrReconciliation makes real, potentially large paginated GitHub REST calls per watched repo (up to
   // RECONCILE_OPEN_PRS_MAX_PAGES per repo, plus a catch-up fetch per missing PR found). Flag-gated OFF by
-  // default today (GITTENSORY_PR_RECONCILIATION) -- this closes the gap before anyone enables it.
+  // default today (LOOPOVER_PR_RECONCILIATION) -- this closes the gap before anyone enables it.
   "reconcile-open-prs",
   // fanOutBacklogConvergenceSweepJobs / sweepRepoBacklogConvergence both call resolveRepositorySettings per
   // repo. Runs every 30 min, unconditional for self-hosted runtimes -- active in production today.

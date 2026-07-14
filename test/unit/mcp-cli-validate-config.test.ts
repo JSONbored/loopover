@@ -16,7 +16,7 @@ describe("loopover-mcp CLI — validate-config", () => {
   async function env(options: Parameters<typeof startFixtureServer>[0] = {}) {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer(options);
-    return { GITTENSORY_API_URL: url, GITTENSORY_TOKEN: "session-token", GITTENSORY_CONFIG_DIR: tempDir, GITTENSORY_API_TIMEOUT_MS: "1000" };
+    return { LOOPOVER_API_URL: url, LOOPOVER_TOKEN: "session-token", LOOPOVER_CONFIG_DIR: tempDir, LOOPOVER_API_TIMEOUT_MS: "1000" };
   }
 
   it("validates a manifest file via the API and prints plain or json output", async () => {

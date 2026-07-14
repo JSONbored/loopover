@@ -360,7 +360,7 @@ describe("runAiReviewForAdvisory", () => {
   });
 
   it("threads settings.aiReviewCombine/aiReviewOnMerge/aiReviewReviewers (#2567) into the AI review call", async () => {
-    // settings.aiReviewCombine/OnMerge/Reviewers are resolved from `.gittensory.yml gate.aiReview.*` upstream by
+    // settings.aiReviewCombine/OnMerge/Reviewers are resolved from `.loopover.yml gate.aiReview.*` upstream by
     // resolveEffectiveSettings; runAiReviewForAdvisory must forward them into runLoopOverAiReview's input so a
     // per-repo override actually reaches the reviewer selection (in place of any env.AI_REVIEW_PLAN default).
     const adv = advisory();

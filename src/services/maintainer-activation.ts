@@ -52,7 +52,7 @@ export function buildMaintainerActivationPreview(args: {
   pullRequests: PullRequestRecord[];
   generatedAt: string;
   sampleSize?: number;
-  /** GITTENSORY_DUPLICATE_WINNER (#dup-winner): mirror the live pipeline so the demo's duplicate findings
+  /** LOOPOVER_DUPLICATE_WINNER (#dup-winner): mirror the live pipeline so the demo's duplicate findings
    *  match the real gate — when ON, the cluster winner is spared. Defaults to off (byte-identical preview). */
   duplicateWinnerEnabled?: boolean;
 }): MaintainerActivationPreview {
@@ -84,7 +84,7 @@ export function buildMaintainerActivationPreview(args: {
     .map(([code, count]) => ({ code, count }))
     .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
   // reviewCheckMode (not the legacy gateCheckMode) is the actual publish authority (#2852) -- a repo activated
-  // only via .gittensory.yml `gate.checkMode`/`gate.enabled` (never touching the old dashboard toggle) must not
+  // only via .loopover.yml `gate.checkMode`/`gate.enabled` (never touching the old dashboard toggle) must not
   // be told to "enable advisory mode" again.
   const currentlyActive = args.settings.reviewCheckMode !== "disabled";
 

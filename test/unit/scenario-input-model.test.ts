@@ -258,10 +258,10 @@ describe("source-upload safety", () => {
   });
 
   it("rejects source-upload env flag and forbidden local branch keys", () => {
-    const previous = process.env.GITTENSORY_UPLOAD_SOURCE;
-    process.env.GITTENSORY_UPLOAD_SOURCE = "true";
+    const previous = process.env.LOOPOVER_UPLOAD_SOURCE;
+    process.env.LOOPOVER_UPLOAD_SOURCE = "true";
     expect(() => assertScenarioLocalBranchInputSafe({ login: "miner", repoFullName: "octo/demo" })).toThrow(/metadata-only/i);
-    process.env.GITTENSORY_UPLOAD_SOURCE = previous;
+    process.env.LOOPOVER_UPLOAD_SOURCE = previous;
     expect(() => assertScenarioLocalBranchInputSafe({ fileContent: "secret" })).toThrow(/never uploaded/i);
     expect(() => assertScenarioLocalBranchInputSafe({ changedFiles: [{ path: "a.ts", diff: "code" }] })).toThrow(/never uploaded/i);
   });

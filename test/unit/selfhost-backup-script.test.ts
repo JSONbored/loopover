@@ -95,7 +95,7 @@ function runBackup(root: string, env: Record<string, string>): string {
       ...process.env,
       BACKUP_OUT_DIR: join(root, "backups"),
       BACKUP_RETAIN: "7",
-      GITTENSORY_BACKUP_SOURCE_DATABASE_URL: "",
+      LOOPOVER_BACKUP_SOURCE_DATABASE_URL: "",
       QDRANT_URL: "",
       ...env,
     },

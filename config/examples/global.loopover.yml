@@ -2,7 +2,7 @@
 # Self-host PRIVATE global default — GENERIC EXAMPLE, safe to publish
 # ============================================================================
 #
-# Copy this file to the ROOT of your own GITTENSORY_REPO_CONFIG_DIR mount (e.g.
+# Copy this file to the ROOT of your own LOOPOVER_REPO_CONFIG_DIR mount (e.g.
 # `./loopover-config/.loopover.yml` for the default docker-compose.yml mount) and edit your
 # copy — never this one. It applies to every repo that has no per-repo file of its own, and is
 # deep-merged UNDER any per-repo file that does exist (see ../README.md for the precedence chain
@@ -74,7 +74,7 @@ settings:
     - your-maintainer-login
 
 # Converged-feature activation shared by every repo unless a per-repo file overrides a key (#4190). Each key
-# still needs its own deployment-wide GITTENSORY_REVIEW_* env flag ON before this block has any effect at all
+# still needs its own deployment-wide LOOPOVER_REVIEW_* env flag ON before this block has any effect at all
 # — this section only controls the PER-REPO default once the operator has already turned a feature on
 # fleet-wide. `e2eTests` gates the opt-in AI-generated E2E test coverage feature (epic #4189); leaving it
 # false/omitted here keeps every repo dark by default until a per-repo file opts in.

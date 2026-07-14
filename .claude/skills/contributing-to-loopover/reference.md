@@ -17,7 +17,7 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 The single **required** status check is **`validate`** (it aggregates `changes, lint, test, workers,
 mcp, ui, security`; a path-skipped job counts as success). **Codecov** posts `codecov/patch` (the real
 coverage gate) and `codecov/project` (informational) independently. The review engine also posts its
-own check run named **`LoopOver Orb Review Agent`** (`src/github/app.ts` `GITTENSORY_GATE_CHECK_NAME`) — the gate
+own check run named **`LoopOver Orb Review Agent`** (`src/github/app.ts` `LOOPOVER_GATE_CHECK_NAME`) — the gate
 verdict (§3), separate from CI. On a PR, jobs run only if their
 path filter matched; on push to `main`, everything runs.
 
@@ -188,7 +188,7 @@ own PR.)
 
 ```ts
 import { createTestEnv } from "../helpers/d1";
-const env = createTestEnv({ GITTENSORY_REVIEW_REPOS: "JSONbored/gittensory" });
+const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory" });
 await env.DB.prepare(`INSERT INTO repositories (full_name, owner, name) VALUES (?,?,?)`)
   .bind("JSONbored/gittensory", "JSONbored", "gittensory").run();
 const row = await env.DB.prepare(`SELECT * FROM repositories WHERE full_name = ?`)

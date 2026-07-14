@@ -532,7 +532,7 @@ describe("evaluateWithSurfaceLane (the processor seam helper)", () => {
 
   it("REGRESSION (#confirmed-bug): holds the gate NEUTRAL — rather than silently passing — when a NON-allowlisted repo's manifest fails to load, since that's the only way it could have configured a contentLane", async () => {
     // OTHER_REPO is NOT in LOOPOVER_REVIEW_REPOS, so its only path to a resolved spec is an explicit
-    // contentLane: config in its OWN .gittensory.yml. If we can't even read that file, we cannot tell "this
+    // contentLane: config in its OWN .loopover.yml. If we can't even read that file, we cannot tell "this
     // repo never configured content-lane" apart from "it did, but we couldn't check this pass" — silently
     // falling through to the plain generic (clean) evaluation would let a real registry submission merge
     // unevaluated.

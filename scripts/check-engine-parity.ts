@@ -414,8 +414,8 @@ function defaultExecGit(args: string[], cwd: string): string {
 export function listChangedEngineParityFiles({
   root,
   execGit = defaultExecGit,
-  baseRef = process.env.GITTENSORY_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "",
-  headRef = process.env.GITTENSORY_ENGINE_PARITY_HEAD_REF ?? "HEAD",
+  baseRef = process.env.LOOPOVER_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "",
+  headRef = process.env.LOOPOVER_ENGINE_PARITY_HEAD_REF ?? "HEAD",
 }: {
   root: string;
   execGit?: EngineParityExecGit;
@@ -672,7 +672,7 @@ export function runEngineParityMain(root: string = process.cwd()): number {
     changedFiles.length > 0
       ? readEnginePackageVersionAtRef({
           root,
-          ref: process.env.GITTENSORY_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "origin/main",
+          ref: process.env.LOOPOVER_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "origin/main",
         }) ?? headEngineVersion
       : headEngineVersion;
   const { failures, pairsChecked, versionSkew } = runEngineParityChecks({

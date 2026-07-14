@@ -7,7 +7,7 @@
 //
 // Two independent switches, same precedence as every other converged review knob in this codebase (see
 // `review/feature-activation.ts`'s doc comment): a GLOBAL env kill-switch (LOOPOVER_REVIEW_CULTURE_PROFILE,
-// default OFF) gates whether the capability exists AT ALL, and the per-repo `.gittensory.yml`
+// default OFF) gates whether the capability exists AT ALL, and the per-repo `.loopover.yml`
 // `review.culture_profile` boolean (see signals/focus-manifest.ts) opts a specific repo in once the global
 // switch is on. Both default OFF/absent ⇒ this module is never invoked, no D1 read happens, and the reviewer
 // prompt is byte-identical to today. `shouldApplyRepoCultureProfile` is the "manifestOnly" precedence shape

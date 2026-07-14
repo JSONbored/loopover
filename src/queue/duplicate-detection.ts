@@ -73,7 +73,7 @@ export async function reconcileLiveDuplicateSiblings(
   pr: PullRequestRecord,
   otherOpenPullRequests: PullRequestRecord[],
 ): Promise<PullRequestRecord[]> {
-  if (env.GITTENSORY_DUPLICATE_WINNER !== "true") return otherOpenPullRequests;
+  if (env.LOOPOVER_DUPLICATE_WINNER !== "true") return otherOpenPullRequests;
   const linkedIssues = new Set(pr.linkedIssues);
   if (linkedIssues.size === 0) return otherOpenPullRequests;
   const overlapping = otherOpenPullRequests.filter(

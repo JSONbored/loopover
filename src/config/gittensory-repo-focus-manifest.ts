@@ -2,7 +2,7 @@
  * Bundled fallback for JSONbored/gittensory when the repo file is not yet reachable
  * (local dev, pre-merge branches). Keep aligned with `.loopover.yml` at repo root.
  */
-export const GITTENSORY_REPO_FOCUS_MANIFEST_YAML = `# LoopOver repo focus manifest — machine-readable contributor policy for this project.
+export const LOOPOVER_REPO_FOCUS_MANIFEST_YAML = `# LoopOver repo focus manifest — machine-readable contributor policy for this project.
 # Private maintainerNotes stay in authenticated API surfaces only.
 
 source: repo_file
@@ -129,8 +129,8 @@ maintainerNotes:
 
 export const GITTENSOR_SELF_REPO_DEFAULT = "JSONbored/gittensory";
 
-export function resolveLoopOverSelfRepoFullName(env: { GITTENSORY_DRIFT_ISSUE_REPO?: string }): string {
-  const configured = env.GITTENSORY_DRIFT_ISSUE_REPO?.trim();
+export function resolveLoopOverSelfRepoFullName(env: { LOOPOVER_DRIFT_ISSUE_REPO?: string }): string {
+  const configured = env.LOOPOVER_DRIFT_ISSUE_REPO?.trim();
   if (configured && configured.includes("/")) return configured;
   return GITTENSOR_SELF_REPO_DEFAULT;
 }

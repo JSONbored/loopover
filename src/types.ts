@@ -165,7 +165,7 @@ export type JobMessage =
       // Cross-repo maintainer recap digest (#1963, #2248): folds gate-precision + outcome-calibration across
       // every scanned repo into ONE RecapReport (buildMaintainerRecap, #2239) and delivers it to Discord --
       // distinct from "generate-review-recap" above, which is single-repo. No `repoFullName`: this is always
-      // a global job, enqueued by the cron on a configurable daily/weekly cadence (GITTENSORY_RECAP_CADENCE).
+      // a global job, enqueued by the cron on a configurable daily/weekly cadence (LOOPOVER_RECAP_CADENCE).
       type: "generate-maintainer-recap";
       requestedBy: "schedule" | "api" | "test";
       windowDays?: number;
@@ -205,7 +205,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Self-heal (flag-gated by GITTENSORY_SWEEP_WATCHDOG). Scan the SAME acting-autonomy repo set the
+      // Self-heal (flag-gated by LOOPOVER_SWEEP_WATCHDOG). Scan the SAME acting-autonomy repo set the
       // scheduled regate sweep covers for a stalled per-repo sweep (open PRs present, but none regated within
       // the staleness window) — emit a structured `sweep_liveness_stale` log AND re-enqueue a targeted
       // `agent-regate-sweep` for just that repo. Enqueued hourly by the cron ONLY when the flag is ON
@@ -214,7 +214,7 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
-      // Self-heal (flag-gated by GITTENSORY_PR_RECONCILIATION). List-diff GitHub's open PR numbers against the
+      // Self-heal (flag-gated by LOOPOVER_PR_RECONCILIATION). List-diff GitHub's open PR numbers against the
       // local table for every acting-autonomy repo — a much tighter cadence than backfillRegisteredRepositories's
       // 6-hour freshness window — and catch up (fetch + upsert + regate) any PR number GitHub has that the local
       // table doesn't (a silently-lost "opened" webhook). Enqueued on a short interval ONLY when the flag is ON
@@ -273,7 +273,7 @@ export type JobMessage =
     }
   | {
       // Scheduled repo-doc refresh (#3003, part of #2993). No `repoFullName` = fan-out: enumerate every repo
-      // with `.gittensory.yml repoDocGeneration.enabled: true` whose refresh interval has elapsed and enqueue
+      // with `.loopover.yml repoDocGeneration.enabled: true` whose refresh interval has elapsed and enqueue
       // one per-repo job each, mirroring "agent-regate-sweep"/"backlog-convergence-sweep". With `repoFullName` =
       // refresh that one repo via openRepoDocPullRequest (the SAME function the on-demand MCP trigger calls) --
       // no separate eligibility/diffing logic lives in the queue processor itself.
@@ -635,7 +635,7 @@ export type ProjectMilestoneMatchMode = "off" | "suggest" | "auto";
 /** Which backend {@link ProjectMilestoneMatchMode} matches against (#3186). `"github"` (default) uses the
  *  installed App's own GitHub Milestones/Projects v2 access; `"linear"` matches against a Linear workspace
  *  instead, using a per-repo encrypted API key (see `getDecryptedRepositoryLinearKey` in db/repositories.ts) --
- *  the key itself is never set here or via `.gittensory.yml`, only this backend CHOICE is config-as-code. */
+ *  the key itself is never set here or via `.loopover.yml`, only this backend CHOICE is config-as-code. */
 export type ProjectMilestoneMatchBackend = "github" | "linear";
 
 /** Which policy pack the gate runs under (#692). `gittensor` = the full Gittensor policy: registry/emissions-
@@ -742,7 +742,7 @@ export type RepositorySettings = {
   qualityGateMinScore?: number | null | undefined;
   /** Deterministic anti-slop signal (#530/#532). `off` = no slop score; `advisory` = surface the slop
    *  score + warnings in context; `block` = ALSO hard-block when slopRisk >= slopGateMinScore (deterministic
-   *  only, applies to every author like every blocker). Default `off` — opt-in via .gittensory.yml. */
+   *  only, applies to every author like every blocker). Default `off` — opt-in via .loopover.yml. */
   slopGateMode: GateRuleMode;
   /** PR-size manual-review HOLD (#gate-size). `off` (default/absent) = no size hold; `advisory`/`block` = a PR with
    *  >= 10 changed files OR >= 1000 changed (added+deleted) lines that would otherwise pass is HELD for manual review
@@ -753,12 +753,12 @@ export type RepositorySettings = {
    *  changing in a changed `package.json`, or whose `resolved` URL points outside `registry.npmjs.org`, produces
    *  a `lockfile_tamper_risk` finding (`block` additionally hard-blocks). Distinct from the OSV.dev CVE analyzer
    *  in review-enrichment — this is a tamper/integrity-substitution check, not a known-CVE check. Config-as-code
-   *  only — no DB column or dashboard toggle; set via `.gittensory.yml gate.lockfileIntegrity`. */
+   *  only — no DB column or dashboard toggle; set via `.loopover.yml gate.lockfileIntegrity`. */
   lockfileIntegrityGateMode?: GateRuleMode | undefined;
   /** CLA / license-compatibility gate (#2564). `off` (default/absent) = no CLA check at all; `advisory`/`block` =
    *  evaluate the configured detection method(s) (`claConsentPhrase` and/or `claCheckRunName` + `claCheckRunAppSlug`) and raise a
    *  `cla_consent_missing` finding when neither confirms consent — `block` also hard-blocks the gate. Config-as-code
-   *  only (no DB column, mirrors sizeGateMode) — set via `.gittensory.yml gate.claMode`. */
+   *  only (no DB column, mirrors sizeGateMode) — set via `.loopover.yml gate.claMode`. */
   claGateMode?: GateRuleMode | undefined;
   /** `gate.cla.consentPhrase`: a public-safe-filtered phrase a maintainer requires somewhere in the PR body (e.g.
    *  "I have read and agree to the CLA"), matched case-insensitively. `null`/absent ⇒ phrase-match detection is not
@@ -775,7 +775,7 @@ export type RepositorySettings = {
   /** Copycat/plagiarism detection (#1969). `off` (default/absent) = no check; `warn`/`label`/`block` are
    *  escalating tiers a future containment/similarity engine would act on (`block` additionally hard-blocks;
    *  a further "strikes" escalation reuses the existing cross-repo banned-contributors ledger once wired).
-   *  Config-as-code only — no DB column or dashboard toggle; set via `.gittensory.yml gate.copycat.mode`.
+   *  Config-as-code only — no DB column or dashboard toggle; set via `.loopover.yml gate.copycat.mode`.
    *  CURRENTLY INERT: this field is parsed and threaded end-to-end, but no detection engine reads it yet —
    *  see {@link CopycatGateMode}'s doc comment in packages/loopover-engine for the tracked follow-up plan. */
   copycatGateMode?: CopycatGateMode | undefined;
@@ -790,7 +790,7 @@ export type RepositorySettings = {
    *  repo with neither configured keeps the existing fold-all fail-closed behavior. A context missing from the
    *  commit ⇒ pending; a completed red check for a listed context ⇒ failed; every listed context settled clean
    *  ⇒ verified passed (no `ciCompletenessWarning`). Config-as-code only — no DB column; set via
-   *  `.gittensory.yml gate.expectedCiContexts`. */
+   *  `.loopover.yml gate.expectedCiContexts`. */
   expectedCiContexts?: ReadonlyArray<string> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
@@ -802,7 +802,7 @@ export type RepositorySettings = {
    *  touches migrations/** is preceded by a fresh GitHub Trees-API read of the base branch's CURRENT migration
    *  filenames — unioned with this PR's own new migration filenames — checked for a live numeric collision.
    *  A collision suppresses the merge and holds the PR with a rebase-needed label + comment instead of merging
-   *  blind. Config-as-code only (no DB column, mirrors gateDryRun) — set via `.gittensory.yml`
+   *  blind. Config-as-code only (no DB column, mirrors gateDryRun) — set via `.loopover.yml`
    *  `gate.premergeContentRecheck`. Default off/undefined — opt-in, since it costs one extra, uncached
    *  GitHub API call for any PR that touches migrations/**. */
   premergeContentRecheck?: boolean | undefined;
@@ -822,7 +822,7 @@ export type RepositorySettings = {
    *  and renders as a collapsible section in the review comment, but never blocks. `block` = ALSO let a
    *  confidence-floor-passing "unaddressed" verdict become a gate blocker (`linked_issue_scope_mismatch`,
    *  confirmed-contributors only, like every other blocker). This is the DB-backed, dashboard-settable
-   *  counterpart; `.gittensory.yml gate.linkedIssueSatisfaction` overrides it exactly like every other
+   *  counterpart; `.loopover.yml gate.linkedIssueSatisfaction` overrides it exactly like every other
    *  `gate:` field overrides its `RepositorySettings` counterpart. The near-identically-named, config-as-
    *  code-only `review.linkedIssueSatisfaction` manifest field (#2173) is folded in as a fallback alias
    *  (#4149) when `gate.linkedIssueSatisfaction` is unset — see `resolveEffectiveSettings` in
@@ -840,7 +840,7 @@ export type RepositorySettings = {
    *  free/default-reviewer pass (the configured self-host provider, or the legacy Workers-AI pair when
    *  none is configured) adds an ADVISORY-only `ai_slop_advisory` finding for semantic slop the
    *  deterministic detector cannot quantify. It NEVER feeds slopRisk or the gate (only the deterministic
-   *  core blocks). Default false — opt-in via `.gittensory.yml gate.slop.aiAdvisory`. */
+   *  core blocks). Default false — opt-in via `.loopover.yml gate.slop.aiAdvisory`. */
   slopAiAdvisory: boolean;
   /** AI maintainer review. `off` = no AI; `advisory` = post AI review notes only; `block` = ALSO let a
    *  dual-model high-confidence consensus defect become a gate blocker (confirmed-contributors only,
@@ -864,7 +864,7 @@ export type RepositorySettings = {
    *  scoping in the first place — see its own doc comment for the full invariant: AI review runs for
    *  every author by default, this pair of fields exists purely for a self-host operator who
    *  deliberately wants to bound AI spend to registered miners). Default false — opt-in via
-   *  `.gittensory.yml gate.aiReview.allAuthors`. Independent of `aiReviewMode`: `off` still means no AI;
+   *  `.loopover.yml gate.aiReview.allAuthors`. Independent of `aiReviewMode`: `off` still means no AI;
    *  this only widens WHO an enabled review covers, and only within confirmed-contributors-only mode. */
   aiReviewAllAuthors: boolean;
   /** Opt-in narrowing (config-as-code, self-host operator's own choice — see resolveAiReviewableAuthor
@@ -881,17 +881,17 @@ export type RepositorySettings = {
    *  real defect into a non-blocker on its own. What DOES vary below the floor is governed by the separate
    *  {@link aiReviewLowConfidenceDisposition} field (#4603): `hold_for_review` (default) routes a sub-floor
    *  blocker to manual review instead of one-shot-closing; `advisory_only` drops it to non-blocking; `one_shot`
-   *  ignores the floor entirely. Config-as-code only — set via `.gittensory.yml gate.aiReview.closeConfidence`
+   *  ignores the floor entirely. Config-as-code only — set via `.loopover.yml gate.aiReview.closeConfidence`
    *  (no dashboard/DB column); unset ⇒ the gate uses the 0.93 default. Clamped to [0,1] at parse time. */
   aiReviewCloseConfidence?: number | null | undefined;
   /** Disposition for a sub-floor `ai_consensus_defect`/`ai_review_split` finding (#4603) — see
    *  {@link AiReviewLowConfidenceDisposition} for the full semantics of each value. Default `"hold_for_review"`.
    *  Unlike {@link aiReviewCloseConfidence}, this IS DB-backed/dashboard-settable (via the `/ai-review` route,
-   *  alongside `aiReviewMode`) and also overridable via `.gittensory.yml gate.aiReview.lowConfidenceDisposition`
+   *  alongside `aiReviewMode`) and also overridable via `.loopover.yml gate.aiReview.lowConfidenceDisposition`
    *  — yml > DB > this default, resolved through the normal `resolveEffectiveSettings` chain like every other
    *  gate-setting field. */
   aiReviewLowConfidenceDisposition?: AiReviewLowConfidenceDisposition | null | undefined;
-  /** Per-repo dual-AI combine-strategy override (#2567). Config-as-code only — set via `.gittensory.yml
+  /** Per-repo dual-AI combine-strategy override (#2567). Config-as-code only — set via `.loopover.yml
    *  gate.aiReview.combine` (no dashboard/DB column); unset ⇒ the self-host operator's `AI_REVIEW_PLAN.combine`
    *  boot config (or `consensus` if the operator set nothing). A REFINEMENT of the operator's plan, not a
    *  bypass — `runLoopOverAiReview` clamps the resolved `onMerge` to the operator's floor (see
@@ -900,14 +900,14 @@ export type RepositorySettings = {
   aiReviewCombine?: CombineStrategy | null | undefined;
   /** Per-repo `synthesis` merge-rule override (#2567): `either` blocks on ANY one reviewer's blocker (the
    *  STRICTER rule); `both` blocks only when every reviewer agrees (the more PERMISSIVE rule). Config-as-code
-   *  only — set via `.gittensory.yml gate.aiReview.onMerge` (no dashboard/DB column). A repo override can only
+   *  only — set via `.loopover.yml gate.aiReview.onMerge` (no dashboard/DB column). A repo override can only
    *  TIGHTEN the operator's `AI_REVIEW_PLAN.onMerge` floor (e.g. `either` → `either` is a no-op; `both` → an
    *  attempted loosening is clamped back to `either`). When the operator has not set an `onMerge` floor, any
    *  per-repo value is honored unclamped. See `resolveEffectiveAiReviewOnMerge` in `services/ai-review.ts`. */
   aiReviewOnMerge?: OnMerge | null | undefined;
   /** Per-repo reviewer-pair override (#2567): named self-host providers (e.g. `{ model: "claude-code" }`,
    *  `{ model: "codex" }`) to run instead of the operator's `AI_REVIEW_PLAN.reviewers` (or the free Workers-AI
-   *  pair when the operator configured none). Config-as-code only — set via `.gittensory.yml
+   *  pair when the operator configured none). Config-as-code only — set via `.loopover.yml
    *  gate.aiReview.reviewers` (no dashboard/DB column). Unlike {@link aiReviewOnMerge}, WHICH reviewers run
    *  carries no operator floor to violate (the floor is what triggers a hold/block, not who evaluates it), so a
    *  repo override always wins unclamped when set. */
@@ -949,15 +949,15 @@ export type RepositorySettings = {
    *  layer; optional so existing settings fixtures/callers need not be touched. */
   linkedIssueLabelPropagation?: LinkedIssueLabelPropagationConfig | undefined;
   /** Deterministic linked-issue hard rules. Config-as-code only; set with
-   *  `.gittensory.yml settings.linkedIssueHardRules` in private/global or per-repo config. These rules close
+   *  `.loopover.yml settings.linkedIssueHardRules` in private/global or per-repo config. These rules close
    *  contributor PRs that link ineligible issues before spending AI review budget: owner/other-assigned,
    *  maintainer-only, or missing point-label issues. Defaults all-off so self-hosters opt into their own policy. */
   linkedIssueHardRules?: LinkedIssueHardRulesConfig | undefined;
   /** Same-account issue-avoidance guardrail (#unlinked-issue-guardrail). Config-as-code only; set with
-   *  `.gittensory.yml settings.unlinkedIssueGuardrail` in private/global or per-repo config. Defaults
+   *  `.loopover.yml settings.unlinkedIssueGuardrail` in private/global or per-repo config. Defaults
    *  all-off so a self-hoster opts into their own credibility-gate-farming defense. */
   unlinkedIssueGuardrail?: UnlinkedIssueGuardrailConfig | undefined;
-  /** Per-capability local-inference routing (#4364). Config-as-code only; set with `.gittensory.yml
+  /** Per-capability local-inference routing (#4364). Config-as-code only; set with `.loopover.yml
    *  settings.advisoryAiRouting` in shared/global or per-repo config. Defaults all-false so every advisory
    *  capability stays on the shared frontier env.AI chain until an operator opts each one in. */
   advisoryAiRouting?: AdvisoryAiRoutingConfig | undefined;
@@ -984,12 +984,12 @@ export type RepositorySettings = {
   publicQualityMetrics?: boolean | undefined;
   commandAuthorization?: RepositoryCommandAuthorizationPolicy | undefined;
   /** Per-repo contributor blacklist (#1425, anti-abuse): banned GitHub logins whose PRs/issues the engine
-   *  deterministically closes ahead of merit review. Layered the same as other settings (`.gittensory.yml` >
+   *  deterministically closes ahead of merit review. Layered the same as other settings (`.loopover.yml` >
    *  DB) and unioned with the shared/global list at the point of use. Always populated by the DB layer
    *  (default `[]`); optional so existing settings fixtures/callers need not be touched. */
   contributorBlacklist?: ContributorBlacklistEntry[] | undefined;
   /** The label applied to a blacklisted contributor's PR (#1425). Configurable per-repo (dashboard/DB +
-   *  `.gittensory.yml` `settings.blacklistLabel`); defaults to `"slop"` so the disposition works regardless of
+   *  `.loopover.yml` `settings.blacklistLabel`); defaults to `"slop"` so the disposition works regardless of
    *  the label a repo sets. Explicit `null` closes WITHOUT applying any label (the same load-bearing-null idiom
    *  as {@link contributorOpenPrCap}) -- distinct from omitted/undefined, which uses the default. Always
    *  populated by the DB layer (default `"slop"`); optional so existing settings fixtures/callers need not be
@@ -997,7 +997,7 @@ export type RepositorySettings = {
   blacklistLabel?: string | null | undefined;
   /** Per-contributor open-PR cap (#2270, anti-abuse): the max PRs a single non-owner/admin/bot contributor may
    *  have open on this repo at once. `null`/absent (default) = no cap, byte-identical to today. Layered like
-   *  every other settings field (`.gittensory.yml` `settings.contributorOpenPrCap` > DB > `null`). Capped at
+   *  every other settings field (`.loopover.yml` `settings.contributorOpenPrCap` > DB > `null`). Capped at
    *  {@link MAX_CONTRIBUTOR_OPEN_ITEM_CAP} so the fixed live-verification sample can enforce the threshold. */
   contributorOpenPrCap?: number | null | undefined;
   /** Per-contributor open-issue cap (#2270, anti-abuse): same shape and precedence as {@link contributorOpenPrCap},
@@ -1054,7 +1054,7 @@ export type RepositorySettings = {
    *  `[]`); optional so existing settings fixtures/callers need not be touched. */
   autoCloseExemptLogins?: string[] | undefined;
   /** Hard manual-review guardrail globs. Config-as-code only: set in private/global or per-repo
-   *  `.gittensory.yml` under `settings.hardGuardrailGlobs`. Safe by default (#3943): ADDED to the built-in
+   *  `.loopover.yml` under `settings.hardGuardrailGlobs`. Safe by default (#3943): ADDED to the built-in
    *  invariant floor (`DEFAULT_HARD_GUARDRAIL_GLOBS` in src/review/guardrail-config.ts), never allowed to
    *  shrink it, unless {@link hardGuardrailGlobsOverridesInvariants} is explicitly `true` — see that field. */
   hardGuardrailGlobs?: string[] | null | undefined;
@@ -1064,7 +1064,7 @@ export type RepositorySettings = {
    *  disable path guardrails entirely. Deliberately a separate, explicitly-named field (rather than
    *  overloading `hardGuardrailGlobs: []`'s meaning) so a repo choosing to drop the built-in safety net is
    *  always a conscious, separately-visible config decision. Default `false`/absent preserves #3943's
-   *  protection: an ordinary `.gittensory.yml` edit can only ever widen guardrail coverage. */
+   *  protection: an ordinary `.loopover.yml` edit can only ever widen guardrail coverage. */
   hardGuardrailGlobsOverridesInvariants?: boolean | null | undefined;
   /** Label applied when an otherwise-ready PR is held for manual review by a guardrail. Config-as-code only;
    *  `null` disables the label while keeping the hold. Distinct from `review_state_label`, so operators can
@@ -1082,7 +1082,7 @@ export type RepositorySettings = {
    *  fresh CI recheck cycle first, rather than trusting a `mergeableState: clean` read that may already be
    *  stale relative to a sibling commit that just landed on the base. `null`/undefined (default) = never
    *  force -- a `mergeable_state: clean` read is trusted exactly as it is today. Layered like every other
-   *  settings field (`.gittensory.yml` `gate.requireFreshRebaseWindow` > DB > `null`). */
+   *  settings field (`.loopover.yml` `gate.requireFreshRebaseWindow` > DB > `null`). */
   requireFreshRebaseWindowMinutes?: number | null | undefined;
   /** Account-age throttle (#2561, anti-abuse): an account younger than this many days gets the
    *  {@link newAccountLabel} and a tighter effective contributor cap — friction/visibility, NEVER an
@@ -1160,7 +1160,7 @@ export type RepositorySettings = {
    *  Dependabot -- settings/agent-actions.ts's PROTECTED_AUTOCLOSE_AUTHORS): skip AI review, gate evaluation,
    *  and public-surface publish entirely for a PR/event genuinely triggered by one of these -- not just
    *  suppress output like {@link "./review-eligibility".ignoreAuthors}. `"inherit"` (the DB default) defers
-   *  to the `GITTENSORY_SKIP_AUTOMATION_BOT_PRS` global default (itself default-ON, unlike most feature
+   *  to the `LOOPOVER_SKIP_AUTOMATION_BOT_PRS` global default (itself default-ON, unlike most feature
    *  flags -- see settings/automation-bot-skip.ts's own doc comment for why); `"off"`/`"enabled"` fully
    *  override the global default in either direction for this repo. Always populated by the DB layer;
    *  optional so existing settings fixtures/callers need not be touched. */
@@ -1202,7 +1202,7 @@ export type RepositorySettings = {
 };
 
 /** #4110: `request_changes`/`comment` were REMOVED (not just left unused) -- they were fully typed/validated
- *  but `src/queue/processors.ts` only ever branched on `=== "close"`, so setting either in `.gittensory.yml`
+ *  but `src/queue/processors.ts` only ever branched on `=== "close"`, so setting either in `.loopover.yml`
  *  silently did nothing. A legacy config with either removed value normalizes to the default ("close") with a
  *  warning, exactly like any other invalid value.
  *  `"advisory"` (#4535) is a NEW, actually-wired value, not a resurrection of either removed one: the gate
@@ -1321,7 +1321,7 @@ export type UnlinkedIssueGuardrailMode = "hold" | "off";
 
 /** Same-account issue-avoidance guardrail (#unlinked-issue-guardrail, credibility-gate-farming defense):
  *  when a PR links NO issue, check whether it directly, unambiguously solves an EXISTING open issue that
- *  was never linked. Config-as-code only, `.gittensory.yml settings.unlinkedIssueGuardrail`; defaults
+ *  was never linked. Config-as-code only, `.loopover.yml settings.unlinkedIssueGuardrail`; defaults
  *  all-off so a self-hoster opts in per repo. `minConfidence` bounds false positives — the AI verifier
  *  must clear this bar (0-1) before a match holds anything. */
 export type UnlinkedIssueGuardrailConfig = {
@@ -1331,7 +1331,7 @@ export type UnlinkedIssueGuardrailConfig = {
 
 /** Per-capability opt-in to the local-inference AI_ADVISORY binding (#4364): each of these ADVISORY-ONLY
  *  (never gate-blocking) capabilities independently decides whether it routes through env.AI_ADVISORY (when
- *  configured) instead of the shared frontier env.AI chain. Config-as-code only, `.gittensory.yml
+ *  configured) instead of the shared frontier env.AI chain. Config-as-code only, `.loopover.yml
  *  settings.advisoryAiRouting` (global default in shared/root config, per-repo override); defaults all-false
  *  so an operator must deliberately opt each capability in.
  *

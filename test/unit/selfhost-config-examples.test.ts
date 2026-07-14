@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { makeLocalManifestReader } from "../../src/selfhost/private-config";
 import { parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
-// The shipped self-host private-config examples (config/examples/*.gittensory.yml, referenced by
+// The shipped self-host private-config examples (config/examples/*.loopover.yml, referenced by
 // config/examples/README.md) must stay valid, comment-tolerant YAML that the SAME parser the real
 // private-config reader uses accepts cleanly — a stale/broken example would silently mislead every
 // self-host operator who copies it. Pure structural checks only (no docker/CLI invocation, mirroring

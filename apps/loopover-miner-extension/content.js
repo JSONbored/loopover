@@ -20,7 +20,7 @@ function mountOpportunityBadge(target) {
   container.className = host
     ? "gittensory-miner-opportunity-badge"
     : "gittensory-miner-opportunity-badge gittensory-miner-opportunity-badge--floating";
-  container.dataset.gittensoryMinerOpportunityBadge = "true";
+  container.dataset.loopoverMinerOpportunityBadge = "true";
   container.hidden = true;
   if (host) {
     host.prepend(container);

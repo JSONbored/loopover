@@ -3,12 +3,12 @@
 // one fewer place to forget. Deploys with the Worker on merge, same as today's manual-sync timing: this
 // advertises the new version to /health and /v1/mcp/compatibility as soon as the release PR merges,
 // before the npm package itself is actually tagged/published.
-import gittensoryMcpPackageJson from "../../packages/loopover-mcp/package.json";
+import loopoverMcpPackageJson from "../../packages/loopover-mcp/package.json";
 
-export const GITTENSORY_API_VERSION = "0.1.0";
-export const GITTENSORY_MCP_PACKAGE_NAME = "@loopover/mcp";
+export const LOOPOVER_API_VERSION = "0.1.0";
+export const LOOPOVER_MCP_PACKAGE_NAME = "@loopover/mcp";
 export const MINIMUM_SUPPORTED_MCP_VERSION = "0.5.0";
-export const LATEST_RECOMMENDED_MCP_VERSION: string = gittensoryMcpPackageJson.version;
+export const LATEST_RECOMMENDED_MCP_VERSION: string = loopoverMcpPackageJson.version;
 
 export type McpCompatibilityStatus = "current" | "stale" | "incompatible" | "unknown";
 
@@ -45,15 +45,15 @@ export function buildMcpCompatibilityMetadata(generatedAt: string): McpCompatibi
   return {
     status: "ok",
     service: "loopover-api",
-    apiVersion: GITTENSORY_API_VERSION,
+    apiVersion: LOOPOVER_API_VERSION,
     mcp: {
-      packageName: GITTENSORY_MCP_PACKAGE_NAME,
+      packageName: LOOPOVER_MCP_PACKAGE_NAME,
       minimumSupportedVersion: MINIMUM_SUPPORTED_MCP_VERSION,
       latestRecommendedVersion: LATEST_RECOMMENDED_MCP_VERSION,
       latestPackageVersion: LATEST_RECOMMENDED_MCP_VERSION,
       supportedVersionRange: `>=${MINIMUM_SUPPORTED_MCP_VERSION}`,
-      upgradeCommand: `npm install -g ${GITTENSORY_MCP_PACKAGE_NAME}@latest`,
-      npxFallbackCommand: `npx ${GITTENSORY_MCP_PACKAGE_NAME}@latest <command>`,
+      upgradeCommand: `npm install -g ${LOOPOVER_MCP_PACKAGE_NAME}@latest`,
+      npxFallbackCommand: `npx ${LOOPOVER_MCP_PACKAGE_NAME}@latest <command>`,
     },
     compatibilityWarnings: [],
     breakingChanges: [],

@@ -273,7 +273,7 @@ export function registryHyperparameterDriftWarningsForRepo(reports: UpstreamDrif
 }
 
 export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, JsonValue>> {
-  if (!truthy(env.GITTENSORY_AUTO_FILE_DRIFT_ISSUES)) {
+  if (!truthy(env.LOOPOVER_AUTO_FILE_DRIFT_ISSUES)) {
     return { status: "disabled", created: 0, updated: 0, skipped: 0 };
   }
   // Respect the global agent kill-switch: filing drift issues is an autonomous GitHub WRITE, so the env brake or
@@ -283,7 +283,7 @@ export async function fileUpstreamDriftIssues(env: Env): Promise<Record<string, 
   if (isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env))) {
     return { status: "paused", created: 0, updated: 0, skipped: 0 };
   }
-  const token = env.GITTENSORY_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
+  const token = env.LOOPOVER_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return { status: "skipped", reason: "missing_issue_token", created: 0, updated: 0, skipped: 0 };
   const repo = resolveLoopOverSelfRepoFullName(env);
   const assignees = resolveDriftAssignees(env);
@@ -1150,12 +1150,12 @@ function githubDriftIssueTitle(report: UpstreamDriftReportRecord): string {
 
 /**
  * Who upstream-drift issues are assigned to. Defaults to the gittensory maintainer, but a self-host operator
- * can set GITTENSORY_DRIFT_ISSUE_ASSIGNEES (comma-separated logins; empty/whitespace = the default) so drift
+ * can set LOOPOVER_DRIFT_ISSUE_ASSIGNEES (comma-separated logins; empty/whitespace = the default) so drift
  * issues land on THEIR team instead of a login that doesn't exist on their fork. Pairs with the existing
- * GITTENSORY_DRIFT_ISSUE_REPO override.
+ * LOOPOVER_DRIFT_ISSUE_REPO override.
  */
 export function resolveDriftAssignees(env: Env): string[] {
-  const raw = env.GITTENSORY_DRIFT_ISSUE_ASSIGNEES;
+  const raw = env.LOOPOVER_DRIFT_ISSUE_ASSIGNEES;
   if (typeof raw !== "string" || !raw.trim()) return ["jsonbored"];
   return raw
     .split(",")

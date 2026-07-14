@@ -27,10 +27,10 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_API_TIMEOUT_MS: "1000",
     };
 
     const online = JSON.parse(await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env)) as { status: string; source: string };
@@ -77,10 +77,10 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_API_TIMEOUT_MS: "1000",
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
@@ -102,10 +102,10 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_API_TIMEOUT_MS: "1000",
     };
 
     const empty = JSON.parse(run(["cache", "list", "--json"], env)) as { count: number; entries: unknown[] };
@@ -135,10 +135,10 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
-      GITTENSORY_API_TIMEOUT_MS: "1000",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
+      LOOPOVER_API_TIMEOUT_MS: "1000",
     };
 
     // Empty cache → zero ndjson lines (not a wrapper object).
@@ -160,9 +160,9 @@ describe("loopover-mcp CLI — packets", () => {
     const fixtureOptions: { decisionPackStatus?: number } = {};
     const url = await startFixtureServer(fixtureOptions);
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
@@ -171,7 +171,7 @@ describe("loopover-mcp CLI — packets", () => {
     await expect(
       runAsync(["decision-pack", "--login", "JSONbored", "--json"], {
         ...env,
-        GITTENSORY_TOKEN: "different-session-token",
+        LOOPOVER_TOKEN: "different-session-token",
       }),
     ).rejects.toThrow(/LoopOver API 429/);
   });
@@ -181,9 +181,9 @@ describe("loopover-mcp CLI — packets", () => {
     const fixtureOptions: { decisionPackStatus?: number } = {};
     const url = await startFixtureServer(fixtureOptions);
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
@@ -204,9 +204,9 @@ describe("loopover-mcp CLI — packets", () => {
     } = {};
     const url = await startFixtureServer(fixtureOptions);
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
@@ -225,16 +225,16 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
 
     await runAsync(["decision-pack", "--login", "JSONbored", "--json"], env);
     const withoutToken = {
       ...env,
       LOOPOVER_API_TOKEN: "",
-      GITTENSORY_TOKEN: "",
+      LOOPOVER_TOKEN: "",
       LOOPOVER_MCP_TOKEN: "",
     };
 
@@ -248,9 +248,9 @@ describe("loopover-mcp CLI — packets", () => {
     tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
     const url = await startFixtureServer();
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_CONFIG_DIR: tempDir,
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_CONFIG_DIR: tempDir,
     };
 
     const plan = JSON.parse(await runAsync(["agent", "plan", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], env)) as {
@@ -290,9 +290,9 @@ describe("loopover-mcp CLI — packets", () => {
     const output = await runAsync(
       ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD", "--body", "Closes #39", "--validation", "passed|npm test|packet tests passed"],
       {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       },
     );
 
@@ -332,10 +332,10 @@ describe("loopover-mcp CLI — packets", () => {
         runAsync(
           ["agent", "packet", "--login", "oktofeesh1", "--cwd", tempDir, "--base", "HEAD"],
           {
-            GITTENSORY_API_URL: url,
-            GITTENSORY_TOKEN: "session-token",
-            GITTENSORY_CONFIG_DIR: tempDir,
-            GITTENSORY_API_TIMEOUT_MS: "3000",
+            LOOPOVER_API_URL: url,
+            LOOPOVER_TOKEN: "session-token",
+            LOOPOVER_CONFIG_DIR: tempDir,
+            LOOPOVER_API_TIMEOUT_MS: "3000",
           },
         ),
       ).rejects.toThrow("Refusing to print unsafe public packet markdown from the server.");
@@ -377,9 +377,9 @@ describe("loopover-mcp CLI — packets", () => {
         "--json",
       ],
       {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       },
     );
 
@@ -424,9 +424,9 @@ describe("loopover-mcp CLI — packets", () => {
         "--json",
       ],
       {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       },
     );
 
@@ -465,9 +465,9 @@ describe("loopover-mcp CLI — packets", () => {
         "--json",
       ],
       {
-        GITTENSORY_API_URL: url,
-        GITTENSORY_TOKEN: "session-token",
-        GITTENSORY_CONFIG_DIR: tempDir,
+        LOOPOVER_API_URL: url,
+        LOOPOVER_TOKEN: "session-token",
+        LOOPOVER_CONFIG_DIR: tempDir,
       },
     );
 

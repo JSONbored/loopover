@@ -376,7 +376,7 @@ describe("focus-manifest loader", () => {
   });
 
   it("falls back to bundled YAML for a configured self-repo alias when fetch is unavailable", async () => {
-    const env = createTestEnv({ GITTENSORY_DRIFT_ISSUE_REPO: "fork/gittensory" });
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "fork/gittensory" });
     const manifest = await loadRepoFocusManifest(env, "fork/gittensory", { fetcher: async () => null });
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("apps/loopover-ui/");

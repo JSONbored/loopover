@@ -933,7 +933,7 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
         <ul>
           <li>
             <code>.env</code> and any <code>*_FILE</code> secret mounts — deploy scripts only write
-            back <code>GITTENSORY_IMAGE</code> (image path) or <code>SENTRY_RELEASE</code> /{" "}
+            back <code>LOOPOVER_IMAGE</code> (image path) or <code>SENTRY_RELEASE</code> /{" "}
             <code>LOOPOVER_VERSION</code> (source path).
           </li>
           <li>
@@ -1004,18 +1004,18 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
         <code>scripts/deploy-selfhost-image.sh</code> pulls a tag or digest, restarts only the{" "}
         <code>loopover</code> service, waits for it to report <code>healthy</code> via{" "}
         <code>docker inspect</code>&apos;s health status (configurable timeout, default 180s), and
-        then persists the resolved image reference back to <code>GITTENSORY_IMAGE</code> in{" "}
+        then persists the resolved image reference back to <code>LOOPOVER_IMAGE</code> in{" "}
         <code>.env</code> so the next plain invocation reuses it.
       </p>
       <CodeBlock
         lang="bash"
-        code={`# Re-pull whatever GITTENSORY_IMAGE already resolves to (safe no-op restart if the tag is unchanged
+        code={`# Re-pull whatever LOOPOVER_IMAGE already resolves to (safe no-op restart if the tag is unchanged
 # and nothing new was pushed under it)
 ./scripts/deploy-selfhost-image.sh
 
 # Pin an exact release tag or content digest
 ./scripts/deploy-selfhost-image.sh ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0
-GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
+LOOPOVER_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy-selfhost-image.sh`}
       />
       <p>
         <code>ghcr.io/jsonbored/gittensory-selfhost</code> (the pre-rename name) is no longer
@@ -1121,7 +1121,7 @@ git merge --ff-only origin/main
 # equivalent manual checks:
 curl -sf http://localhost:8787/ready
 docker compose ps loopover
-grep -E '^(GITTENSORY_IMAGE|LOOPOVER_VERSION|SENTRY_RELEASE)=' .env
+grep -E '^(LOOPOVER_IMAGE|LOOPOVER_VERSION|SENTRY_RELEASE)=' .env
 docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q loopover)"`}
       />
       <p>

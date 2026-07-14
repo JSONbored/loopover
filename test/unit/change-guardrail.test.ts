@@ -147,7 +147,7 @@ describe("change-guardrail glob matching", () => {
 // Operator-configured hard-guardrail globs can still cover sensitive files outside broad dir-prefix guards,
 // while leaving ordinary paths auto-mergeable. These examples are not runtime defaults.
 describe("configured hard-guardrail glob examples", () => {
-  const GITTENSORY_GLOBS = [
+  const LOOPOVER_GLOBS = [
     ".github/**", "scripts/**", "packages/**", "apps/loopover-ui/**",
     "src/scoring/**", "src/signals/**", "src/rules/**", "src/gittensor/**", "src/auth/**",
     "src/upstream/**", "src/settings/**", "src/review/**", "src/services/**", "src/github/**", "src/config/**",
@@ -165,13 +165,13 @@ describe("configured hard-guardrail glob examples", () => {
       "src/github/backfill.ts", // CI aggregation that gates merges
       "src/config/gittensory-repo-focus-manifest.ts", // scoring focus config
     ]) {
-      expect(changedPathsHittingGuardrail([p], GITTENSORY_GLOBS)).toEqual([p]);
+      expect(changedPathsHittingGuardrail([p], LOOPOVER_GLOBS)).toEqual([p]);
     }
   });
 
   it("still lets clean non-crucial PRs auto-merge (infra/data/registry/docs/tests)", () => {
     const nonCrucial = ["src/utils/json.ts", "src/db/repositories.ts", "src/registry/normalize.ts", "src/mcp/server.ts", "README.md", "docs/x.md", "test/unit/foo.test.ts"];
-    expect(changedPathsHittingGuardrail(nonCrucial, GITTENSORY_GLOBS)).toEqual([]);
+    expect(changedPathsHittingGuardrail(nonCrucial, LOOPOVER_GLOBS)).toEqual([]);
   });
 
   it("the hold-all sentinel ['**'] guards every path", () => {

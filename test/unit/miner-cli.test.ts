@@ -109,7 +109,7 @@ describe("loopover-miner startup update check (#2331)", () => {
     expect(resolveNpmRegistryUrl({})).toBe("https://registry.npmjs.org");
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "https://registry.example.com/",
+        LOOPOVER_NPM_REGISTRY_URL: "https://registry.example.com/",
       }),
     ).toBe("https://registry.example.com");
     expect(resolveUpgradeCommand("@loopover/miner")).toBe(
@@ -120,22 +120,22 @@ describe("loopover-miner startup update check (#2331)", () => {
   it("falls back to the default npm registry for unsafe or invalid registry URLs", () => {
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "file:///etc/passwd",
+        LOOPOVER_NPM_REGISTRY_URL: "file:///etc/passwd",
       }),
     ).toBe("https://registry.npmjs.org");
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "http://169.254.169.254/",
+        LOOPOVER_NPM_REGISTRY_URL: "http://169.254.169.254/",
       }),
     ).toBe("https://registry.npmjs.org");
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "https://user:pass@registry.example.com/",
+        LOOPOVER_NPM_REGISTRY_URL: "https://user:pass@registry.example.com/",
       }),
     ).toBe("https://registry.npmjs.org");
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "not-a-url",
+        LOOPOVER_NPM_REGISTRY_URL: "not-a-url",
       }),
     ).toBe("https://registry.npmjs.org");
   });
@@ -143,12 +143,12 @@ describe("loopover-miner startup update check (#2331)", () => {
   it("allows http registry URLs only on local loopback hosts", () => {
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "http://127.0.0.1:4873/",
+        LOOPOVER_NPM_REGISTRY_URL: "http://127.0.0.1:4873/",
       }),
     ).toBe("http://127.0.0.1:4873");
     expect(
       resolveNpmRegistryUrl({
-        GITTENSORY_NPM_REGISTRY_URL: "http://localhost:4873/",
+        LOOPOVER_NPM_REGISTRY_URL: "http://localhost:4873/",
       }),
     ).toBe("http://localhost:4873");
   });
@@ -257,7 +257,7 @@ describe("loopover-miner startup update check (#2331)", () => {
     await startUpdateCheck(["--version"], {
       packageName: "@loopover/miner",
       packageVersion: "0.1.0",
-      env: { GITTENSORY_NPM_REGISTRY_URL: registryUrl },
+      env: { LOOPOVER_NPM_REGISTRY_URL: registryUrl },
     });
     expect(stderr).toHaveBeenCalledWith(
       "npm install -g @loopover/miner@latest\n",
@@ -272,7 +272,7 @@ describe("loopover-miner startup update check (#2331)", () => {
     await startUpdateCheck(["--version"], {
       packageName: "@loopover/miner",
       packageVersion: "0.1.0",
-      env: { GITTENSORY_NPM_REGISTRY_URL: registryUrl },
+      env: { LOOPOVER_NPM_REGISTRY_URL: registryUrl },
     });
     expect(stderr).not.toHaveBeenCalled();
   });
@@ -283,7 +283,7 @@ describe("loopover-miner startup update check (#2331)", () => {
       startUpdateCheck(["--version"], {
         packageName: "@loopover/miner",
         packageVersion: "0.1.0",
-        env: { GITTENSORY_NPM_REGISTRY_URL: registryUrl },
+        env: { LOOPOVER_NPM_REGISTRY_URL: registryUrl },
       }),
     ).resolves.toBeUndefined();
   });
@@ -309,7 +309,7 @@ describe("loopover-miner startup update check (#2331)", () => {
     const updateCheck = startUpdateCheck(["mystery"], {
       packageName: "@loopover/miner",
       packageVersion: "0.1.0",
-      env: { GITTENSORY_NPM_REGISTRY_URL: registryUrl },
+      env: { LOOPOVER_NPM_REGISTRY_URL: registryUrl },
     });
     await awaitOpportunisticUpdateCheck(updateCheck);
     expect(stderr).toHaveBeenCalledWith(
@@ -329,7 +329,7 @@ describe("loopover-miner startup update check (#2331)", () => {
     });
     const startedAt = Date.now();
     const output = runCapture(["--help"], {
-      GITTENSORY_NPM_REGISTRY_URL: registryUrl,
+      LOOPOVER_NPM_REGISTRY_URL: registryUrl,
     });
     expect(Date.now() - startedAt).toBeLessThan(2000);
     expect(output).toContain("loopover-miner --help");
@@ -348,7 +348,7 @@ describe("loopover-miner startup update check (#2331)", () => {
       encoding: "utf8",
       env: {
         ...process.env,
-        GITTENSORY_NPM_REGISTRY_URL: registryUrl,
+        LOOPOVER_NPM_REGISTRY_URL: registryUrl,
       },
     });
     expect(Date.now() - startedAt).toBeLessThan(2000);

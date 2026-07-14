@@ -722,17 +722,17 @@ esac
       );
     `);
 
-    const first = runExporter(root, appDb, outDb, { GITTENSORY_REPORTING_SCRIPT_VERSION: "test-v1" });
+    const first = runExporter(root, appDb, outDb, { LOOPOVER_REPORTING_SCRIPT_VERSION: "test-v1" });
     expect(first).toContain("reporting export complete");
 
     // Same source data, same script version -- the normal incremental fast-path applies.
-    const second = runExporter(root, appDb, outDb, { GITTENSORY_REPORTING_SCRIPT_VERSION: "test-v1" });
+    const second = runExporter(root, appDb, outDb, { LOOPOVER_REPORTING_SCRIPT_VERSION: "test-v1" });
     expect(second).toContain("reporting export skipped: source unchanged since last export");
 
     // Same source data, but the script's own logic "changed" (simulated by a different version string) --
     // this must NOT skip, exactly the gap that let the dead 'ignored'/'ignore' values survive a real mapping
     // migration for years without the reporting DB ever refreshing.
-    const third = runExporter(root, appDb, outDb, { GITTENSORY_REPORTING_SCRIPT_VERSION: "test-v2" });
+    const third = runExporter(root, appDb, outDb, { LOOPOVER_REPORTING_SCRIPT_VERSION: "test-v2" });
     expect(third).toContain("reporting export complete");
   });
 

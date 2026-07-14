@@ -142,9 +142,9 @@ describe("loopover-mcp CLI — basics", () => {
     const url = await startFixtureServer();
 
     const env = {
-      GITTENSORY_API_URL: url,
-      GITTENSORY_TOKEN: "session-token",
-      GITTENSORY_SKIP_NPM_VERSION_CHECK: "true",
+      LOOPOVER_API_URL: url,
+      LOOPOVER_TOKEN: "session-token",
+      LOOPOVER_SKIP_NPM_VERSION_CHECK: "true",
     };
     const jsonOutput = await runAsync(["preflight", "--login", "JSONbored", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], env);
     const payload = JSON.parse(jsonOutput) as { workspaceIntelligence: { blockers: { accountState: string[] }; rerunWhen: string } };
@@ -227,13 +227,13 @@ describe("loopover-mcp CLI — basics", () => {
       tokenSource: string;
       sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
     };
-    // The run() harness sets GITTENSORY_CONFIG_DIR but no API URL or token.
+    // The run() harness sets LOOPOVER_CONFIG_DIR but no API URL or token.
     expect(payload.apiUrl).toBe("https://gittensory-api.aethereal.dev");
     expect(payload.apiUrlSource).toBe("default");
     expect(payload.activeProfile).toBe("default");
     expect(payload.profileCount).toBeGreaterThanOrEqual(1);
     expect(payload.configured).toBe(false);
-    expect(payload.configPathSource).toBe("GITTENSORY_CONFIG_DIR");
+    expect(payload.configPathSource).toBe("LOOPOVER_CONFIG_DIR");
     expect(payload.cacheDirSource).toBe("default");
     expect(payload.tokenConfigured).toBe(false);
     expect(payload.tokenSource).toBe("none");
@@ -244,14 +244,14 @@ describe("loopover-mcp CLI — basics", () => {
     const secretDir = mkdtempSync(join(tmpdir(), "loopover-config-secret-"));
     try {
       const out = run(["config"], {
-        GITTENSORY_API_URL: "https://example.test",
-        GITTENSORY_TOKEN: "super-secret-token",
-        GITTENSORY_CACHE_DIR: join(secretDir, "cache"),
-        GITTENSORY_CONFIG_DIR: secretDir,
+        LOOPOVER_API_URL: "https://example.test",
+        LOOPOVER_TOKEN: "super-secret-token",
+        LOOPOVER_CACHE_DIR: join(secretDir, "cache"),
+        LOOPOVER_CONFIG_DIR: secretDir,
       });
       expect(out).toContain("API URL: https://example.test (environment)");
       expect(out).toContain("Token: configured (environment)");
-      expect(out).toContain("Cache dir: GITTENSORY_CACHE_DIR");
+      expect(out).toContain("Cache dir: LOOPOVER_CACHE_DIR");
       expect(out).toContain("Source upload: disabled (unsupported)");
       // No token value or local absolute path may appear in output.
       expect(out).not.toContain("super-secret-token");
@@ -262,13 +262,13 @@ describe("loopover-mcp CLI — basics", () => {
   });
 
   it("reports enabled unsupported source upload environment settings via config", () => {
-    const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_UPLOAD_SOURCE: "true" })) as {
+    const payload = JSON.parse(run(["config", "--json"], { LOOPOVER_UPLOAD_SOURCE: "true" })) as {
       sourceUpload: { default: boolean; enabled: boolean; source: string; supported: boolean };
     };
-    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "GITTENSORY_UPLOAD_SOURCE", supported: false });
+    expect(payload.sourceUpload).toEqual({ default: false, enabled: true, source: "LOOPOVER_UPLOAD_SOURCE", supported: false });
 
-    const out = run(["config"], { GITTENSORY_UPLOAD_SOURCE: "true" });
-    expect(out).toContain("Source upload: enabled via GITTENSORY_UPLOAD_SOURCE (unsupported; unset GITTENSORY_UPLOAD_SOURCE)");
+    const out = run(["config"], { LOOPOVER_UPLOAD_SOURCE: "true" });
+    expect(out).toContain("Source upload: enabled via LOOPOVER_UPLOAD_SOURCE (unsupported; unset LOOPOVER_UPLOAD_SOURCE)");
   });
 
   it("attributes API URL and token to a named profile from the config file", () => {
@@ -282,7 +282,7 @@ describe("loopover-mcp CLI — basics", () => {
         }),
         { mode: 0o600 },
       );
-      const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_CONFIG_DIR: configDir })) as {
+      const payload = JSON.parse(run(["config", "--json"], { LOOPOVER_CONFIG_DIR: configDir })) as {
         apiUrl: string;
         apiUrlSource: string;
         activeProfile: string;
@@ -308,7 +308,7 @@ describe("loopover-mcp CLI — basics", () => {
     const file = join(dir, "custom-config.json");
     try {
       writeFileSync(file, JSON.stringify({ apiUrl: "https://global.example" }), { mode: 0o600 });
-      const payload = JSON.parse(run(["config", "--json"], { GITTENSORY_CONFIG_PATH: file, GITTENSORY_CONFIG_DIR: "" })) as {
+      const payload = JSON.parse(run(["config", "--json"], { LOOPOVER_CONFIG_PATH: file, LOOPOVER_CONFIG_DIR: "" })) as {
         apiUrl: string;
         apiUrlSource: string;
         configPathSource: string;
@@ -316,7 +316,7 @@ describe("loopover-mcp CLI — basics", () => {
       };
       expect(payload.apiUrl).toBe("https://global.example");
       expect(payload.apiUrlSource).toBe("config");
-      expect(payload.configPathSource).toBe("GITTENSORY_CONFIG_PATH");
+      expect(payload.configPathSource).toBe("LOOPOVER_CONFIG_PATH");
       expect(payload.configured).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

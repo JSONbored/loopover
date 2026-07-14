@@ -187,8 +187,8 @@ export function buildScenarioInput(args: {
 }
 
 export function assertScenarioLocalBranchInputSafe(payload: Record<string, unknown>): void {
-  if (/^(1|true|yes)$/i.test(String(process.env.GITTENSORY_UPLOAD_SOURCE ?? "false"))) {
-    throw new Error("GITTENSORY_UPLOAD_SOURCE=true is not supported; scenario inputs remain metadata-only.");
+  if (/^(1|true|yes)$/i.test(String(process.env.LOOPOVER_UPLOAD_SOURCE ?? "false"))) {
+    throw new Error("LOOPOVER_UPLOAD_SOURCE=true is not supported; scenario inputs remain metadata-only.");
   }
   for (const key of Object.keys(payload)) {
     if (FORBIDDEN_SOURCE_UPLOAD_KEYS.test(key)) {

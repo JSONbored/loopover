@@ -4,12 +4,12 @@
 // Before this file existed, each feature ran when `isXEnabled(env)` (a global env flag) AND
 // `isConvergenceRepoAllowed(env, repo)` (the LOOPOVER_REVIEW_REPOS allowlist) were both true — coarse,
 // all-or-nothing per repo, configured only via env. `resolveConvergedFeature` replaced that for the six
-// `features:`-block keys (now seven, see below) with a per-repo `.gittensory.yml` override. But that migration
+// `features:`-block keys (now seven, see below) with a per-repo `.loopover.yml` override. But that migration
 // left ~10 OTHER per-PR advisory capabilities (screenshots, impactMap, reviewMemory, cultureProfile,
 // inlineComments, fixHandoff, …) each re-implementing their OWN hand-rolled version of the same boolean
 // arithmetic outside this file, with at least four subtly different precedence shapes and no single place
 // documenting which feature uses which (#4616's config-sprawl audit finding — already the root cause of one
-// production incident, see GITTENSORY_PUBLIC_STATS_REPOS's doc comment in env.d.ts).
+// production incident, see LOOPOVER_PUBLIC_STATS_REPOS's doc comment in env.d.ts).
 //
 // `resolveFeatureActivation` below is now the ONE pure core every one of those precedence shapes reduces to.
 // `resolveConvergedFeature` and `resolveManifestOnlyFeature` are the two thin adapters over it in actual use:
@@ -19,7 +19,7 @@
 //     `FEATURE_MODE` below.
 //   - `resolveManifestOnlyFeature` — the `review:`-block keys with NO allowlist role at all (impactMap /
 //     reviewMemory / cultureProfile / inlineComments / fixHandoff): env kill-switch → an EXPLICIT per-repo
-//     `review.*` opt-in is the only way to activate. These live under a different `.gittensory.yml` namespace
+//     `review.*` opt-in is the only way to activate. These live under a different `.loopover.yml` namespace
 //     (`review:`, not `features:`) than the seven `ConvergedFeatureKey`s above, so they were never candidates
 //     for literally becoming `ConvergedFeatureKey`s — renaming an operator's existing yml key would itself be a
 //     behavior break — but they share the exact same underlying arithmetic as "standard" mode with the
@@ -54,7 +54,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
  *    publicly embedded images), so a repo override alone must never bypass the operator's own allowlist.
  *  - `"manifestOnly"`: there is no allowlist role at all (`allowlisted` is never consulted); an explicit
  *    `override === true` is the ONLY way to activate. impactMap / reviewMemory / cultureProfile /
- *    inlineComments / fixHandoff — each shipped as an explicit-opt-in-only `.gittensory.yml` `review.*` toggle
+ *    inlineComments / fixHandoff — each shipped as an explicit-opt-in-only `.loopover.yml` `review.*` toggle
  *    from day one, with no `LOOPOVER_REVIEW_REPOS` role ever defined for it (see
  *    {@link resolveManifestOnlyFeature}).
  */
@@ -120,7 +120,7 @@ export function resolveConvergedFeature(
 
 /**
  * Resolve a "manifest-only" advisory feature (#4616): the operator's global env kill-switch AND an EXPLICIT
- * per-repo `.gittensory.yml` `review.*` opt-in — no `LOOPOVER_REVIEW_REPOS` allowlist role at all. Shared by
+ * per-repo `.loopover.yml` `review.*` opt-in — no `LOOPOVER_REVIEW_REPOS` allowlist role at all. Shared by
  * every `review:`-block feature that was never given an allowlist fallback: impactMap (`shouldComputeImpactMap`,
  * impact-map-wire.ts), reviewMemory (`shouldApplyReviewMemory`, review-memory-wire.ts), cultureProfile
  * (`shouldApplyRepoCultureProfile`, repo-culture-profile-wire.ts), inlineComments (`shouldRequestInlineFindings`,

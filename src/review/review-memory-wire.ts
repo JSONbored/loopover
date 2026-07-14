@@ -1,6 +1,6 @@
 // Review-memory activation wiring (#2179, config slice of #1964). Mirrors impact-map-wire.ts's
 // isImpactMapEnabled: a single GLOBAL env kill-switch the self-host operator controls, ANDed with the per-repo
-// `.gittensory.yml review.memory` manifest toggle (resolved via `resolveReviewMemoryManifestToggle`,
+// `.loopover.yml review.memory` manifest toggle (resolved via `resolveReviewMemoryManifestToggle`,
 // src/signals/focus-manifest.ts) — so a repo can only ever NARROW what the operator has already turned on,
 // never widen it. Both OFF by default: with the env flag unset, the suppression store is never read from the
 // review path at all (the caller guards on this flag before doing any D1 read or matching), so the review

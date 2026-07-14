@@ -1690,7 +1690,7 @@ describe("local MCP git metadata collection", () => {
   afterEach(() => {
     if (tempDir) rmSync(tempDir, { recursive: true, force: true });
     tempDir = null;
-    delete process.env.GITTENSORY_UPLOAD_SOURCE;
+    delete process.env.LOOPOVER_UPLOAD_SOURCE;
   });
 
   it("counts pending commits, emits CI hints, and tracks deleted or renamed paths", async () => {
@@ -1923,7 +1923,7 @@ describe("local MCP git metadata collection", () => {
     );
     expect(JSON.stringify(metadata)).not.toMatch(/export const cache/);
 
-    process.env.GITTENSORY_UPLOAD_SOURCE = "true";
+    process.env.LOOPOVER_UPLOAD_SOURCE = "true";
     expect(() => collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1" })).toThrow(/not supported/);
   });
 

@@ -11,7 +11,7 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("GET /v1/public/stats — error path", () => {
   it("returns 503 when stats computation throws", async () => {
-    const env = createTestEnv({ GITTENSORY_PUBLIC_STATS: "1" });
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS: "1" });
     const res = await createApp().request("/v1/public/stats", {}, env);
     expect(res.status).toBe(503);
     expect((await res.json()) as { error: string }).toEqual({

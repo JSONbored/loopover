@@ -22,20 +22,20 @@ const DEFAULT_SLOP_GATE_MIN_SCORE = 60;
 export const AGENT_LABEL_READY = "ready-to-merge";
 export const AGENT_LABEL_CHANGES = "changes-requested";
 // Default label applied to a blacklisted contributor's PR (#1425). NOT hardcoded into the action — it is
-// configurable per-repo via `.gittensory.yml` (`settings.blacklistLabel`); the planner uses the resolved label
+// configurable per-repo via `.loopover.yml` (`settings.blacklistLabel`); the planner uses the resolved label
 // and falls back to this default, so the disposition works regardless of the label a repo sets.
 export const DEFAULT_BLACKLIST_LABEL = "slop";
 // Default label applied to a PR/issue closed for exceeding the per-contributor open-item cap (#2270). Same
 // configurable-with-fallback shape as DEFAULT_BLACKLIST_LABEL — a repo can override it via
-// `.gittensory.yml` (`settings.contributorCapLabel`); this is only the fallback when unset.
+// `.loopover.yml` (`settings.contributorCapLabel`); this is only the fallback when unset.
 export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 // Default label applied to a PR closed for review-nag cooldown (#2463). NOT hardcoded into the action — it is
-// configurable per-repo via `.gittensory.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
+// configurable per-repo via `.loopover.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
 // and falls back to this default, mirroring DEFAULT_BLACKLIST_LABEL's shape.
 export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
 // Default label applied to a PR re-closed for review-evasion (#review-evasion-protection): a contributor
 // closing/converting-to-draft their own PR while an active review pass is running. NOT hardcoded -- a repo
-// can override it via `.gittensory.yml` (`settings.reviewEvasionLabel`); this is only the fallback when unset.
+// can override it via `.loopover.yml` (`settings.reviewEvasionLabel`); this is only the fallback when unset.
 // Applied by the direct webhook-driven enforcement handlers in queue/processors.ts, which bypass the planner
 // (mirroring the existing draft-dodge/reopen-reclose guards' shape), so it is not consumed by
 // planAgentMaintenanceActions -- it lives alongside its siblings here purely for discoverability.
@@ -145,7 +145,7 @@ export type PlannedAgentAction = {
   closeRequiresDuplicateStillOpen?: boolean;
   // The specific sibling PR number this close named as the duplicate-cluster winner (dupWinnerLinkedDuplicateWinnerNumber),
   // persisted so the recheck above can re-verify THAT PR specifically instead of re-running the full election.
-  // Absent when the election named no specific winner (GITTENSORY_DUPLICATE_WINNER off, or an ambiguous
+  // Absent when the election named no specific winner (LOOPOVER_DUPLICATE_WINNER off, or an ambiguous
   // election) even though closeRequiresDuplicateStillOpen is true -- the recheck has no cheap single-PR signal
   // in that case and is a no-op, matching the legacy (pre-dup-winner) behavior for that configuration.
   duplicateWinnerPrNumber?: number;
@@ -303,7 +303,7 @@ export type AgentActionPlanInput = {
   // (owner/automation bots are never auto-closed). `reason` is private maintainer metadata used only for matching
   // context; the public close comment intentionally uses static copy. Absent / not-matched ⇒ no effect.
   blacklistMatch?: { matched: boolean; reason: string | null | undefined } | undefined;
-  // The repo-configured label applied to a blacklisted author's PR (#1425), resolved from `.gittensory.yml`.
+  // The repo-configured label applied to a blacklisted author's PR (#1425), resolved from `.loopover.yml`.
   // Absent ⇒ the default (`DEFAULT_BLACKLIST_LABEL` = "slop"); explicit `null` ⇒ close WITHOUT any label
   // (#label-scoping). Gated on `close` autonomy, NOT `label` (see the `blacklistMatch` block below) — the
   // label is inseparable metadata on the close, never applied independently.
@@ -324,7 +324,7 @@ export type AgentActionPlanInput = {
   // repository this install gates, combined" for the install-wide globalContributorOpenItemCap. Same closeKind
   // ("contributor_cap") and label either way — this is a description-only distinction, not a new disposition.
   contributorCapMatch?: { matched: boolean; authorLogin: string; openCount: number; cap: number; itemKind: "pull requests" | "issues" | "pull requests and issues"; scope?: "repository" | "install" | undefined } | undefined;
-  // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.gittensory.yml`.
+  // The repo-configured label applied to an over-cap author's PR/issue (#2270), resolved from `.loopover.yml`.
   // Absent ⇒ the default (`DEFAULT_CONTRIBUTOR_CAP_LABEL` = "over-contributor-limit"); explicit `null` ⇒ close
   // WITHOUT any label (#label-scoping). Gated on `close` autonomy, NOT `label` — same shape as {@link blacklistLabel}.
   contributorCapLabel?: string | null | undefined;
@@ -336,7 +336,7 @@ export type AgentActionPlanInput = {
   // (counting pings, choosing hold vs. close) happens at the webhook trigger, not here — this input is already
   // the resolved "yes, close this PR" verdict. Absent / not-matched ⇒ no effect.
   reviewNagMatch?: { matched: boolean; authorLogin: string; pingCount: number; maxPings: number } | undefined;
-  // The repo-configured label applied to a review-nag-closed PR (#2463), resolved from `.gittensory.yml`.
+  // The repo-configured label applied to a review-nag-closed PR (#2463), resolved from `.loopover.yml`.
   // Absent ⇒ the default (`DEFAULT_REVIEW_NAG_LABEL` = "review-nag-cooldown"); explicit `null` ⇒ close WITHOUT
   // any label (#label-scoping). Gated on `close` autonomy, NOT `label` — same shape as {@link blacklistLabel}.
   reviewNagLabel?: string | null | undefined;
@@ -580,7 +580,7 @@ function reviewNagCloseMessage(authorLogin: string, pingCount: number, maxPings:
 
 // The close comment for the screenshot-table gate (#2006). `reason` is the repo-configured (or built-in
 // default) templated contract message — already public-safe by construction (it is either the maintainer's own
-// configured `.gittensory.yml` text or the static DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, never AI/user-derived),
+// configured `.loopover.yml` text or the static DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, never AI/user-derived),
 // so it is interpolated directly, unlike blacklistCloseMessage's deliberately-static text.
 function screenshotTableCloseMessage(reason: string): string {
   return `${reason} This is an automated maintenance action.`;

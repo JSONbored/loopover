@@ -1,6 +1,6 @@
 // Fix-handoff blocks (#2176, config slice for #1962) — copy-paste remediation guidance the reviewer can emit
 // ALONGSIDE the decision summary. Default OFF: the operator flag LOOPOVER_REVIEW_FIX_HANDOFF is a master
-// kill-switch, and the per-repo `.gittensory.yml` review.fixHandoff toggle (#4099) fully controls activation by
+// kill-switch, and the per-repo `.loopover.yml` review.fixHandoff toggle (#4099) fully controls activation by
 // itself when explicitly set — the per-repo convergence cutover allowlist no longer applies to this feature (an
 // unset manifest toggle preserves the ORIGINAL always-off default; it was never sufficient to be allowlisted
 // alone). This is the config/gate slice: pure resolvers only — no emission/render here (that is a separate
@@ -21,7 +21,7 @@ export function isFixHandoffEnabled(env: {
 /** PURE (#4099): should the reviewer emit fix-handoff blocks for this PR? (1) The operator's
  *  LOOPOVER_REVIEW_FIX_HANDOFF flag is an absolute MASTER KILL-SWITCH — off ⇒ always false, regardless of the
  *  manifest, and no per-repo config can bypass it (consistent with every other converged feature — see
- *  `resolveConvergedFeature` in `feature-activation.ts`). (2) An explicit per-repo `.gittensory.yml`
+ *  `resolveConvergedFeature` in `feature-activation.ts`). (2) An explicit per-repo `.loopover.yml`
  *  `review.fixHandoff` override (`true`/`false`) now FULLY controls the feature by itself — a repo can turn this
  *  on without needing the LOOPOVER_REVIEW_REPOS cutover allowlist at all. (3) `manifestToggle` unset
  *  (`undefined`) preserves this feature's ORIGINAL design exactly: being on the allowlist alone was never

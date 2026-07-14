@@ -9,24 +9,24 @@ import {
 describe("isSkipAutomationBotPullRequestsEnabledGlobally", () => {
   it("defaults ON when unset (unlike most LOOPOVER_REVIEW_* flags)", () => {
     expect(isSkipAutomationBotPullRequestsEnabledGlobally({})).toBe(true);
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: undefined })).toBe(true);
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "" })).toBe(true);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: undefined })).toBe(true);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "" })).toBe(true);
   });
 
   it("stays ON for an explicit truthy value", () => {
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "true" })).toBe(true);
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "1" })).toBe(true);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "true" })).toBe(true);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "1" })).toBe(true);
   });
 
   it("turns OFF only for an explicit falsy value, case-insensitively", () => {
     for (const value of ["0", "false", "False", "FALSE", "no", "No", "off", "OFF"]) {
-      expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: value })).toBe(false);
+      expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: value })).toBe(false);
     }
   });
 
   it("stays ON for whitespace around a truthy/garbage value", () => {
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "  false  " })).toBe(false);
-    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ GITTENSORY_SKIP_AUTOMATION_BOT_PRS: "banana" })).toBe(true);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "  false  " })).toBe(false);
+    expect(isSkipAutomationBotPullRequestsEnabledGlobally({ LOOPOVER_SKIP_AUTOMATION_BOT_PRS: "banana" })).toBe(true);
   });
 });
 

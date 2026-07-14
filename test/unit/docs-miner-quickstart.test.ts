@@ -64,7 +64,7 @@ describe("docs miner quickstart page", () => {
 
   it("documents the local privacy boundary and packet redaction", () => {
     expect(normalizedSource).toMatch(/source never leaves your machine/i);
-    expect(source).toMatch(/GITTENSORY_UPLOAD_SOURCE=false/);
+    expect(source).toMatch(/LOOPOVER_UPLOAD_SOURCE=false/);
     expect(source).toMatch(/local absolute paths are redacted/i);
     expect(source).toMatch(/public-safe/i);
     expect(normalizedSource).toMatch(

@@ -8,7 +8,7 @@
 // feature's own tests.
 //
 // Single env switch: LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL. Default OFF (unset/"false") -- when OFF the feature
-// never runs anywhere, regardless of any per-repo `.gittensory.yml` override (see `resolveConvergedFeature` in
+// never runs anywhere, regardless of any per-repo `.loopover.yml` override (see `resolveConvergedFeature` in
 // `./feature-activation`). Truthy follows the codebase convention (`/^(1|true|yes|on)$/i`, same as
 // isRagEnabled / isE2eTestGenerationEnabled).
 

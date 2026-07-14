@@ -12,6 +12,19 @@ describe("detectBoundaryTouches", () => {
     expect(touches[0]).toMatchObject({ path: "src/list.ts", kind: "array_index_bounds" });
   });
 
+  it("detects the modern `.at(<literal>)` last-element/off-by-one idiom as array/index bounds", () => {
+    for (const line of ["+const last = items.at(-1);\n", "+const head = items.at(0);\n", "+const penult = rows.at(-2);\n"]) {
+      const touches = detectBoundaryTouches([{ path: "src/list.ts", patch: line }]);
+      expect(touches).toHaveLength(1);
+      expect(touches[0]?.kind).toBe("array_index_bounds");
+    }
+  });
+
+  it("does NOT flag `.at(<identifier>)` — a non-literal argument carries no off-by-one boundary signal", () => {
+    // Narrow-scope guard (#1972): only a numeric literal argument is a boundary tell; `.at(idx)` is not.
+    expect(detectBoundaryTouches([{ path: "src/list.ts", patch: "+const item = items.at(idx);\n" }])).toHaveLength(0);
+  });
+
   it("detects a null/undefined branch pattern in an added line", () => {
     const touches = detectBoundaryTouches([{ path: "src/user.ts", patch: "@@ -1,1 +1,2 @@\n+if (user === null) return defaultUser;\n" }]);
     expect(touches).toHaveLength(1);

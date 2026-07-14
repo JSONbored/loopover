@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { parseDocument } from "yaml";
 import { describe, expect, it } from "vitest";
 
-function readYaml(path: string): Record<string, unknown> {
-  const value = parse(readFileSync(path, "utf8"));
+function readYamlWithMerge(path: string): Record<string, unknown> {
+  const doc = parseDocument(readFileSync(path, "utf8"), { merge: true });
+  expect(doc.errors, `YAML parse errors in ${path}`).toHaveLength(0);
+  const value = doc.toJS();
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${path} must be a YAML object`);
   }
@@ -20,13 +22,16 @@ function record(value: unknown): Record<string, unknown> {
 
 // Pure structural checks only (no `docker` CLI invocation): the self-hosted runner container this actually
 // runs on does not have Docker-in-Docker access, so a test that shells out to `docker compose config`
-// would be unreliable/environment-dependent here (same constraint as selfhost-compose-ollama-health.test.ts).
+// would be unreliable/environment-dependent here (same constraint as selfhost-compose-logging.test.ts).
+// `{ merge: true }` resolves `<<: *default-logging` the same way Docker Compose's own YAML 1.1 merge-key
+// support does -- verified once by hand against `docker compose config` with every profile active.
 describe("docker-compose.yml — workflows + storage profiles (#1219)", () => {
-  const compose = readYaml("docker-compose.yml");
+  const compose = readYamlWithMerge("docker-compose.yml");
   const services = record(compose.services);
   const volumes = record(compose.volumes);
   const n8n = record(services.n8n);
   const minio = record(services.minio);
+  const grafana = record(services.grafana);
 
   it("documents the optional workflows and storage profiles in the header", () => {
     const header = readFileSync("docker-compose.yml", "utf8");
@@ -34,6 +39,21 @@ describe("docker-compose.yml — workflows + storage profiles (#1219)", () => {
     expect(header).toContain("--profile storage");
     expect(header).toContain("n8n workflow automation");
     expect(header).toContain("MinIO S3-compatible object storage");
+  });
+
+  it("merges the shared logging anchor into both new services without YAML conflicts", () => {
+    for (const [name, service] of [
+      ["n8n", n8n],
+      ["minio", minio],
+    ] as const) {
+      const logging = record(service).logging as {
+        driver?: string;
+        options?: Record<string, string>;
+      };
+      expect(logging.driver, name).toBe("json-file");
+      expect(logging.options?.["max-size"], name).toBe("10m");
+      expect(logging.options?.["max-file"], name).toBe("3");
+    }
   });
 
   it("gates n8n behind --profile workflows with basic-auth env and a runtime password check", () => {
@@ -51,9 +71,33 @@ describe("docker-compose.yml — workflows + storage profiles (#1219)", () => {
     expect(env.N8N_ENCRYPTION_KEY).toBe("${N8N_ENCRYPTION_KEY:-}");
 
     const entrypoint = n8n.entrypoint as string[];
+    expect(entrypoint).toHaveLength(3);
     expect(entrypoint[0]).toBe("/bin/sh");
-    expect(entrypoint.join("\n")).toContain("N8N_PASSWORD");
-    expect(entrypoint.join("\n")).toContain("exit 1");
+    expect(entrypoint[1]).toBe("-ec");
+    expect(entrypoint[2]).toContain('if [ -z "$${N8N_BASIC_AUTH_PASSWORD:-}" ]; then');
+    expect(entrypoint[2]).toContain("Set N8N_PASSWORD in .env before using --profile workflows.");
+    expect(entrypoint[2]).toContain("exit 1");
+    expect(entrypoint[2]).toContain("exec /docker-entrypoint.sh");
+
+    // Same multi-line shell entrypoint shape as Grafana's runtime password gate (observability profile).
+    expect(grafana.entrypoint).toEqual(
+      expect.arrayContaining([
+        "/bin/sh",
+        "-ec",
+        expect.stringContaining("exec /run.sh"),
+      ]),
+    );
+  });
+
+  it("keeps compose-safe $$ escaping in the n8n entrypoint heredoc (not a bare $ for compose interpolation)", () => {
+    const source = readFileSync("docker-compose.yml", "utf8");
+    const n8nStart = source.indexOf("  n8n:\n");
+    const n8nEnd = source.indexOf("  # ── MinIO S3-compatible object storage");
+    expect(n8nStart).toBeGreaterThan(-1);
+    expect(n8nEnd).toBeGreaterThan(n8nStart);
+    const n8nBlock = source.slice(n8nStart, n8nEnd);
+    expect(n8nBlock).toContain('$${N8N_BASIC_AUTH_PASSWORD:-}');
+    expect(n8nBlock).not.toContain('if [ -z "${N8N_BASIC_AUTH_PASSWORD:-}" ];');
   });
 
   it("gates MinIO behind --profile storage on the S3 API and console ports", () => {

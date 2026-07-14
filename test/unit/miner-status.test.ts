@@ -63,11 +63,10 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   it("REGRESSION: collectStatus reports the REAL installed engine version, not the declared dependency range", () => {
     const root = tempRoot();
     const status = collectStatus({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") }, root);
-    // The monorepo declares "*" for this workspace dependency -- a self-hoster asking "what's installed"
-    // needs the real resolved semver (matching what doctor's own engine-version-skew check already shows),
-    // not the meaningless declared range.
+    // A self-hoster asking "what's installed" needs the real resolved semver (matching what doctor's own
+    // engine-version-skew check already shows), not the declared dependency range.
     expect(status.engine.version).toBe(readInstalledEnginePackageVersion());
-    expect(status.engine.version).not.toBe("*");
+    expect(status.engine.version).not.toBe("^2.0.0");
   });
 
   it("buildEngineVersionDisplay prefers a real resolved version when available", () => {
@@ -75,7 +74,7 @@ describe("gittensory-miner status/doctor (#2288)", () => {
   });
 
   it("REGRESSION: buildEngineVersionDisplay falls back to the declared dependency range when real resolution comes up empty", () => {
-    expect(buildEngineVersionDisplay(() => null)).toBe("*");
+    expect(buildEngineVersionDisplay(() => null)).toBe("^2.0.0");
   });
 
   it("collectStatus prefers LOOPOVER_MINER_VERSION over package.json (#4310)", () => {

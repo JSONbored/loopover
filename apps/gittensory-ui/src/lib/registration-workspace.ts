@@ -63,7 +63,11 @@ export type OwnerWorkflowState = "accepted" | "needs_cleanup" | "not_ready";
 export type OwnerWorkflowRemediationKind = "action" | "manual";
 
 export type OwnerWorkflowBucketId =
-  "policy" | "data_quality" | "queue_health" | "docs_onboarding" | "maintainer_capacity";
+  | "policy"
+  | "data_quality"
+  | "queue_health"
+  | "docs_onboarding"
+  | "maintainer_capacity";
 
 export type OwnerWorkflowItem = {
   id: string;

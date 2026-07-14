@@ -38,7 +38,10 @@ const CHANGE_TONE: Record<RecommendationChange["status"], Status> = {
 };
 
 type RecommendationSignalGroup =
-  "repo_state" | "contributor_state" | "validation_state" | "policy_context";
+  | "repo_state"
+  | "contributor_state"
+  | "validation_state"
+  | "policy_context";
 
 type RecommendationChange = {
   status: "new" | "changed" | "unchanged";

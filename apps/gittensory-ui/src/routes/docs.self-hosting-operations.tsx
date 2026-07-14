@@ -937,8 +937,8 @@ SENTRY_ORG_SLUG=<your-sentry-org-slug>
             <code>LOOPOVER_VERSION</code> (source path).
           </li>
           <li>
-            <code>./loopover-config/</code> bind mount — private per-repo{" "}
-            <code>.loopover.yml</code> policy.
+            <code>./loopover-config/</code> bind mount — private per-repo <code>.loopover.yml</code>{" "}
+            policy.
           </li>
           <li>
             Named data volumes — especially <code>loopover-data</code> (SQLite DB, Codex/Claude auth
@@ -1048,10 +1048,10 @@ GITTENSORY_IMAGE=ghcr.io/jsonbored/loopover-selfhost@sha256:... ./scripts/deploy
       </p>
       <p>
         None of this touches operator-owned state: <code>.env</code>, the{" "}
-        <code>loopover-config/</code> mount, <code>.deploy-backups/</code>, any{" "}
-        <code>*.local</code> or <code>docker-compose.local-*.yml</code> compose override, or
-        Alertmanager file, and every named data volume are already gitignored or outside the source
-        tree entirely, so a fetch-and-rebuild never touches them. See the{" "}
+        <code>loopover-config/</code> mount, <code>.deploy-backups/</code>, any <code>*.local</code>{" "}
+        or <code>docker-compose.local-*.yml</code> compose override, or Alertmanager file, and every
+        named data volume are already gitignored or outside the source tree entirely, so a
+        fetch-and-rebuild never touches them. See the{" "}
         <Link to="/docs/self-hosting-quickstart">Quickstart</Link> for the initial clone; this
         script assumes that checkout already exists and already tracks <code>origin/main</code>.
       </p>
@@ -1191,8 +1191,8 @@ docker inspect --format '{{.Config.Image}}' "$(docker compose ps -q loopover)"`}
         <code>docker compose down</code> (without <code>-v</code>) leaves every named volume (
         <code>loopover-data</code>, <code>loopover-pg</code>, <code>qdrant-data</code>,{" "}
         <code>loopover-backups</code>, <code>grafana-data</code>, and the rest declared in{" "}
-        <code>docker-compose.yml</code>) on disk, along with the <code>./loopover-config</code>{" "}
-        host directory (a bind mount, not a named volume, so it is never affected by <code>-v</code>{" "}
+        <code>docker-compose.yml</code>) on disk, along with the <code>./loopover-config</code> host
+        directory (a bind mount, not a named volume, so it is never affected by <code>-v</code>{" "}
         either way). Pick one:
       </p>
       <FeatureRow

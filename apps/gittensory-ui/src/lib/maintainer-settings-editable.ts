@@ -14,7 +14,12 @@ export type CommandAuthorization = {
 
 export type AutonomyLevel = "observe" | "auto_with_approval" | "auto";
 export type AgentActionClass =
-  "review" | "request_changes" | "approve" | "merge" | "close" | "label";
+  | "review"
+  | "request_changes"
+  | "approve"
+  | "merge"
+  | "close"
+  | "label";
 export type AutoMergeMethod = "merge" | "squash" | "rebase";
 
 export type MaintainerSettingsEditable = {

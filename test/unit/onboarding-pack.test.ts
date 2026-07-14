@@ -265,16 +265,13 @@ describe("buildRepoOnboardingPackPreview", () => {
 });
 
 describe("buildRepoOnboardingPackPreviewForRepo", () => {
-  it("returns preview_only pack for accepted registered repos", async () => {
+  it("returns preview_only pack for an installed repo", async () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(
       env,
       { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
       1,
     );
-    await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?")
-      .bind("JSONbored/gittensory")
-      .run();
     const response = await buildRepoOnboardingPackPreviewForRepo(env, "JSONbored/gittensory");
     expect("error" in response).toBe(false);
     if ("error" in response) return;
@@ -284,14 +281,28 @@ describe("buildRepoOnboardingPackPreviewForRepo", () => {
     expect(isRepoOnboardingPackPublicSafe(response.preview)).toBe(true);
   });
 
-  it("rejects onboarding pack preview for unregistered repos", async () => {
+  it("rejects onboarding pack preview for a repo not installed on this instance", async () => {
     const env = createTestEnv();
-    await upsertRepositoryFromGitHub(
-      env,
-      { name: "unregistered", full_name: "owner/unregistered", private: false, owner: { login: "owner" } },
-      1,
-    );
-    const response = await buildRepoOnboardingPackPreviewForRepo(env, "owner/unregistered");
-    expect(response).toMatchObject({ error: "repo_not_accepted", repoFullName: "owner/unregistered" });
+    await upsertRepositoryFromGitHub(env, { name: "not-installed", full_name: "owner/not-installed", private: false, owner: { login: "owner" } });
+    const response = await buildRepoOnboardingPackPreviewForRepo(env, "owner/not-installed");
+    expect(response).toMatchObject({ error: "repo_not_accepted", repoFullName: "owner/not-installed" });
+  });
+
+  it("#onboarding-pack-isinstalled: returns a real preview for an installed-but-not-subnet-registered repo", async () => {
+    // The preview is derived entirely from the repo's own focus manifest/policy compiler (contribution
+    // lanes, label policy, maintainer expectations) with zero gittensor-subnet economics data, so it must
+    // not require subnet registration -- it's scoped to isInstalled like the sibling advisory tools.
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "installed-not-registered", full_name: "acme/installed-not-registered", private: false, owner: { login: "acme" } }, 42);
+    const response = await buildRepoOnboardingPackPreviewForRepo(env, "acme/installed-not-registered");
+    expect("error" in response).toBe(false);
+  });
+
+  it("#onboarding-pack-isinstalled: rejects a subnet-registered-but-not-installed repo", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "registered-not-installed", full_name: "acme/registered-not-installed", private: false, owner: { login: "acme" } });
+    await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("acme/registered-not-installed").run();
+    const response = await buildRepoOnboardingPackPreviewForRepo(env, "acme/registered-not-installed");
+    expect(response).toMatchObject({ error: "repo_not_accepted", repoFullName: "acme/registered-not-installed" });
   });
 });

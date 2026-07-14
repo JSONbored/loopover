@@ -25,7 +25,11 @@ export function buildRepoOnboardingPackPreviewFromManifest(
 }
 
 /**
- * Build a sanitized onboarding-pack preview for an accepted (registered) repository.
+ * Build a sanitized onboarding-pack preview for an installed repository. The preview is derived
+ * entirely from the repo's own focus manifest/policy compiler (contribution lanes, label policy,
+ * validation/maintainer expectations) with zero gittensor-subnet economics data, so it is scoped to
+ * isInstalled like the sibling advisory tools in this same access tier (getMaintainerLane, getLabelAudit,
+ * getBurdenForecast all use isInstalled-equivalent RBAC with no isRegistered gate) -- not isRegistered.
  */
 export async function buildRepoOnboardingPackPreviewForRepo(
   env: Env,
@@ -33,7 +37,7 @@ export async function buildRepoOnboardingPackPreviewForRepo(
   options: { refreshManifest?: boolean } = {},
 ): Promise<RepoOnboardingPackPreviewResponse | { error: string; repoFullName: string }> {
   const repo = await getRepository(env, repoFullName);
-  if (!repo?.isRegistered) {
+  if (!repo?.isInstalled) {
     return {
       error: "repo_not_accepted",
       repoFullName,

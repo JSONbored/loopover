@@ -297,9 +297,9 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
   });
 
-  it("gittensory_get_repo_onboarding_pack returns a structured preview for a registered repo", async () => {
+  it("gittensory_get_repo_onboarding_pack returns a structured preview for an installed repo", async () => {
     const env = createTestEnv();
-    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } });
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" } }, 501);
     await env.DB.prepare("UPDATE repositories SET is_registered = 1 WHERE full_name = ?").bind("octo/demo").run();
     // Onboarding-pack previews require a maintainer/owner/operator session or a trusted static identity --
     // the shared static "mcp" identity (connectTestClient's default) is unconditionally rejected here, unlike

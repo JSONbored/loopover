@@ -6,9 +6,11 @@ import {
   contributorReadinessBand,
   redactExtensionText,
 } from "../../src/signals/extension-contributor-context";
+import { isPublicSafeText } from "../../src/signals/redaction";
 import type { ContributorOpportunity, PublicReadinessScore } from "../../src/signals/engine";
 
-const FORBIDDEN_PUBLIC_TERMS = /wallet|hotkey|coldkey|mnemonic|reward|payout|farming|raw trust|trust score|scoreability|reviewability internals|private ranking/i;
+const FORBIDDEN_PUBLIC_TERMS =
+  /wallet|hotkey|coldkey|mnemonic|reward|payout|farming|raw trust|trust score|scoreability|reviewability|cohort|ranking|miner-originated|human-originated/i;
 
 function opportunity(over: Partial<ContributorOpportunity> = {}): ContributorOpportunity {
   return {
@@ -58,6 +60,52 @@ describe("redactExtensionText", () => {
 
   it("leaves safe text untouched", () => {
     expect(redactExtensionText("Maintainer-created issue, good fit.")).toBe("Maintainer-created issue, good fit.");
+  });
+
+  it("redacts a bare cohort reference (#5840)", () => {
+    expect(redactExtensionText("Cohort diagnostics flagged this PR")).toBe("[redacted] diagnostics flagged this PR");
+  });
+
+  it("redacts a bare ranking reference (#5840)", () => {
+    expect(redactExtensionText("Your ranking dropped this week")).toBe("Your [redacted] dropped this week");
+  });
+
+  it("redacts miner-originated and human-originated (#5840)", () => {
+    expect(redactExtensionText("This looks miner-originated, not human-originated")).toBe(
+      "This looks [redacted], not [redacted]",
+    );
+  });
+
+  it("redacts a standalone reviewability reference, not just the compound phrases (#5840)", () => {
+    expect(redactExtensionText("Reviewability is limited right now")).toBe("[redacted] is limited right now");
+  });
+});
+
+describe("FORBIDDEN_EXTENSION_TERMS drift guard (#5840)", () => {
+  it("redacts a representative sample of every canonical PUBLIC_UNSAFE_TERMS entry, so this module can't silently drift from the shared public/private boundary again", () => {
+    const samples = [
+      "Your reward is pending.",
+      "Your score is pending.",
+      "Check your wallet balance.",
+      "Rotate your hotkey.",
+      "Rotate your coldkey.",
+      "Keep the mnemonic safe.",
+      "The payout is scheduled.",
+      "Your ranking dropped this week.",
+      "Cohort diagnostics flagged this PR.",
+      "This looks miner-originated, not human-originated.",
+      "We detected farming behavior.",
+      "This uses raw trust internally.",
+      "The trust score moved.",
+      "This is private reviewability data.",
+      "Reviewability is limited right now.",
+    ];
+
+    for (const sample of samples) {
+      // Sanity check: confirm the sample really is flagged unsafe by the canonical pattern.
+      expect(isPublicSafeText(sample)).toBe(false);
+      expect(isPublicSafeText(redactExtensionText(sample))).toBe(true);
+    }
   });
 });
 

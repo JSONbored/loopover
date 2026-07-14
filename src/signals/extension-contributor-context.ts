@@ -1,4 +1,5 @@
 import type { ContributorOpportunity, PublicReadinessScore } from "./engine";
+import { PUBLIC_UNSAFE_TERMS } from "./redaction";
 
 // ─── Contributor-context payloads for the browser extension (#556) ───────────────────────────────
 // The contributor (miner) side of the extension overlay. Every payload here is PUBLIC-SAFE and self-
@@ -20,9 +21,13 @@ export function contributorReadinessBand(total: number): ContributorReadinessBan
 // Defense-in-depth public-safe redaction for any free-form text that reaches the contributor overlay.
 // The upstream builders are already contributor-facing, but every string is re-checked here and any
 // forbidden private term (reward/wallet/key material/raw trust score/etc.) is redacted rather than
-// leaked. Kept local (no import) so this module stays cycle-free and the API never 500s on a stray term.
-const FORBIDDEN_EXTENSION_TERMS =
-  /\b(?:rewards?|payouts?|farming|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|score[-\s]?(?:estimate|preview|prediction)s?|estimated[-\s]?scores?|scoreability|private[-\s]?reviewability|reviewability[-\s]?internals?|private[-\s]?rankings?)\b/gi;
+// leaked. Composed from the canonical `PUBLIC_UNSAFE_TERMS` alternation (redaction.ts) plus a couple of
+// extension-only terms that aren't part of that shared vocabulary, so this list can't silently drift
+// from the canonical public/private boundary again (#5840). Only the plain string constant is imported
+// (not the whole redaction module), and redaction.ts has no imports of its own, so this stays cycle-free.
+const FORBIDDEN_EXTENSION_ONLY_TERMS = String.raw`seed[-\s]?phrases?|private[-\s]?keys?`;
+
+const FORBIDDEN_EXTENSION_TERMS = new RegExp(String.raw`\b(?:${PUBLIC_UNSAFE_TERMS}|${FORBIDDEN_EXTENSION_ONLY_TERMS})\b`, "gi");
 
 export function redactExtensionText(text: string): string {
   return text.replace(FORBIDDEN_EXTENSION_TERMS, "[redacted]").replace(/\s+/g, " ").trim();

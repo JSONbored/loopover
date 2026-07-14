@@ -12,6 +12,7 @@ import {
   changedPathToDenyGlob,
   initDenyHookSynthesisStore,
   normalizeBlockerHistory,
+  resolveDenyHookSynthesisDbPath,
   resolveEffectiveDenyRules,
   setProposalStatuses,
   synthesizeDenyRuleProposals,
@@ -32,6 +33,21 @@ function tempStore() {
   stores.push(store);
   return store;
 }
+
+describe("resolveDenyHookSynthesisDbPath() (#4522)", () => {
+  it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
+    expect(resolveDenyHookSynthesisDbPath({ LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB: "/custom/d.sqlite3" })).toBe(
+      "/custom/d.sqlite3",
+    );
+    expect(resolveDenyHookSynthesisDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
+      "/custom/config/deny-hook-synthesis.sqlite3",
+    );
+    expect(resolveDenyHookSynthesisDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
+      "/xdg/loopover-miner/deny-hook-synthesis.sqlite3",
+    );
+    expect(resolveDenyHookSynthesisDbPath({})).toMatch(/\/\.config\/loopover-miner\/deny-hook-synthesis\.sqlite3$/);
+  });
+});
 
 describe("synthesizeDenyRuleProposals() (#4522)", () => {
   it("returns no proposals and empty history aggregates cleanly", () => {

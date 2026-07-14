@@ -11,6 +11,10 @@
 // already produced through the public-safe filter (InlineFinding.body/suggestion are sanitized upstream by
 // composeInlineFindings before they ever reach here — this module adds no new free text of its own beyond the
 // fixed label/marker strings below).
+//
+// Also renders the AGGREGATE flavor (#5102): buildFixHandoffAggregateBlock combines every finding into ONE
+// block for a single agent run over the whole PR, instead of one run per finding — same rendering contract,
+// still unwired (see that function's doc comment for why).
 import { LOCAL_WRITE_BOUNDARY } from "../mcp/local-write-tools";
 import type { InlineFinding } from "../services/ai-review";
 
@@ -79,4 +83,49 @@ export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
  *  nothing to hand off. */
 export function buildFixHandoffBlocks(findings: InlineFinding[]): FixHandoffBlock[] {
   return findings.map((finding) => buildFixHandoffBlock(finding));
+}
+
+/** A whole PR's findings rendered as ONE fix-handoff block, for a single local-agent run instead of one run per
+ *  finding (#5102). */
+export type FixHandoffAggregateBlock = {
+  findingCount: number;
+  /** The rendered, machine-readable markdown block (fenced items + an HTML comment marker a harness can grep for). */
+  body: string;
+  boundary: string;
+};
+
+/** The HTML comment marker prefixing the rendered aggregate block, distinct from FIX_HANDOFF_MARKER so a
+ *  harness can tell a per-finding block from the aggregate one. */
+const FIX_HANDOFF_AGGREGATE_MARKER = "<!-- loopover:fix-handoff-aggregate -->";
+
+/** One numbered list item for the aggregate block: same location/label/suggestion composition as
+ *  buildFixHandoffBlock, just indented under a shared numbered list instead of standing alone. */
+function fixHandoffAggregateItem(finding: InlineFinding, index: number): string {
+  const hasLine = Number.isInteger(finding.line) && finding.line > 0;
+  const safePath = markdownPathCodeText(finding.path);
+  const location = hasLine ? `${safePath}:${finding.line}` : `${safePath} (no specific line)`;
+  const label = finding.severity === "blocker" ? "Blocker" : "Nit";
+  const suggestion = finding.suggestion?.trim();
+  const suggestionBlock = suggestion ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";
+  return `${index + 1}. **${label} at \`${location}\`** — ${finding.body}${suggestionBlock}`;
+}
+
+/** PURE: combine every current finding into ONE fix-handoff block for a single local-agent run across the
+ *  whole PR (#5102) — the aggregate sibling of buildFixHandoffBlock/buildFixHandoffBlocks, mirroring
+ *  CodeRabbit's split between a per-finding "Prompt for AI Agents" collapsible and an aggregate "Fix all
+ *  issues" prompt (confirmed against live CodeRabbit-reviewed PRs — see #5102). Same boundary-safe,
+ *  content-only contract as the per-finding block: no server-side write, no execution, public-safe by
+ *  construction (every field rendered here was already made public-safe upstream by composeInlineFindings).
+ *  Empty in ⇒ null out — nothing to hand off. Render-only, like buildFixHandoffBlock was before its own
+ *  wiring PR (#4053) — NOT wired into the unified comment here; #5102 leaves per-finding vs aggregate vs
+ *  both as an open placement question for the wiring PR to resolve. */
+export function buildFixHandoffAggregateBlock(findings: InlineFinding[]): FixHandoffAggregateBlock | null {
+  if (findings.length === 0) return null;
+  const body = [
+    FIX_HANDOFF_AGGREGATE_MARKER,
+    `**Fix handoff — ${findings.length} finding${findings.length === 1 ? "" : "s"} across this PR**`,
+    ...findings.map((finding, index) => fixHandoffAggregateItem(finding, index)),
+    `\n_${LOCAL_WRITE_BOUNDARY}_`,
+  ].join("\n");
+  return { findingCount: findings.length, body, boundary: LOCAL_WRITE_BOUNDARY };
 }

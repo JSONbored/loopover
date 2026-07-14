@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFixHandoffBlock, buildFixHandoffBlocks } from "../../src/review/fix-handoff-render";
+import { buildFixHandoffAggregateBlock, buildFixHandoffBlock, buildFixHandoffBlocks } from "../../src/review/fix-handoff-render";
 import { LOCAL_WRITE_BOUNDARY } from "../../src/mcp/local-write-tools";
 import type { InlineFinding } from "../../src/services/ai-review";
 
@@ -81,5 +81,57 @@ describe("buildFixHandoffBlocks (#2175)", () => {
 
   it("returns an empty array for no findings (no-op)", () => {
     expect(buildFixHandoffBlocks([])).toEqual([]);
+  });
+});
+
+describe("buildFixHandoffAggregateBlock (#5102)", () => {
+  it("returns null for no findings (no-op)", () => {
+    expect(buildFixHandoffAggregateBlock([])).toBeNull();
+  });
+
+  it("combines a single finding into one block with singular wording", () => {
+    const block = buildFixHandoffAggregateBlock([finding()]);
+    expect(block?.findingCount).toBe(1);
+    expect(block?.body).toContain("**Fix handoff — 1 finding across this PR**");
+    expect(block?.body).toContain("1. **Blocker at `src/a.ts:12`** — Null check missing before dereference.");
+  });
+
+  it("combines multiple findings into one numbered block with plural wording", () => {
+    const block = buildFixHandoffAggregateBlock([
+      finding({ path: "a.ts", line: 1, severity: "blocker" }),
+      finding({ path: "b.ts", line: 2, severity: "nit" }),
+    ]);
+    expect(block?.findingCount).toBe(2);
+    expect(block?.body).toContain("**Fix handoff — 2 findings across this PR**");
+    expect(block?.body).toContain("1. **Blocker at `a.ts:1`**");
+    expect(block?.body).toContain("2. **Nit at `b.ts:2`**");
+  });
+
+  it("renders a path-only location when a finding has no commentable line", () => {
+    const block = buildFixHandoffAggregateBlock([finding({ line: 0 })]);
+    expect(block?.body).toContain("src/a.ts (no specific line)");
+    expect(block?.body).not.toContain("src/a.ts:0");
+  });
+
+  it("includes a fenced suggestion block, indented under its list item, when present", () => {
+    const block = buildFixHandoffAggregateBlock([finding({ suggestion: "if (!value) return null;" })]);
+    expect(block?.body).toContain("```\n   if (!value) return null;\n   ```");
+  });
+
+  it("omits the suggestion block entirely when absent or whitespace-only", () => {
+    expect(buildFixHandoffAggregateBlock([finding()])?.body).not.toContain("```");
+    expect(buildFixHandoffAggregateBlock([finding({ suggestion: "   " })])?.body).not.toContain("```");
+  });
+
+  it("always includes the exact LOCAL_WRITE_BOUNDARY text (boundary-safe)", () => {
+    const block = buildFixHandoffAggregateBlock([finding()]);
+    expect(block?.boundary).toBe(LOCAL_WRITE_BOUNDARY);
+    expect(block?.body).toContain(LOCAL_WRITE_BOUNDARY);
+  });
+
+  it("includes the aggregate HTML comment marker, distinct from the per-finding marker", () => {
+    const block = buildFixHandoffAggregateBlock([finding()]);
+    expect(block?.body).toContain("<!-- loopover:fix-handoff-aggregate -->");
+    expect(block?.body).not.toContain("<!-- loopover:fix-handoff -->");
   });
 });

@@ -35,6 +35,7 @@ export function printHelp(input) {
       "                                                                 Claim the highest-priority queued item, optionally WIP-cap-aware",
       "  loopover-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]",
       "  loopover-miner queue metrics                                Print portfolio-queue counters in Prometheus text format",
+      "  loopover-miner queue dashboard [--json]                     Print portfolio-queue backlog status counts + oldest-queued age",
       "  loopover-miner queue done <owner/repo> <identifier> [--dry-run] [--json]",
       "  loopover-miner queue release <owner/repo> <identifier> [--dry-run] [--json]  Return a claimed item to the queue",
       "  loopover-miner queue requeue <owner/repo> <identifier> [--dry-run] [--json]  Put a completed item back on the queue",

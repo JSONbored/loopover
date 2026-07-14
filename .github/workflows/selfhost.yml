@@ -114,8 +114,8 @@ jobs:
 
       - name: Free disk before visual-review image build
         run: |
-          docker rmi gittensory:selfhost-ci || true
           docker image prune -f
+          docker builder prune -f --filter until=24h || true
 
       - name: Build release target with visual review deps
         run: |
@@ -127,6 +127,8 @@ jobs:
             -t gittensory:selfhost-prebuilt-visual-ci .
           docker run --rm --entrypoint node gittensory:selfhost-prebuilt-visual-ci \
             -e "import('puppeteer-core').then(() => console.log('puppeteer-core ok'))"
+          docker rmi gittensory:selfhost-prebuilt-visual-ci || true
+          docker image prune -f
 
       - name: Boot the container + smoke-test /health, /ready, /metrics, migrations
         run: |

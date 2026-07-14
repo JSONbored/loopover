@@ -20,7 +20,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@loopover/ui-kit": ">=0.1.0 <1.0.0",
+    "@loopover/ui-kit": ">=0.1.0 <2.0.0",
     "@radix-ui/react-accordion": "^1.2.15",
     "@radix-ui/react-alert-dialog": "^1.1.18",
     "@radix-ui/react-aspect-ratio": "^1.1.11",

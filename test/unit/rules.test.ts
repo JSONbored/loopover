@@ -915,6 +915,154 @@ describe("advisory rules", () => {
     expect(JSON.stringify(annotations)).not.toMatch(/trust score|wallet|hotkey|reward estimate|reviewability/i);
   });
 
+  const dupPr = {
+    repoFullName: repo.fullName,
+    number: 12,
+    title: "Add registry sync",
+    state: "open" as const,
+    authorLogin: "contributor",
+    authorAssociation: "NONE",
+    labels: [],
+    linkedIssues: [],
+  };
+
+  it("formatCheckRunOutput renders a scannable duplicate-overlap table at standard detail, excluding the PR itself (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, dupPr);
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 1, itemsReviewed: 3 },
+      clusters: [
+        {
+          id: "c1",
+          risk: "high",
+          reason: "Titles/paths share 4 meaningful terms.",
+          items: [
+            { type: "pull_request", number: 12, title: "Add registry sync" },
+            { type: "pull_request", number: 13, title: "Registry sync cleanup" },
+            { type: "issue", number: 7, title: "Registry drifts from upstream" },
+          ],
+        },
+      ],
+    };
+    const output = formatCheckRunOutput(advisory, "standard", { files: [], collisions, pullNumber: 12 });
+    expect(output.text).toContain("### Possible duplicate overlaps");
+    expect(output.text).toContain("| Overlapping work | Risk | Why |");
+    expect(output.text).toContain("#13 Registry sync cleanup (PR)");
+    expect(output.text).toContain("#7 Registry drifts from upstream (issue)");
+    expect(output.text).toContain("| high |");
+    expect(output.text).toContain("Titles/paths share 4 meaningful terms.");
+    // The current PR is never listed as its own overlap.
+    expect(output.text).not.toContain("#12 Add registry sync");
+  });
+
+  it("formatCheckRunOutput labels a recent-merged-PR overlap and its cluster risk (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, { ...dupPr, number: 30, title: "Add cache" });
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "c2",
+          risk: "medium",
+          reason: "Overlaps a recently merged PR.",
+          items: [
+            { type: "pull_request", number: 30, title: "Add cache" },
+            { type: "recent_merged_pull_request", number: 29, title: "Cache layer" },
+          ],
+        },
+      ],
+    };
+    const output = formatCheckRunOutput(advisory, "standard", { files: [], collisions, pullNumber: 30 });
+    expect(output.text).toContain("#29 Cache layer (merged PR)");
+    expect(output.text).toContain("| medium |");
+  });
+
+  it("formatCheckRunOutput omits the overlap table at minimal detail even when clusters exist (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, dupPr);
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 1, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "c1",
+          risk: "high",
+          reason: "Overlap.",
+          items: [
+            { type: "pull_request", number: 12, title: "Add registry sync" },
+            { type: "pull_request", number: 13, title: "Registry sync cleanup" },
+          ],
+        },
+      ],
+    };
+    const output = formatCheckRunOutput(advisory, "minimal", { files: [], collisions, pullNumber: 12 });
+    expect(output.text).not.toContain("Possible duplicate overlaps");
+    expect(output.text).toContain("No detailed findings are published");
+  });
+
+  it("formatCheckRunOutput renders no overlap table when no cluster involves this PR, or without any context (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, { ...dupPr, number: 99, title: "Unrelated" });
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "c3",
+          risk: "low",
+          reason: "Other overlap.",
+          items: [
+            { type: "pull_request", number: 12, title: "Add registry sync" },
+            { type: "pull_request", number: 13, title: "Registry sync cleanup" },
+          ],
+        },
+      ],
+    };
+    expect(formatCheckRunOutput(advisory, "standard", { files: [], collisions, pullNumber: 99 }).text).not.toContain(
+      "Possible duplicate overlaps",
+    );
+    expect(formatCheckRunOutput(advisory, "standard").text).not.toContain("Possible duplicate overlaps");
+  });
+
+  it("formatCheckRunOutput shows an em dash when a cluster's only member is the PR itself (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, { ...dupPr, title: "Solo" });
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 1 },
+      clusters: [{ id: "c4", risk: "low", reason: "Self only.", items: [{ type: "pull_request", number: 12, title: "Solo" }] }],
+    };
+    const output = formatCheckRunOutput(advisory, "standard", { files: [], collisions, pullNumber: 12 });
+    expect(output.text).toContain("### Possible duplicate overlaps");
+    expect(output.text).toContain("| — | low |");
+  });
+
+  it("formatCheckRunOutput sanitizes forbidden terms inside the overlap table (#576)", () => {
+    const advisory = buildPullRequestAdvisory(repo, dupPr);
+    const collisions: CollisionReport = {
+      repoFullName: repo.fullName,
+      generatedAt: "2026-06-10T00:00:00.000Z",
+      summary: { clusterCount: 1, highRiskCount: 0, itemsReviewed: 2 },
+      clusters: [
+        {
+          id: "c5",
+          risk: "low",
+          reason: "Shares a reward estimate leak.",
+          items: [
+            { type: "pull_request", number: 12, title: "Add registry sync" },
+            { type: "pull_request", number: 14, title: "wallet drain hotkey" },
+          ],
+        },
+      ],
+    };
+    const text = formatCheckRunOutput(advisory, "standard", { files: [], collisions, pullNumber: 12 }).text;
+    expect(text).toContain("### Possible duplicate overlaps");
+    expect(text).not.toMatch(/wallet|hotkey|reward estimate/i);
+    expect(text).toContain("[context]");
+  });
+
   it("does not flag Missing test evidence when a Cypress/e2e test accompanies a code change (regression)", () => {
     // isTestPath now delegates to the canonical src/signals/test-evidence matcher, which recognizes
     // *.cy./*.e2e./__snapshots__/_spec.rb tests. A stale local copy dropped those branches, so a code

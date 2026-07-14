@@ -10,7 +10,7 @@ import type {
   PullRequestRecord,
   RepositoryRecord,
 } from "../types";
-import type { CollisionCluster, CollisionReport } from "../signals/engine";
+import type { CollisionCluster, CollisionItem, CollisionReport } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import type { GuardrailPathMatch } from "../signals/change-guardrail";
 import { isCodeFile } from "../signals/local-branch";
@@ -355,6 +355,39 @@ function collisionClustersForPull(collisions: CollisionReport, pullNumber: numbe
   );
 }
 
+const COLLISION_ITEM_TYPE_LABEL: Record<CollisionItem["type"], string> = {
+  issue: "issue",
+  pull_request: "PR",
+  recent_merged_pull_request: "merged PR",
+};
+
+/**
+ * A scannable "possible duplicate overlaps" markdown table for the Context check DETAILS page, gated
+ * to `standard` detail (#576). Reuses the SAME collision clusters the inline annotations already use
+ * (collisionClustersForPull), but presents each cluster as one consolidated table row — the other
+ * overlapping issues/PRs, the cluster's risk, and why — instead of the scattered per-file annotations,
+ * so a maintainer can scan the overlaps at a glance on the details page. Public-safe: every item title
+ * and cluster reason is run through sanitizeForCheckRun, the same filter the annotations use. Returns
+ * "" when there is no annotation context or no cluster involves this PR, so `minimal`-detail and
+ * overlap-free PRs are byte-identical to before.
+ */
+function buildCollisionClusterTable(context: CheckRunAnnotationContext | undefined): string {
+  if (!context) return "";
+  const clusters = collisionClustersForPull(context.collisions, context.pullNumber);
+  if (clusters.length === 0) return "";
+  const rows = clusters.map((cluster) => {
+    const others = cluster.items.filter(
+      (item) => !(item.type === "pull_request" && item.number === context.pullNumber),
+    );
+    const overlaps =
+      others
+        .map((item) => `#${item.number} ${sanitizeForCheckRun(item.title)} (${COLLISION_ITEM_TYPE_LABEL[item.type]})`)
+        .join("<br>") || "—";
+    return `| ${overlaps} | ${cluster.risk} | ${sanitizeForCheckRun(cluster.reason)} |`;
+  });
+  return ["### Possible duplicate overlaps", "", "| Overlapping work | Risk | Why |", "| --- | --- | --- |", ...rows].join("\n");
+}
+
 const ANNOTATABLE_PR_FILE_STATUSES = new Set(["added", "changed", "modified"]);
 
 export function firstAddedLineFromPatch(patch: string): number | null {
@@ -471,15 +504,17 @@ export function formatCheckRunOutput(
   let text: string;
   if (detailLevel === "minimal") {
     text = "No detailed findings are published in check runs.";
-  } else if (advisoryResult.findings.length === 0) {
-    text = "No detailed findings are published in check runs.";
   } else {
     const publicLines = advisoryResult.findings.flatMap((f) => {
       if (!f.publicText) return [];
       const label = f.severity === "warning" ? "⚠️" : "ℹ️";
       return [`${label} ${sanitizeForCheckRun(f.publicText)}`];
     });
-    text = publicLines.length === 0 ? "No detailed findings are published in check runs." : publicLines.join("\n");
+    // Standard detail also renders a scannable duplicate-overlap table on the details page (#576).
+    const sections = [publicLines.join("\n"), buildCollisionClusterTable(annotationContext)].filter(
+      (section) => section.length > 0,
+    );
+    text = sections.length === 0 ? "No detailed findings are published in check runs." : sections.join("\n\n");
   }
 
   const { annotations, omittedCount } = buildCheckRunAnnotations(advisoryResult, annotationContext, detailLevel);

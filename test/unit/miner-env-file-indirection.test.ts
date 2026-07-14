@@ -127,7 +127,7 @@ describe("loadMinerFileSecrets (#5178)", () => {
     }
   });
 
-  describe("wired into the real CLI entry point (bin/gittensory-miner.js)", () => {
+  describe("wired into the real CLI entry point (bin/loopover-miner.js)", () => {
     it("resolves GITHUB_TOKEN_FILE end-to-end: status --json reports it without ever printing the value", () => {
       const root = mkdtempSync(join(tmpdir(), "gittensory-miner-file-secret-"));
       roots.push(root);

@@ -115,8 +115,8 @@ jobs:
           TMP="$(mktemp -d)"
           npm --prefix "$TMP" init -y >/dev/null
           npm --prefix "$TMP" install "$TARBALL_PATH" >/dev/null
-          "$TMP/node_modules/.bin/gittensory-miner" --help | grep -q "Foundation CLI for the local Gittensory miner runtime"
-          "$TMP/node_modules/.bin/gittensory-miner-mcp" --help >/dev/null
+          "$TMP/node_modules/.bin/loopover-miner" --help | grep -q "Foundation CLI for the local LoopOver miner runtime"
+          "$TMP/node_modules/.bin/loopover-miner-mcp" --help >/dev/null
 
       - name: Upload package tarball
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

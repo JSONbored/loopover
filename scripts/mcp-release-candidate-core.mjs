@@ -17,7 +17,7 @@ export const RELEASE_TAG_PATTERN = /^mcp-v(\d+)\.(\d+)\.(\d+)$/;
 
 // Kept in sync with scripts/check-mcp-package.mjs and the publish workflow tarball gate.
 const ALLOWED_FILE_PATTERNS = [
-  /^bin\/gittensory-mcp\.js$/,
+  /^bin\/loopover-mcp\.js$/,
   /^lib\/local-branch\.js$/,
   /^scripts\/gittensor-score-preview\.(mjs|py)$/,
   /^package\.json$/,
@@ -170,7 +170,7 @@ const REMEDIATION = {
   tag_version_mismatch: "Align the tag with packages/gittensory-mcp/package.json (and the CLI packageVersion) before tagging.",
   changelog_section_missing: "Run npm run changelog:mcp and commit the generated mcp-v<version> changelog section.",
   tarball_unsafe: "Remove unexpected or secret-bearing files from the package and rerun the dry-run.",
-  cli_smoke_failed: "Fix the packed CLI so `gittensory-mcp --help` exits cleanly before tagging.",
+  cli_smoke_failed: "Fix the packed CLI so `loopover-mcp --help` exits cleanly before tagging.",
   publish_token_risk: "Restore tokenless trusted publishing (id-token: write + --provenance, no npm token) in publish-mcp.yml.",
 };
 

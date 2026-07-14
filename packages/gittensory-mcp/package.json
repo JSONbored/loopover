@@ -26,7 +26,7 @@
     "access": "public"
   },
   "bin": {
-    "gittensory-mcp": "bin/gittensory-mcp.js"
+    "loopover-mcp": "bin/loopover-mcp.js"
   },
   "files": [
     "bin",
@@ -35,7 +35,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "node --check bin/gittensory-mcp.js && node --check lib/local-branch.js && node --check lib/format-table.js && node --check scripts/gittensor-score-preview.mjs"
+    "build": "node --check bin/loopover-mcp.js && node --check lib/local-branch.js && node --check lib/format-table.js && node --check scripts/gittensor-score-preview.mjs"
   },
   "dependencies": {
     "@loopover/engine": "^1.0.0",

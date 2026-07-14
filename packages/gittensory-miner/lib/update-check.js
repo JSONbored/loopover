@@ -121,7 +121,7 @@ export async function fetchLatestPackageVersion(input) {
 }
 
 // Non-blocking startup nudge: prints one upgrade line when local is behind npm latest.
-// Mirrors packages/gittensory-mcp/bin/gittensory-mcp.js packageVersion/npmRegistryUrl/upgradeCommand (#2331).
+// Mirrors packages/gittensory-mcp/bin/loopover-mcp.js packageVersion/npmRegistryUrl/upgradeCommand (#2331).
 export async function maybePrintUpdateNudge(input) {
   try {
     const latestVersion = await fetchLatestPackageVersion(input);

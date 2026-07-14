@@ -14,7 +14,7 @@ import {
   startFixtureServer,
 } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — packets", () => {
+describe("loopover-mcp CLI — packets", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -54,7 +54,7 @@ describe("gittensory-mcp CLI — packets", () => {
       source: "local_cache",
       stale: true,
       freshness: "stale",
-      cache: { source: "local_cache", clearCommand: "gittensory-mcp cache clear" },
+      cache: { source: "local_cache", clearCommand: "loopover-mcp cache clear" },
     });
     expect(offline.cachedAt).toEqual(expect.any(String));
     expect(offline.cache.rerunGuidance).toMatch(/Retry when Gittensory API access is restored/);
@@ -238,9 +238,9 @@ describe("gittensory-mcp CLI — packets", () => {
       LOOPOVER_MCP_TOKEN: "",
     };
 
-    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], withoutToken)).rejects.toThrow(/Run `gittensory-mcp login`/);
+    await expect(runAsync(["decision-pack", "--login", "JSONbored", "--json"], withoutToken)).rejects.toThrow(/Run `loopover-mcp login`/);
     await expect(runAsync(["repo-decision", "--login", "JSONbored", "--repo", "JSONbored/gittensory", "--json"], withoutToken)).rejects.toThrow(
-      /Run `gittensory-mcp login`/,
+      /Run `loopover-mcp login`/,
     );
   });
 

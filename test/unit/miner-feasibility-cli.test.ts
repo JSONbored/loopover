@@ -37,13 +37,13 @@ describe("parseFeasibilityArgs (#4270)", () => {
 
   it("requires exactly three positional arguments", () => {
     expect(parseFeasibilityArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner feasibility"),
+      error: expect.stringContaining("Usage: loopover-miner feasibility"),
     });
     expect(parseFeasibilityArgs(["unclaimed", "none"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner feasibility"),
+      error: expect.stringContaining("Usage: loopover-miner feasibility"),
     });
     expect(parseFeasibilityArgs(["unclaimed", "none", "ready", "extra"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner feasibility"),
+      error: expect.stringContaining("Usage: loopover-miner feasibility"),
     });
   });
 
@@ -124,10 +124,10 @@ describe("runFeasibilityCli (#4270)", () => {
   });
 });
 
-describe("gittensory-miner feasibility CLI entrypoint (#4270)", () => {
+describe("loopover-miner feasibility CLI entrypoint (#4270)", () => {
   it("lists the feasibility command in --help", () => {
     const output = runCapture(["--help", "--no-update-check"]);
-    expect(output).toContain("gittensory-miner feasibility");
+    expect(output).toContain("loopover-miner feasibility");
   });
 
   it("computes a real verdict end-to-end through the compiled engine dependency", () => {
@@ -137,7 +137,7 @@ describe("gittensory-miner feasibility CLI entrypoint (#4270)", () => {
 
   it("exits 2 with a usage error for a missing argument", () => {
     const output = runCapture(["feasibility", "unclaimed", "none"]);
-    expect(output).toContain("Usage: gittensory-miner feasibility");
+    expect(output).toContain("Usage: loopover-miner feasibility");
   });
 });
 

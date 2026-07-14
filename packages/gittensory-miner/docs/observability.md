@@ -7,7 +7,7 @@ operations, see your ops runbook.
 ## What's observable
 
 The miner writes append-only SQLite ledgers under `LOOPOVER_MINER_CONFIG_DIR` (default
-`~/.config/gittensory-miner` on a laptop, or `/data/miner` in the fleet Docker image — see
+`~/.config/loopover-miner` on a laptop, or `/data/miner` in the fleet Docker image — see
 [`DEPLOYMENT.md`](../DEPLOYMENT.md)):
 
 - **`attempt-log.sqlite3`** — the driver-level attempt event trace (event type, action class, mode, reason,
@@ -69,10 +69,10 @@ exposes four Prometheus text-exposition documents for live counters/gauges — a
 
 | Command                             | Metric family                                                                     |
 | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `gittensory-miner metrics`           | Prediction-calibration counters (`gittensory_miner_prediction*_total`)               |
-| `gittensory-miner queue metrics`     | Portfolio-queue backlog + lease-age gauges (`gittensory_miner_portfolio_queue*`)      |
-| `gittensory-miner ledger metrics`    | Event-ledger counters (`gittensory_miner_events_total`)                              |
-| `gittensory-miner governor metrics`  | Write-rate-limit + cap-usage pressure gauges (`gittensory_miner_governor*`)           |
+| `loopover-miner metrics`           | Prediction-calibration counters (`gittensory_miner_prediction*_total`)               |
+| `loopover-miner queue metrics`     | Portfolio-queue backlog + lease-age gauges (`gittensory_miner_portfolio_queue*`)      |
+| `loopover-miner ledger metrics`    | Event-ledger counters (`gittensory_miner_events_total`)                              |
+| `loopover-miner governor metrics`  | Write-rate-limit + cap-usage pressure gauges (`gittensory_miner_governor*`)           |
 
 None of these is a long-running HTTP server — Prometheus can't scrape a one-shot CLI command directly. To opt in,
 wire [`scripts/export-miner-prometheus-textfile.sh`](../../../scripts/export-miner-prometheus-textfile.sh) into
@@ -92,7 +92,7 @@ family's metrics are simply omitted from the file for that run (logged to stderr
 
 Then point your own `prometheus.yml` at node_exporter as usual — no changes to this repo's `prometheus/` config
 are needed. See [`prometheus/rules/alerts.yml`](../../../prometheus/rules/alerts.yml)'s
-`gittensory-miner-prediction` / `gittensory-miner-portfolio-queue` / `gittensory-miner-governor` rule groups for
+`loopover-miner-prediction` / `loopover-miner-portfolio-queue` / `loopover-miner-governor` rule groups for
 alert rules that already target these exact metric names.
 
 ## Anonymized central telemetry (opt-in, off by default)
@@ -102,7 +102,7 @@ of its own PR-outcome history to gittensory's hosted AMS collector — the same 
 self-host collector already sends for maintainers, mirrored for contributors:
 
 ```sh
-gittensory-miner orb export --enable --send
+loopover-miner orb export --enable --send
 ```
 
 - **`--enable`** alone only builds and prints the anonymized batch locally — no network call, so you can inspect

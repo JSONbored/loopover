@@ -214,7 +214,7 @@ const feasibilityGateShape = {
  * Returns `null` (fall back to the caller-supplied value unchanged) only when there is genuinely nothing to
  * look up: no repo/issue supplied, no local install detected (the ledger DB file doesn't exist -- checked
  * via `existsSync` BEFORE opening anything), or the sibling `@loopover/miner` package isn't
- * resolvable at all (a standalone gittensory-mcp install with no miner alongside it). When the ledger DB
+ * resolvable at all (a standalone loopover-mcp install with no miner alongside it). When the ledger DB
  * file DOES exist (a real local install IS present) but reading it fails -- corrupt, locked, permission
  * denied -- this returns `"unknown"` rather than silently falling back to a caller-supplied string that
  * ground-truth data (which we know exists but can't currently read) might contradict; `"unknown"` is an
@@ -233,7 +233,7 @@ async function resolveLedgerClaimStatus(repoFullName, issueNumber) {
   try {
     claimLedgerModule = await import("@loopover/miner/lib/claim-ledger.js");
   } catch {
-    /* v8 ignore next -- gittensory-miner genuinely unresolvable (not installed alongside gittensory-mcp); not
+    /* v8 ignore next -- gittensory-miner genuinely unresolvable (not installed alongside loopover-mcp); not
        reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always
        resolves */
     return null;
@@ -426,7 +426,7 @@ const agentRunIdShape = {
 };
 
 // Single source of truth for stdio tool name + one-line description (#2233).
-// Registration and `gittensory-mcp tools` both read this list.
+// Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_repo_context",
@@ -1271,7 +1271,7 @@ server.registerResource(
   "gittensory://changelog",
   {
     title: "Gittensory MCP Changelog",
-    description: "Current CHANGELOG.md for the installed gittensory-mcp package.",
+    description: "Current CHANGELOG.md for the installed loopover-mcp package.",
     mimeType: "text/markdown",
   },
   async () => {
@@ -1711,9 +1711,9 @@ function workspaceRootStatus(roots) {
 function printMaintainHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp maintain <subcommand> --repo owner/repo",
+      "Usage: loopover-mcp maintain <subcommand> --repo owner/repo",
       "",
-      "Maintainer controls for the agent auto-maintain layer (requires maintainer access; run `gittensory-mcp login`).",
+      "Maintainer controls for the agent auto-maintain layer (requires maintainer access; run `loopover-mcp login`).",
       "",
       "Subcommands:",
       "  status                       List the agent approval queue (auto_with_approval actions awaiting a decision).",
@@ -1773,7 +1773,7 @@ async function maintainCli(args) {
     return;
   }
   if (subcommand === "approve" || subcommand === "reject") {
-    if (!positional) throw new Error(`Pass the pending-action id: gittensory-mcp maintain ${subcommand} <id> --repo owner/repo.`);
+    if (!positional) throw new Error(`Pass the pending-action id: loopover-mcp maintain ${subcommand} <id> --repo owner/repo.`);
     // The approval-queue route's decision verb is accept|reject (#779); the CLI exposes approve|reject.
     const decision = subcommand === "approve" ? "accept" : "reject";
     const payload = await apiPost(`${queueBase}/${encodeURIComponent(positional)}/${decision}`, {});
@@ -1788,7 +1788,7 @@ async function maintainCli(args) {
   if (subcommand === "set-level") {
     const action = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
     const level = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
-    if (!action || !level) throw new Error("Usage: gittensory-mcp maintain set-level <action> <level> --repo owner/repo.");
+    if (!action || !level) throw new Error("Usage: loopover-mcp maintain set-level <action> <level> --repo owner/repo.");
     if (!MAINTAIN_ACTION_CLASSES.includes(action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
     if (!MAINTAIN_AUTONOMY_LEVELS.includes(level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
     // Read-merge-write so one class is updated without clearing the others.
@@ -1850,7 +1850,7 @@ async function runCli(args) {
   if (command === "review-pr") return reviewPrCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
     const suggestion = suggestCommand(command);
-    throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`gittensory-mcp --help\` to list commands.`);
+    throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
   }
   const contributorLogin = options.login ?? process.env.GITTENSORY_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set GITTENSORY_LOGIN.");
@@ -1911,7 +1911,7 @@ function writeBranchAnalysisTable(result, command) {
 function printReviewPrHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
+      "Usage: loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
       "",
       "Compose the existing preflight + slop-risk + PR-text-lint checks into ONE pre-PR review report,",
       "so a contributor's own local agent can see everything the gittensory gate would flag before ever opening a PR.",
@@ -1993,7 +1993,7 @@ function readCliTextFile(path, label) {
 function printLintPrTextHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
+      "Usage: loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
       "",
       "Lint a commit message and PR body against the Gittensory traceability and Conventional Commit rubric.",
       "Mirrors the loopover_lint_pr_text MCP tool and POST /v1/lint/pr-text. No source upload.",
@@ -2035,7 +2035,7 @@ function sanitizePlainTextTerminalOutput(value) {
 function printValidateConfigHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]",
+      "Usage: loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]",
       "",
       "Validate a .loopover.yml manifest before pushing.",
       "Mirrors the loopover_validate_config MCP tool and POST /v1/validate/focus-manifest. No source upload.",
@@ -2070,7 +2070,7 @@ async function validateConfigCli(args) {
 function printSlopRiskHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]",
+      "Usage: loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]",
       "",
       "Assess deterministic slop risk from local diff metadata and a PR description.",
       "Mirrors the loopover_check_slop_risk MCP tool and POST /v1/lint/slop-risk. No source upload.",
@@ -2130,7 +2130,7 @@ async function slopRiskCli(args) {
 function printIssueSlopHelp() {
   process.stdout.write(
     [
-      "Usage: gittensory-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]",
+      "Usage: loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]",
       "",
       "Assess deterministic issue slop risk from an issue title and body alone.",
       "Mirrors the loopover_check_issue_slop MCP tool and POST /v1/lint/issue-slop. Advisory only; no source upload.",
@@ -2228,13 +2228,13 @@ async function runAgentCli(args) {
   }
   if (subcommand === "status") {
     const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
-    if (!runId) throw new Error("Usage: gittensory-mcp agent status <run-id>");
+    if (!runId) throw new Error("Usage: loopover-mcp agent status <run-id>");
     const payload = await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`);
     return outputAgentPayload(payload, options, `Gittensory agent run ${runId}: ${payload.run?.status ?? "unknown"}`);
   }
   if (subcommand === "explain") {
     const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
-    if (!runId) throw new Error("Usage: gittensory-mcp agent explain <run-id>");
+    if (!runId) throw new Error("Usage: loopover-mcp agent explain <run-id>");
     const payload = await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`);
     const topAction = payload.actions?.[0] ?? null;
     return outputAgentPayload({ ...payload, topAction }, options, topAction ? `Top action: ${topAction.recommendation}` : "No top action is available yet.");
@@ -2402,7 +2402,7 @@ function toolsCommand(options) {
 function completionCommand(args) {
   const shell = args[0] && !args[0].startsWith("--") ? args[0] : undefined;
   const options = parseOptions(args.filter((arg) => arg.startsWith("--")));
-  if (!shell) throw new Error(`Usage: gittensory-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
+  if (!shell) throw new Error(`Usage: loopover-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
   if (!COMPLETION_SHELLS.includes(shell)) throw new Error(`Unsupported shell: ${shell}. Supported shells: ${COMPLETION_SHELLS.join(", ")}.`);
   const script = buildCompletionScript(shell);
   if (options.json) {
@@ -2457,8 +2457,8 @@ function buildBashCompletion(topLevel, withSubcommands) {
   const subcommandCases = withSubcommands
     .map(([command, subcommands]) => `      ${command}) COMPREPLY=( $(compgen -W "${subcommands.join(" ")}" -- "$cur") ); return 0;;`)
     .join("\n");
-  return `# gittensory-mcp bash completion. Add to ~/.bashrc:
-#   source <(gittensory-mcp completion bash)
+  return `# loopover-mcp bash completion. Add to ~/.bashrc:
+#   source <(loopover-mcp completion bash)
 _gittensory_mcp() {
   local cur prev cword
   cur="\${COMP_WORDS[COMP_CWORD]}"
@@ -2474,16 +2474,16 @@ ${subcommandCases}
       *) COMPREPLY=( $(compgen -W "--json --format --login --repo --profile --agent-profile --base --cwd" -- "$cur") ); return 0;;
   esac
 }
-complete -F _gittensory_mcp gittensory-mcp`;
+complete -F _gittensory_mcp loopover-mcp`;
 }
 
 function buildZshCompletion(topLevel, withSubcommands) {
   const subcommandCases = withSubcommands
     .map(([command, subcommands]) => `      ${command}) _values 'subcommand' ${subcommands.join(" ")} ;;`)
     .join("\n");
-  return `#compdef gittensory-mcp
-# gittensory-mcp zsh completion. Add to your fpath, or:
-#   source <(gittensory-mcp completion zsh)
+  return `#compdef loopover-mcp
+# loopover-mcp zsh completion. Add to your fpath, or:
+#   source <(loopover-mcp completion zsh)
 _gittensory_mcp() {
   local -a commands
   commands=(${topLevel.join(" ")})
@@ -2500,12 +2500,12 @@ _gittensory_mcp "$@"`;
 
 function buildFishCompletion(topLevel, withSubcommands) {
   const topLevelLines = topLevel
-    .map((command) => `complete -c gittensory-mcp -n __fish_use_subcommand -a ${command} -d 'gittensory-mcp command'`)
+    .map((command) => `complete -c loopover-mcp -n __fish_use_subcommand -a ${command} -d 'loopover-mcp command'`)
     .join("\n");
   const subcommandLines = withSubcommands
-    .map(([command, subcommands]) => `complete -c gittensory-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
+    .map(([command, subcommands]) => `complete -c loopover-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
     .join("\n");
-  return `# gittensory-mcp fish completion. Save to:
+  return `# loopover-mcp fish completion. Save to:
 #   ~/.config/fish/completions/gittensory-mcp.fish
 ${topLevelLines}
 ${subcommandLines}`;
@@ -2516,9 +2516,9 @@ function buildPowershellCompletion(topLevel, withSubcommands) {
   const subcommandEntries = withSubcommands
     .map(([command, subcommands]) => `    '${command}' = @(${subcommands.map((subcommand) => `'${subcommand}'`).join(", ")})`)
     .join("\n");
-  return `# gittensory-mcp PowerShell completion. Add to your $PROFILE:
-#   gittensory-mcp completion powershell | Out-String | Invoke-Expression
-Register-ArgumentCompleter -Native -CommandName gittensory-mcp -ScriptBlock {
+  return `# loopover-mcp PowerShell completion. Add to your $PROFILE:
+#   loopover-mcp completion powershell | Out-String | Invoke-Expression
+Register-ArgumentCompleter -Native -CommandName loopover-mcp -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
   $commands = @(${commandList})
   $subcommands = @{
@@ -2542,39 +2542,39 @@ ${subcommandEntries}
 
 function printHelp() {
   process.stdout.write(`Usage:
-  gittensory-mcp --stdio
-  gittensory-mcp version [--json]
-  gittensory-mcp tools [--json]
-  gittensory-mcp completion bash|zsh|fish|powershell [--json]
-  gittensory-mcp login [--profile name] [--github-token <token>] [--json]
-  gittensory-mcp logout [--profile name] [--all] [--json]
-  gittensory-mcp whoami [--profile name] [--json]
-  gittensory-mcp config [--profile name] [--json]
-  gittensory-mcp status [--profile name] [--json]
-  gittensory-mcp profile list|create|switch|remove [name] [--json]
-  gittensory-mcp changelog [--json]
-  gittensory-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
-  gittensory-mcp cache status|list|clear [--json]
-  gittensory-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
-  gittensory-mcp decision-pack --login <github-login> [--json]
-  gittensory-mcp repo-decision --login <github-login> --repo owner/repo [--json]
-  gittensory-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
-  gittensory-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
-  gittensory-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  gittensory-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  gittensory-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
-  gittensory-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
-  gittensory-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
-  gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
-  gittensory-mcp agent status <run-id> [--json]
-  gittensory-mcp agent explain <run-id> [--json]
-  gittensory-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
+  loopover-mcp --stdio
+  loopover-mcp version [--json]
+  loopover-mcp tools [--json]
+  loopover-mcp completion bash|zsh|fish|powershell [--json]
+  loopover-mcp login [--profile name] [--github-token <token>] [--json]
+  loopover-mcp logout [--profile name] [--all] [--json]
+  loopover-mcp whoami [--profile name] [--json]
+  loopover-mcp config [--profile name] [--json]
+  loopover-mcp status [--profile name] [--json]
+  loopover-mcp profile list|create|switch|remove [name] [--json]
+  loopover-mcp changelog [--json]
+  loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
+  loopover-mcp cache status|list|clear [--json]
+  loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
+  loopover-mcp decision-pack --login <github-login> [--json]
+  loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
+  loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
+  loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
+  loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
+  loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
+  loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
+  loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
+  loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
+  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
+  loopover-mcp agent status <run-id> [--json]
+  loopover-mcp agent explain <run-id> [--json]
+  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
 
   Environment:
   GITTENSORY_API_URL
   GITTENSORY_PROFILE
   GITTENSORY_CONFIG_PATH or GITTENSORY_CONFIG_DIR
-  GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, GITTENSORY_TOKEN, or a session from gittensory-mcp login
+  GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, GITTENSORY_TOKEN, or a session from loopover-mcp login
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
@@ -2585,9 +2585,9 @@ function printHelp() {
 
 function printCacheHelp() {
   process.stdout.write(`Usage:
-  gittensory-mcp cache status [--json]
-  gittensory-mcp cache list [--json | --format ndjson]
-  gittensory-mcp cache clear [--json]
+  loopover-mcp cache status [--json]
+  loopover-mcp cache list [--json | --format ndjson]
+  loopover-mcp cache clear [--json]
 
 Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.
 Source upload remains disabled.
@@ -2596,10 +2596,10 @@ Source upload remains disabled.
 
 function printAgentHelp() {
   process.stdout.write(`Usage:
-  gittensory-mcp agent plan --login <github-login> [--repo owner/repo] [--objective "..."] [--json]
-  gittensory-mcp agent status <run-id> [--json]
-  gittensory-mcp agent explain <run-id> [--json]
-  gittensory-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]
+  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--objective "..."] [--json]
+  loopover-mcp agent status <run-id> [--json]
+  loopover-mcp agent explain <run-id> [--json]
+  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]
 
 The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.
 Source upload remains disabled.
@@ -2608,10 +2608,10 @@ Source upload remains disabled.
 
 function printProfileHelp() {
   process.stdout.write(`Usage:
-  gittensory-mcp profile list [--json | --format ndjson]
-  gittensory-mcp profile create <name> [--json]
-  gittensory-mcp profile switch <name> [--json]
-  gittensory-mcp profile remove <name> [--json]
+  loopover-mcp profile list [--json | --format ndjson]
+  loopover-mcp profile create <name> [--json]
+  loopover-mcp profile switch <name> [--json]
+  loopover-mcp profile remove <name> [--json]
 
 Use --profile <name> or GITTENSORY_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
 `);
@@ -2740,7 +2740,7 @@ function profileCommand(args) {
   }
 
   const rawName = args[1] && !args[1].startsWith("--") ? args[1] : options.name ?? options.profile;
-  if (!rawName) throw new Error(`Usage: gittensory-mcp profile ${subcommand} <name>`);
+  if (!rawName) throw new Error(`Usage: loopover-mcp profile ${subcommand} <name>`);
   const profileName = normalizeProfileName(rawName);
 
   if (subcommand === "create") {
@@ -2753,7 +2753,7 @@ function profileCommand(args) {
   }
 
   if (subcommand === "switch" || subcommand === "use") {
-    if (!config.profiles?.[profileName]) throw new Error(`Profile ${profileName} does not exist. Run \`gittensory-mcp profile create ${profileName}\` or \`gittensory-mcp login --profile ${profileName}\`.`);
+    if (!config.profiles?.[profileName]) throw new Error(`Profile ${profileName} does not exist. Run \`loopover-mcp profile create ${profileName}\` or \`loopover-mcp login --profile ${profileName}\`.`);
     const nextConfig = setActiveProfile(config, profileName);
     saveConfig(nextConfig);
     const payload = { status: "switched", activeProfile: profileName, profile: profilePublicState(profileName, nextConfig) };
@@ -2907,14 +2907,14 @@ async function doctor(options) {
 
   const token = getApiToken();
   if (!token) {
-    add("auth", "fail", `No Gittensory API/session token is configured for profile ${activeProfileName}.`, `Run \`gittensory-mcp login --profile ${activeProfileName}\`.`);
+    add("auth", "fail", `No Gittensory API/session token is configured for profile ${activeProfileName}.`, `Run \`loopover-mcp login --profile ${activeProfileName}\`.`);
   } else {
     try {
       const session = await apiGet("/v1/auth/session");
       authLogin = session.login ?? authLogin;
       add("auth", "pass", `Profile ${activeProfileName} authenticated as ${session.login}; session expires ${session.expiresAt}.`);
     } catch (error) {
-      add("auth", "warn", `A token is configured for profile ${activeProfileName} but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `gittensory-mcp login`.");
+      add("auth", "warn", `A token is configured for profile ${activeProfileName} but no user session was verified: ${error instanceof Error ? error.message : "session_check_failed"}.`, "If this is a static beta token, this can be expected. Otherwise run `loopover-mcp login`.");
     }
   }
 
@@ -2929,7 +2929,7 @@ async function doctor(options) {
     "decision_pack_cache",
     "pass",
     `Local stale fallback cache has ${decisionPackCache.entries} entr${decisionPackCache.entries === 1 ? "y" : "ies"} and is bounded at ${decisionPackCache.maxEntries}.`,
-    "Run `gittensory-mcp cache clear` to remove local stale fallback data.",
+    "Run `loopover-mcp cache clear` to remove local stale fallback data.",
   );
 
   try {
@@ -2945,9 +2945,9 @@ async function doctor(options) {
     add("git_metadata", "warn", error instanceof Error ? error.message : "git_metadata_failed", "Run from a git repo or pass --repo owner/repo.");
   }
 
-  const commandPath = findExecutable("gittensory-mcp");
-  if (commandPath) add("client_path", "pass", "gittensory-mcp is visible on PATH.");
-  else add("client_path", "warn", "gittensory-mcp was not found on PATH.", "Use an absolute command path in your MCP client config.");
+  const commandPath = findExecutable("loopover-mcp");
+  if (commandPath) add("client_path", "pass", "loopover-mcp is visible on PATH.");
+  else add("client_path", "warn", "loopover-mcp was not found on PATH.", "Use an absolute command path in your MCP client config.");
 
   const scorerCommand = resolveScorePreviewCommand();
   if (!scorerCommand) {
@@ -2963,7 +2963,7 @@ async function doctor(options) {
       add("local_scorer", "pass", `Configured scorer responded in ${probe.durationMs ?? 0}ms.`);
     } else {
       const remediation = setupGuidanceForLocalScorer(probe).slice(1).join(" ");
-      add("local_scorer", "warn", `Configured scorer failed (${probe.code ?? "scorer_failed"}): ${probe.reason}`, remediation || "Run gittensory-mcp doctor --json for structured diagnostics.");
+      add("local_scorer", "warn", `Configured scorer failed (${probe.code ?? "scorer_failed"}): ${probe.reason}`, remediation || "Run loopover-mcp doctor --json for structured diagnostics.");
     }
   }
 
@@ -3078,14 +3078,14 @@ function doctorNextCommand(byName, context) {
   const auth = byName.get("auth");
   if (auth?.status === "fail") {
     return {
-      command: `gittensory-mcp login --profile ${shellArg(context.profileName ?? "default")}`,
+      command: `loopover-mcp login --profile ${shellArg(context.profileName ?? "default")}`,
       reason: "Authenticate the active profile so doctor, plan, preflight, and packet commands can call the API.",
     };
   }
   const apiHealth = byName.get("api_health");
   if (apiHealth?.status === "fail") {
     return {
-      command: "gittensory-mcp status --json",
+      command: "loopover-mcp status --json",
       reason: "Check API reachability before running planner or preflight commands.",
     };
   }
@@ -3099,20 +3099,20 @@ function doctorNextCommand(byName, context) {
   const gitMetadata = byName.get("git_metadata");
   if (gitMetadata?.status === "warn") {
     return {
-      command: "gittensory-mcp doctor --repo owner/repo --json",
+      command: "loopover-mcp doctor --repo owner/repo --json",
       reason: "Run doctor from a git checkout or pass the repository explicitly.",
     };
   }
   const localScorer = byName.get("local_scorer");
   if (localScorer?.status === "warn" && localScorer.remediation) {
-    const scorerSetupCommand = localScorer.remediation.startsWith("Example: ") ? localScorer.remediation.replace(/^Example:\s*/, "") : "gittensory-mcp doctor --json";
+    const scorerSetupCommand = localScorer.remediation.startsWith("Example: ") ? localScorer.remediation.replace(/^Example:\s*/, "") : "loopover-mcp doctor --json";
     return {
       command: scorerSetupCommand,
       reason: "Configure the optional local scorer for richer private branch analysis.",
     };
   }
   return {
-    command: `gittensory-mcp review-pr --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
+    command: `loopover-mcp review-pr --login ${shellArg(context.login ?? "<github-login>")} --repo ${shellArg(context.repoFullName ?? "owner/repo")} --json`,
     reason: "Run the composed pre-PR review (preflight + slop-risk + PR-text lint) next; source upload remains disabled.",
   };
 }
@@ -3126,7 +3126,7 @@ function shellArg(value) {
 function initClient(options) {
   const client = String(options.print ?? options.client ?? "").toLowerCase();
   if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, --print mcp, or --print vscode.");
-  const command = options.command ?? "gittensory-mcp";
+  const command = options.command ?? "loopover-mcp";
   const snippet = clientSnippet(client, command);
   const agentProfile = resolveAgentProfile(options.agentProfile);
   const payload = {
@@ -3136,7 +3136,7 @@ function initClient(options) {
     snippet,
     agentProfile,
     notes: [
-      "Run `gittensory-mcp login` before starting the MCP client.",
+      "Run `loopover-mcp login` before starting the MCP client.",
       "Use an absolute command path if the client does not inherit your shell PATH.",
       "This command prints config only; it does not edit client files.",
       ...(agentProfile
@@ -3718,7 +3718,7 @@ function cacheFallbackMetadata(entry, error) {
     reason: "api_unavailable",
     detail: sanitizeDiagnosticText(error instanceof Error ? error.message : "api_unavailable"),
     rerunGuidance: "Retry when Gittensory API access is restored; cached guidance may be stale.",
-    clearCommand: "gittensory-mcp cache clear",
+    clearCommand: "loopover-mcp cache clear",
   };
 }
 
@@ -3780,7 +3780,7 @@ function clearDecisionPackCache() {
     cache: {
       source: "local_cache",
       maxEntries: decisionPackCacheMaxEntries,
-      clearCommand: "gittensory-mcp cache clear",
+      clearCommand: "loopover-mcp cache clear",
     },
   };
 }
@@ -3795,7 +3795,7 @@ function inspectDecisionPackCache() {
     maxEntries: decisionPackCacheMaxEntries,
     schemaVersion: decisionPackCacheSchemaVersion,
     apiVersion: currentApiVersion,
-    clearCommand: "gittensory-mcp cache clear",
+    clearCommand: "loopover-mcp cache clear",
   };
 }
 
@@ -3822,7 +3822,7 @@ function listDecisionPackCache() {
     status: "ok",
     count: entries.length,
     maxEntries: decisionPackCacheMaxEntries,
-    clearCommand: "gittensory-mcp cache clear",
+    clearCommand: "loopover-mcp cache clear",
     entries,
   };
 }
@@ -3956,7 +3956,7 @@ async function apiPost(path, body) {
 async function apiFetch(path, init, options = {}) {
   const token = options.token ?? getApiToken();
   if (options.auth !== false && !token) {
-    const error = new Error("Run `gittensory-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
+    const error = new Error("Run `loopover-mcp login`, or set GITTENSORY_API_TOKEN, GITTENSORY_MCP_TOKEN, or GITTENSORY_TOKEN before starting the MCP wrapper.");
     error.status = 401;
     error.code = "missing_auth";
     throw error;
@@ -3971,9 +3971,9 @@ async function apiFetch(path, init, options = {}) {
       ...(token && options.auth !== false ? { authorization: `Bearer ${token}` } : {}),
       "content-type": "application/json",
       accept: "application/json",
-      "x-gittensory-mcp-package": packageName,
-      "x-gittensory-mcp-version": packageVersion,
-      "x-gittensory-mcp-client": "gittensory-mcp-cli",
+      "x-loopover-mcp-package": packageName,
+      "x-loopover-mcp-version": packageVersion,
+      "x-loopover-mcp-client": "loopover-mcp-cli",
     },
   }).finally(() => clearTimeout(timeout));
   const text = await response.text();

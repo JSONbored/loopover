@@ -22,7 +22,7 @@ const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
 
 function tempClaimLedger() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-claim-ledger-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-claim-ledger-cli-"));
   roots.push(root);
   const ledger = openClaimLedger(join(root, "claim-ledger.sqlite3"));
   ledgers.push(ledger);
@@ -36,7 +36,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner claim ledger CLI (#4290)", () => {
+describe("loopover-miner claim ledger CLI (#4290)", () => {
   it("parseClaimClaimArgs, parseClaimReleaseArgs, and parseClaimListArgs validate argv", () => {
     expect(parseClaimClaimArgs(["acme/widgets", "42", "--note", "wip", "--dry-run", "--json"])).toEqual({
       repoFullName: "acme/widgets",
@@ -53,7 +53,7 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       json: false,
     });
     expect(parseClaimClaimArgs(["acme/widgets"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim claim"),
+      error: expect.stringContaining("Usage: loopover-miner claim claim"),
     });
     expect(parseClaimClaimArgs(["acme", "42"])).toEqual({
       error: "Repository must be in owner/repo form.",
@@ -62,7 +62,7 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       error: "issue number must be a positive integer.",
     });
     expect(parseClaimClaimArgs(["acme/widgets", "42", "--note"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim claim"),
+      error: expect.stringContaining("Usage: loopover-miner claim claim"),
     });
     expect(parseClaimClaimArgs(["acme/widgets", "42", "--verbose"])).toEqual({
       error: "Unknown option: --verbose",
@@ -75,7 +75,7 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       json: true,
     });
     expect(parseClaimReleaseArgs(["acme/widgets"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim release"),
+      error: expect.stringContaining("Usage: loopover-miner claim release"),
     });
     expect(parseClaimReleaseArgs(["acme/widgets", "7", "--bad"])).toEqual({
       error: "Unknown option: --bad",
@@ -95,10 +95,10 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       error: "status must be one of: active, released, expired.",
     });
     expect(parseClaimListArgs(["--repo"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim list"),
+      error: expect.stringContaining("Usage: loopover-miner claim list"),
     });
     expect(parseClaimListArgs(["extra"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim list"),
+      error: expect.stringContaining("Usage: loopover-miner claim list"),
     });
     expect(parseClaimListArgs(["--status", "released", "--unknown"])).toEqual({
       error: "Unknown option: --unknown",
@@ -115,7 +115,7 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       apiBaseUrl: "https://ghe.example.com/api/v3",
     });
     expect(parseClaimClaimArgs(["acme/widgets", "42", "--api-base-url"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim claim"),
+      error: expect.stringContaining("Usage: loopover-miner claim claim"),
     });
 
     expect(parseClaimReleaseArgs(["acme/widgets", "7", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
@@ -126,7 +126,7 @@ describe("gittensory-miner claim ledger CLI (#4290)", () => {
       apiBaseUrl: "https://ghe.example.com/api/v3",
     });
     expect(parseClaimReleaseArgs(["acme/widgets", "7", "--api-base-url"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner claim release"),
+      error: expect.stringContaining("Usage: loopover-miner claim release"),
     });
   });
 

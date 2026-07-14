@@ -28,7 +28,7 @@ const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
 
 function tempStores() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-manage-poll-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-poll-"));
   roots.push(root);
   const portfolioQueue = initPortfolioQueueStore(join(root, "portfolio-queue.sqlite3"));
   const eventLedger = initEventLedger(join(root, "event-ledger.sqlite3"));
@@ -53,10 +53,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner manage poll (#2323/#2325)", () => {
+describe("loopover-miner manage poll (#2323/#2325)", () => {
   it("parseManagePollArgs validates argv", () => {
     expect(parseManagePollArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner manage poll"),
+      error: expect.stringContaining("Usage: loopover-miner manage poll"),
     });
     expect(parseManagePollArgs(["acme/widgets", "42", "--branch", "feat/x", "--json"])).toEqual({
       repoFullName: "acme/widgets",

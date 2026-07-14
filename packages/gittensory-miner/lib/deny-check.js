@@ -2,7 +2,7 @@ import { evaluateDenyHooks } from "./deny-hooks.js";
 import { argsWantJson, reportCliFailure } from "./cli-error.js";
 
 const DENY_CHECK_USAGE =
-  "Usage: gittensory-miner hooks check --tool <name> --input <json> [--json]";
+  "Usage: loopover-miner hooks check --tool <name> --input <json> [--json]";
 
 function parseToolInput(raw) {
   if (raw === undefined) {

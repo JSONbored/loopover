@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — slop-risk", () => {
+describe("loopover-mcp CLI — slop-risk", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -118,7 +118,7 @@ describe("gittensory-mcp CLI — slop-risk", () => {
     await expect(runAsync(["slop-risk", "--changed-file", "src/a.ts:-1"], e)).rejects.toThrow(/Invalid additions/);
     await expect(runAsync(["slop-risk", "--description-file", "/tmp/missing-gittensory-slop-description.md"], e)).rejects.toThrow(/Description file not found/);
     const help = run(["slop-risk", "--help"]);
-    expect(help).toMatch(/Usage: gittensory-mcp slop-risk/);
+    expect(help).toMatch(/Usage: loopover-mcp slop-risk/);
     expect(help).toMatch(/loopover_check_slop_risk/);
     expect(help).toMatch(/--changed-file/);
   });

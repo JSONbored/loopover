@@ -10,15 +10,15 @@ describe("miner deployment guide (#2330)", () => {
     const doc = readFileSync(DEPLOYMENT_PATH, "utf8");
     expect(doc).toContain("Laptop mode");
     expect(doc).toContain("Fleet mode");
-    expect(doc).toContain("gittensory-miner status");
-    expect(doc).toContain("gittensory-miner doctor");
+    expect(doc).toContain("loopover-miner status");
+    expect(doc).toContain("loopover-miner doctor");
     expect(doc).toContain("LOOPOVER_MINER_CONFIG_DIR");
     expect(doc).toContain("100% client-side");
     expect(doc).toContain("credentials");
     expect(doc).toContain("docker build");
     expect(doc).toContain("docker run");
     expect(doc).toContain("packages/gittensory-miner/Dockerfile");
-    expect(doc).toContain("gittensory-miner:latest");
+    expect(doc).toContain("loopover-miner:latest");
     expect(doc).toContain("docker-compose.yml");
   });
 

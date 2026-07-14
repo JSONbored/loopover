@@ -1,4 +1,4 @@
-# gittensory-miner resource sizing
+# loopover-miner resource sizing
 
 Real, measured CPU/RAM/disk numbers for laptop mode and fleet mode, so an operator can size a host or
 cluster from data instead of guessing. Neither the operational-runbook issue nor the local-stores
@@ -14,7 +14,7 @@ documentation commits to this — this doc is scoped strictly to the numbers and
 
 ## Workload measured
 
-Both modes measure `gittensory-miner init` (laptop mode only) followed by `gittensory-miner discover
+Both modes measure `loopover-miner init` (laptop mode only) followed by `loopover-miner discover
 <owner/repo> [<owner/repo>...] --json` against real, small public repositories (`octocat/Hello-World`,
 `octocat/Spoon-Knife`) with **no `GITHUB_TOKEN`** — real, unauthenticated GitHub GET requests, metadata
 fan-out + deterministic ranking, no writes.
@@ -44,10 +44,10 @@ dominated by the operator's chosen coding-agent CLI process, not by anything thi
 
 ```sh
 LOOPOVER_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
-  node packages/gittensory-miner/bin/gittensory-miner.js init --json
+  node packages/gittensory-miner/bin/loopover-miner.js init --json
 
 LOOPOVER_MINER_CONFIG_DIR=/tmp/sizing-laptop /usr/bin/time -v \
-  node packages/gittensory-miner/bin/gittensory-miner.js discover octocat/Hello-World --dry-run --json
+  node packages/gittensory-miner/bin/loopover-miner.js discover octocat/Hello-World --dry-run --json
 
 du -sh /tmp/sizing-laptop
 ```
@@ -55,11 +55,11 @@ du -sh /tmp/sizing-laptop
 ### Exact commands (fleet mode, N=1 shown; N=4 repeats the `docker run` with 4 distinct names/volumes)
 
 ```sh
-docker build -f packages/gittensory-miner/Dockerfile -t gittensory-miner:sizing .
+docker build -f packages/gittensory-miner/Dockerfile -t loopover-miner:sizing .
 
 docker volume create miner-sizing-1
-docker run -d --name miner-sizing-1 -v miner-sizing-1:/data/miner --entrypoint sh gittensory-miner:sizing \
-  -c "gittensory-miner discover octocat/Hello-World octocat/Spoon-Knife --json > /tmp/out.json 2>&1; sleep 20"
+docker run -d --name miner-sizing-1 -v miner-sizing-1:/data/miner --entrypoint sh loopover-miner:sizing \
+  -c "loopover-miner discover octocat/Hello-World octocat/Spoon-Knife --json > /tmp/out.json 2>&1; sleep 20"
 
 for i in $(seq 1 20); do
   docker stats --no-stream --format '{{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}' miner-sizing-1
@@ -74,7 +74,7 @@ docker run --rm -v miner-sizing-1:/data alpine du -ah /data
 | --- | --- | --- | --- | --- | --- |
 | Laptop (`init`) | 1 | 125% (short burst, Node startup) | 74 MB | — | Sandbox above |
 | Laptop (`discover`, 1 repo, 90 issues) | 1 | 16% (network-bound) | 98 MB | 100 KB (5 SQLite files after `init` + `discover`) | Sandbox above |
-| Fleet (Docker, `discover`, 2 repos) | 1 | 54% (short burst) | 46 MB | 92 KB (4 SQLite files) | Sandbox above, `gittensory-miner:sizing` image (333 MB) |
+| Fleet (Docker, `discover`, 2 repos) | 1 | 54% (short burst) | 46 MB | 92 KB (4 SQLite files) | Sandbox above, `loopover-miner:sizing` image (333 MB) |
 | Fleet (Docker, `discover`, 2 repos) | 4 (isolated volumes) | 5–38% per worker (bursts did not line up across workers) | 34–45 MB per worker | 92 KB per worker (368 KB total across 4 isolated volumes) | Sandbox above |
 
 **Takeaways:**

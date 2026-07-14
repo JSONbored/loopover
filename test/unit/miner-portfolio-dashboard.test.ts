@@ -70,7 +70,7 @@ describe("parsePortfolioDashboardArgs (#4287)", () => {
     expect(parsePortfolioDashboardArgs([])).toEqual({ json: false });
     expect(parsePortfolioDashboardArgs(["--json"])).toEqual({ json: true });
     expect(parsePortfolioDashboardArgs(["--nope"])).toEqual({ error: expect.stringContaining("Unknown option") });
-    expect(parsePortfolioDashboardArgs(["extra"])).toEqual({ error: expect.stringContaining("Usage: gittensory-miner queue dashboard") });
+    expect(parsePortfolioDashboardArgs(["extra"])).toEqual({ error: expect.stringContaining("Usage: loopover-miner queue dashboard") });
   });
 });
 

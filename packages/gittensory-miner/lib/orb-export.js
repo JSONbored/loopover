@@ -200,7 +200,7 @@ export async function sendAmsExportBatch({ batch, secret, collectorUrl = resolve
   return { sent: batch.length };
 }
 
-const ORB_EXPORT_USAGE = "Usage: gittensory-miner orb export [--enable] [--send] [--dry-run] [--json]";
+const ORB_EXPORT_USAGE = "Usage: loopover-miner orb export [--enable] [--send] [--dry-run] [--json]";
 
 export function parseOrbExportArgs(args) {
   const options = { json: false, enable: false, send: false, dryRun: false };

@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const srcRoot = join(root, "src");
 
 const WORKER_ENTRY = join(srcRoot, "index.ts");
-const MCP_BIN = join(root, "packages/gittensory-mcp/bin/gittensory-mcp.js");
+const MCP_BIN = join(root, "packages/gittensory-mcp/bin/loopover-mcp.js");
 
 const FORBIDDEN_PATH = /(?:^|\/)visual-agent\//;
 const FORBIDDEN_IDENTIFIERS = /\b(?:pixelmatch|pngjs|visual-diff|gifenc|sharp)\b/;

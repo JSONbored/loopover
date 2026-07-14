@@ -3594,9 +3594,9 @@ describe("api routes", () => {
         method: "POST",
         headers: {
           ...apiHeaders(env),
-          "x-gittensory-mcp-package": "@loopover/mcp",
-          "x-gittensory-mcp-version": "0.4.0",
-          "x-gittensory-mcp-client": "gittensory-mcp-cli",
+          "x-loopover-mcp-package": "@loopover/mcp",
+          "x-loopover-mcp-version": "0.4.0",
+          "x-loopover-mcp-client": "loopover-mcp-cli",
         },
         body: JSON.stringify({ login: "oktofeesh1", repoFullName: "entrius/allways-ui", branchName: "usage-spine" }),
       },
@@ -5914,12 +5914,12 @@ describe("api routes", () => {
     const mcpUsageEvents = await listProductUsageEvents(env, { limit: 100 });
     expect(mcpUsageEvents).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "gittensory-<redacted-actor>-cli", clientVersion: "0.4.0" }),
+        expect.objectContaining({ surface: "mcp", eventName: "mcp_request", outcome: "success", clientName: "loopover-<redacted-actor>-cli", clientVersion: "0.4.0" }),
         expect.objectContaining({
           surface: "mcp",
           eventName: "mcp_tool_called",
           outcome: "success",
-          clientName: "gittensory-<redacted-actor>-cli",
+          clientName: "loopover-<redacted-actor>-cli",
           clientVersion: "0.4.0",
           metadata: expect.objectContaining({
             toolName: "gittensory_get_bounty_advisory",
@@ -6673,9 +6673,9 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     accept: "application/json, text/event-stream",
     "content-type": "application/json",
     "mcp-protocol-version": "2025-03-26",
-    "x-gittensory-mcp-package": "@loopover/mcp",
-    "x-gittensory-mcp-version": "0.4.0",
-    "x-gittensory-mcp-client": "gittensory-mcp-cli",
+    "x-loopover-mcp-package": "@loopover/mcp",
+    "x-loopover-mcp-version": "0.4.0",
+    "x-loopover-mcp-client": "loopover-mcp-cli",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
   };
 }

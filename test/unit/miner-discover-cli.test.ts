@@ -87,7 +87,7 @@ afterEach(() => {
 describe("parseDiscoverArgs (#4247)", () => {
   it("requires either repo targets or --search", () => {
     expect(parseDiscoverArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
   });
 
@@ -126,10 +126,10 @@ describe("parseDiscoverArgs (#4247)", () => {
 
   it("rejects a --search flag missing its query and unknown options", () => {
     expect(parseDiscoverArgs(["--search"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
     expect(parseDiscoverArgs(["--search", "--json"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
     expect(parseDiscoverArgs(["acme/widgets", "--verbose"])).toEqual({
       error: "Unknown option: --verbose",
@@ -175,16 +175,16 @@ describe("parseDiscoverArgs (#4247)", () => {
 
   it("rejects --api-base-url / --token-env missing their value (#4784)", () => {
     expect(parseDiscoverArgs(["acme/widgets", "--api-base-url"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
     expect(parseDiscoverArgs(["acme/widgets", "--api-base-url", "--json"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
     expect(parseDiscoverArgs(["acme/widgets", "--token-env"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
     expect(parseDiscoverArgs(["acme/widgets", "--token-env", "--json"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner discover"),
+      error: expect.stringContaining("Usage: loopover-miner discover"),
     });
   });
 });
@@ -1035,14 +1035,14 @@ describe("runDiscover (#4247)", () => {
   });
 });
 
-describe("gittensory-miner discover CLI entrypoint (#4247)", () => {
+describe("loopover-miner discover CLI entrypoint (#4247)", () => {
   it("lists the discover command in --help", () => {
     const output = runCapture(["--help", "--no-update-check"]);
-    expect(output).toContain("gittensory-miner discover");
+    expect(output).toContain("loopover-miner discover");
   });
 
   it("exits 2 with a usage error when neither repo targets nor --search are given", () => {
     const output = runCapture(["discover"]);
-    expect(output).toContain("Usage: gittensory-miner discover");
+    expect(output).toContain("Usage: loopover-miner discover");
   });
 });

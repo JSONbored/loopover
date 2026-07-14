@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — lint-pr-text", () => {
+describe("loopover-mcp CLI — lint-pr-text", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -101,7 +101,7 @@ describe("gittensory-mcp CLI — lint-pr-text", () => {
     await expect(runAsync(["lint-pr-text", "--linked-issue", "0"], e)).rejects.toThrow(/positive integer/);
     await expect(runAsync(["lint-pr-text", "--body-file", "/tmp/missing-gittensory-pr-body.md"], e)).rejects.toThrow(/Body file not found/);
     const help = run(["lint-pr-text", "--help"]);
-    expect(help).toMatch(/Usage: gittensory-mcp lint-pr-text/);
+    expect(help).toMatch(/Usage: loopover-mcp lint-pr-text/);
     expect(help).toMatch(/loopover_lint_pr_text/);
     expect(help).toMatch(/--body-file/);
   });

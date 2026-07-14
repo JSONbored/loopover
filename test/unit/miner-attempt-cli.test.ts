@@ -91,7 +91,7 @@ function readyPipelineOptions(overrides: Record<string, unknown> = {}) {
 }
 
 function tempLedgers() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-"));
   roots.push(root);
   const allocator = openWorktreeAllocator({
     dbPath: join(root, "worktree-allocator.sqlite3"),
@@ -146,7 +146,7 @@ describe("parseAttemptArgs (#5132)", () => {
   });
 
   it("requires exactly repo and issue number as positional args", () => {
-    expect(parseAttemptArgs([])).toEqual({ error: expect.stringContaining("Usage: gittensory-miner attempt") });
+    expect(parseAttemptArgs([])).toEqual({ error: expect.stringContaining("Usage: loopover-miner attempt") });
     expect(parseAttemptArgs(["acme/widgets"])).toEqual({ error: expect.stringContaining("Usage:") });
     expect(parseAttemptArgs(["acme/widgets", "7", "extra", "--miner-login", "alice"])).toEqual({
       error: expect.stringContaining("Usage:"),
@@ -247,7 +247,7 @@ describe("runAttempt (#5132)", () => {
     const openWorktreeAllocatorSpy = vi.fn();
     const exitCode = await runAttempt([], { openWorktreeAllocator: openWorktreeAllocatorSpy });
     expect(exitCode).toBe(2);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Usage: gittensory-miner attempt"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Usage: loopover-miner attempt"));
     expect(openWorktreeAllocatorSpy).not.toHaveBeenCalled();
   });
 
@@ -461,7 +461,7 @@ describe("runAttempt (#5132)", () => {
   it("REGRESSION (#5655 follow-up): when options.recordOwnSubmission is omitted, runAttempt falls back to the REAL governor-state.js default, not a fabricated no-op", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-governor-state-"));
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-governor-state-"));
     roots.push(root);
     vi.stubEnv("LOOPOVER_MINER_GOVERNOR_STATE_DB", join(root, "governor-state.sqlite3"));
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({
@@ -612,7 +612,7 @@ describe("runAttempt (#5132)", () => {
   it("REGRESSION (#5654): when options.getAttemptHistory is omitted, runAttempt falls back to the REAL portfolio-queue.js default, not a fabricated result", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-portfolio-"));
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-portfolio-"));
     roots.push(root);
     vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({
@@ -1279,7 +1279,7 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
   it("REGRESSION: reads a real .gittensory-miner.yml killSwitch.paused:true from the worktree's real repoPath, end to end", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const repoRoot = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-repo-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-repo-"));
     roots.push(repoRoot);
     writeFileSync(join(repoRoot, ".gittensory-miner.yml"), "killSwitch:\n  paused: true\n");
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "governed", decision: { allowed: false }, loopResult: fakeLoopResult() });
@@ -1307,7 +1307,7 @@ describe("runAttempt: real per-repo kill switch (#5392)", () => {
   it("does not gate on a repo pause when no .gittensory-miner.yml exists (real resolver, real empty dir)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const repoRoot = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-cli-repo-"));
+    const repoRoot = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-cli-repo-"));
     roots.push(repoRoot);
     const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: fakeLoopResult() });
 

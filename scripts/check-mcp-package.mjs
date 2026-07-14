@@ -14,7 +14,7 @@ if (result.status !== 0) {
 
 const [pack] = JSON.parse(result.stdout);
 const files = pack.files.map((file) => file.path).sort();
-const allowed = [/^bin\/gittensory-mcp\.js$/, /^lib\/local-branch\.js$/, /^lib\/format-table\.js$/, /^scripts\/gittensor-score-preview\.(mjs|py)$/, /^package\.json$/, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
+const allowed = [/^bin\/loopover-mcp\.js$/, /^lib\/local-branch\.js$/, /^lib\/format-table\.js$/, /^scripts\/gittensor-score-preview\.(mjs|py)$/, /^package\.json$/, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
 const forbiddenPath = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const forbiddenContent = /(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)/;
 const stalePackageText = /(private beta|zeronode\.workers\.dev|preview URL)/i;

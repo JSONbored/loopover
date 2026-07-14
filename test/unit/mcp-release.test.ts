@@ -60,7 +60,7 @@ describe("MCP release changelog detection", () => {
       existingChangelog: `# Changelog\n\n${priorSections}`,
       targetVersion: "0.4.0",
       generatedAt: "2026-06-02",
-      commits: [commit("feat(mcp): add local workspace intelligence v2 (#70)", ["packages/gittensory-mcp/bin/gittensory-mcp.js"])],
+      commits: [commit("feat(mcp): add local workspace intelligence v2 (#70)", ["packages/gittensory-mcp/bin/loopover-mcp.js"])],
     });
 
     expect(changelog).toContain("## mcp-v0.4.0 - 2026-06-02");

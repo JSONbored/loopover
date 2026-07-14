@@ -36,7 +36,7 @@ Everything else audited is already parameterized (see the last section) and need
 | 83 | `` `/repos/${owner}/${repo}${suffix}` `` | (5) query construction | Per-forge repo path template. |
 | 202 | `` `${trimmed} state:open type:issue` `` (search qualifiers) | (5) query construction | Per-forge search dialect (GitHub search syntax is assumed). |
 | 241 | `"/search/issues"` | (5) query construction | Per-forge search endpoint. |
-| 70 | `"user-agent": "gittensory-miner"` | (7) branding | Cosmetic; low priority — a configurable UA string. |
+| 70 | `"user-agent": "loopover-miner"` | (7) branding | Cosmetic; low priority — a configurable UA string. |
 
 Note: the label extractor (`labelNames`, ~168) and issue projection are already generic — they read
 whatever label strings the forge returns, with no `gittensor:*` filter. No change needed there.

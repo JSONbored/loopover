@@ -25,8 +25,8 @@ function readPackageJson(root: string): PackageJson {
   return JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as PackageJson;
 }
 
-describe("gittensory-miner package skeleton (#2287)", () => {
-  it("mirrors gittensory-mcp packaging conventions", () => {
+describe("loopover-miner package skeleton (#2287)", () => {
+  it("mirrors loopover-mcp packaging conventions", () => {
     const miner = readPackageJson(minerRoot);
     const mcp = readPackageJson(mcpRoot);
 
@@ -34,18 +34,18 @@ describe("gittensory-miner package skeleton (#2287)", () => {
     expect(miner.license).toBe("AGPL-3.0-only");
     expect(miner.type).toBe("module");
     expect(miner.bin).toEqual({
-      "gittensory-miner": "bin/gittensory-miner.js",
-      "gittensory-miner-mcp": "bin/gittensory-miner-mcp.js",
+      "loopover-miner": "bin/loopover-miner.js",
+      "loopover-miner-mcp": "bin/loopover-miner-mcp.js",
     });
     expect(miner.publishConfig).toEqual(mcp.publishConfig);
     expect(miner.dependencies["@loopover/engine"]).toBeDefined();
     expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2}$/);
     expect(miner.files).toEqual(expect.arrayContaining(["bin", "lib"]));
-    expect(miner.scripts.build.startsWith("node --check bin/gittensory-miner.js")).toBe(true);
+    expect(miner.scripts.build.startsWith("node --check bin/loopover-miner.js")).toBe(true);
   });
 
   it("starts the CLI bin with a node shebang", () => {
-    const bin = readFileSync(join(minerRoot, "bin/gittensory-miner.js"), "utf8");
+    const bin = readFileSync(join(minerRoot, "bin/loopover-miner.js"), "utf8");
     expect(bin.startsWith("#!/usr/bin/env node\n")).toBe(true);
   });
 
@@ -63,7 +63,7 @@ describe("gittensory-miner package skeleton (#2287)", () => {
   });
 
   it("serves --help and --version from the bin entry", () => {
-    expect(runCapture(["--help", "--no-update-check"])).toContain("gittensory-miner --help");
+    expect(runCapture(["--help", "--no-update-check"])).toContain("loopover-miner --help");
     expect(runCapture(["--version", "--no-update-check"])).toContain("@loopover/miner/");
     expect(
       runCapture(["--version", "--no-update-check"], {
@@ -76,7 +76,7 @@ describe("gittensory-miner package skeleton (#2287)", () => {
     const readme = readFileSync(readmePath, "utf8");
     expect(readme).toContain("foundation phase");
     expect(readme).toContain("npm link --workspace @loopover/miner");
-    expect(readme).toContain("gittensory-miner --help");
-    expect(readme).toContain("gittensory-miner --version");
+    expect(readme).toContain("loopover-miner --help");
+    expect(readme).toContain("loopover-miner --version");
   });
 });

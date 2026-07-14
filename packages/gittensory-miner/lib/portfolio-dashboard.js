@@ -82,12 +82,12 @@ export function parsePortfolioDashboardArgs(args = []) {
   for (const token of args) {
     if (token === "--json") continue;
     if (token.startsWith("-")) return { error: `Unknown option: ${token}` };
-    return { error: "Usage: gittensory-miner queue dashboard [--json]" };
+    return { error: "Usage: loopover-miner queue dashboard [--json]" };
   }
   return { json: args.includes("--json") };
 }
 
-/** CLI glue for `gittensory-miner queue dashboard [--json]` (mirrors manage-status.js's `runManageStatus`). */
+/** CLI glue for `loopover-miner queue dashboard [--json]` (mirrors manage-status.js's `runManageStatus`). */
 export function runPortfolioDashboard(args = [], options = {}) {
   const parsed = parsePortfolioDashboardArgs(args);
   if ("error" in parsed) {

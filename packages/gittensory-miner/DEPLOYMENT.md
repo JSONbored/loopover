@@ -6,7 +6,7 @@ Two form factors for running `@loopover/miner`: **laptop mode** (single machine,
 | ---------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | **Best for**     | One contributor machine, local experimentation                                                 | Many parallel miner attempts on a host or small cluster                           |
 | **Dependencies** | Node.js `>=22.13.0` only                                                                       | Docker (or compatible runtime) + Node image or custom image                       |
-| **State**        | SQLite files under `~/.config/gittensory-miner/` (override with `LOOPOVER_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `LOOPOVER_MINER_CONFIG_DIR`) volume |
+| **State**        | SQLite files under `~/.config/loopover-miner/` (override with `LOOPOVER_MINER_CONFIG_DIR`) | Same SQLite layout on a mounted `/data` (or `LOOPOVER_MINER_CONFIG_DIR`) volume |
 | **Setup**        | `npm install -g @loopover/miner` or workspace build                                | `docker build` + `docker run` with env + volume (see below)                       |
 | **Footprint**    | One Node process, local disk for ledgers/queues                                                | One container per worker; scale horizontally by adding containers                 |
 
@@ -29,10 +29,10 @@ For provider selection and the CLI-specific model/timeout overrides, see
 2. Inspect what is installed and where local state will live. `status` and `doctor` stay offline; `init --verify-token` is optional and makes one authenticated GitHub call up front:
 
    ```sh
-   gittensory-miner status
-   gittensory-miner doctor
-   gittensory-miner init --verify-token   # optional: validate GITHUB_TOKEN once before attempts
-   gittensory-miner init --interactive    # optional: guided prompt for GITHUB_TOKEN + provider, writes a starter .env, then reruns doctor
+   loopover-miner status
+   loopover-miner doctor
+   loopover-miner init --verify-token   # optional: validate GITHUB_TOKEN once before attempts
+   loopover-miner init --interactive    # optional: guided prompt for GITHUB_TOKEN + provider, writes a starter .env, then reruns doctor
    ```
 
    `init --interactive` offers "Authorize with GitHub" (device flow -- visit a URL, enter a short code, no
@@ -45,7 +45,7 @@ For provider selection and the CLI-specific model/timeout overrides, see
 3. Expected layout after first use (default paths):
 
    ```text
-   ~/.config/gittensory-miner/
+   ~/.config/loopover-miner/
      laptop-state.sqlite3          # laptop-mode setup state, created by `init`
      portfolio-queue.sqlite3       # prioritized work backlog across tracked repos (#2292)
      claim-ledger.sqlite3          # soft issue claims (#2314)
@@ -80,7 +80,7 @@ For provider selection and the CLI-specific model/timeout overrides, see
 Build the fleet image from the **monorepo root** (the Dockerfile needs the full workspace on disk before `npm ci` — see comments in [`Dockerfile`](Dockerfile)):
 
 ```sh
-docker build -f packages/gittensory-miner/Dockerfile -t gittensory-miner:latest .
+docker build -f packages/gittensory-miner/Dockerfile -t loopover-miner:latest .
 ```
 
 Run a disposable worker with persistent SQLite state on a mounted volume. Inject secrets at runtime (never bake them into the image):
@@ -90,11 +90,11 @@ docker run --rm -it \
   -e LOOPOVER_MINER_CONFIG_DIR=/data/miner \
   -e GITHUB_TOKEN \
   -v miner-data:/data/miner \
-  gittensory-miner:latest \
+  loopover-miner:latest \
   doctor
 ```
 
-The image entrypoint is `gittensory-miner`; pass subcommands after the image name (`status`, `doctor`, `claim`, …).
+The image entrypoint is `loopover-miner`; pass subcommands after the image name (`status`, `doctor`, `claim`, …).
 
 - **`/data/miner` volume** — holds all SQLite state (`claim-ledger.sqlite3`, `plan-store.sqlite3`, etc.) so containers are disposable. Defaults to `LOOPOVER_MINER_CONFIG_DIR=/data/miner` in the image.
 - **`GITHUB_TOKEN`** — supplied by the operator at run time; the image contains no credentials.
@@ -112,7 +112,7 @@ docker run --rm -it \
   -e GITHUB_TOKEN_FILE=/run/secrets/github_token \
   -v miner-data:/data/miner \
   -v /path/to/your/secret:/run/secrets/github_token:ro \
-  gittensory-miner:latest \
+  loopover-miner:latest \
   doctor
 ```
 
@@ -137,25 +137,25 @@ docker compose -f docker-compose.miner.yml up -d --build
 
 ## Bare-host (systemd, no Docker)
 
-To run the miner continuously on a plain Linux host without Docker, supervise `gittensory-miner loop` — the autonomous discover → attempt → manage daemon (#5135) — with systemd. [`systemd/gittensory-miner.service.example`](../../systemd/gittensory-miner.service.example) is a ready-to-adapt persistent unit; its header carries the full install steps:
+To run the miner continuously on a plain Linux host without Docker, supervise `loopover-miner loop` — the autonomous discover → attempt → manage daemon (#5135) — with systemd. [`systemd/gittensory-miner.service.example`](../../systemd/gittensory-miner.service.example) is a ready-to-adapt persistent unit; its header carries the full install steps:
 
 ```sh
 npm install -g @loopover/miner
-gittensory-miner init --verify-token   # optional: validate GITHUB_TOKEN before discovery/attempt runs
+loopover-miner init --verify-token   # optional: validate GITHUB_TOKEN before discovery/attempt runs
 sudo cp systemd/gittensory-miner.service.example /etc/systemd/system/gittensory-miner.service
 sudo $EDITOR /etc/systemd/system/gittensory-miner.service   # set User / WorkingDirectory / ExecStart / secrets
 sudo systemctl daemon-reload
-sudo systemctl enable --now gittensory-miner.service
+sudo systemctl enable --now loopover-miner.service
 ```
 
-Because `loop` is a **long-running daemon that schedules its own cycles**, it is a persistent `Type=simple` service (with `Restart=on-failure`) — **not** a oneshot unit driven by a `.timer`, unlike the periodic `loopover-docker-prune.*.example` hygiene job in [`systemd/`](../../systemd/). Keep `GITHUB_TOKEN` (and any coding-agent credentials) in a root-owned `0600` `EnvironmentFile`, never in the unit file. Follow the loop with `journalctl -u gittensory-miner -f`; `systemctl stop` sends SIGTERM, which the loop handles cleanly at its next kill-switch check.
+Because `loop` is a **long-running daemon that schedules its own cycles**, it is a persistent `Type=simple` service (with `Restart=on-failure`) — **not** a oneshot unit driven by a `.timer`, unlike the periodic `loopover-docker-prune.*.example` hygiene job in [`systemd/`](../../systemd/). Keep `GITHUB_TOKEN` (and any coding-agent credentials) in a root-owned `0600` `EnvironmentFile`, never in the unit file. Follow the loop with `journalctl -u loopover-miner -f`; `systemctl stop` sends SIGTERM, which the loop handles cleanly at its next kill-switch check.
 
 Want the dashboard too? [`systemd/gittensory-miner-ui.service.example`](../../systemd/gittensory-miner-ui.service.example) is a companion unit that serves `apps/gittensory-miner-ui` persistently over the same local state — see that app's [README](../../apps/gittensory-miner-ui/README.md#running-as-a-persistent-service).
 
 ## Invariants
 
 - Core miner bookkeeping (claims, plans, queues, ledgers) works offline after install.
-- `gittensory-miner status` and `gittensory-miner doctor` make **no network calls**.
+- `loopover-miner status` and `loopover-miner doctor` make **no network calls**.
 - Discovery/ranking primitives that touch GitHub only run when explicitly invoked and only perform documented GETs unless a future command says otherwise.
 - Operators own secret injection; images and packages ship without embedded tokens.
 

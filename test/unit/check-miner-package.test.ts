@@ -19,7 +19,7 @@ describe("check-miner-package script", () => {
     const result = runChecker();
     expect(result.status).toBe(0);
     expect(result.out).toMatch(/^Miner package dry-run ok:/);
-    expect(result.out).toContain("bin/gittensory-miner.js");
+    expect(result.out).toContain("bin/loopover-miner.js");
     expect(result.out).toContain("package.json");
   });
 
@@ -39,7 +39,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/gittensory-miner.js",
+        "bin/loopover-miner.js",
         "bin/gittensory-miner-backdoor.js",
         "lib/cli.js",
       ]),
@@ -53,7 +53,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/gittensory-miner.js",
+        "bin/loopover-miner.js",
         "lib/cli.js",
         "lib/calibration/index.js",
       ]),
@@ -66,7 +66,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/gittensory-miner.js",
+        "bin/loopover-miner.js",
         "lib/cli.js",
         "lib/calibration/nested/index.js",
       ]),
@@ -80,7 +80,7 @@ describe("check-miner-package script", () => {
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "lib/cli.js"]),
     });
     expect(result.status).toBe(1);
-    expect(result.out).toContain("Miner package is missing required file: bin/gittensory-miner.js");
+    expect(result.out).toContain("Miner package is missing required file: bin/loopover-miner.js");
   });
 
   it("rejects a package missing lib artifacts", () => {
@@ -88,7 +88,7 @@ describe("check-miner-package script", () => {
       // Every REQUIRED file present so the check reaches (and fails on) the lib-artifacts guard specifically.
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
-        "bin/gittensory-miner.js",
+        "bin/loopover-miner.js",
         "DEPLOYMENT.md",
         "Dockerfile",
         "schema/miner-goal-spec.schema.json",
@@ -102,7 +102,7 @@ describe("check-miner-package script", () => {
   it("rejects secret-like content", () => {
     const probe = ["PROBE", "_", "SECRET", "=", "value"].join("");
     const result = runChecker({
-      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/gittensory-miner.js", "lib/cli.js"]),
+      CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["package.json", "bin/loopover-miner.js", "lib/cli.js"]),
       CHECK_MINER_PACK_TEST_CONTENT: probe,
     });
     expect(result.status).toBe(1);
@@ -114,7 +114,7 @@ describe("check-miner-package script", () => {
     // and the schema — is accepted.
     const FULL_PACKAGE = [
       "package.json",
-      "bin/gittensory-miner.js",
+      "bin/loopover-miner.js",
       "lib/cli.js",
       "DEPLOYMENT.md",
       "Dockerfile",

@@ -1,7 +1,7 @@
 # Fleet-mode AMS host — Terraform starter module
 
 A minimal, self-contained Terraform module that provisions a dedicated **fleet-mode** host for the Autonomous
-Miner System (AMS / `gittensory-miner`) on Hetzner Cloud — for operators who want the miner running as an
+Miner System (AMS / `loopover-miner`) on Hetzner Cloud — for operators who want the miner running as an
 always-on CLI worker instead of in laptop mode.
 
 It stands up a single firewalled VM with Docker pre-installed and a persistent volume mounted at `/data/miner`,

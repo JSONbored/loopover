@@ -21,7 +21,7 @@ export type CliProcessResult = {
 
 export const bin = join(
   process.cwd(),
-  "packages/gittensory-miner/bin/gittensory-miner.js",
+  "packages/gittensory-miner/bin/loopover-miner.js",
 );
 let server: Server | null = null;
 

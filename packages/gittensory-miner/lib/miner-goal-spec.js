@@ -12,7 +12,7 @@ const MAX_MINER_GOAL_SPEC_BYTES = 32_768;
 // attempt-cli.js flow) -- no extra network round trip needed for a file that's already sitting in the
 // worktree.
 
-// Same convention as packages/gittensory-mcp/bin/gittensory-mcp.js's readCliTextFile: O_NOFOLLOW on open
+// Same convention as packages/gittensory-mcp/bin/loopover-mcp.js's readCliTextFile: O_NOFOLLOW on open
 // atomically rejects a symlinked path (no separate pre-open lstat -- that would be a check-then-open race, since
 // a symlink can be swapped in between the lstat and the open). Bounds the READ itself, not just fstat's
 // reported size, since a regular file can still grow between fstatSync and the read below.

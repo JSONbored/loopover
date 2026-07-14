@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, startFixtureServer } from "./support/mcp-cli-harness";
 
-const bin = join(process.cwd(), "packages/gittensory-mcp/bin/gittensory-mcp.js");
+const bin = join(process.cwd(), "packages/gittensory-mcp/bin/loopover-mcp.js");
 
-describe("gittensory-mcp CLI — tools", () => {
+describe("loopover-mcp CLI — tools", () => {
   let configDir: string | null = null;
   let client: Client | null = null;
   let transport: StdioClientTransport | null = null;
@@ -60,7 +60,7 @@ describe("gittensory-mcp CLI — tools", () => {
 
   it("prints name + description rows for humans and documents --json in help", () => {
     const help = run(["--help"]);
-    expect(help).toContain("gittensory-mcp tools [--json]");
+    expect(help).toContain("loopover-mcp tools [--json]");
 
     const plain = run(["tools"]);
     const payload = JSON.parse(run(["tools", "--json"])) as {

@@ -48,16 +48,16 @@ describe("MCP compatibility telemetry", () => {
   it("builds bounded telemetry from allowlisted MCP headers", () => {
     const telemetry = buildMcpClientTelemetry(
       new Headers({
-        "x-gittensory-mcp-package": "@loopover/mcp",
-        "x-gittensory-mcp-version": "0.2.1",
-        "x-gittensory-mcp-client": "gittensory-mcp-cli",
+        "x-loopover-mcp-package": "@loopover/mcp",
+        "x-loopover-mcp-version": "0.2.1",
+        "x-loopover-mcp-client": "loopover-mcp-cli",
         "mcp-protocol-version": "2025-03-26",
       }),
       { requireGittensoryHeader: true },
     );
 
     expect(telemetry).toMatchObject({
-      clientName: "gittensory-mcp-cli",
+      clientName: "loopover-mcp-cli",
       clientVersion: "0.2.1",
       metadata: {
         packageName: "@loopover/mcp",
@@ -71,8 +71,8 @@ describe("MCP compatibility telemetry", () => {
   it("derives a safe client name from scoped package telemetry when no explicit client is sent", () => {
     const telemetry = buildMcpClientTelemetry(
       new Headers({
-        "x-gittensory-mcp-package": "@example/custom-mcp",
-        "x-gittensory-mcp-version": "0.5.0",
+        "x-loopover-mcp-package": "@example/custom-mcp",
+        "x-loopover-mcp-version": "0.5.0",
       }),
       { requireGittensoryHeader: true },
     );
@@ -90,12 +90,12 @@ describe("MCP compatibility telemetry", () => {
   it("uses the canonical package and default MCP client fallbacks without storing unsafe header data", () => {
     const canonical = buildMcpClientTelemetry(
       new Headers({
-        "x-gittensory-mcp-package": "@loopover/mcp",
-        "x-gittensory-mcp-version": "0.4.0",
+        "x-loopover-mcp-package": "@loopover/mcp",
+        "x-loopover-mcp-version": "0.4.0",
       }),
       { requireGittensoryHeader: true },
     );
-    expect(canonical).toMatchObject({ clientName: "gittensory-mcp", clientVersion: "0.4.0" });
+    expect(canonical).toMatchObject({ clientName: "loopover-mcp", clientVersion: "0.4.0" });
 
     const defaulted = buildMcpClientTelemetry(new Headers(), { defaultClientName: "mcp" });
     expect(defaulted).toMatchObject({
@@ -110,9 +110,9 @@ describe("MCP compatibility telemetry", () => {
   it("drops token-like and local-path-like header values before analytics storage", () => {
     const telemetry = buildMcpClientTelemetry(
       new Headers({
-        "x-gittensory-mcp-package": "/Users/example/private",
-        "x-gittensory-mcp-version": "github_pat_secretsecret",
-        "x-gittensory-mcp-client": "node /tmp/client.js",
+        "x-loopover-mcp-package": "/Users/example/private",
+        "x-loopover-mcp-version": "github_pat_secretsecret",
+        "x-loopover-mcp-client": "node /tmp/client.js",
         "mcp-protocol-version": "Bearer secret-token-value",
       }),
       { requireGittensoryHeader: true },

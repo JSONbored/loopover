@@ -26,10 +26,10 @@ export type McpClientTelemetry = {
 };
 
 export function buildMcpClientTelemetry(headers: Headers, options: ClientTelemetryOptions = {}): McpClientTelemetry | null {
-  const packageName = safePackageHeader(headers.get("x-gittensory-mcp-package"));
-  const packageVersion = safeVersionHeader(headers.get("x-gittensory-mcp-version"));
-  const explicitClientName = safeClientHeader(headers.get("x-gittensory-mcp-client"));
-  const explicitClientVersion = safeVersionHeader(headers.get("x-gittensory-mcp-client-version"));
+  const packageName = safePackageHeader(headers.get("x-loopover-mcp-package"));
+  const packageVersion = safeVersionHeader(headers.get("x-loopover-mcp-version"));
+  const explicitClientName = safeClientHeader(headers.get("x-loopover-mcp-client"));
+  const explicitClientVersion = safeVersionHeader(headers.get("x-loopover-mcp-client-version"));
   const protocolVersion = safeProtocolHeader(headers.get("mcp-protocol-version"));
   const hasGittensoryHeader = Boolean(packageName ?? packageVersion ?? explicitClientName ?? explicitClientVersion);
   if (options.requireGittensoryHeader && !hasGittensoryHeader) return null;
@@ -53,7 +53,7 @@ export function buildMcpClientTelemetry(headers: Headers, options: ClientTelemet
 
 function clientNameFromPackage(packageName: string | undefined): string | undefined {
   if (!packageName) return undefined;
-  if (packageName === GITTENSORY_MCP_PACKAGE_NAME) return "gittensory-mcp";
+  if (packageName === GITTENSORY_MCP_PACKAGE_NAME) return "loopover-mcp";
   const tail = packageName.split("/").at(-1);
   return safeClientHeader(tail);
 }

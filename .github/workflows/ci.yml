@@ -103,7 +103,7 @@ jobs:
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
-            # and mcp-discovery.test.ts spawns packages/gittensory-mcp/bin/gittensory-mcp.js as a real
+            # and mcp-discovery.test.ts spawns packages/gittensory-mcp/bin/loopover-mcp.js as a real
             # subprocess via StdioClientTransport -- none of the 6 ever load root src/ in-process. This mirrors
             # the `mcp` filter's own established trust boundary above (a self-contained package build). They are
             # NOT self-contained w.r.t. packages/gittensory-engine/**, though: gittensory-mcp now has a real

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — issue-slop", () => {
+describe("loopover-mcp CLI — issue-slop", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -94,7 +94,7 @@ describe("gittensory-mcp CLI — issue-slop", () => {
     const e = await env();
     await expect(runAsync(["issue-slop", "--body-file", "/tmp/missing-gittensory-issue-body.md"], e)).rejects.toThrow(/Body file not found/);
     const help = run(["issue-slop", "--help"]);
-    expect(help).toMatch(/Usage: gittensory-mcp issue-slop/);
+    expect(help).toMatch(/Usage: loopover-mcp issue-slop/);
     expect(help).toMatch(/loopover_check_issue_slop/);
     expect(help).toMatch(/--body-file/);
   });

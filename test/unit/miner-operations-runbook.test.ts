@@ -10,7 +10,7 @@ const deploymentDocPath = join(repoRoot, "packages/gittensory-miner/DEPLOYMENT.m
 describe("miner operations runbook (#4875)", () => {
   it("covers the three operational scenarios from the issue plus the busy_timeout guarantee", () => {
     const doc = readFileSync(runbookPath, "utf8");
-    expect(doc).toContain("# gittensory-miner — operational runbook");
+    expect(doc).toContain("# loopover-miner — operational runbook");
     expect(doc).toMatch(/ledger corrupted|corrupted_\*_row|corrupted_/i);
     expect(doc).toMatch(/two miners collided|two miners on one state/i);
     expect(doc).toMatch(/migrate.*upgrade|package upgrade/i);

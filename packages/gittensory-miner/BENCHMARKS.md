@@ -1,4 +1,4 @@
-# gittensory-miner benchmarks
+# loopover-miner benchmarks
 
 A small, committed micro-benchmark for the two purely local, synchronous hot paths that have no other signal
 for a future regression: the discovery fan-out ranking pass and the local-store (SQLite) read/write path.
@@ -37,7 +37,7 @@ Captured on a Linux x86_64 dev container, Node.js 22.21.0. Absolute numbers vary
 rough sense of scale, not a target:
 
 ```
-gittensory-miner benchmark
+loopover-miner benchmark
 
 discovery-fanout-ranking: median ~42ms over 5 runs, ~11,800 ops/sec (n=500)
 local-store-read-write: median ~38ms over 5 runs, ~26,400 ops/sec (n=1000)

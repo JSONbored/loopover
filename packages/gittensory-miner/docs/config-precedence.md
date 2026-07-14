@@ -8,8 +8,8 @@ AMS does **not** have a single `config.js` resolver. Configuration is layered by
 | --- | --- | --- | --- |
 | **Per-target-repo file** | `.gittensory-miner.yml` (or `.github/gittensory-miner.yml`, JSON variants) | One cloned target repo | `lib/miner-goal-spec.js`, engine `parseMinerGoalSpecContent` |
 | **Operator env** | `LOOPOVER_MINER_*` / `MINER_*` | This miner process / fleet container | `lib/local-store.js`, `lib/governor-kill-switch.js`, `lib/attempt-cli.js`, … |
-| **CLI flags** | `gittensory-miner <cmd> …` argv | One invocation | `lib/attempt-cli.js`, `lib/discover-cli.js`, `lib/loop-cli.js`, … |
-| **Operator file (not goal spec)** | `~/.config/gittensory-miner/.gittensory-ams.yml` | Operator execution policy | `lib/ams-policy.js` |
+| **CLI flags** | `loopover-miner <cmd> …` argv | One invocation | `lib/attempt-cli.js`, `lib/discover-cli.js`, `lib/loop-cli.js`, … |
+| **Operator file (not goal spec)** | `~/.config/loopover-miner/.gittensory-ams.yml` | Operator execution policy | `lib/ams-policy.js` |
 
 `.gittensory-miner.yml` is **maintainer-authored in the target repo**. Operator env and CLI flags are **never overridden by a target repo's goal spec** for operator-owned policy (see `lib/ams-policy.js` header).
 

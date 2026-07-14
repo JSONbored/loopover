@@ -1,6 +1,6 @@
 # Hosted discovery plane — operator guide (opt-in)
 
-Operator-facing guide for the **optional** Phase 6 hosted discovery-index plane ([#4250](https://github.com/JSONbored/gittensory/issues/4250)). This is the client/miner half of that roadmap item: how a `gittensory-miner` instance opts in, what it may send, and what never leaves the operator's machine.
+Operator-facing guide for the **optional** Phase 6 hosted discovery-index plane ([#4250](https://github.com/JSONbored/gittensory/issues/4250)). This is the client/miner half of that roadmap item: how a `loopover-miner` instance opts in, what it may send, and what never leaves the operator's machine.
 
 > **Placeholder scope:** the concrete env var names, HTTP paths, and telemetry event types below are **provisional** until the sibling contract/telemetry/client issues land. When those ship, update this file to match the real symbols — do not treat the TBD names as stable API yet.
 >
@@ -75,7 +75,7 @@ Mirrors [`DEPLOYMENT.md`](../DEPLOYMENT.md) tone — concrete guarantees for ope
 - **Telemetry is a second opt-in** — even with the plane enabled, anonymized telemetry ([#4301](https://github.com/JSONbored/gittensory/issues/4301)) remains separately gated.
 - **Anonymized identifiers only** — when telemetry ships, repo/issue correlation uses HMAC-hashed identifiers keyed by a **per-instance dedicated secret** the collector never holds (same posture as `getOrCreateAnonSecret` / `hmacField` in `src/selfhost/orb-collector.ts` — key separation from GitHub App / webhook secrets).
 - **Low-cardinality reason buckets** — any free-text-adjacent telemetry fields use bucketed categories (Orb's `bucketReasonCode` pattern), not raw maintainer or model prose.
-- **Core miner still works offline** — claims, plans, queues, and local ledgers do not require the hosted plane; `gittensory-miner doctor` / `status` remain no-network commands.
+- **Core miner still works offline** — claims, plans, queues, and local ledgers do not require the hosted plane; `loopover-miner doctor` / `status` remain no-network commands.
 
 ### Never included (client → hosted plane)
 

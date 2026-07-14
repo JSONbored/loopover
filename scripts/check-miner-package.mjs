@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { FORBIDDEN_CONTENT } from "./forbidden-content.mjs";
 
 const ALLOWED = [
-  /^bin\/gittensory-miner\.js$/,
-  /^bin\/gittensory-miner-mcp\.(js|d\.ts)$/,
+  /^bin\/loopover-miner\.js$/,
+  /^bin\/loopover-miner-mcp\.(js|d\.ts)$/,
   /^lib\/[a-z0-9-]+\.(js|d\.ts)$/,
   /^package\.json$/,
   /^README\.md$/,
@@ -19,7 +19,7 @@ const ALLOWED = [
   /^schema\/[a-z0-9.-]+\.json$/,
 ];
 const REQUIRED = [
-  "bin/gittensory-miner.js",
+  "bin/loopover-miner.js",
   "package.json",
   // The operational files #4874 shipped — asserted present so they can never silently drop out of the package again.
   "DEPLOYMENT.md",

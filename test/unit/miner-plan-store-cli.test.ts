@@ -24,7 +24,7 @@ const PLAN: PlanDag = {
 };
 
 function tempStore() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-plan-store-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-plan-store-cli-"));
   roots.push(root);
   const store = openPlanStore(join(root, "plan-store.sqlite3"));
   stores.push(store);
@@ -37,7 +37,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner plan store CLI (#2318)", () => {
+describe("loopover-miner plan store CLI (#2318)", () => {
   it("parsePlanListArgs and parsePlanShowArgs validate argv", () => {
     expect(parsePlanListArgs(["--status", "running", "--json"])).toEqual({
       json: true,
@@ -51,7 +51,7 @@ describe("gittensory-miner plan store CLI (#2318)", () => {
       error: expect.stringMatching(/Invalid status/),
     });
     expect(parsePlanShowArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner plan show"),
+      error: expect.stringContaining("Usage: loopover-miner plan show"),
     });
   });
 

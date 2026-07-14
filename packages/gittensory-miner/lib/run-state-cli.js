@@ -1,9 +1,9 @@
 import { RUN_STATES, getRunState, setRunState } from "./run-state.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
-const STATE_GET_USAGE = "Usage: gittensory-miner state get <owner/repo> [--api-base-url <url>] [--json]";
+const STATE_GET_USAGE = "Usage: loopover-miner state get <owner/repo> [--api-base-url <url>] [--json]";
 const STATE_SET_USAGE =
-  "Usage: gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner state set <owner/repo> <idle|discovering|planning|preparing> [--api-base-url <url>] [--dry-run] [--json]";
 
 const allowedRunStates = new Set(RUN_STATES);
 

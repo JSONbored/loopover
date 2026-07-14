@@ -14,10 +14,10 @@ function extractFirstJsonBlock(markdown: string): string {
 }
 
 describe("miner MCP client config example (#5163)", () => {
-  it("documents running gittensory-mcp and gittensory-miner-mcp together", () => {
+  it("documents running loopover-mcp and loopover-miner-mcp together", () => {
     const readme = readFileSync(README_PATH, "utf8");
     expect(readme).toContain("### Client config");
-    expect(readme).toContain("gittensory-mcp init-client --print claude");
+    expect(readme).toContain("loopover-mcp init-client --print claude");
     // Explains what each server is for, not just how to wire it up.
     expect(readme).toContain("contributor-workflow tools");
     expect(readme).toContain("state-visibility tools");
@@ -28,11 +28,11 @@ describe("miner MCP client config example (#5163)", () => {
     const config = JSON.parse(extractFirstJsonBlock(readme));
 
     expect(config.mcpServers.gittensory).toEqual({
-      command: "gittensory-mcp",
+      command: "loopover-mcp",
       args: ["--stdio"],
     });
-    expect(config.mcpServers["gittensory-miner"]).toEqual({
-      command: "gittensory-miner-mcp",
+    expect(config.mcpServers["loopover-miner"]).toEqual({
+      command: "loopover-miner-mcp",
       args: [],
     });
   });

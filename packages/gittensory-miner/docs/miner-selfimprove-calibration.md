@@ -40,7 +40,7 @@ reduces the per-task scores to one composite `[0, 1]`, folds it into the `Histor
 engine expects, calls `computePhase7CalibrationLoop` with that **plus the existing `pr_outcome` signal**, and
 persists the combined snapshot as a `calibration_snapshot` event on the local append-only event ledger (the same
 typed-event-over-`event-ledger.js` pattern as `pr-outcome.js`). The persisted metric is queryable with
-`gittensory-miner ledger list --type calibration_snapshot` and via `readCalibrationSnapshots` /
+`loopover-miner ledger list --type calibration_snapshot` and via `readCalibrationSnapshots` /
 `latestCalibrationSnapshot`.
 
 Consistent with the boundary below, the runner is **read/measure-only**: it produces and persists the tracked

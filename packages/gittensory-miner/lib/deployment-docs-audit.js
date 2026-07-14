@@ -1,14 +1,14 @@
 // Docs-accuracy audit for the miner's DEPLOYMENT.md (#5180). Mirrors the self-host docs audit
 // (apps/gittensory-ui/src/lib/selfhost-docs-audit.ts): parse the deployment doc, then assert every
-// LOOPOVER_MINER_* / MINER_* env var, repo-relative file path, and `gittensory-miner <subcommand>`
+// LOOPOVER_MINER_* / MINER_* env var, repo-relative file path, and `loopover-miner <subcommand>`
 // it documents still exists under packages/gittensory-miner/**. A rename or move that leaves the doc
 // stale then fails CI with a message naming the exact stale claim, instead of misleading operators.
 
 /** The miner's own env-var namespace: LOOPOVER_MINER_* and the shorter MINER_* aliases it reads. */
 const ENV_VAR_PATTERN = /\b(?:LOOPOVER_MINER|MINER)_[A-Z0-9_]+\b/g;
 
-/** `gittensory-miner <subcommand>` CLI invocations, excluding the `@loopover/miner` package spelling. */
-const SUBCOMMAND_PATTERN = /(?<![\w./@-])gittensory-miner\s+([a-z][a-z0-9-]*)/g;
+/** `loopover-miner <subcommand>` CLI invocations, excluding the `@loopover/miner` package spelling. */
+const SUBCOMMAND_PATTERN = /(?<![\w./@-])loopover-miner\s+([a-z][a-z0-9-]*)/g;
 
 /** Markdown inline-link targets: the `target` in `](target)`. */
 const MARKDOWN_LINK_PATTERN = /\]\(([^)]+)\)/g;
@@ -33,7 +33,7 @@ export function extractEnvVarClaims(markdown) {
   return [...scanEnvVarTokens(markdown)].sort();
 }
 
-/** Sorted, de-duplicated `gittensory-miner <subcommand>` subcommands DEPLOYMENT.md documents. */
+/** Sorted, de-duplicated `loopover-miner <subcommand>` subcommands DEPLOYMENT.md documents. */
 export function extractSubcommandClaims(markdown) {
   const commands = new Set();
   for (const match of markdown.matchAll(SUBCOMMAND_PATTERN)) {
@@ -96,7 +96,7 @@ export function auditDeploymentDocs(claims, reality) {
   for (const command of claims.subcommands) {
     if (!reality.isRegisteredCommand(command)) {
       failures.push(
-        `CLI subcommand "gittensory-miner ${command}" is documented in DEPLOYMENT.md but is not registered in the CLI command table`,
+        `CLI subcommand "loopover-miner ${command}" is documented in DEPLOYMENT.md but is not registered in the CLI command table`,
       );
     }
   }

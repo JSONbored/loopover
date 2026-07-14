@@ -1,4 +1,4 @@
-// `gittensory-miner purge` (#5564): an explicit, operator-invoked right-to-be-forgotten path across the local
+// `loopover-miner purge` (#5564): an explicit, operator-invoked right-to-be-forgotten path across the local
 // ledgers. Deletes every row for one repo from the four stores that have a real `repoColumn` (claim-ledger,
 // event-ledger, governor-ledger, prediction-ledger), via each store's own `purgeByRepo` method (which reuses
 // `store-maintenance.js`'s shared, identifier-guarded `purgeStoreByRepo`). `attempt-log.js` is deliberately
@@ -25,7 +25,7 @@ import {
   describeError,
 } from "./store-maintenance.js";
 
-const PURGE_USAGE = "Usage: gittensory-miner purge --repo <owner/repo> [--dry-run] [--json]";
+const PURGE_USAGE = "Usage: loopover-miner purge --repo <owner/repo> [--dry-run] [--json]";
 
 export const ATTEMPT_LOG_NOT_PURGEABLE_NOTE =
   "attempt-log has no repoFullName column and cannot be purged by repo (#5564); its rows are unaffected";

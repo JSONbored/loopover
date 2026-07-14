@@ -13,7 +13,7 @@ const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
 
 function tempLedger(): PredictionLedger {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-metrics-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-metrics-cli-"));
   roots.push(root);
   const ledger = initPredictionLedger(join(root, "prediction-ledger.sqlite3"));
   ledgers.push(ledger);
@@ -21,7 +21,7 @@ function tempLedger(): PredictionLedger {
 }
 
 function tempDbPath() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-metrics-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-metrics-cli-"));
   roots.push(root);
   return join(root, "prediction-ledger.sqlite3");
 }
@@ -36,7 +36,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner metrics CLI (#4838)", () => {
+describe("loopover-miner metrics CLI (#4838)", () => {
   it("collectPredictionMetricRows projects ledger rows onto the renderer's conclusion-only shape", () => {
     const ledger = tempLedger();
     appendPrediction(ledger, 1, "merge");
@@ -90,12 +90,12 @@ describe("gittensory-miner metrics CLI (#4838)", () => {
     expect(error).not.toHaveBeenCalled();
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
       ok: false,
-      error: "Usage: gittensory-miner metrics",
+      error: "Usage: loopover-miner metrics",
     });
     error.mockClear();
     log.mockClear();
     expect(runMetrics(["--nope"], { initPredictionLedger: () => tempLedger() })).toBe(2);
-    expect(error).toHaveBeenCalledWith("Usage: gittensory-miner metrics");
+    expect(error).toHaveBeenCalledWith("Usage: loopover-miner metrics");
     expect(log).not.toHaveBeenCalled();
   });
 

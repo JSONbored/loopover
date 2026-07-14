@@ -2,11 +2,11 @@ import { CLAIM_STATUSES, openClaimLedger } from "./claim-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const CLAIM_CLAIM_USAGE =
-  "Usage: gittensory-miner claim claim <owner/repo> <issue#> [--note <text>] [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner claim claim <owner/repo> <issue#> [--note <text>] [--api-base-url <url>] [--dry-run] [--json]";
 const CLAIM_RELEASE_USAGE =
-  "Usage: gittensory-miner claim release <owner/repo> <issue#> [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner claim release <owner/repo> <issue#> [--api-base-url <url>] [--dry-run] [--json]";
 const CLAIM_LIST_USAGE =
-  "Usage: gittensory-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]";
+  "Usage: loopover-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]";
 
 function parseRepoArg(value, usage) {
   if (!value) return { error: usage };

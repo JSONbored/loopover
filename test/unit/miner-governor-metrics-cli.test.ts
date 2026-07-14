@@ -15,7 +15,7 @@ const roots: string[] = [];
 const states: Array<{ close(): void }> = [];
 
 function tempGovernorState() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-metrics-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-metrics-cli-"));
   roots.push(root);
   const state = openGovernorState(join(root, "governor-state.sqlite3"));
   states.push(state);
@@ -185,7 +185,7 @@ describe("runGovernorMetrics (#5187)", () => {
   it("rejects unexpected positional args and surfaces a store failure", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await runGovernorMetrics(["extra"])).toBe(2);
-    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner governor metrics");
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner governor metrics");
 
     error.mockClear();
     expect(
@@ -205,7 +205,7 @@ describe("runGovernorMetrics (#5187)", () => {
   });
 
   it("opens and closes the default on-disk governor state when no override is supplied", async () => {
-    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-metrics-cli-default-"));
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-metrics-cli-default-"));
     roots.push(root);
     const dbPath = join(root, "governor-state.sqlite3");
     const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;

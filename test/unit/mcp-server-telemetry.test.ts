@@ -23,9 +23,9 @@ describe("MCP server telemetry", () => {
       headers: {
         authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
         "content-type": "application/json",
-        "x-gittensory-mcp-package": "@loopover/mcp",
-        "x-gittensory-mcp-version": "0.5.0",
-        "x-gittensory-mcp-client": "gittensory-mcp-cli",
+        "x-loopover-mcp-package": "@loopover/mcp",
+        "x-loopover-mcp-version": "0.5.0",
+        "x-loopover-mcp-client": "loopover-mcp-cli",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -53,7 +53,7 @@ describe("MCP server telemetry", () => {
         surface: "mcp",
         eventName: "mcp_tool_called",
         outcome: "error",
-        clientName: "gittensory-<redacted-actor>-cli",
+        clientName: "loopover-<redacted-actor>-cli",
         clientVersion: "0.5.0",
         metadata: expect.objectContaining({
           toolName: "gittensory_local_status",

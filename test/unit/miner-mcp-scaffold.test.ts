@@ -5,7 +5,7 @@ import {
   createMinerMcpServer,
   MINER_PING_STATUS,
   type MinerMcpServerOptions,
-} from "../../packages/gittensory-miner/bin/gittensory-miner-mcp.js";
+} from "../../packages/gittensory-miner/bin/loopover-miner-mcp.js";
 import { collectPortfolioDashboard } from "../../packages/gittensory-miner/lib/portfolio-dashboard.js";
 
 // Tests for the gittensory-miner MCP server: the #5153 ping scaffold and the #5155 read-only
@@ -345,7 +345,7 @@ const FAKE_STATUS = {
   package: { name: "@loopover/miner", version: "0.1.0" },
   engine: { name: "@loopover/engine", version: "1.0.0" },
   node: "v22.13.0",
-  stateDir: "/home/miner/.config/gittensory-miner",
+  stateDir: "/home/miner/.config/loopover-miner",
   configFile: null,
   driver: { provider: "claude-code", modelEnvVar: "MINER_CODING_AGENT_CLAUDE_MODEL", cliPresent: true },
 };

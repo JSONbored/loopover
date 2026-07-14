@@ -303,7 +303,7 @@ describe("orb export — wires the anonymized telemetry batch-builder (#4833)", 
   });
 
   it("REGRESSION (#5681 follow-up): when openOrbExportStore/initEventLedger/sendAmsExportBatch are all omitted, runOrbExportCli falls back to the REAL defaults", async () => {
-    // Isolated tmp DB paths (never touches a real ~/.config/gittensory-miner), matching the pattern already
+    // Isolated tmp DB paths (never touches a real ~/.config/loopover-miner), matching the pattern already
     // established for the analogous getAttemptHistory/recordOwnSubmission DI-fallback tests.
     const dir = tempDir();
     vi.stubEnv("LOOPOVER_MINER_ORB_EXPORT_DB", join(dir, "orb-export.sqlite3"));

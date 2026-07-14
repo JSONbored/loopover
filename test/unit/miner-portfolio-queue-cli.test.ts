@@ -29,7 +29,7 @@ const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
 
 function tempQueueStore() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-portfolio-queue-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-portfolio-queue-cli-"));
   roots.push(root);
   const store = initPortfolioQueueStore(join(root, "portfolio-queue.sqlite3"));
   stores.push(store);
@@ -43,7 +43,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner portfolio queue CLI (#2292)", () => {
+describe("loopover-miner portfolio queue CLI (#2292)", () => {
   it("parseQueueListArgs, parseQueueNextArgs, and parseQueueDoneArgs validate argv", () => {
     expect(parseQueueListArgs([])).toEqual({ json: false, repoFullName: null });
     expect(parseQueueListArgs(["--repo", "acme/widgets", "--json"])).toEqual({
@@ -58,7 +58,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       json: true,
     });
     expect(parseQueueDoneArgs(["acme/widgets"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner queue done"),
+      error: expect.stringContaining("Usage: loopover-miner queue done"),
     });
   });
 
@@ -255,13 +255,13 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
       perRepoWipCap: 2,
     });
     expect(parseQueueNextArgs(["--global-wip", "not-a-number"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner queue next"),
+      error: expect.stringContaining("Usage: loopover-miner queue next"),
     });
     expect(parseQueueNextArgs(["--global-wip"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner queue next"),
+      error: expect.stringContaining("Usage: loopover-miner queue next"),
     });
     expect(parseQueueNextArgs(["extra-positional"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner queue next"),
+      error: expect.stringContaining("Usage: loopover-miner queue next"),
     });
     expect(parseQueueNextArgs(["--bogus"])).toEqual({ error: "Unknown option: --bogus" });
   });
@@ -443,7 +443,7 @@ describe("gittensory-miner portfolio queue CLI (#2292)", () => {
     it("rejects unexpected positional args and surfaces a store failure", () => {
       const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
       expect(runQueueMetrics(["extra"])).toBe(2);
-      expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner queue metrics");
+      expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner queue metrics");
 
       error.mockClear();
       expect(

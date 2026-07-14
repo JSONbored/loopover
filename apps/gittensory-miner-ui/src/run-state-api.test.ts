@@ -7,7 +7,7 @@ const rows = [{ repoFullName: "acme/widgets", state: "idle", updatedAt: "2026-07
 function deps(overrides: Partial<RunStateApiDeps> = {}): RunStateApiDeps {
   return {
     loadRunStateModule: async () => ({
-      resolveRunStateDbPath: () => "/home/miner/.config/gittensory-miner/run-state.sqlite3",
+      resolveRunStateDbPath: () => "/home/miner/.config/loopover-miner/run-state.sqlite3",
       listRunStates: () => rows,
     }),
     fileExists: () => true,

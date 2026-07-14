@@ -216,13 +216,13 @@ describe("gittensory-mcp CLI — profiles", () => {
     });
 
     const sessionRequest = requests.find((request) => request.url === "/v1/auth/session");
-    expect(sessionRequest?.headers["x-gittensory-mcp-package"]).toBe("@loopover/mcp");
-    expect(sessionRequest?.headers["x-gittensory-mcp-version"]).toBe(mcpPackageJson.version);
-    expect(sessionRequest?.headers["x-gittensory-mcp-client"]).toBe("gittensory-mcp-cli");
+    expect(sessionRequest?.headers["x-loopover-mcp-package"]).toBe("@loopover/mcp");
+    expect(sessionRequest?.headers["x-loopover-mcp-version"]).toBe(mcpPackageJson.version);
+    expect(sessionRequest?.headers["x-loopover-mcp-client"]).toBe("loopover-mcp-cli");
     const telemetryHeaders = JSON.stringify({
-      package: sessionRequest?.headers["x-gittensory-mcp-package"],
-      version: sessionRequest?.headers["x-gittensory-mcp-version"],
-      client: sessionRequest?.headers["x-gittensory-mcp-client"],
+      package: sessionRequest?.headers["x-loopover-mcp-package"],
+      version: sessionRequest?.headers["x-loopover-mcp-version"],
+      client: sessionRequest?.headers["x-loopover-mcp-client"],
     });
     expect(telemetryHeaders).not.toContain("session-token");
     expect(telemetryHeaders).not.toContain(tempDir);

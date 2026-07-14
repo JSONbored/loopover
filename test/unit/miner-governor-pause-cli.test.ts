@@ -15,7 +15,7 @@ const roots: string[] = [];
 const states: Array<{ close(): void }> = [];
 
 function tempGovernorState() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-pause-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-cli-"));
   roots.push(root);
   const state = openGovernorState(join(root, "governor-state.sqlite3"));
   states.push(state);
@@ -44,10 +44,10 @@ describe("parseGovernorPauseArgs (#4851)", () => {
 
   it("rejects a --reason flag missing its value", () => {
     expect(parseGovernorPauseArgs(["--reason"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner governor pause"),
+      error: expect.stringContaining("Usage: loopover-miner governor pause"),
     });
     expect(parseGovernorPauseArgs(["--reason", "--json"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner governor pause"),
+      error: expect.stringContaining("Usage: loopover-miner governor pause"),
     });
   });
 
@@ -67,12 +67,12 @@ describe("parseGovernorResumeArgs (#4847)", () => {
 
   it("rejects an unrecognized token", () => {
     expect(parseGovernorResumeArgs(["extra"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner governor resume"),
+      error: expect.stringContaining("Usage: loopover-miner governor resume"),
     });
   });
 });
 
-describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
+describe("loopover-miner governor pause/resume/status CLI (#4851)", () => {
   it("pauses with a reason, then resumes, using an injected governor state", async () => {
     const governorState = tempGovernorState();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -118,11 +118,11 @@ describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
   it("resume and status reject stray positional arguments", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await runGovernorResume(["extra"])).toBe(2);
-    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner governor resume");
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner governor resume");
 
     error.mockClear();
     expect(await runGovernorStatus(["extra"])).toBe(2);
-    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: gittensory-miner governor status");
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner governor status");
   });
 
   it("#4847: --dry-run reports what pause/resume would do and returns 0 without opening the governor state", async () => {
@@ -248,7 +248,7 @@ describe("gittensory-miner governor pause/resume/status CLI (#4851)", () => {
   });
 
   it("opens and closes the default on-disk governor state when no override is supplied", async () => {
-    const root = mkdtempSync(join(tmpdir(), "gittensory-miner-governor-pause-cli-default-"));
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-cli-default-"));
     roots.push(root);
     const dbPath = join(root, "governor-state.sqlite3");
     const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_STATE_DB;

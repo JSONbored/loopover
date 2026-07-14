@@ -26,7 +26,7 @@ type CommonAttemptResultFields = {
 };
 
 /** The result runAttempt reports at every real return point, threaded to `options.onResult` (in addition to
- *  the plain exit-code return runAttempt itself still returns, unchanged, so bin/gittensory-miner.js's own
+ *  the plain exit-code return runAttempt itself still returns, unchanged, so bin/loopover-miner.js's own
  *  `process.exit(exitCode)` usage never breaks) -- the loop orchestrator's real caller for this data. */
 export type AttemptCliResult =
   | (CommonAttemptResultFields & { outcome: "dry_run" })

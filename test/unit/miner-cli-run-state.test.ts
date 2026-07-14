@@ -21,10 +21,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("gittensory-miner state CLI", () => {
+describe("loopover-miner state CLI", () => {
   it("parseStateGetArgs and parseStateSetArgs validate argv", () => {
     expect(parseStateGetArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner state get"),
+      error: expect.stringContaining("Usage: loopover-miner state get"),
     });
     expect(parseStateGetArgs(["acme/widgets", "--json"])).toEqual({
       repoFullName: "acme/widgets",
@@ -48,7 +48,7 @@ describe("gittensory-miner state CLI", () => {
       apiBaseUrl: "https://ghe.example.com/api/v3",
     });
     expect(parseStateGetArgs(["acme/widgets", "--api-base-url"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner state get"),
+      error: expect.stringContaining("Usage: loopover-miner state get"),
     });
     expect(parseStateSetArgs(["acme/widgets", "planning", "--api-base-url", "https://ghe.example.com/api/v3"])).toEqual({
       repoFullName: "acme/widgets",
@@ -58,7 +58,7 @@ describe("gittensory-miner state CLI", () => {
       apiBaseUrl: "https://ghe.example.com/api/v3",
     });
     expect(parseStateSetArgs(["acme/widgets", "planning", "--api-base-url"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner state set"),
+      error: expect.stringContaining("Usage: loopover-miner state set"),
     });
   });
 

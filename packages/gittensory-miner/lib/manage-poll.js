@@ -8,7 +8,7 @@ import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const MANAGE_POLL_USAGE =
-  "Usage: gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--dry-run] [--json]";
+  "Usage: loopover-miner manage poll <owner/repo> <pr#> [--branch <name>] [--dry-run] [--json]";
 
 function parseRepoArg(value, usage) {
   if (!value) return { error: usage };

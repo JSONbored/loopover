@@ -21,7 +21,7 @@ const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
 
 function tempLedger() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-event-ledger-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-event-ledger-cli-"));
   roots.push(root);
   const ledger = initEventLedger(join(root, "event-ledger.sqlite3"));
   ledgers.push(ledger);
@@ -29,7 +29,7 @@ function tempLedger() {
 }
 
 function tempEventDbPath() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-event-ledger-metrics-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-event-ledger-metrics-"));
   roots.push(root);
   return join(root, "event-ledger.sqlite3");
 }
@@ -45,7 +45,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("gittensory-miner event ledger CLI (#2290)", () => {
+describe("loopover-miner event ledger CLI (#2290)", () => {
   it("parseLedgerListArgs validates argv", () => {
     expect(parseLedgerListArgs([])).toEqual({
       json: false,
@@ -154,7 +154,7 @@ describe("gittensory-miner event ledger CLI (#2290)", () => {
   });
 });
 
-describe("gittensory-miner ledger metrics CLI (#4841)", () => {
+describe("loopover-miner ledger metrics CLI (#4841)", () => {
   it("renderEventLedgerMetrics emits one sorted loopover_miner_events_total series per type", () => {
     const text = renderEventLedgerMetrics([
       metricEntry(1, "manage_pr_update"),
@@ -227,12 +227,12 @@ describe("gittensory-miner ledger metrics CLI (#4841)", () => {
     expect(error).not.toHaveBeenCalled();
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
       ok: false,
-      error: "Usage: gittensory-miner ledger metrics",
+      error: "Usage: loopover-miner ledger metrics",
     });
     error.mockClear();
     log.mockClear();
     expect(runLedgerMetrics(["--nope"], { initEventLedger: () => tempLedger() })).toBe(2);
-    expect(error).toHaveBeenCalledWith("Usage: gittensory-miner ledger metrics");
+    expect(error).toHaveBeenCalledWith("Usage: loopover-miner ledger metrics");
     expect(log).not.toHaveBeenCalled();
   });
 

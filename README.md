@@ -74,17 +74,17 @@ See [Tuning your reviews](https://gittensory.aethereal.dev/docs/tuning) for the 
 
 ```sh
 npm install -g @loopover/mcp@latest
-gittensory-mcp login
-gittensory-mcp doctor
-gittensory-mcp --stdio
+loopover-mcp login
+loopover-mcp doctor
+loopover-mcp --stdio
 ```
 
 Print editor/client snippets:
 
 ```sh
-gittensory-mcp init-client --print codex
-gittensory-mcp init-client --print claude
-gittensory-mcp init-client --print cursor
+loopover-mcp init-client --print codex
+loopover-mcp init-client --print claude
+loopover-mcp init-client --print cursor
 ```
 
 For full editor setup and stdio configuration, use [MCP client setup](https://gittensory.aethereal.dev/docs/mcp-clients).
@@ -92,9 +92,9 @@ For full editor setup and stdio configuration, use [MCP client setup](https://gi
 Run base-agent commands:
 
 ```sh
-gittensory-mcp agent plan --login jsonbored --json
-gittensory-mcp agent packet --login jsonbored --json
-gittensory-mcp agent status <run-id> --json
+loopover-mcp agent plan --login jsonbored --json
+loopover-mcp agent packet --login jsonbored --json
+loopover-mcp agent status <run-id> --json
 ```
 
 ## Local Development

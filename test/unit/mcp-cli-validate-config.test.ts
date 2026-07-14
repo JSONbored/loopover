@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — validate-config", () => {
+describe("loopover-mcp CLI — validate-config", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -57,7 +57,7 @@ describe("gittensory-mcp CLI — validate-config", () => {
   it("rejects missing --file and prints help", async () => {
     const e = await env();
     const help = run(["validate-config", "--help"]);
-    expect(help).toMatch(/Usage: gittensory-mcp validate-config/);
+    expect(help).toMatch(/Usage: loopover-mcp validate-config/);
     expect(help).toMatch(/loopover_validate_config/);
 
     const manifestPath = join(tempDir!, "missing.yml");

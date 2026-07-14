@@ -8,9 +8,9 @@
 
 import { openGovernorState } from "./governor-state.js";
 
-const GOVERNOR_PAUSE_USAGE = "Usage: gittensory-miner governor pause [--reason <text>] [--dry-run] [--json]";
-const GOVERNOR_RESUME_USAGE = "Usage: gittensory-miner governor resume [--dry-run] [--json]";
-const GOVERNOR_STATUS_USAGE = "Usage: gittensory-miner governor status [--json]";
+const GOVERNOR_PAUSE_USAGE = "Usage: loopover-miner governor pause [--reason <text>] [--dry-run] [--json]";
+const GOVERNOR_RESUME_USAGE = "Usage: loopover-miner governor resume [--dry-run] [--json]";
+const GOVERNOR_STATUS_USAGE = "Usage: loopover-miner governor status [--json]";
 
 export function parseGovernorPauseArgs(args) {
   const options = { json: false, dryRun: false, reason: null };

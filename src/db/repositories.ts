@@ -2378,7 +2378,7 @@ export async function summarizeMcpCompatibilityAdoption(
 ): Promise<McpCompatibilityAdoptionSummary> {
   const db = getDb(env.DB);
   const limit = Math.max(1, Math.min(MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT, Math.round(options.limit ?? MCP_COMPATIBILITY_ADOPTION_SCAN_LIMIT)));
-  const mcpClientWhere = or(eq(productUsageEvents.surface, "mcp"), eq(productUsageEvents.clientName, "gittensory-mcp"), eq(productUsageEvents.clientName, "gittensory-mcp-cli"));
+  const mcpClientWhere = or(eq(productUsageEvents.surface, "mcp"), eq(productUsageEvents.clientName, "loopover-mcp"), eq(productUsageEvents.clientName, "loopover-mcp-cli"));
   const baseWhere = sinceIso ? and(mcpClientWhere, gte(productUsageEvents.occurredAt, sinceIso)) : mcpClientWhere;
   const [totalRow] = await db.select({ count: sql<number>`count(*)` }).from(productUsageEvents).where(baseWhere);
   const [activeActorRow] = await db

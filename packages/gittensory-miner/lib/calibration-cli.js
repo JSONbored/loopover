@@ -1,4 +1,4 @@
-// `gittensory-miner calibration [--json]` (#4849): a read-only report joining the miner's own predicted gate
+// `loopover-miner calibration [--json]` (#4849): a read-only report joining the miner's own predicted gate
 // verdicts (prediction-ledger) with the realized PR outcomes it later observed (event-ledger `pr_outcome`
 // events), via the pure buildCalibrationReport join. Opens both local stores, maps their rows to the
 // calibration record shapes, renders, and closes. Never modifies the live scoring/calibration logic.
@@ -8,7 +8,7 @@ import { MINER_PR_OUTCOME_EVENT } from "./pr-outcome.js";
 import { initPredictionLedger, resolvePredictionLedgerDbPath } from "./prediction-ledger.js";
 import { reportCliFailure, describeCliError } from "./cli-error.js";
 
-const CALIBRATION_USAGE = "Usage: gittensory-miner calibration [--json]";
+const CALIBRATION_USAGE = "Usage: loopover-miner calibration [--json]";
 
 /** Map prediction-ledger rows to predicted-verdict records: the target id becomes a string key and the recorded
  *  prediction verdict is the `conclusion`. */
@@ -57,7 +57,7 @@ function renderReportText(report) {
 }
 
 /**
- * Run `gittensory-miner calibration [--json]`. Reads the prediction ledger + PR-outcome events, joins them into a
+ * Run `loopover-miner calibration [--json]`. Reads the prediction ledger + PR-outcome events, joins them into a
  * calibration report, and prints it (a JSON dump under `--json`, else a per-project text summary). Returns the
  * process exit code: 0 on success, 1 on an unknown option.
  * @param {string[]} [args]

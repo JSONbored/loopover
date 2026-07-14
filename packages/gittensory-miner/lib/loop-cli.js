@@ -43,7 +43,7 @@ import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "@loopover/engine";
 
 const LOOP_USAGE =
-  "Usage: gittensory-miner loop <owner/repo> [<owner/repo>...] | --search <query> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--max-cycles <n>] [--cycle-delay-ms <ms>] [--json]";
+  "Usage: loopover-miner loop <owner/repo> [<owner/repo>...] | --search <query> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--max-cycles <n>] [--cycle-delay-ms <ms>] [--json]";
 const DEFAULT_CYCLE_DELAY_MS = 60_000;
 const ISSUE_IDENTIFIER_PATTERN = /^issue:(\d+)$/;
 
@@ -287,7 +287,7 @@ export async function runLoop(args, options = {}) {
     // Checked BEFORE any work at all -- including the very first discovery call -- so an already-active kill
     // switch OR an already-active pause (#4851) halts the loop without ever touching GitHub or the queue. The
     // pause flag is real, persisted, operator/governor-writable state on governorState (toggled via
-    // `gittensory-miner governor pause`/`resume`) -- unlike the kill switch, a paused run resumes simply by being
+    // `loopover-miner governor pause`/`resume`) -- unlike the kill switch, a paused run resumes simply by being
     // re-invoked: every piece of per-cycle state this loop reads (portfolioQueue, runState, governorState's own
     // cap usage) is already durable, so clearing the flag and restarting continues exactly where it left off.
     const initialKillSwitch = checkKillSwitchFn({ env });

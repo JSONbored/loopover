@@ -43,7 +43,7 @@ function tempGovernorLedger() {
 }
 
 // Isolated per test: without this, evaluateGovernorChokepointGatePersisted's own default-store fallback
-// would open the REAL ~/.config/gittensory-miner/governor-state.sqlite3 on whatever machine runs these tests.
+// would open the REAL ~/.config/loopover-miner/governor-state.sqlite3 on whatever machine runs these tests.
 function tempGovernorState() {
   const root = mkdtempSync(join(tmpdir(), "gittensory-miner-attempt-runner-governor-state-"));
   roots.push(root);

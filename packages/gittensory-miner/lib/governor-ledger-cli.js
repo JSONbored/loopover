@@ -12,14 +12,14 @@ const GOVERNOR_LEDGER_EVENT_TYPES = Object.freeze([
 ]);
 
 const GOVERNOR_LIST_USAGE =
-  "Usage: gittensory-miner governor list [--repo <owner/repo>] [--type allowed|denied|throttled|kill_switch] [--json]";
+  "Usage: loopover-miner governor list [--repo <owner/repo>] [--type allowed|denied|throttled|kill_switch] [--json]";
 
 const GOVERNOR_SUBCOMMAND_USAGE = [
   GOVERNOR_LIST_USAGE,
-  "       gittensory-miner governor pause [--reason <text>] [--json]",
-  "       gittensory-miner governor resume [--json]",
-  "       gittensory-miner governor status [--json]",
-  "       gittensory-miner governor metrics",
+  "       loopover-miner governor pause [--reason <text>] [--json]",
+  "       loopover-miner governor resume [--json]",
+  "       loopover-miner governor status [--json]",
+  "       loopover-miner governor metrics",
 ].join("\n");
 
 function parseRepoArg(value, usage) {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 
-describe("gittensory-mcp CLI — maintain (#784)", () => {
+describe("loopover-mcp CLI — maintain (#784)", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -87,7 +87,7 @@ describe("gittensory-mcp CLI — maintain (#784)", () => {
     await expect(runAsync(["maintain", "status"], e)).rejects.toThrow(/Pass --repo/);
     await expect(runAsync(["maintain", "approve", "--repo", "owner/repo"], e)).rejects.toThrow(/Pass the pending-action id/);
     await expect(runAsync(["maintain", "bogus", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown maintain subcommand/);
-    await expect(runAsync(["maintain", "set-level", "merge", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: gittensory-mcp maintain set-level/);
+    await expect(runAsync(["maintain", "set-level", "merge", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: loopover-mcp maintain set-level/);
     await expect(runAsync(["maintain", "set-level", "bogus", "auto", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown action/);
     await expect(runAsync(["maintain", "set-level", "merge", "bogus", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown level/);
   }, 45_000);
@@ -95,7 +95,7 @@ describe("gittensory-mcp CLI — maintain (#784)", () => {
   it("prints help when invoked with no subcommand", async () => {
     const e = await env();
     const out = await runAsync(["maintain"], e);
-    expect(out).toMatch(/Usage: gittensory-mcp maintain/);
+    expect(out).toMatch(/Usage: loopover-mcp maintain/);
     expect(out).toMatch(/approve <id>/);
     expect(out).toMatch(/queue/);
     expect(out).toMatch(/pause/);

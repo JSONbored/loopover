@@ -25,7 +25,7 @@ const candidates = [
 function deps(overrides: Partial<RankedCandidatesApiDeps> = {}): RankedCandidatesApiDeps {
   return {
     loadRankedCandidatesModule: async () => ({
-      resolveRankedCandidatesDbPath: () => "/home/miner/.config/gittensory-miner/ranked-candidates.sqlite3",
+      resolveRankedCandidatesDbPath: () => "/home/miner/.config/loopover-miner/ranked-candidates.sqlite3",
       listRankedCandidates: () => candidates,
     }),
     fileExists: () => true,

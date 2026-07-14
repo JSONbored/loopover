@@ -1,4 +1,4 @@
-# gittensory-miner — operational runbook
+# loopover-miner — operational runbook
 
 Operator-facing runbook for **local SQLite state**: what the concurrency guarantees actually mean, how to recover from corruption, what to do when two miner processes collide on the same files, and how schema upgrades migrate your on-disk ledgers after a package update.
 
@@ -6,13 +6,13 @@ Operator-facing runbook for **local SQLite state**: what the concurrency guarant
 
 ## Local state at a glance
 
-Every miner keeps **independent SQLite files** under one state directory (default `~/.config/gittensory-miner/`, override with `LOOPOVER_MINER_CONFIG_DIR`). Each store has its own file, table, and optional per-store env override — see the table in [`../README.md`](../README.md#local-storage) and [`env-reference.md`](env-reference.md).
+Every miner keeps **independent SQLite files** under one state directory (default `~/.config/loopover-miner/`, override with `LOOPOVER_MINER_CONFIG_DIR`). Each store has its own file, table, and optional per-store env override — see the table in [`../README.md`](../README.md#local-storage) and [`env-reference.md`](env-reference.md).
 
 Common files you will touch in incidents:
 
 | File | Purpose |
 |------|---------|
-| `laptop-state.sqlite3` | Bootstrap metadata (`gittensory-miner init`) |
+| `laptop-state.sqlite3` | Bootstrap metadata (`loopover-miner init`) |
 | `claim-ledger.sqlite3` | Soft issue claims on this machine |
 | `event-ledger.sqlite3` | Append-only manage-loop audit trail |
 | `portfolio-queue.sqlite3` | Per-repo portfolio queue |
@@ -41,15 +41,15 @@ PRAGMA busy_timeout = 5000;
 | Two **short-lived** writers on the **same file** (e.g. CLI command finishing while `loop` is idle, or Grafana reading while the miner appends) | SQLite waits up to **5 seconds** for the lock, then proceeds or surfaces `database is locked` |
 | Append-only ledgers (`event-ledger`, `attempt-log`, …) | Writes use **`BEGIN IMMEDIATE`** (or equivalent single-statement atomicity) so sequence allocation cannot interleave |
 | Claim / queue stores | **`INSERT … ON CONFLICT`** and **`UPDATE … RETURNING`** patterns avoid read-then-write races **within one file** |
-| Two **long-running `gittensory-miner loop` daemons** on the **same `LOOPOVER_MINER_CONFIG_DIR`** | **Unsupported.** `busy_timeout` reduces transient lock errors; it does **not** make multi-process loop workers safe on one volume |
+| Two **long-running `loopover-miner loop` daemons** on the **same `LOOPOVER_MINER_CONFIG_DIR`** | **Unsupported.** `busy_timeout` reduces transient lock errors; it does **not** make multi-process loop workers safe on one volume |
 
 **Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in [`../DEPLOYMENT.md`](../DEPLOYMENT.md)).
 
 ### Quick health check
 
 ```sh
-gittensory-miner doctor --json
-gittensory-miner status --json
+loopover-miner doctor --json
+loopover-miner status --json
 ```
 
 `doctor` includes `laptop-state-sqlite` (file exists + readable) and `state-dir-writable`. It performs **no network I/O**.
@@ -68,7 +68,7 @@ gittensory-miner status --json
 1. List processes using the state dir:
 
    ```sh
-   STATE_DIR="$(gittensory-miner status --json | jq -r .stateDir)"
+   STATE_DIR="$(loopover-miner status --json | jq -r .stateDir)"
    ls -la "$STATE_DIR"
    # Linux: lsof +D "$STATE_DIR" 2>/dev/null || fuser -v "$STATE_DIR"/*.sqlite3 2>/dev/null
    ```
@@ -78,9 +78,9 @@ gittensory-miner status --json
 3. Inspect soft claims and queue without mutating:
 
    ```sh
-   gittensory-miner claim list --json
-   gittensory-miner queue list --json
-   gittensory-miner ledger list --json | tail -20
+   loopover-miner claim list --json
+   loopover-miner queue list --json
+   loopover-miner ledger list --json | tail -20
    ```
 
 **Remediation**
@@ -96,7 +96,7 @@ gittensory-miner status --json
 
    Or set distinct `LOOPOVER_MINER_CONFIG_DIR` per worker.
 
-3. Re-run `gittensory-miner doctor`. If locks persist with a single process, see **Ledger corrupted** below.
+3. Re-run `loopover-miner doctor`. If locks persist with a single process, see **Ledger corrupted** below.
 
 4. **Claims are local bookkeeping only.** Two miners on different machines claiming the same GitHub issue is a **fleet coordination** problem (duplicate-cluster adjudication in the engine), not something SQLite resolves — split state dirs and use operational claim hygiene.
 
@@ -129,7 +129,7 @@ schedule (cron, systemd timer, etc.) so a good restore point always exists befor
   ```sh
   sh scripts/restore-miner.sh --yes                          # newest backup
   sh scripts/restore-miner.sh --yes /path/to/backups/<ts>     # a specific one
-  gittensory-miner doctor --json                              # verify afterward
+  loopover-miner doctor --json                              # verify afterward
   ```
 
   Also removes any leftover `-wal`/`-shm` sidecar files from the live directory after restoring each store —
@@ -141,7 +141,7 @@ schedule (cron, systemd timer, etc.) so a good restore point always exists befor
 **Symptoms**
 
 - Command throws `corrupted_*_row` (`corrupted_attempt_log_row`, `corrupted_governor_row`, `corrupted_plan_row`, `corrupted_prediction_row`, …)
-- `gittensory-miner doctor` reports `laptop-state-sqlite` not readable
+- `loopover-miner doctor` reports `laptop-state-sqlite` not readable
 - `sqlite3` reports `database disk image is malformed`
 - Partial writes after disk full, forced kill during a migration transaction, or copying a live `.sqlite3` while the miner is writing
 
@@ -173,7 +173,7 @@ schedule (cron, systemd timer, etc.) so a good restore point always exists befor
    |------|------|--------|
    | **A — single store reset** | One ledger is corrupt; others healthy; you accept losing that store's history | Remove only the bad `*.sqlite3` (and any `-wal`/`-shm` siblings). Next command recreates an empty store. |
    | **B — restore from backup** | You have a recent backup from `backup-miner.sh` (see **Backup and restore** above) | Stop miner → `sh scripts/restore-miner.sh --yes` → restart. |
-   | **C — full re-init** | Multiple files suspect or state is disposable | Archive dir → `gittensory-miner init` → reconfigure env/goals. Rebuild claims/plans from GitHub metadata as needed. |
+   | **C — full re-init** | Multiple files suspect or state is disposable | Archive dir → `loopover-miner init` → reconfigure env/goals. Rebuild claims/plans from GitHub metadata as needed. |
 
 4. **Never copy a live SQLite file** from a running miner as backup — stop first, or use SQLite's `.backup` command:
 
@@ -181,7 +181,7 @@ schedule (cron, systemd timer, etc.) so a good restore point always exists befor
    sqlite3 "$DB" ".backup '${DB}.safe-copy'"
    ```
 
-5. After recovery, run `gittensory-miner doctor --json` and spot-check read-only listings (`claim list`, `ledger list`).
+5. After recovery, run `loopover-miner doctor --json` and spot-check read-only listings (`claim list`, `ledger list`).
 
 Append-only stores **do not repair individual bad rows** in place — corrupted payload JSON is rejected on read by design so bad data cannot silently propagate.
 
@@ -202,12 +202,12 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 1. **Before upgrading** the `@loopover/miner` package (npm, image tag, or git pull):
 
    ```sh
-   gittensory-miner doctor --json > /tmp/miner-pre-upgrade-doctor.json
-   STATE_DIR="$(gittensory-miner status --json | jq -r .stateDir)"
-   tar -czf "/tmp/gittensory-miner-state-$(date +%Y%m%d).tar.gz" -C "$(dirname "$STATE_DIR")" "$(basename "$STATE_DIR")"
+   loopover-miner doctor --json > /tmp/miner-pre-upgrade-doctor.json
+   STATE_DIR="$(loopover-miner status --json | jq -r .stateDir)"
+   tar -czf "/tmp/loopover-miner-state-$(date +%Y%m%d).tar.gz" -C "$(dirname "$STATE_DIR")" "$(basename "$STATE_DIR")"
    ```
 
-2. **Stop** supervised loops (`systemctl stop gittensory-miner.service`, `docker compose stop miner`, etc.).
+2. **Stop** supervised loops (`systemctl stop loopover-miner.service`, `docker compose stop miner`, etc.).
 
 3. **Install** the new version (`npm install -g @loopover/miner@latest`, rebuild image, …). The CLI prints a one-line npm upgrade nudge when behind registry latest — informational only.
 
@@ -215,7 +215,7 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
    deliberate pass instead of relying on whichever command happens to open a given store first:
 
    ```sh
-   gittensory-miner migrate --json
+   loopover-miner migrate --json
    ```
 
    (Pending migrations still apply automatically on first open regardless — e.g. `portfolio-queue` adds
@@ -226,9 +226,9 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 5. **Start** one miner process, then **verify**:
 
    ```sh
-   gittensory-miner doctor --json
-   gittensory-miner status --json
-   gittensory-miner migrate --json   # re-run: every store should now report "up-to-date"
+   loopover-miner doctor --json
+   loopover-miner status --json
+   loopover-miner migrate --json   # re-run: every store should now report "up-to-date"
    ```
 
 6. If a migration throws on startup, **do not delete files immediately** — restore the pre-upgrade tarball, pin the previous package version, and file an issue with the failing `user_version` and store filename.

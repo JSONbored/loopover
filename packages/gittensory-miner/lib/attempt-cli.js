@@ -1,4 +1,4 @@
-// CLI dispatch for the real attempt pipeline (#5132, Wave 3.5 -- the final assembly). Wires bin/gittensory-miner.js's
+// CLI dispatch for the real attempt pipeline (#5132, Wave 3.5 -- the final assembly). Wires bin/loopover-miner.js's
 // `attempt` subcommand to real infrastructure end to end: worktree allocation + real git preparation
 // (worktree-allocator.js + attempt-worktree.js), the four ledgers (claim/event/attempt-log/governor), the
 // real coding-agent driver (#5131) and slop assessor (#5133), a live SelfReviewContext fetch (#5145), a real
@@ -39,7 +39,7 @@ import { loadReputationHistory, recordOwnSubmission } from "./governor-state.js"
 import { runMinerAttempt } from "./attempt-runner.js";
 
 const ATTEMPT_USAGE =
-  "Usage: gittensory-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--json]";
+  "Usage: loopover-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--json]";
 
 function parseRepoTarget(value) {
   const trimmed = typeof value === "string" ? value.trim() : "";

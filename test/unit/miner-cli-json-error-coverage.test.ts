@@ -101,7 +101,7 @@ describe("miner CLI --json error coverage (#4836)", () => {
         runQueueClaimBatch(["--global-wip", "nope", "--json"], {
           initPortfolioQueueManager: () => ({ claimBatch: () => [], close: () => {} }) as never,
         }),
-      /Usage: gittensory-miner queue claim-batch/,
+      /Usage: loopover-miner queue claim-batch/,
     );
     expectJsonError(
       () =>
@@ -137,7 +137,7 @@ describe("miner CLI --json error coverage (#4836)", () => {
         }),
       "plan_list_db",
     );
-    expectJsonError(() => runPlanShow(["--json"]), /Usage: gittensory-miner plan show/);
+    expectJsonError(() => runPlanShow(["--json"]), /Usage: loopover-miner plan show/);
     expectJsonError(
       () =>
         runPlanShow(["plan-a", "--json"], {
@@ -150,7 +150,7 @@ describe("miner CLI --json error coverage (#4836)", () => {
   });
 
   it("state get/set/cli failures", () => {
-    expectJsonError(() => runStateGet(["--json"]), /Usage: gittensory-miner state get/);
+    expectJsonError(() => runStateGet(["--json"]), /Usage: loopover-miner state get/);
     setRunState.mockImplementation(() => {
       throw new Error("set_failed");
     });
@@ -162,8 +162,8 @@ describe("miner CLI --json error coverage (#4836)", () => {
     const broken = () => {
       throw new Error("ledger_broken");
     };
-    expectJsonError(() => runClaimClaim(["--json"]), /Usage: gittensory-miner claim claim/);
-    expectJsonError(() => runClaimRelease(["acme/widgets", "--json"]), /Usage: gittensory-miner claim release/);
+    expectJsonError(() => runClaimClaim(["--json"]), /Usage: loopover-miner claim claim/);
+    expectJsonError(() => runClaimRelease(["acme/widgets", "--json"]), /Usage: loopover-miner claim release/);
     expectJsonError(() => runClaimList(["--status", "bogus", "--json"]), /status must be one of/);
     expectJsonError(
       () => runClaimClaim(["acme/widgets", "1", "--json"], { openClaimLedger: broken }),
@@ -214,10 +214,10 @@ describe("miner CLI --json error coverage (#4836)", () => {
   });
 
   it("loop parse failure", async () => {
-    await expectJsonErrorAsync(() => runLoop(["--json"]), /Usage: gittensory-miner loop/);
+    await expectJsonErrorAsync(() => runLoop(["--json"]), /Usage: loopover-miner loop/);
   });
 
   it("manage poll parse failure", async () => {
-    await expectJsonErrorAsync(() => runManagePoll(["--json"]), /Usage: gittensory-miner manage poll/);
+    await expectJsonErrorAsync(() => runManagePoll(["--json"]), /Usage: loopover-miner manage poll/);
   });
 });

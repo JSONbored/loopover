@@ -623,7 +623,7 @@ describe("lint-guarded edit wrapper (#4276)", () => {
     expect(classifyLintGuardPackage("apps/gittensory-ui/src/App.tsx")).toBe("ui");
     expect(classifyLintGuardPackage("packages/gittensory-engine/src/miner/lint-guard.ts")).toBe("engine");
     expect(classifyLintGuardPackage("packages/gittensory-miner/lib/cli.js")).toBe("miner-js");
-    expect(classifyLintGuardPackage("packages/gittensory-mcp/bin/gittensory-mcp.js")).toBe("mcp-js");
+    expect(classifyLintGuardPackage("packages/gittensory-mcp/bin/loopover-mcp.js")).toBe("mcp-js");
     expect(classifyLintGuardPackage("src/review/ops-wire.ts")).toBe("root");
     // A hand-written .d.ts under miner/mcp is type-checked by the root tsc, not node --check.
     expect(classifyLintGuardPackage("packages/gittensory-miner/lib/cli.d.ts")).toBe("root");

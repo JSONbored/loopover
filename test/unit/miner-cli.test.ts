@@ -45,7 +45,7 @@ afterEach(async () => {
   await closeFixtureServer();
 });
 
-describe("gittensory-miner CLI helpers", () => {
+describe("loopover-miner CLI helpers", () => {
   it("prints the package version with the node runtime", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     printVersion({
@@ -62,11 +62,11 @@ describe("gittensory-miner CLI helpers", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     printHelp({ packageName: "@loopover/miner" });
     const text = log.mock.calls[0]?.[0];
-    expect(text).toContain("gittensory-miner --help");
-    expect(text).toContain("gittensory-miner version");
-    expect(text).toContain("gittensory-miner metrics");
-    expect(text).toContain("gittensory-miner migrate [--json]");
-    expect(text).toContain("gittensory-miner ledger metrics");
+    expect(text).toContain("loopover-miner --help");
+    expect(text).toContain("loopover-miner version");
+    expect(text).toContain("loopover-miner metrics");
+    expect(text).toContain("loopover-miner migrate [--json]");
+    expect(text).toContain("loopover-miner ledger metrics");
     expect(text).toContain("--no-update-check");
   });
 
@@ -104,7 +104,7 @@ describe("gittensory-miner CLI helpers", () => {
   });
 });
 
-describe("gittensory-miner startup update check (#2331)", () => {
+describe("loopover-miner startup update check (#2331)", () => {
   it("mirrors the mcp npm registry and upgrade command conventions", () => {
     expect(resolveNpmRegistryUrl({})).toBe("https://registry.npmjs.org");
     expect(
@@ -170,7 +170,7 @@ describe("gittensory-miner startup update check (#2331)", () => {
     expect(shouldSkipUpdateCheck(["version"], {})).toBe(false);
   });
 
-  it("orders semver values the same way as gittensory-mcp", () => {
+  it("orders semver values the same way as loopover-mcp", () => {
     expect(compareSemver("0.1.0", "0.2.0")).toBe(-1);
     expect(compareSemver("0.2.0", "0.1.0")).toBe(1);
     expect(compareSemver("0.1.0", "0.1.0")).toBe(0);
@@ -332,7 +332,7 @@ describe("gittensory-miner startup update check (#2331)", () => {
       GITTENSORY_NPM_REGISTRY_URL: registryUrl,
     });
     expect(Date.now() - startedAt).toBeLessThan(2000);
-    expect(output).toContain("gittensory-miner --help");
+    expect(output).toContain("loopover-miner --help");
     expect(output).not.toContain(
       "npm install -g @loopover/miner@latest",
     );

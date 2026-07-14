@@ -24,7 +24,7 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 // pair it with here. Using the fleet-wide DEFAULT_AMS_POLICY_SPEC.capLimits is the same approximation
 // loop-cli.js itself already makes for any repo without its own override.
 
-const GOVERNOR_METRICS_USAGE = "Usage: gittensory-miner governor metrics";
+const GOVERNOR_METRICS_USAGE = "Usage: loopover-miner governor metrics";
 
 export const GOVERNOR_RATE_LIMIT_REMAINING_RATIO = "loopover_miner_governor_rate_limit_remaining_ratio";
 export const GOVERNOR_CAP_USAGE_RATIO = "loopover_miner_governor_cap_usage_ratio";

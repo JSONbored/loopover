@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   createMinerMcpServer,
   type MinerMcpServerOptions,
-} from "../../packages/gittensory-miner/bin/gittensory-miner-mcp.js";
+} from "../../packages/gittensory-miner/bin/loopover-miner-mcp.js";
 import { initGovernorLedger } from "../../packages/gittensory-miner/lib/governor-ledger.js";
 // The SAME secret-shape matcher the miner pack validator uses — imported from its single source of truth (rather
 // than hand-duplicated here) so the two stay byte-for-byte in sync instead of relying on manual vigilance.
@@ -114,7 +114,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
         package: { name: "@loopover/miner", version: "0.1.0" },
         engine: { name: "@loopover/engine", version: "1.0.0" },
         node: "v22.13.0",
-        stateDir: "/home/miner/.config/gittensory-miner",
+        stateDir: "/home/miner/.config/loopover-miner",
         configFile: null,
         driver: { provider: "claude-code", modelEnvVar: "MINER_CODING_AGENT_CLAUDE_MODEL", cliPresent: true },
       }),

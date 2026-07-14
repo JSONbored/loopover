@@ -17,7 +17,7 @@ const roots: string[] = [];
 const closeables: Array<{ close(): void }> = [];
 
 function tempDir() {
-  const root = mkdtempSync(join(tmpdir(), "gittensory-miner-purge-cli-"));
+  const root = mkdtempSync(join(tmpdir(), "loopover-miner-purge-cli-"));
   roots.push(root);
   return root;
 }
@@ -35,7 +35,7 @@ afterEach(() => {
 
 describe("parsePurgeArgs (#5564)", () => {
   it("requires --repo", () => {
-    expect(parsePurgeArgs([])).toEqual({ error: expect.stringContaining("Usage: gittensory-miner purge") });
+    expect(parsePurgeArgs([])).toEqual({ error: expect.stringContaining("Usage: loopover-miner purge") });
   });
 
   it("parses --repo, --dry-run, and --json together", () => {
@@ -59,8 +59,8 @@ describe("parsePurgeArgs (#5564)", () => {
   });
 
   it("rejects a --repo flag missing its value", () => {
-    expect(parsePurgeArgs(["--repo"])).toEqual({ error: expect.stringContaining("Usage: gittensory-miner purge") });
-    expect(parsePurgeArgs(["--repo", "--json"])).toEqual({ error: expect.stringContaining("Usage: gittensory-miner purge") });
+    expect(parsePurgeArgs(["--repo"])).toEqual({ error: expect.stringContaining("Usage: loopover-miner purge") });
+    expect(parsePurgeArgs(["--repo", "--json"])).toEqual({ error: expect.stringContaining("Usage: loopover-miner purge") });
   });
 
   it("rejects an unknown option", () => {
@@ -229,7 +229,7 @@ describe("runPurge --dry-run (#5564)", () => {
   it("prints an argument error without opening or counting anything", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(runPurge([])).toBe(2);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("Usage: gittensory-miner purge"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Usage: loopover-miner purge"));
   });
 
   it("opens the real default on-disk stores in dry-run when no resolveDbPaths override is supplied", () => {

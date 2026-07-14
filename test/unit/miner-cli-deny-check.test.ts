@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseDenyCheckArgs, runDenyCheck } from "../../packages/gittensory-miner/lib/deny-check.js";
 
-describe("gittensory-miner hooks check command", () => {
+describe("loopover-miner hooks check command", () => {
   it("parseDenyCheckArgs requires tool and JSON input", () => {
     expect(parseDenyCheckArgs([])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner hooks check"),
+      error: expect.stringContaining("Usage: loopover-miner hooks check"),
     });
     expect(parseDenyCheckArgs(["--tool", "Write"])).toEqual({
-      error: expect.stringContaining("Usage: gittensory-miner hooks check"),
+      error: expect.stringContaining("Usage: loopover-miner hooks check"),
     });
     expect(parseDenyCheckArgs(["--tool", "Write", "--input", "[]"])).toEqual({
       error: "Tool input must be a JSON object.",

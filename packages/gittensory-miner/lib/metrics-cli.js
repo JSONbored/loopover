@@ -8,7 +8,7 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 // reads the local prediction ledger and feeds it in, never touching the renderer itself. Strictly local + offline:
 // no network, no writes.
 
-const METRICS_USAGE = "Usage: gittensory-miner metrics";
+const METRICS_USAGE = "Usage: loopover-miner metrics";
 
 /**
  * Project prediction-ledger rows onto the engine renderer's metric-row shape -- the predicted `conclusion` only.

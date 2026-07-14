@@ -14,7 +14,7 @@ import { initRankedCandidatesStore } from "./ranked-candidates.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const DISCOVER_USAGE =
-  "Usage: gittensory-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--dry-run] [--json] [--api-base-url <url>] [--token-env <VAR>]";
+  "Usage: loopover-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--dry-run] [--json] [--api-base-url <url>] [--token-env <VAR>]";
 
 const MAX_DISCOVER_TITLE_DISPLAY_LENGTH = 240;
 const OSC_SEQUENCE_PATTERN = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;

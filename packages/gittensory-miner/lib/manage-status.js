@@ -205,7 +205,7 @@ export function parseManageStatusArgs(args = []) {
   for (const token of args) {
     if (token === "--json") continue;
     if (token.startsWith("-")) return { error: `Unknown option: ${token}` };
-    return { error: "Usage: gittensory-miner manage status [--json]" };
+    return { error: "Usage: loopover-miner manage status [--json]" };
   }
   return { json: args.includes("--json") };
 }

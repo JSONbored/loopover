@@ -36,7 +36,7 @@ It never clones source and never writes to GitHub.
 Discovery is per-tenant, not github.com-specific (#4784): `lib/forge-config.js` (`resolveForgeConfig`) holds the
 forge base URL, API version, request headers, repo path, search endpoint/qualifiers, user-agent, and credential env
 var behind one resolver with gittensory's github.com values as the only defaults, so the fan-out targets another
-forge unchanged. `gittensory-miner discover` surfaces `--api-base-url <url>` and `--token-env <VAR>` and forwards a
+forge unchanged. `loopover-miner discover` surfaces `--api-base-url <url>` and `--token-env <VAR>` and forwards a
 tenant goal spec to the ranker, printing `usedDefaultGoalSpec` so a fall-back to the built-in rubric is explicit
 rather than silent. See [`docs/repo-agnostic-capability-audit.md`](docs/repo-agnostic-capability-audit.md) for the
 #4780 audit this executes.
@@ -53,7 +53,7 @@ The package also includes an append-only governor decision ledger: `initGovernor
 persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
 no enforcement wiring yet. (#2328)
 
-The package also includes a real, persisted governor pause/resume control surface: `gittensory-miner governor
+The package also includes a real, persisted governor pause/resume control surface: `loopover-miner governor
 pause [--reason <text>]` / `governor resume` / `governor status` toggle a `paused`/`reason`/`pausedAt` flag on
 governor-state.js's existing scalar-state row, and `loop-cli.js`'s iteration loop checks it at the same two
 boundaries as the kill switch (before the first cycle and at the top of every subsequent one) — pausing mid-run
@@ -86,11 +86,11 @@ The package also includes the Phase 7 calibration runner: `runHistoricalReplayCa
 (`lib/calibration-run.js`) scores a completed historical-replay run with the deterministic objective-anchor scorer,
 folds the composite into the engine's `computePhase7CalibrationLoop` combine alongside the existing `pr_outcome`
 signal, and persists the combined snapshot as a `calibration_snapshot` event — queryable with
-`gittensory-miner ledger list --type calibration_snapshot` or `readCalibrationSnapshots` /
+`loopover-miner ledger list --type calibration_snapshot` or `readCalibrationSnapshots` /
 `latestCalibrationSnapshot`. It measures and records only; acting on the metric (autonomy bumps, threshold tuning)
 stays maintainer-only. See [`docs/miner-selfimprove-calibration.md`](docs/miner-selfimprove-calibration.md). (#4248)
 
-`gittensory-miner manage status` now also folds each tracked repo's current discover/plan/prepare run state
+`loopover-miner manage status` now also folds each tracked repo's current discover/plan/prepare run state
 (`run-state.js`) alongside its managed PR rows into a "run portfolio" view — `collectRunPortfolio` /
 `renderRunPortfolioTable` — so a repo actively being discovered or planned shows up even with zero PRs yet.
 Additive only: the existing `rows` JSON key and PR table are unchanged; `runPortfolio` is a new key printed
@@ -132,7 +132,7 @@ confirmed unchanged, it reuses the already-resolved AI-usage-policy verdict inst
 (identical) doc text (#4843).
 
 Every store resolves its file the same way: the store-specific env var above, else `LOOPOVER_MINER_CONFIG_DIR`,
-else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `gittensory-miner/<file>`. Every store also opens
+else `XDG_CONFIG_HOME` (falling back to `~/.config`), joined with `loopover-miner/<file>`. Every store also opens
 its file with `0700`/`0600` permissions and a shared `PRAGMA busy_timeout` so two instances on the same file
 serialize writes instead of racing.
 
@@ -170,14 +170,14 @@ Zero-infra local install — no Docker, Redis, or Postgres required:
 
 ```sh
 npm install -g @loopover/miner
-gittensory-miner init
-gittensory-miner doctor
-gittensory-miner status
+loopover-miner init
+loopover-miner doctor
+loopover-miner status
 ```
 
-`init` creates `~/.config/gittensory-miner/` (or `LOOPOVER_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only). Every local store already applies its own pending schema migrations automatically the moment some other command first opens it, but `migrate` lets an operator proactively bring every EXISTING store file up to date in one pass (e.g. right after upgrading) instead of relying on whichever command happens to touch a given store first; a store file that hasn't been created yet is reported as skipped, not created.
+`init` creates `~/.config/loopover-miner/` (or `LOOPOVER_MINER_CONFIG_DIR` / `XDG_CONFIG_HOME` overrides) and a local `laptop-state.sqlite3` bootstrap file. Re-running `init` is idempotent. Pass `--verify-token` to make one authenticated GitHub API call up front and fail fast if `GITHUB_TOKEN` is invalid or missing repository access scopes. `doctor` reports Node, the state directory, SQLite readiness, and whether Docker is installed (informational only). Every local store already applies its own pending schema migrations automatically the moment some other command first opens it, but `migrate` lets an operator proactively bring every EXISTING store file up to date in one pass (e.g. right after upgrading) instead of relying on whichever command happens to touch a given store first; a store file that hasn't been created yet is reported as skipped, not created.
 
-First-time operators can instead run `gittensory-miner init --interactive` (#5176): a guided prompt for `GITHUB_TOKEN` (input hidden, never echoed or written to any log) and an optional coding-agent provider — plus that provider's model/timeout companion vars, each individually skippable with Enter — writes a starter `.env` to the state dir, then automatically reruns `doctor` against the collected values so setup problems surface immediately. `--interactive` makes no network calls of its own beyond what `doctor` already makes (none); non-interactive `init` invocations are unaffected.
+First-time operators can instead run `loopover-miner init --interactive` (#5176): a guided prompt for `GITHUB_TOKEN` (input hidden, never echoed or written to any log) and an optional coding-agent provider — plus that provider's model/timeout companion vars, each individually skippable with Enter — writes a starter `.env` to the state dir, then automatically reruns `doctor` against the collected values so setup problems surface immediately. `--interactive` makes no network calls of its own beyond what `doctor` already makes (none); non-interactive `init` invocations are unaffected.
 
 From a local checkout:
 
@@ -207,39 +207,39 @@ When an attempt fails on a `claude-cli` / `codex-cli` provider, the CLI-subproce
 
 | Error string / pattern | Symptom | Remediation |
 | --- | --- | --- |
-| `claude_code_error_<status>` | The `claude` CLI ran but its `--output-format json` envelope reported `is_error: true` (e.g. `claude_code_error_invalid_api_key`) — the OAuth token is missing, rejected, or expired. `gittensory-miner doctor` reports the same condition up front as `not authenticated: set CLAUDE_CODE_OAUTH_TOKEN`. | Regenerate a long-lived token with `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`, then retry. |
+| `claude_code_error_<status>` | The `claude` CLI ran but its `--output-format json` envelope reported `is_error: true` (e.g. `claude_code_error_invalid_api_key`) — the OAuth token is missing, rejected, or expired. `loopover-miner doctor` reports the same condition up front as `not authenticated: set CLAUDE_CODE_OAUTH_TOKEN`. | Regenerate a long-lived token with `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`, then retry. |
 | `codex_no_auth` | `codex exec` exited non-zero with no structured error in its JSONL stdout and only the `Reading prompt from stdin...` banner on stderr — its `auth.json` credential is missing or expired. The driver appends its own remediation hint (`... auth.json missing or expired -- run codex auth to authenticate`). | Run `codex auth` to re-authenticate; the next attempt reads the refreshed `auth.json` with no further restart. |
 | `<command>_exit_<code>` | Generic non-zero-exit fallback when neither structured parser matched (e.g. `codex_exit_1: ...`, `claude_exit_1: ...`). The driver appends the redacted stderr slice — an auth failure that neither parser recognized still surfaces here. | Read the appended detail; if it points at authentication, re-run `claude setup-token` or `codex auth` for the failing provider, otherwise address the reported error directly. |
 
 ## Commands
 
 ```sh
-gittensory-miner --help
-gittensory-miner help
-gittensory-miner --version
-gittensory-miner version
-gittensory-miner init [--json] [--verify-token]
-gittensory-miner status [--json]
-gittensory-miner doctor [--json]
-gittensory-miner migrate [--json]
-gittensory-miner manage status [--json]
-gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
+loopover-miner --help
+loopover-miner help
+loopover-miner --version
+loopover-miner version
+loopover-miner init [--json] [--verify-token]
+loopover-miner status [--json]
+loopover-miner doctor [--json]
+loopover-miner migrate [--json]
+loopover-miner manage status [--json]
+loopover-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]
 ```
 
 ## MCP server
 
-The package ships a second bin entry, `gittensory-miner-mcp`, a minimal [Model Context Protocol](https://modelcontextprotocol.io) stdio server that any MCP-compatible client can connect to:
+The package ships a second bin entry, `loopover-miner-mcp`, a minimal [Model Context Protocol](https://modelcontextprotocol.io) stdio server that any MCP-compatible client can connect to:
 
 ```sh
-gittensory-miner-mcp
+loopover-miner-mcp
 ```
 
 It exposes these read-only tools:
 
 - `gittensory_miner_ping` (#5153) — a health check returning a static `{ "status": "ok", "tool": "gittensory_miner_ping" }` object. Reads no AMS state, takes no arguments.
-- `gittensory_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `gittensory-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
+- `gittensory_miner_get_portfolio_dashboard` (#5155) — the per-repo portfolio-queue backlog dashboard: status counts (queued / in_progress / done), totals, and the oldest-queued age. Wraps `collectPortfolioDashboard()` (no new logic) — the same data `loopover-miner queue dashboard --json` prints locally. Read-only, takes no arguments.
 - `gittensory_miner_list_claims` (#5156) — lists the local claim ledger (repo, issue number, status, claimed-at, note) via `listClaims()`. Optional `repoFullName` / `status` filters pass through to the query. Read-only — exposes no claim/release mutation.
-- `gittensory_miner_get_audit_feed` (#5158) — read-only, metadata-only event-ledger audit feed (`eventType`, `repoFullName`, `outcome`, `actor`, `detail`, `createdAt`). Wraps `collectEventLedgerAuditFeed()` with the same filters as `gittensory-miner ledger list` (`--repo`, `--since`, `--type`). Never returns `payload_json` or other raw ledger columns.
+- `gittensory_miner_get_audit_feed` (#5158) — read-only, metadata-only event-ledger audit feed (`eventType`, `repoFullName`, `outcome`, `actor`, `detail`, `createdAt`). Wraps `collectEventLedgerAuditFeed()` with the same filters as `loopover-miner ledger list` (`--repo`, `--since`, `--type`). Never returns `payload_json` or other raw ledger columns.
 
 - `gittensory_miner_get_run_state` (#5160) — read-only per-repo run-state (`idle` / `discovering` / `planning` / `preparing`) via `getRunState` / `listRunStates`. Pass `repoFullName` for one repo (a null state means none recorded yet), or omit it to list all. The read-only analog of ORB's `gittensory_get_automation_state`; adds no state-set mutation.
 
@@ -247,30 +247,30 @@ It exposes these read-only tools:
 
 - `gittensory_miner_get_governor_decisions` (#5159) — read-only projection of the governor decision log (`id`, `ts`, `eventType`, `repoFullName`, `actionClass`, `decision`, `reason`), optionally filtered by `repoFullName`. The projection **excludes the sensitive `payload_json` column by construction** — `governor-ledger.js` reads it with an explicit named-column SELECT, never `SELECT *`.
 
-- `gittensory_miner_status` (#5154) — read-only status + doctor diagnostics, returning `{ status, doctor }`: `status` = package/engine versions (and skew), node version, state-dir + config-file paths, and the resolved coding-agent driver (provider name, the model **env-var NAME** never its value, CLI-present boolean); `doctor` = the checks `gittensory-miner doctor` runs (Docker/CLI presence, config validity, …) as `{ name, ok, detail }`. Reuses `collectStatus` / `runDoctorChecks` so it can't drift from the CLI, and returns only names / booleans / paths — never any env-var value, token, or credential.
+- `gittensory_miner_status` (#5154) — read-only status + doctor diagnostics, returning `{ status, doctor }`: `status` = package/engine versions (and skew), node version, state-dir + config-file paths, and the resolved coding-agent driver (provider name, the model **env-var NAME** never its value, CLI-present boolean); `doctor` = the checks `loopover-miner doctor` runs (Docker/CLI presence, config validity, …) as `{ name, ok, detail }`. Reuses `collectStatus` / `runDoctorChecks` so it can't drift from the CLI, and returns only names / booleans / paths — never any env-var value, token, or credential.
 
 This completes the read-only AMS MCP tool surface (status, portfolio, claims, event-ledger, governor-ledger, run-state, plan-store).
 
 ### Client config
 
-`gittensory-mcp` (ORB's hosted contributor-workflow tools) and `gittensory-miner-mcp` (AMS's own local state-visibility tools above) can run as two separate stdio servers in the same MCP client session — useful for a dual-role operator running both ORB and AMS on the same box. Generate ORB's half with `gittensory-mcp init-client --print claude` (see the [`@loopover/mcp` README](../gittensory-mcp/README.md#client-config)); `gittensory-miner-mcp` takes no flags, so its entry is just the bin name. Combined, a Claude Desktop / Claude Code style config looks like:
+`loopover-mcp` (ORB's hosted contributor-workflow tools) and `loopover-miner-mcp` (AMS's own local state-visibility tools above) can run as two separate stdio servers in the same MCP client session — useful for a dual-role operator running both ORB and AMS on the same box. Generate ORB's half with `loopover-mcp init-client --print claude` (see the [`@loopover/mcp` README](../gittensory-mcp/README.md#client-config)); `loopover-miner-mcp` takes no flags, so its entry is just the bin name. Combined, a Claude Desktop / Claude Code style config looks like:
 
 ```json
 {
   "mcpServers": {
     "gittensory": {
-      "command": "gittensory-mcp",
+      "command": "loopover-mcp",
       "args": ["--stdio"]
     },
-    "gittensory-miner": {
-      "command": "gittensory-miner-mcp",
+    "loopover-miner": {
+      "command": "loopover-miner-mcp",
       "args": []
     }
   }
 }
 ```
 
-`gittensory` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs). `gittensory-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans) — a fully separate, 100% local tool surface with no shared code or network calls between the two. Both follow the same `gittensory_*` tool-naming convention (`gittensory_...` vs. `gittensory_miner_...`), but back onto different stores: ORB's tools read the hosted gittensory backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `gittensory_miner_get_run_state` is the read-only analog of `gittensory_get_automation_state`) so the relationship is explicit at the point of use, not just here.
+`gittensory` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs). `loopover-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans) — a fully separate, 100% local tool surface with no shared code or network calls between the two. Both follow the same `gittensory_*` tool-naming convention (`gittensory_...` vs. `gittensory_miner_...`), but back onto different stores: ORB's tools read the hosted gittensory backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `gittensory_miner_get_run_state` is the read-only analog of `gittensory_get_automation_state`) so the relationship is explicit at the point of use, not just here.
 
 ## Version check
 

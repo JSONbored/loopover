@@ -14,7 +14,7 @@ const oneMinorAboveLocal = (() => {
   return `${major}.${minor + 1}.0`;
 })();
 
-describe("gittensory-mcp CLI — doctor", () => {
+describe("loopover-mcp CLI — doctor", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -62,7 +62,7 @@ describe("gittensory-mcp CLI — doctor", () => {
       ]),
     );
     expect(payload.nextCommand).toMatchObject({
-      command: "gittensory-mcp doctor --json",
+      command: "loopover-mcp doctor --json",
       reason: expect.stringContaining("local scorer"),
     });
     expect(payload.checks).toEqual(
@@ -95,11 +95,11 @@ describe("gittensory-mcp CLI — doctor", () => {
     };
 
     const payload = JSON.parse(await runAsync(["doctor", "--cwd", tempDir, "--json"], env)) as { nextCommand: { command: string } };
-    expect(payload.nextCommand.command).toBe("gittensory-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(payload.nextCommand.command).toBe("loopover-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
     expect(payload.nextCommand.command).not.toContain("--repo owner/repo$(");
 
     const humanOutput = await runAsync(["doctor", "--cwd", tempDir], env);
-    expect(humanOutput).toContain("gittensory-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
+    expect(humanOutput).toContain("loopover-mcp review-pr --login JSONbored --repo 'owner/repo$(touch /tmp/av_pwned)' --json");
     expect(humanOutput).not.toContain("--repo owner/repo$(");
   });
 
@@ -126,7 +126,7 @@ describe("gittensory-mcp CLI — doctor", () => {
     expect(auth).toMatchObject({ status: "fail" });
     expect(auth?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "auth", status: "fail" })]));
     expect(payload.nextCommand).toMatchObject({
-      command: "gittensory-mcp login --profile default",
+      command: "loopover-mcp login --profile default",
       reason: expect.stringContaining("Authenticate"),
     });
     expect(JSON.stringify(payload)).not.toContain(tempDir);
@@ -391,7 +391,7 @@ describe("gittensory-mcp CLI — doctor", () => {
     expect(repoReadiness).toMatchObject({ status: "warn" });
     expect(repoReadiness?.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "git_metadata", status: "warn" })]));
     expect(payload.nextCommand).toMatchObject({
-      command: "gittensory-mcp doctor --repo owner/repo --json",
+      command: "loopover-mcp doctor --repo owner/repo --json",
       reason: expect.stringContaining("git checkout"),
     });
     expect(JSON.stringify(payload)).not.toContain(tempDir);

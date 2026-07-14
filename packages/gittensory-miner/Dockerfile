@@ -1,9 +1,9 @@
 # Fleet-mode image for @loopover/miner (#4295). Build context = monorepo root:
-#   docker build -f packages/gittensory-miner/Dockerfile -t gittensory-miner:latest .
+#   docker build -f packages/gittensory-miner/Dockerfile -t loopover-miner:latest .
 # SECRETS ARE NEVER BAKED: supply operator credentials at `docker run` time only.
 # Persistent SQLite ledgers live on a mounted volume (default LOOPOVER_MINER_CONFIG_DIR=/data/miner).
 
-ARG GITTENSORY_VERSION=
+ARG LOOPOVER_VERSION=
 
 # --- build: workspace install + engine compile + miner syntax check ----------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS build
@@ -20,10 +20,10 @@ RUN npm prune --omit=dev --ignore-scripts
 # --- runtime: non-root CLI image with a mounted config volume -----------------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS runtime
 WORKDIR /app
-ARG GITTENSORY_VERSION=
+ARG LOOPOVER_VERSION=
 ENV NODE_ENV=production \
     LOOPOVER_MINER_CONFIG_DIR=/data/miner \
-    LOOPOVER_MINER_VERSION=${GITTENSORY_VERSION} \
+    LOOPOVER_MINER_VERSION=${LOOPOVER_VERSION} \
     PATH=/app/node_modules/.bin:$PATH
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/packages/gittensory-miner ./packages/gittensory-miner
@@ -31,8 +31,8 @@ COPY --from=build --chown=node:node /app/packages/gittensory-engine ./packages/g
 RUN mkdir -p /data/miner && chown -R node:node /data
 USER node
 VOLUME ["/data/miner"]
-# No HEALTHCHECK: the miner is a batch/CLI workload (`docker run … gittensory-miner <cmd>`), not a
+# No HEALTHCHECK: the miner is a batch/CLI workload (`docker run … loopover-miner <cmd>`), not a
 # long-running HTTP service — there is no steady-state endpoint to probe unless an operator wraps
 # the container in their own supervising loop.
-ENTRYPOINT ["gittensory-miner"]
+ENTRYPOINT ["loopover-miner"]
 CMD ["doctor"]

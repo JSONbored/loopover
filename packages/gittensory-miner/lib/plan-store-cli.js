@@ -2,8 +2,8 @@ import { PLAN_STATUSES, openPlanStore } from "./plan-store.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const PLAN_LIST_USAGE =
-  "Usage: gittensory-miner plan list [--status pending|running|completed|failed] [--json]";
-const PLAN_SHOW_USAGE = "Usage: gittensory-miner plan show <planId> [--json]";
+  "Usage: loopover-miner plan list [--status pending|running|completed|failed] [--json]";
+const PLAN_SHOW_USAGE = "Usage: loopover-miner plan show <planId> [--json]";
 
 function parseJsonFlag(args) {
   const options = { json: false };

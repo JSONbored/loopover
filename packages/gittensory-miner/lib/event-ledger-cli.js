@@ -2,7 +2,7 @@ import { initEventLedger } from "./event-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const LEDGER_LIST_USAGE =
-  "Usage: gittensory-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]";
+  "Usage: loopover-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]";
 
 function parseRepoArg(value, usage) {
   if (!value) return { error: usage };
@@ -165,7 +165,7 @@ export function renderLedgerTable(events) {
   return [header, ...lines].join("\n");
 }
 
-const EVENT_LEDGER_METRICS_USAGE = "Usage: gittensory-miner ledger metrics";
+const EVENT_LEDGER_METRICS_USAGE = "Usage: loopover-miner ledger metrics";
 
 // Prometheus metric name for the per-type event-ledger counter. Mirrors the `loopover_miner_*_total` naming and
 // the HELP/TYPE/label conventions of the engine's renderMinerPredictionMetrics

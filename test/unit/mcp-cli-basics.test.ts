@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, createPacketRepo, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
 import mcpPackageJson from "../../packages/gittensory-mcp/package.json";
 
-describe("gittensory-mcp CLI — basics", () => {
+describe("loopover-mcp CLI — basics", () => {
   let tempDir: string | null = null;
 
   afterEach(async () => {
@@ -159,7 +159,7 @@ describe("gittensory-mcp CLI — basics", () => {
 
   it("guides unknown commands to --help", () => {
     expect(() => run(["bogus-command"])).toThrow(/Unknown command: bogus-command/);
-    expect(() => run(["bogus-command"])).toThrow(/gittensory-mcp --help/);
+    expect(() => run(["bogus-command"])).toThrow(/loopover-mcp --help/);
   });
 
   it("suggests the closest command for a near-miss typo", () => {
@@ -174,7 +174,7 @@ describe("gittensory-mcp CLI — basics", () => {
   it("prints shell completion scripts for bash, zsh, and fish", () => {
     const bash = run(["completion", "bash"]);
     expect(bash).toContain("_gittensory_mcp()");
-    expect(bash).toContain("complete -F _gittensory_mcp gittensory-mcp");
+    expect(bash).toContain("complete -F _gittensory_mcp loopover-mcp");
     expect(bash).toContain("analyze-branch");
     expect(bash).toContain("local commands=\"login logout whoami config status changelog completion version tools doctor");
     expect(bash).toContain("version");
@@ -182,22 +182,22 @@ describe("gittensory-mcp CLI — basics", () => {
     expect(bash).toContain("plan status explain packet");
 
     const zsh = run(["completion", "zsh"]);
-    expect(zsh).toContain("#compdef gittensory-mcp");
+    expect(zsh).toContain("#compdef loopover-mcp");
     expect(zsh).toContain("_describe 'command' commands");
     expect(zsh).toContain("commands=(login logout whoami config status changelog completion version tools doctor");
     expect(zsh).toContain("list create switch remove");
 
     const fish = run(["completion", "fish"]);
-    expect(fish).toContain("complete -c gittensory-mcp");
-    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a config");
-    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a completion");
-    expect(fish).toContain("complete -c gittensory-mcp -n __fish_use_subcommand -a tools");
+    expect(fish).toContain("complete -c loopover-mcp");
+    expect(fish).toContain("complete -c loopover-mcp -n __fish_use_subcommand -a config");
+    expect(fish).toContain("complete -c loopover-mcp -n __fish_use_subcommand -a completion");
+    expect(fish).toContain("complete -c loopover-mcp -n __fish_use_subcommand -a tools");
     expect(fish).toContain("__fish_seen_subcommand_from agent");
   });
 
   it("prints a PowerShell argument-completer script", () => {
     const ps = run(["completion", "powershell"]);
-    expect(ps).toContain("Register-ArgumentCompleter -Native -CommandName gittensory-mcp");
+    expect(ps).toContain("Register-ArgumentCompleter -Native -CommandName loopover-mcp");
     expect(ps).toContain("[System.Management.Automation.CompletionResult]::new");
     expect(ps).toContain("$commands = @('login', 'logout'");
     expect(ps).toContain("'maintain' = @('status', 'queue', 'approve', 'reject', 'pause', 'resume', 'set-level', 'precision')");
@@ -206,11 +206,11 @@ describe("gittensory-mcp CLI — basics", () => {
   it("emits completion as machine-readable json", () => {
     const payload = JSON.parse(run(["completion", "zsh", "--json"])) as { shell: string; script: string };
     expect(payload.shell).toBe("zsh");
-    expect(payload.script).toContain("#compdef gittensory-mcp");
+    expect(payload.script).toContain("#compdef loopover-mcp");
   });
 
   it("rejects missing or unsupported completion shells", () => {
-    expect(() => run(["completion"])).toThrow(/Usage: gittensory-mcp completion <bash\|zsh\|fish\|powershell>/);
+    expect(() => run(["completion"])).toThrow(/Usage: loopover-mcp completion <bash\|zsh\|fish\|powershell>/);
     expect(() => run(["completion", "tcsh"])).toThrow(/Unsupported shell: tcsh/);
   });
 

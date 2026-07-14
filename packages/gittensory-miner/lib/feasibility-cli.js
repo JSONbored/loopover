@@ -9,7 +9,7 @@ const DUPLICATE_CLUSTER_RISKS = ["none", "low", "medium", "high"];
 const ISSUE_STATUSES = ["ready", "needs_proof", "hold", "do_not_use", "duplicate", "invalid", "missing"];
 
 const FEASIBILITY_USAGE =
-  "Usage: gittensory-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]\n" +
+  "Usage: loopover-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]\n" +
   `  claimStatus: ${CLAIM_STATUSES.join("|")}\n` +
   `  duplicateClusterRisk: ${DUPLICATE_CLUSTER_RISKS.join("|")}\n` +
   `  issueStatus: ${ISSUE_STATUSES.join("|")}`;

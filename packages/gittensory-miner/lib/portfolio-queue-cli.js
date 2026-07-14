@@ -3,17 +3,17 @@ import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
-const QUEUE_LIST_USAGE = "Usage: gittensory-miner queue list [--repo <owner/repo>] [--json]";
+const QUEUE_LIST_USAGE = "Usage: loopover-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE =
-  "Usage: gittensory-miner queue next [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
+  "Usage: loopover-miner queue next [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
 const QUEUE_DONE_USAGE =
-  "Usage: gittensory-miner queue done <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner queue done <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
 const QUEUE_RELEASE_USAGE =
-  "Usage: gittensory-miner queue release <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner queue release <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
 const QUEUE_REQUEUE_USAGE =
-  "Usage: gittensory-miner queue requeue <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
+  "Usage: loopover-miner queue requeue <owner/repo> <identifier> [--api-base-url <url>] [--dry-run] [--json]";
 const QUEUE_CLAIM_BATCH_USAGE =
-  "Usage: gittensory-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
+  "Usage: loopover-miner queue claim-batch [--global-wip <n>] [--per-repo-wip <n>] [--dry-run] [--json]";
 
 function parseRepoArg(value, usage) {
   if (!value) return { error: usage };
@@ -497,7 +497,7 @@ export function runQueueClaimBatch(args, options = {}) {
   }
 }
 
-const QUEUE_METRICS_USAGE = "Usage: gittensory-miner queue metrics";
+const QUEUE_METRICS_USAGE = "Usage: loopover-miner queue metrics";
 
 // Prometheus metric names for the portfolio-queue gauges (#5186). Mirrors the `loopover_miner_*` naming and
 // HELP/TYPE/label conventions of event-ledger-cli.js's renderEventLedgerMetrics / the engine's

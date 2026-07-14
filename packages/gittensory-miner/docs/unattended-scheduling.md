@@ -1,4 +1,4 @@
-# gittensory-miner — unattended scheduling & failure alerting
+# loopover-miner — unattended scheduling & failure alerting
 
 Operational guidance for running the miner's scheduled commands — `manage poll` and `discover` —
 unattended on a timer (cron or systemd), and for alerting when a run fails. These are the two commands
@@ -33,10 +33,10 @@ LOOPOVER_MINER_NO_UPDATE_CHECK=1
 # Poll a tracked PR every 10 minutes. The `||` branch fires on any non-zero exit: it logs the failing
 # code to syslog AND re-raises it with `exit "$status"`, so the failure stays visible to exit-status
 # monitoring instead of being masked by logger's own success.
-*/10 * * * * /usr/local/bin/gittensory-miner manage poll acme/widgets 42 --json || { status=$?; logger -t gittensory-miner "manage poll failed (exit $status)"; exit "$status"; }
+*/10 * * * * /usr/local/bin/loopover-miner manage poll acme/widgets 42 --json || { status=$?; logger -t loopover-miner "manage poll failed (exit $status)"; exit "$status"; }
 
 # Discover + enqueue candidate work hourly.
-0 * * * * /usr/local/bin/gittensory-miner discover --search "label:good-first-issue" --json || { status=$?; logger -t gittensory-miner "discover failed (exit $status)"; exit "$status"; }
+0 * * * * /usr/local/bin/loopover-miner discover --search "label:good-first-issue" --json || { status=$?; logger -t loopover-miner "discover failed (exit $status)"; exit "$status"; }
 ```
 
 Two cron facts to get right here:
@@ -53,23 +53,23 @@ Two cron facts to get right here:
 A `oneshot` service plus a timer is the more observable option: `systemctl status` / `journalctl`
 capture each run, and `OnFailure=` is a first-class alerting hook.
 
-`gittensory-miner-discover.service`:
+`loopover-miner-discover.service`:
 ```ini
 [Unit]
-Description=gittensory-miner discover
-OnFailure=gittensory-miner-alert@%n.service
+Description=loopover-miner discover
+OnFailure=loopover-miner-alert@%n.service
 
 [Service]
 Type=oneshot
 Environment=LOOPOVER_MINER_NO_UPDATE_CHECK=1
 # A non-zero exit (2) marks the unit failed and triggers OnFailure=.
-ExecStart=/usr/local/bin/gittensory-miner discover --search "label:good-first-issue" --json
+ExecStart=/usr/local/bin/loopover-miner discover --search "label:good-first-issue" --json
 ```
 
-`gittensory-miner-discover.timer`:
+`loopover-miner-discover.timer`:
 ```ini
 [Unit]
-Description=Run gittensory-miner discover hourly
+Description=Run loopover-miner discover hourly
 
 [Timer]
 OnCalendar=hourly
@@ -79,7 +79,7 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-Enable with `systemctl enable --now gittensory-miner-discover.timer`.
+Enable with `systemctl enable --now loopover-miner-discover.timer`.
 
 ## Alerting on failure
 
@@ -89,18 +89,18 @@ Every option keys on the same exit-code contract (`2` = failure):
   capture `$?` before the alert command runs and re-raise it, so the failure isn't masked. Substitute
   `logger` with a webhook `curl`, a PagerDuty/Slack CLI, etc. (`MAILTO` still mails any output, but is not
   a reliable signal for a silent failure — see the cron note above.)
-- **systemd:** `OnFailure=gittensory-miner-alert@%n.service` runs a templated alert unit on any non-zero
+- **systemd:** `OnFailure=loopover-miner-alert@%n.service` runs a templated alert unit on any non-zero
   exit. A minimal alert unit:
   ```ini
-  # gittensory-miner-alert@.service
+  # loopover-miner-alert@.service
   [Service]
   Type=oneshot
-  ExecStart=/usr/local/bin/notify-failure "gittensory-miner unit %i failed"
+  ExecStart=/usr/local/bin/notify-failure "loopover-miner unit %i failed"
   ```
 - **wrapper script:** for any scheduler, wrap the command and preserve its exit code:
   ```sh
   #!/bin/sh
-  gittensory-miner "$@" || { status=$?; notify-failure "gittensory-miner $* exited $status"; exit "$status"; }
+  loopover-miner "$@" || { status=$?; notify-failure "loopover-miner $* exited $status"; exit "$status"; }
   ```
 
 Keep `--json` on scheduled runs so the alert handler can forward the structured output; the

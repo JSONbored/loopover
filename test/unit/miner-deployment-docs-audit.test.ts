@@ -18,7 +18,7 @@ const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/gittensory-miner");
 const DEPLOYMENT_MD = resolve(MINER_DIR, "DEPLOYMENT.md");
 const BIN_DIR = resolve(MINER_DIR, "bin");
-const BIN_ENTRY = resolve(BIN_DIR, "gittensory-miner.js");
+const BIN_ENTRY = resolve(BIN_DIR, "loopover-miner.js");
 const LIB_DIR = resolve(MINER_DIR, "lib");
 // gittensory-miner's coding-agent driver construction (MINER_CODING_AGENT_*) is implemented in the
 // gittensory-engine package it depends on, not under packages/gittensory-miner/** -- an env var read only
@@ -180,7 +180,7 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]).toContain("gittensory-miner teleport");
+    expect(result.failures[0]).toContain("loopover-miner teleport");
     expect(result.failures[0]).toContain("not registered");
   });
 
@@ -190,7 +190,7 @@ describe("gittensory-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
         { envVars: ["LOOPOVER_MINER_GONE"], filePaths: ["gone.yml"], subcommands: ["gone"] },
         { hasEnvRead: () => false, pathExists: () => false, isRegisteredCommand: () => false },
       ),
-    ).toThrow(/LOOPOVER_MINER_GONE[\s\S]*gone\.yml[\s\S]*gittensory-miner gone/);
+    ).toThrow(/LOOPOVER_MINER_GONE[\s\S]*gone\.yml[\s\S]*loopover-miner gone/);
   });
 
   it("assertDeploymentDocsInSync returns the ok result without throwing when in sync", () => {

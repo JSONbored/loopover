@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createMinerMcpServer } from "../../packages/gittensory-miner/bin/gittensory-miner-mcp.js";
+import { createMinerMcpServer } from "../../packages/gittensory-miner/bin/loopover-miner-mcp.js";
 import {
   AUDIT_FEED_ENTRY_FIELDS,
   collectEventLedgerAuditFeed,

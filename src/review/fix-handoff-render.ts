@@ -4,7 +4,7 @@
 // content only, no server-side write, no execution. Mirrors formatInlineBody's severity-label composition
 // (inline-comments.ts) and reuses the exact no-cloud-write boundary text every other local-execution artifact
 // carries (local-write-tools.ts's LOCAL_WRITE_BOUNDARY), so the guarantee reads identically everywhere
-// gittensory hands a contributor something to run themselves.
+// loopover hands a contributor something to run themselves.
 //
 // The caller is responsible for gating emission via shouldEmitFixHandoff (fix-handoff.ts) BEFORE calling into
 // this module — this file is pure rendering, public-safe by construction: it only renders fields the caller

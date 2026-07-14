@@ -1,6 +1,6 @@
 // Deterministic security/abuse scan for content submissions (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
 // src/agents/awesome-claude/security-scan.ts + the shared core/secrets-scan.ts. PURE — data in, data out,
 // no I/O.
 //
@@ -83,7 +83,7 @@ function firstSecretLine(text: string): { n: number; kinds: string[] } | null {
 
 /**
  * generic_secret_assignment is a keyword-plus-quoted-value SHAPE heuristic, not a concrete credential format
- * (see ../secret-patterns.ts's HARD_SECRET_KINDS doc comment — split out post-gittensory-PR-#5346, which
+ * (see ../secret-patterns.ts's HARD_SECRET_KINDS doc comment — split out post-loopover-PR-#5346, which
  * auto-closed a legitimate contributor PR over two inert test-fixture strings). Per this file's own header
  * ("only ONE signal is unambiguous enough to hard-close... every other heuristic routes to MANUAL"), a hit
  * here routes to MANUAL, never scanSubmissionContent's auto-close. Its keyword-to-value span can wrap across

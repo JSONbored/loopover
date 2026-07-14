@@ -1,4 +1,4 @@
-// Deterministic surface-model review orchestrator (no AI — surfaces are structured data; gittensory is the
+// Deterministic surface-model review orchestrator (no AI — surfaces are structured data; loopover is the
 // sole adjudicator). Given a lane spec, the PR's changed files, and an injected file-content loader, it:
 //   1. classifies the PR via classifyRegistryPrScope (entry / provider / not-a-direct-submission),
 //   2. loads the head (+ base, for entries) document content,

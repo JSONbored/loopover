@@ -1,6 +1,6 @@
 // Deterministic source-evidence content gate (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
 // src/agents/awesome-claude/source-evidence.ts. The SSRF guard is the shared content-lane
 // `isSafeHttpUrl` (safe-url.ts); the browser fetch headers and the SHA-256 hash are inlined here.
 //

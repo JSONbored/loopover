@@ -1,7 +1,7 @@
-// Content-lane public surface (reviewbot→gittensory convergence).
+// Content-lane public surface (reviewbot→loopover convergence).
 //
 // The native, flag-gated content-review primitives for the two CONTENT repos — awesome-claude (a
-// curated list) and metagraphed (a registry) — a different domain from gittensory's code-gate. The
+// curated list) and metagraphed (a registry) — a different domain from loopover's code-gate. The
 // lane only runs when LOOPOVER_REVIEW_CONTENT_LANE is truthy (see ./flag); flag-off the host never reaches
 // these modules.
 //

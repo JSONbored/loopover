@@ -13,7 +13,7 @@ import type { LinkedIssueLabelPropagationMapping } from "../types";
 
 // The GitHub-fetch orchestrator for linked-issue label propagation (#priority-linked-issue-gate), kept
 // deliberately OUT of `linked-issue-label-propagation.ts` (the pure config types + normalizer, imported by
-// `focus-manifest.ts`'s YAML parser and transitively by the gittensory-ui workspace's isolated typecheck via
+// `focus-manifest.ts`'s YAML parser and transitively by the loopover-ui workspace's isolated typecheck via
 // `apps/loopover-ui/src/lib/registration-workspace.ts`). This file's GitHub/fetch imports resolve the
 // Worker's ambient `Env` type, which the UI workspace's tsconfig has no visibility into -- importing them
 // from the pure config file broke `ui:typecheck` by pulling the whole github/app.ts + github/backfill.ts

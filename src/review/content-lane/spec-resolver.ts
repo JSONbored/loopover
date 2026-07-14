@@ -1,6 +1,6 @@
 // Per-repo RegistryLaneSpec resolution (#2435 — closes the "only metagraphed can use this" gap). Before this,
 // content-lane-wire.ts hard-selected METAGRAPHED_LANE_SPEC for every repo in the LOOPOVER_REVIEW_REPOS
-// allowlist; a different self-hosted maintainer's registry could only be onboarded by editing gittensory's own
+// allowlist; a different self-hosted maintainer's registry could only be onboarded by editing loopover's own
 // TypeScript source. This mirrors resolveConvergedFeature's precedence (review/feature-activation.ts): env
 // kill-switch → per-repo `.loopover.yml` config → allowlist default — but resolves to a whole spec OBJECT (or
 // null/inactive) instead of a boolean, so it lives alongside the content-lane engine rather than in

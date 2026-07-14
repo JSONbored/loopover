@@ -1,13 +1,13 @@
-// Anomaly alerting (reviewbot→gittensory convergence — ADDITIVE, NATIVE port of reviewbot
+// Anomaly alerting (reviewbot→loopover convergence — ADDITIVE, NATIVE port of reviewbot
 // src/core/alerts.ts). On each cron tick, snapshot agent health and push a THROTTLED Discord alert when
 // something drifts — a manual-rate spike, stuck/failed targets, a DLQ spike, calibration drift, disputed
 // closes, or a config invariant violation — so drift is HEARD ABOUT instead of polled for.
 //
 // SELF-CONTAINED: every type + helper this module needs is defined HERE. No imports from reviewbot. The
-// logic is byte-faithful to the reviewbot source; the only deltas are mechanical guards for gittensory's
+// logic is byte-faithful to the reviewbot source; the only deltas are mechanical guards for loopover's
 // stricter tsconfig (noUncheckedIndexedAccess / exactOptionalPropertyTypes), which do not change behavior.
 //
-// STORAGE: gittensory has no platform/access adapter — `Env` is a global ambient interface with `DB`. The
+// STORAGE: loopover has no platform/access adapter — `Env` is a global ambient interface with `DB`. The
 // `storage(env) => env.DB` helper below mirrors the other native ports (unified-comment-bridge etc.).
 //
 // HEALTH/CALIBRATION INPUTS: computing the D1 health/calibration snapshots is the runtime gate's job
@@ -93,7 +93,7 @@ export interface AlertAgentConfig {
 
 // ── Inlined helpers (byte-faithful from reviewbot src/core/{crypto,util,notify,db}.ts) ───────────
 
-/** Storage seam: gittensory's `Env` is a global ambient interface with `DB`. */
+/** Storage seam: loopover's `Env` is a global ambient interface with `DB`. */
 function storage(env: Env): D1Database {
   return env.DB;
 }

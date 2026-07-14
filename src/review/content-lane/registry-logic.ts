@@ -1,6 +1,6 @@
 // Metagraphed registry decision logic (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
 // src/agents/metagraphed/review-logic.ts (itself a faithful port of the live metagraphed
 // submission-gate). PURE + testable; all I/O (GitHub, registry/taostats API, AI) lives in the
 // caller. The SSRF guard is the shared content-lane safe-url; `Verdict` + `isInternalAutomation
@@ -458,7 +458,7 @@ function fail(reason: string, summary: string, candidate: CandidateLike | null =
 /**
  * Surface validators: a contribution appends ONE entry to `surfaces[]` of a `registry/subnets/<slug>.json`, whose
  * `netuid` lives at the file ROOT (not on each entry). These two deterministic validators (per-entry +
- * whole-document) make gittensory the sole adjudicator; no AI (surfaces are structured data). They take the
+ * whole-document) make loopover the sole adjudicator; no AI (surfaces are structured data). They take the
  * appended entry / parsed document as arguments; the orchestrator resolves "exactly one appended entry" from a
  * head-vs-base diff.
  */
@@ -651,7 +651,7 @@ export function probeFunctionalSurface(
 //
 // A community contribution appends entries to an array field of ONE registry "entry file" (e.g.
 // registry/subnets/<slug>.json::surfaces[]), optionally with one flat companion provider file. To stay MODULAR —
-// many maintainers will install gittensory over wildly different registries — the engine is parameterized by a
+// many maintainers will install loopover over wildly different registries — the engine is parameterized by a
 // RegistryLaneSpec rather than hard-coding metagraphed's paths; metagraphed is just the FIRST spec, and a spec can
 // later be loaded from per-repo .loopover.yml config so a new registry needs config, not a code change.
 

@@ -1,5 +1,5 @@
 // Gittensor experimental-plugin activation wiring. `gittensor` is the first key under the `experimental:`
-// manifest block (EXPERIMENTAL_PLUGIN_KEYS) -- gittensory's original subnet mining-registry/scoring
+// manifest block (EXPERIMENTAL_PLUGIN_KEYS) -- loopover's original subnet mining-registry/scoring
 // integration, now an OPT-IN plugin rather than a core dependency, so a self-host instance with no gittensor
 // affiliation has zero footprint from it (see registry/sync.ts's self-host scoping, which this feeds, and
 // index.ts's cron gate, which skips the registry fetch entirely when nothing is opted in).

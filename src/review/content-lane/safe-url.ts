@@ -1,6 +1,6 @@
 // SSRF-safe URL guard (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Ported from reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Ported from reviewbot's
 // core/source-url.ts isSafeHttpUrl + isSafeEndpointUrl (the host/IP guard, including the encoded-IP
 // decoding that a dotted-quad regex misses), hardened so a trailing-dot or `*.localhost` host can't
 // dodge the loopback check. PURE — no imports, no I/O.

@@ -1,6 +1,6 @@
 // Content scope classification (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
 // src/agents/awesome-claude/review-logic.ts (itself a faithful port of the live submission-gate
 // classifyPullRequestFilesForContentReview). PURE — distinguishes ignore (no content entry) vs
 // scope_failure (CLOSE) vs deletion vs review. `slugify` is inlined (a one-liner). The accepted

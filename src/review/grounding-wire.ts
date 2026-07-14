@@ -7,7 +7,7 @@
 // codebase convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isEnabled).
 //
 // The ported, self-contained grounding engine lives in `./review-grounding`; this file is the thin HOST
-// adapter that supplies its two inputs from data gittensory already has — the cached CI check summaries
+// adapter that supplies its two inputs from data loopover already has — the cached CI check summaries
 // (listCheckSummaries) and a GitHub Contents-API-backed FileFetcher — and renders the prompt text. Fully
 // fail-safe: any missing CI data / fetch error degrades to "no grounding" and the review proceeds on the diff.
 
@@ -76,7 +76,7 @@ export function checkSummaryText(check: CheckSummaryRecord): string {
 type CheckAggregate = { state: "passed" | "failed" | "pending"; passing: string[]; failingDetails: Array<{ name: string; summary?: string }> };
 
 /**
- * Fold gittensory's cached CI check summaries into the compact aggregate the grounding engine renders.
+ * Fold loopover's cached CI check summaries into the compact aggregate the grounding engine renders.
  * `state` is failed if ANY check failed, else pending if ANY check is still running, else passed. A check
  * with no rows at all (`undefined`) means we have no CI signal → the caller passes `undefined` so CI grounding
  * is simply omitted (never asserts a green/red state we can't verify).
@@ -105,7 +105,7 @@ export function buildCheckAggregate(checks: CheckSummaryRecord[]): CheckAggregat
   return { state, passing, failingDetails };
 }
 
-/** Map gittensory's PR file records to the subset the grounding engine reads (filename + status, plus the
+/** Map loopover's PR file records to the subset the grounding engine reads (filename + status, plus the
  *  patch/additions/deletions a MODIFIED file's diffFullyCoversFile check needs to skip a redundant fetch
  *  when the diff already carries the whole file — see review-grounding.ts). */
 function toGroundingFiles(files: PullRequestFileRecord[]): PullRequestFile[] {

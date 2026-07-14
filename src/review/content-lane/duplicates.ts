@@ -1,6 +1,6 @@
 // Deterministic duplicate-detection + protected-edit content gate (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to reviewbot's
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to reviewbot's
 // src/agents/awesome-claude/duplicates.ts (itself a faithful port of the live submission-gate
 // duplicates.ts). This module is I/O-free: the caller fetches the accepted corpus
 // (`${PUBLIC_SITE_URL}/data/directory-index.json`) and any earlier-open-PR content, then passes
@@ -9,7 +9,7 @@
 // Normalization, the STRICT-match rule (the only result the gate closes on), the related/legacy
 // classifiers, and the protected-field set are preserved exactly. Over-closing (a false strict
 // duplicate) permanently rejects a legitimate submission, so the strict boundary is unchanged.
-// The only deltas vs the reviewbot source are mechanical guards for gittensory's stricter tsconfig
+// The only deltas vs the reviewbot source are mechanical guards for loopover's stricter tsconfig
 // (noUncheckedIndexedAccess + exactOptionalPropertyTypes) — they do not change behavior.
 //
 // Dedup config (protected fields, URL fields, domain exclusions, multi-entry catalog roots) is sourced from the

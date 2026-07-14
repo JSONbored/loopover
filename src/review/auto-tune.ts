@@ -1,4 +1,4 @@
-// Autonomous self-improvement — accuracy circuit-breaker (#self-improve, reviewbot→gittensory convergence).
+// Autonomous self-improvement — accuracy circuit-breaker (#self-improve, reviewbot→loopover convergence).
 // The ONE tuning action safe to take unattended: when the gate eval shows merge precision dropping below a
 // floor over a real sample, the system DISABLES its own auto-merge for that project (sets the holdonly flag)
 // so it stops repeating a bad call, and alerts a human. It only ever makes itself MORE cautious — loosening /
@@ -9,7 +9,7 @@
 // reviewbot. The eval-report SHAPE (GateEvalReport/GateEvalRow) and the system-flags accessors
 // (isHoldOnly/setFlag/flagSetAt) are inlined as INJECTED interfaces so this ports the PURE calibration logic
 // without dragging in the engine. The logic is byte-faithful to the reviewbot source (src/core/auto-tune.ts);
-// the only deltas are mechanical guards for gittensory's stricter tsconfig (noUncheckedIndexedAccess,
+// the only deltas are mechanical guards for loopover's stricter tsconfig (noUncheckedIndexedAccess,
 // exactOptionalPropertyTypes), which do not change behavior.
 //
 // DEFERRED INFRA (out of scope here — this ports the pure logic + tests):

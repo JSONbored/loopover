@@ -1,11 +1,11 @@
-// Convergence (ops / observability) — wires the ported alerts + stats observability into gittensory, behind
+// Convergence (ops / observability) — wires the ported alerts + stats observability into loopover, behind
 // the default-OFF `LOOPOVER_REVIEW_OPS` flag. Flag-OFF every export here is a no-op / 404, so the worker is
 // byte-identical to today (the cron enqueues no ops job; the endpoint short-circuits).
 //
-// ADAPTED TO GITTENSORY'S OWN OUTCOME DATA — NOT reviewbot's `review_targets`/`review_audit` (those tables are
+// ADAPTED TO LOOPOVER'S OWN OUTCOME DATA — NOT reviewbot's `review_targets`/`review_audit` (those tables are
 // not populated here). The ported reviewbot modules (src/review/alerts.ts, src/review/stats.ts) are built
-// around `review_targets` + a Discord webhook; gittensory's review-outcome ledger is different, so this module
-// derives the equivalent health/anomaly signals from gittensory's native sources via the EXISTING aggregation
+// around `review_targets` + a Discord webhook; loopover's review-outcome ledger is different, so this module
+// derives the equivalent health/anomaly signals from loopover's native sources via the EXISTING aggregation
 // services (no new queries, no schema change):
 //   • gate_outcomes (#554) — the gate-block ledger; blocked-then-merged = a gate FALSE POSITIVE, plus the
 //     maintainer-OVERRIDE count. Aggregated by services/gate-precision.ts (buildGatePrecisionReport).
@@ -13,7 +13,7 @@
 //     persisted slop band on resolved PRs (slop score discrimination). Aggregated by
 //     services/outcome-calibration.ts (buildRepoOutcomeCalibration).
 //
-// NOTIFY PATH: gittensory has NO Discord / operator webhook (notifications/service.ts is a per-recipient,
+// NOTIFY PATH: loopover has NO Discord / operator webhook (notifications/service.ts is a per-recipient,
 // pull-based BADGE feed — the wrong channel for an operator anomaly). So an anomaly emits a structured
 // `console.error` log line with an `event` field (#orb-ci-stuck-repeat: this was previously `console.warn` with
 // an `ev` field — forwardStructuredLogToSentry, src/selfhost/sentry.ts, only wraps console.log/console.error
@@ -27,7 +27,7 @@
 // DEFERRED (NOT implemented here): the auto-tune / auto-apply config-mutation self-improve loop. The ported
 // pure logic + D1 store already exist in src/review/auto-apply.ts, but actually CLOSING the loop (mutating a
 // live gate's tunables from the cron) is sensitive — it needs the `tunables_overrides` / `_shadow` /
-// `override_audit` D1 tables (none of which exist in gittensory's migrations yet) plus a careful soak/promote
+// `override_audit` D1 tables (none of which exist in loopover's migrations yet) plus a careful soak/promote
 // design. This module is READ-ONLY observability: it reports drift; it never changes what blocks a live PR.
 
 import { findHottestInconclusiveReviewTargetForRepo, findHottestReviewTargetForRepo, listRepositories, sumByokAiUsageForRepoSince } from "../db/repositories";
@@ -91,7 +91,7 @@ export interface RepoOutcomeSnapshot {
 
 /**
  * PURE: human-readable anomalies in one repo's outcome snapshot (empty = healthy). Mirrors the SHAPE of the
- * ported alerts.ts `detectAnomalies` (a list of actionable lines), but over GITTENSORY'S signals:
+ * ported alerts.ts `detectAnomalies` (a list of actionable lines), but over LOOPOVER'S signals:
  *   • a gate type whose blocked-then-merged rate is high (the gate is blocking mergeable PRs);
  *   • the slop score INVERTING (a higher-severity band merging more than a lower one — score not predictive);
  *   • recommendations not panning out (a high negative outcome rate over enough resolved evidence).
@@ -170,7 +170,7 @@ export function worstAnomaly(anomalies: string[]): { line: string; severity: Pag
   return best;
 }
 
-// ── Cron alerts: scan gittensory's outcome data, emit a structured log on drift (flag-gated by the caller) ──
+// ── Cron alerts: scan loopover's outcome data, emit a structured log on drift (flag-gated by the caller) ──
 
 /** The installed repos to scan. Mirrors fanOutAgentRegateSweepJobs's own repo population (#5016): outcome
  *  telemetry (gate precision, slop calibration, review-burst detection) is core review-quality monitoring for
@@ -226,7 +226,7 @@ export async function runOpsAlerts(env: Env): Promise<Record<string, string[]>> 
         const anomalies = detectOutcomeAnomalies({ repoFullName, gatePrecision, calibration, reviewBurst, reviewFailureBurst });
         if (anomalies.length === 0) continue;
         found[repoFullName] = anomalies;
-        // Structured log = gittensory's notify path (no Discord/operator webhook exists) AND the Sentry path
+        // Structured log = loopover's notify path (no Discord/operator webhook exists) AND the Sentry path
         // (level:"error" + an `event` field reaches forwardStructuredLogToSentry). One line per repo.
         console.error(JSON.stringify({ level: "error", event: "ops_anomaly", repo: repoFullName, at: nowIso(), anomalies }));
         // Experimental PagerDuty paging (#4937): no-op unless LOOPOVER_ENABLE_PAGERDUTY is set AND a routing
@@ -295,7 +295,7 @@ export interface OpsStatsPayload {
 }
 
 /**
- * Aggregate gittensory's outcome data across the scanned repos into the stats payload. Read-only (D1 only via
+ * Aggregate loopover's outcome data across the scanned repos into the stats payload. Read-only (D1 only via
  * the existing aggregation services); never any GitHub I/O. Aggregate counts only — never PR content.
  */
 export async function computeOpsStats(env: Env): Promise<OpsStatsPayload> {

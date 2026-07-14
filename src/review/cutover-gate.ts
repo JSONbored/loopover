@@ -5,7 +5,7 @@
 // ALSO pass for the feature to run on a given PR's repo.
 //
 // Single env var: LOOPOVER_REVIEW_REPOS — a comma-separated allowlist of repo full-names
-// ("owner/repo", e.g. "JSONbored/gittensory,JSONbored/awesome-claude"). A repo activates the converged
+// ("owner/repo", e.g. "JSONbored/loopover,JSONbored/awesome-claude"). A repo activates the converged
 // features ONLY IF (the feature's global flag is ON) AND (the repo is in this allowlist).
 //
 // DEFAULT IS NO REPOS: empty / unset / whitespace-only → false for EVERY repo. So even with every global flag

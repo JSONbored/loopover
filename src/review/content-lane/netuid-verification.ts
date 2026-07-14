@@ -1,6 +1,6 @@
 // Metagraphed netuid verification (content-lane primitive).
 //
-// SELF-CONTAINED NATIVE PORT (reviewbot→gittensory convergence). Byte-faithful to the taostats /
+// SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence). Byte-faithful to the taostats /
 // public-registry netuid-identity verification in reviewbot's src/agents/metagraphed/capabilities.ts
 // (fetchSubnetRecord / checkNetuidExists / fetchTaostatsSubnetIdentity).
 //
@@ -13,7 +13,7 @@
 //  2. TAOSTATS on-chain identity (api.taostats.io) — REQUIRES the env secret TAOSTATS_API_KEY (sent
 //     as a raw `Authorization` header, NOT `Bearer`). STRICTLY OPTIONAL + fail-open: returns null
 //     when the key is unset or on any error, so the merge gate falls back to the page-mention +
-//     registry-identity grounding signals. The key is NOT yet declared in gittensory's Env — see the
+//     registry-identity grounding signals. The key is NOT yet declared in loopover's Env — see the
 //     port report; wire it (a Worker secret) to enable signal #2, or leave it unset to disable it.
 //
 // I/O is the injected fetch (`fetchImpl`, default global fetch) + a `readSecret` over a plain env

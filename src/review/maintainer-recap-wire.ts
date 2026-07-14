@@ -13,14 +13,14 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/gittensory-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
 
-/** A manifest-sourced enable/cadence override (#2250) -- the `maintainerRecap` block of the gittensory
+/** A manifest-sourced enable/cadence override (#2250) -- the `maintainerRecap` block of the loopover
  *  self-repo's `.loopover.yml` (see FocusManifestMaintainerRecapConfig). `present: false` (no block, or the
  *  repo has no manifest at all) means "no override configured", not "disabled" -- the caller falls through to
  *  the env vars in that case, exactly as if this parameter were omitted. */
 export type MaintainerRecapManifestOverride = { present: boolean; enabled: boolean; cadence: RecapCadence };
 
 /** True when the cross-repo maintainer recap digest is enabled. Config-as-code (#2250): a present
- *  `maintainerRecap` manifest block on the gittensory self-repo wins outright; otherwise falls back to the
+ *  `maintainerRecap` manifest block on the loopover self-repo wins outright; otherwise falls back to the
  *  LOOPOVER_MAINTAINER_RECAP env flag (default OFF -- the cron enqueues no job and runMaintainerRecapJob is
  *  never invoked). Truthy env convention matches isOpsEnabled. */
 export function isRecapEnabled(
@@ -119,7 +119,7 @@ async function recapScanRepos(env: Env): Promise<string[]> {
 }
 
 /**
- * Config-as-code override lookup (#2250): read the `maintainerRecap` block off the gittensory self-repo's
+ * Config-as-code override lookup (#2250): read the `maintainerRecap` block off the loopover self-repo's
  * `.loopover.yml` (resolveLoopOverSelfRepoFullName) -- the digest is an operator-level setting, not a
  * per-contributor-repo one, so ONE designated repo's manifest stands in for "the operator's own config" the
  * same way weekly-value-report/ops-alerts/selftune are operator-level, env-gated jobs. A manifest load failure

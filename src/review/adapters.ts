@@ -1,6 +1,6 @@
-// Review-adapter factory (reviewbot→gittensory convergence — ADDITIVE infra). Builds the injected adapter
+// Review-adapter factory (reviewbot→loopover convergence — ADDITIVE infra). Builds the injected adapter
 // interfaces the ported review modules expect (src/review/rag.ts `RagInfra` = VectorAdapter / InferenceAdapter /
-// StorageAdapter) from gittensory's ambient `Env` bindings, so the host can wire the ported RAG path without
+// StorageAdapter) from loopover's ambient `Env` bindings, so the host can wire the ported RAG path without
 // the modules depending on Cloudflare bindings directly. This mirrors reviewbot's platform layer — the `cf*`
 // pass-through wrappers + `createCloudflareAdapters` (src/platform/cloudflare/index.ts) and the fail-safe gates
 // in src/platform/access.ts (no Vectorize → no RAG, no AI → no context).
@@ -37,7 +37,7 @@ export function reviewVectorAdapter(vectorize: Vectorize): VectorAdapter {
     },
     query: async (vector, opts) => {
       const res = await vectorize.query(vector, opts as unknown as Parameters<Vectorize["query"]>[1]);
-      // Under `exactOptionalPropertyTypes` (gittensory's stricter tsconfig) the optional `metadata?` cannot be
+      // Under `exactOptionalPropertyTypes` (loopover's stricter tsconfig) the optional `metadata?` cannot be
       // assigned `undefined`, so only attach it when Vectorize returned metadata. Behavior is identical to
       // reviewbot's cfVector — a match with no metadata simply has no `metadata` key.
       return {

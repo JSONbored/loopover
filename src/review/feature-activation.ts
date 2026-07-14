@@ -41,7 +41,7 @@ import type { ConvergedFeatureKey, FocusManifest } from "../signals/focus-manife
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 
 /**
- * The four per-feature activation precedence shapes actually in use across gittensory's advisory review
+ * The four per-feature activation precedence shapes actually in use across loopover's advisory review
  * capabilities (#4616):
  *  - `"standard"`: `override` fully controls (`true` forces on, `false` forces off); `null` (unset) falls back
  *    to `allowlisted`. rag / reputation / unifiedComment / e2eTests / improvementSignal.

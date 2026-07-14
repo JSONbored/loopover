@@ -1,4 +1,4 @@
-// Self-improvement "apply" surface (#273–#279, reviewbot→gittensory convergence). The autonomous loop's
+// Self-improvement "apply" surface (#273–#279, reviewbot→loopover convergence). The autonomous loop's
 // (eval → advisor → apply) write side: a per-project store of runtime tunable overrides the loop raises
 // (confidenceFloor / scopeCap) WITHOUT a human editing config + redeploying, plus the soak-gated promotion
 // that flips a SHADOW-queued tightening to LIVE once it passes the gate. Everything here FAILS SAFE: a query
@@ -8,7 +8,7 @@
 // reviewbot. Storage is reached through an inline `storage(env) => env.DB` helper + a minimal D1-shaped
 // interface (no Cloudflare-binding type dependency), matching the runtime's D1 calls byte-for-byte. The pure
 // helpers (sanitize / merge / tightening / promotion gate) are ports of the reviewbot source
-// (src/core/tunables.ts + src/core/auto-apply.ts); the only deltas are mechanical guards for gittensory's
+// (src/core/tunables.ts + src/core/auto-apply.ts); the only deltas are mechanical guards for loopover's
 // stricter tsconfig (noUncheckedIndexedAccess, exactOptionalPropertyTypes), which do not change behavior.
 //
 // DEFERRED INFRA (out of scope here — this ports the pure logic + the D1-shaped store + tests):

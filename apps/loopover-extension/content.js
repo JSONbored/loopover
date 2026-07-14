@@ -182,7 +182,7 @@ function renderActions(body, actions) {
 }
 
 if (globalThis.__LOOPOVER_EXTENSION_TEST__) {
-  globalThis.__gittensoryContentInternals = {
+  globalThis.__loopoverContentInternals = {
     matchGitHubPageTarget,
     matchPullRequestTarget,
     renderPullContext,

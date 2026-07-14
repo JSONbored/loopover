@@ -52,7 +52,7 @@ function normalizeMinerUiUrl(text) {
 }
 
 if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
-  globalThis.__gittensoryMinerOptionsInternals = {
+  globalThis.__loopoverMinerOptionsInternals = {
     parseWatchedRepos,
     parseRankedCandidatesJson,
     removeLegacyDiscoveryIndexUrl,

@@ -1,8 +1,8 @@
 import "./opportunity-badge.js";
 import "./toolbar-badge.js";
 
-const badgeApi = globalThis.__gittensoryMinerOpportunityBadge;
-const toolbarBadgeApi = globalThis.__gittensoryMinerToolbarBadge;
+const badgeApi = globalThis.__loopoverMinerOpportunityBadge;
+const toolbarBadgeApi = globalThis.__loopoverMinerToolbarBadge;
 
 const PING_MESSAGE = "gittensory-miner:ping";
 const ISSUE_CONTEXT_MESSAGE = "gittensory-miner:issue-context";
@@ -172,7 +172,7 @@ if (chrome.action && chrome.storage.onChanged) {
 }
 
 if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
-  globalThis.__gittensoryMinerBackgroundInternals = {
+  globalThis.__loopoverMinerBackgroundInternals = {
     PING_MESSAGE,
     ISSUE_CONTEXT_MESSAGE,
     SYNC_RANKED_CANDIDATES_MESSAGE,

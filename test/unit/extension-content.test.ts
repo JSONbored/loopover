@@ -88,7 +88,7 @@ function loadContentInternals() {
   context.globalThis = context;
   const vmContext = createContext(context);
   new Script(contentScript).runInContext(vmContext);
-  return vmContext.__gittensoryContentInternals as {
+  return vmContext.__loopoverContentInternals as {
     matchGitHubPageTarget: (
       pathname: string,
     ) => { kind: "pull_request"; owner: string; repo: string; pullNumber: number } | { kind: "issue"; owner: string; repo: string; issueNumber: number } | null;

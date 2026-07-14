@@ -1,4 +1,4 @@
-const badgeApi = globalThis.__gittensoryMinerOpportunityBadge;
+const badgeApi = globalThis.__loopoverMinerOpportunityBadge;
 
 const target = matchGitHubIssueTarget(location.pathname);
 
@@ -69,7 +69,7 @@ function renderOpportunityBadge(container, payload, nowMs = Date.now()) {
 }
 
 if (globalThis.__LOOPOVER_MINER_EXTENSION_TEST__) {
-  globalThis.__gittensoryMinerContentInternals = {
+  globalThis.__loopoverMinerContentInternals = {
     matchGitHubIssueTarget,
     findIssueSidebar,
     renderOpportunityBadge,

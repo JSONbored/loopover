@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.1.0](https://github.com/JSONbored/loopover/compare/engine-v3.0.0...engine-v3.1.0) (2026-07-14)
+
+
+### Features
+
+* **engine:** add a load-testing harness for iterate-loop under concurrent load ([#5781](https://github.com/JSONbored/loopover/issues/5781)) ([4b6b5c6](https://github.com/JSONbored/loopover/commit/4b6b5c67f79b8c7610f1132e37779ca2bf1cdc8e)), closes [#5224](https://github.com/JSONbored/loopover/issues/5224)
+* **engine:** extract content-lane's pure leaf modules to loopover-engine ([#5775](https://github.com/JSONbored/loopover/issues/5775)) ([60ed3cd](https://github.com/JSONbored/loopover/commit/60ed3cd70560caa01fc633ab53df2d22eaf6ecec)), closes [#4880](https://github.com/JSONbored/loopover/issues/4880)
+* **engine:** extract settings leaf modules to loopover-engine ([#5779](https://github.com/JSONbored/loopover/issues/5779)) ([b570c11](https://github.com/JSONbored/loopover/commit/b570c114431bc4e94caec1dfc4473325cabddc93)), closes [#4879](https://github.com/JSONbored/loopover/issues/4879)
+* **engine:** per-tenant configuration layer ([#5804](https://github.com/JSONbored/loopover/issues/5804)) ([1fd8519](https://github.com/JSONbored/loopover/commit/1fd851902bfd5f59b8b064c58e1a880f29eac8bf)), closes [#4787](https://github.com/JSONbored/loopover/issues/4787)
+* **engine:** per-tenant resource quota evaluation ([#5801](https://github.com/JSONbored/loopover/issues/5801)) ([db74aa3](https://github.com/JSONbored/loopover/commit/db74aa3fd73c8ffab9d2230ba43ef8addc847085)), closes [#4796](https://github.com/JSONbored/loopover/issues/4796)
+* **mcp:** add the idea-intake bridge and loopover_intake_idea tool ([#5792](https://github.com/JSONbored/loopover/issues/5792)) ([d60481e](https://github.com/JSONbored/loopover/commit/d60481ec33c6004d8f59857a406ffd69695c9917)), closes [#4798](https://github.com/JSONbored/loopover/issues/4798)
+* **mcp:** deliver a completed loop iteration as a customer results payload ([#5797](https://github.com/JSONbored/loopover/issues/5797)) ([9b3f4b2](https://github.com/JSONbored/loopover/commit/9b3f4b276636fd119dcf973aa71003bd50df4d7e)), closes [#4801](https://github.com/JSONbored/loopover/issues/4801)
+* **mcp:** evaluate when a rented loop should escalate to a human ([#5806](https://github.com/JSONbored/loopover/issues/5806)) ([90f477e](https://github.com/JSONbored/loopover/commit/90f477e9e060b15244f9aa47d81665bfd87fd664))
+* **mcp:** route ideas through intake into a loop claim plan ([#5795](https://github.com/JSONbored/loopover/issues/5795)) ([48d2a39](https://github.com/JSONbored/loopover/commit/48d2a3970e7dffb6c93dba1d0538fe401ec308a9)), closes [#4799](https://github.com/JSONbored/loopover/issues/4799)
+* **mcp:** stream loop progress to the customer via a progress snapshot ([#5798](https://github.com/JSONbored/loopover/issues/5798)) ([96b8c42](https://github.com/JSONbored/loopover/commit/96b8c426ce5057b7884e19146be35c569568da36)), closes [#4800](https://github.com/JSONbored/loopover/issues/4800)
+* **miner:** honor kill-switch mid-attempt during iterate-loop ([#5799](https://github.com/JSONbored/loopover/issues/5799)) ([3525e95](https://github.com/JSONbored/loopover/commit/3525e95a4afd0a9827e64fc00a20919d9a222f82))
+
+
+### Fixes
+
+* **engine:** clamp rate-limit retryAfterMs to at most one window on a backward clock ([#5855](https://github.com/JSONbored/loopover/issues/5855)) ([f35e354](https://github.com/JSONbored/loopover/commit/f35e354747fcd959ff8be848d9e96fe0a5b3559e)), closes [#5829](https://github.com/JSONbored/loopover/issues/5829)
+* **rebrand:** full-cutover rename miner/AMS per-repo and operator config filenames ([#5765](https://github.com/JSONbored/loopover/issues/5765)) ([c93569d](https://github.com/JSONbored/loopover/commit/c93569dcd977ec7a6ec78157b6b40374f85f12cc))
+* **rebrand:** full-cutover rename remaining internal gittensory runtime identifiers ([#5761](https://github.com/JSONbored/loopover/issues/5761)) ([75450f1](https://github.com/JSONbored/loopover/commit/75450f1d597dbc54c46d6005ed540dad8512b071))
+* **signals:** require a code file before manifest_missing_tests fires ([#5852](https://github.com/JSONbored/loopover/issues/5852)) ([ad011d3](https://github.com/JSONbored/loopover/commit/ad011d377721b235e168e911738264df5eda45ca))
+
 ## [3.0.0](https://github.com/JSONbored/gittensory/compare/engine-v2.0.0...engine-v3.0.0) (2026-07-14)
 
 

@@ -792,6 +792,9 @@ export type RepositorySettings = {
    *  ⇒ verified passed (no `ciCompletenessWarning`). Config-as-code only — no DB column; set via
    *  `.loopover.yml gate.expectedCiContexts`. */
   expectedCiContexts?: ReadonlyArray<string> | null | undefined;
+  /** `gate.advisoryCheckRuns` (#4372): third-party check-runs excluded from CI pass/fail/pending aggregation;
+   *  a completed non-pass routes to manual-review. Config-as-code only — set via `.loopover.yml`. */
+  advisoryCheckRuns?: ReadonlyArray<import("@loopover/engine").AdvisoryCheckRunSpec> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
    *  preview exactly what it would do before the maintainer flips to real enforcement. Default off.

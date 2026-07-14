@@ -649,6 +649,7 @@ export {
   REVIEW_PROFILES,
   type AutoReviewConfig,
   type CommentVerbosity,
+  type AdvisoryCheckRunSpec,
   type ConvergedFeatureKey,
   type ExperimentalPluginKey,
   type FocusManifest,

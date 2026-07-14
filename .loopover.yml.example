@@ -252,6 +252,17 @@ gate:
     - build
     - test
 
+  # Third-party check-runs that must never gate CI pass/fail or count as pending, but whose non-pass
+  # conclusions should route an otherwise-green PR to manual review instead of merging through a flag the
+  # operator installed an app to raise (#4372). Each entry matches a check-run by exact name AND trusted app
+  # slug (same trust model as gate.cla.checkRunName/checkRunAppSlug). A completed advisory check with
+  # success/neutral/skipped is settled and ignored; failure/action_required/etc. holds for manual review.
+  # List of { name, appSlug } mappings, or omit. Default: not configured (byte-identical to today's behavior).
+  # Config-as-code only — no DB column or dashboard toggle.
+  # advisoryCheckRuns:
+  #   - name: Example trust scan
+  #     appSlug: example-trust-app
+
   # Promote a confident AI-judgment-only finding (one the reviewer itself placed under "Blockers", never
   # a "Nit") into a real, deterministic gate blocker instead of leaving it advisory (#3907). Only matters
   # for repos already running the registry content lane (see contentLane below) — content/registry repos

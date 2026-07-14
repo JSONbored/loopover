@@ -112,6 +112,7 @@ import {
   primeDurablePrStateCache,
   refreshPullRequestDetails,
 } from "../github/backfill";
+import { resolveAdvisoryCheckHold } from "../github/advisory-check-runs.js";
 import {
   contributorRepoStatsFromGittensor,
   fetchGittensorContributorSnapshot,
@@ -2286,6 +2287,7 @@ function buildAgentMaintenancePlanInput(args: {
   unlinkedIssueMatchHold: AgentActionPlanInput["unlinkedIssueMatchHold"];
   aiReviewLowConfidenceHold: AgentActionPlanInput["aiReviewLowConfidenceHold"];
   unlinkedIssueMatchClose: AgentActionPlanInput["unlinkedIssueMatchClose"];
+  advisoryCheckHold: AgentActionPlanInput["advisoryCheckHold"];
   liveMergeState: string | undefined;
   liveReviewDecision: string | undefined;
   pr: PullRequestRecord;
@@ -2311,6 +2313,7 @@ function buildAgentMaintenancePlanInput(args: {
     unlinkedIssueMatchHold,
     aiReviewLowConfidenceHold,
     unlinkedIssueMatchClose,
+    advisoryCheckHold,
     liveMergeState,
     liveReviewDecision,
     pr,
@@ -2362,6 +2365,7 @@ function buildAgentMaintenancePlanInput(args: {
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
     ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
+    ...(advisoryCheckHold !== undefined ? { advisoryCheckHold } : {}),
     pr: {
       mergeableState: liveMergeState ?? pr.mergeableState,
       reviewDecision: liveReviewDecision ?? pr.reviewDecision,
@@ -2477,6 +2481,7 @@ async function runAgentMaintenancePlanAndExecute(
     token,
     settings.expectedCiContexts,
     admissionKey,
+    settings.advisoryCheckRuns,
   );
   // #2137: informational-only nudge for the operator — never affects the disposition below (ciState is
   // unchanged). recordAuditEvent is a DB write with its own internal failure handling; a failure here must
@@ -2796,6 +2801,7 @@ async function runAgentMaintenancePlanAndExecute(
   // gate failed SOLELY on a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding under
   // the (default) hold_for_review disposition. See resolveAiReviewLowConfidenceHold's own doc comment.
   const aiReviewLowConfidenceHold = resolveAiReviewLowConfidenceHold(gate, settings);
+  const advisoryCheckHold = resolveAdvisoryCheckHold(ciAggregate.advisoryHoldDetails ?? [], settings.advisoryCheckRuns);
   const planned = planAgentMaintenanceActions(
     buildAgentMaintenancePlanInput({
       gate,
@@ -2816,6 +2822,7 @@ async function runAgentMaintenancePlanAndExecute(
       unlinkedIssueMatchHold,
       aiReviewLowConfidenceHold,
       unlinkedIssueMatchClose,
+      advisoryCheckHold,
       liveMergeState,
       liveReviewDecision,
       pr,
@@ -3401,6 +3408,7 @@ async function prReadyForReview(
     token,
     expectedCiContexts: settings.expectedCiContexts,
     admissionKey,
+    advisoryCheckRuns: settings.advisoryCheckRuns,
   }).catch(() => undefined);
   if (ci?.hasPending) {
     // Staleness cap: inferred or unreadable pending CI can otherwise defer FOREVER (orphaned required context,
@@ -7300,6 +7308,7 @@ async function resolveManifestPassedValidationCount(
     liveFacts: LiveGithubFacts;
     testExpectationsConfigured: boolean;
     testFileCount: number;
+    advisoryCheckRuns?: ReadonlyArray<import("@loopover/engine").AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<number> {
   if (hasValidationNote(args.body ?? "")) return 1;
@@ -7324,6 +7333,7 @@ async function resolveManifestPassedValidationCount(
     token,
     expectedCiContexts: args.expectedCiContexts,
     admissionKey,
+    advisoryCheckRuns: args.advisoryCheckRuns,
   });
   return liveCi.ciState === "passed" ? 1 : 0;
 }
@@ -7387,6 +7397,7 @@ async function maybeApplyManifestPolicyGate(
       liveFacts: args.webhook.liveFacts,
       testExpectationsConfigured: manifest.testExpectations.length > 0,
       testFileCount,
+      advisoryCheckRuns: args.settings.advisoryCheckRuns,
     });
     const guidance = buildFocusManifestGuidance({
       manifest,
@@ -9828,6 +9839,7 @@ async function maybePublishPrPublicSurface(
         token,
         expectedCiContexts: settings.expectedCiContexts,
         admissionKey,
+        advisoryCheckRuns: settings.advisoryCheckRuns,
       });
       // Live merge-state too — the SAME source the disposition uses (planAgentMaintenanceActions reads liveMergeState).
       // The stored pr.mergeableState lags GitHub's async recompute, and the gate's own check/review publication can
@@ -9858,6 +9870,13 @@ async function maybePublishPrPublicSurface(
           ...(detail.detailsUrl ? { detailsUrl: detail.detailsUrl } : {}),
         }),
       );
+      const advisoryHoldDetails: CheckFailureDetail[] = (liveCi.advisoryHoldDetails ?? []).map(
+        (detail) => ({
+          name: detail.name,
+          ...(detail.summary ? { summary: detail.summary } : {}),
+          ...(detail.detailsUrl ? { detailsUrl: detail.detailsUrl } : {}),
+        }),
+      );
       const mergeReadiness: MergeReadiness = {
         ciState,
         ...(mergeStateLabel ? { mergeStateLabel } : {}),
@@ -9866,6 +9885,7 @@ async function maybePublishPrPublicSurface(
           : {}),
         ...(failingDetails.length > 0 ? { failingDetails } : {}),
         ...(nonRequiredFailingDetails.length > 0 ? { nonRequiredFailingDetails } : {}),
+        ...(advisoryHoldDetails.length > 0 ? { advisoryHoldDetails } : {}),
       };
       // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = gateEvaluation;
@@ -9880,10 +9900,12 @@ async function maybePublishPrPublicSurface(
       // must render "held for review", not "✅ safe to merge". Compute the SAME guardrail-hit the disposition uses
       // (shared isGuardrailHit) and thread it so the signal and the action agree (the #4220 class, clean variant).
       const commentHardGuardrailGlobs = resolveHardGuardrailGlobs(settings);
-      const heldForReview = isGuardrailHit(
-        changedPathsForGuardrail(unifiedFiles),
-        commentHardGuardrailGlobs,
-      );
+      const heldForReview =
+        isGuardrailHit(
+          changedPathsForGuardrail(unifiedFiles),
+          commentHardGuardrailGlobs,
+        ) ||
+        resolveAdvisoryCheckHold(liveCi.advisoryHoldDetails ?? [], settings.advisoryCheckRuns) !== undefined;
       // Held-vs-closed parity (#8/#9): the disposition NEVER auto-closes an owner / automation-bot PR, so a gate
       // "close" verdict on one must headline "held", not "Closed". Compute the same author classification the
       // planner uses (repo-owner login match + protected automation author) and thread it to the comment.

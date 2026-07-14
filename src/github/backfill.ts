@@ -83,6 +83,8 @@ import {
   type GitHubRateLimitAdmissionKey,
 } from "./client";
 import { fetchCachedGitHubGraphQl } from "./graphql-cache";
+import { isAdvisoryCheckRunSettledPass, matchesConfiguredAdvisoryCheckRun } from "./advisory-check-runs.js";
+import type { AdvisoryCheckRunSpec } from "@loopover/engine";
 import { incr } from "../selfhost/metrics";
 import { fetchBrokeredInstallationToken, isOrbBrokerMode } from "../orb/broker-client";
 type GitHubLabelPayload = {
@@ -2572,6 +2574,9 @@ export type LiveCiAggregate = {
   failingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
   // Historical compatibility: non-required red checks are now folded into failingDetails so this stays empty.
   nonRequiredFailingDetails: Array<{ name: string; summary?: string; detailsUrl?: string }>;
+  /** Configured advisory check-runs (#4372) that completed with a non-pass conclusion — routed to manual-review,
+   *  never folded into ciState/hasPending. Empty when the repo did not opt in via `gate.advisoryCheckRuns`. */
+  advisoryHoldDetails?: Array<{ name: string; summary?: string; detailsUrl?: string; appSlug?: string }>;
   // Informational-only (#2137): set when the aggregate resolved to "passed" with no branch-protection required
   // contexts configured (`enforceRequiredOnly` false) — meaning a workflow that never triggers on this commit at
   // all (e.g. path-filtered out, or a broken YAML trigger) is indistinguishable from one that doesn't exist, and
@@ -2799,9 +2804,10 @@ async function reduceLiveCiAggregate(
     checkRunsIncomplete: boolean;
     statusIncomplete: boolean;
     fetchSuites: () => Promise<ReadonlyArray<LiveCiSuite> | null>;
+    advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<LiveCiAggregate> {
-  const { checkRuns, statuses, requiredContexts, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
+  const { checkRuns, statuses, requiredContexts, checkRunsIncomplete, statusIncomplete, fetchSuites, advisoryCheckRuns } = inputs;
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
   // Deliberately the OPPOSITE unknown-case default from isRequired() above, and used ONLY for a third-party
@@ -2819,6 +2825,7 @@ async function reduceLiveCiAggregate(
   const isConfirmedRequired = (name: string): boolean => enforceRequiredOnly && requiredContexts!.has(name);
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
+  const advisoryHoldDetails: LiveCiAggregate["advisoryHoldDetails"] = [];
   let total = 0;
   let anyPending = false;
   let anyVisiblePending = false;
@@ -2836,10 +2843,22 @@ async function reduceLiveCiAggregate(
     seenContextNames.add(run.name); // mark BEFORE bot-check skip: a bot-owned required context is "seen"
     const appSlug = (run.app?.slug ?? "").toLowerCase();
     if (appSlug === "github-actions") sawFirstPartyCheckRun = true;
-    if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs
-    total += 1;
     const conclusion = (run.conclusion ?? "").toLowerCase();
     const status = (run.status ?? "").toLowerCase();
+    if (isOwnGitHubAppCheckRun(env, run)) continue; // never wait on the bot's own Gate/Context check-runs
+    if (matchesConfiguredAdvisoryCheckRun(run, advisoryCheckRuns)) {
+      if (status === "completed" && conclusion && !isAdvisoryCheckRunSettledPass(conclusion)) {
+        const summary = checkRunSummary(run);
+        advisoryHoldDetails.push({
+          name: run.name,
+          ...(summary ? { summary } : {}),
+          ...(run.details_url ? { detailsUrl: run.details_url } : {}),
+          ...(appSlug ? { appSlug } : {}),
+        });
+      }
+      continue;
+    }
+    total += 1;
     // A THIRD-PARTY app's OWN action_required verdict on an already-COMPLETED check-run (for example, a
     // security/check tool asking for human review) is a settled, terminal adverse result -- but ONLY when that
     // check is actually a REQUIRED context. A non-required third-party check must never hard-fail/auto-close the
@@ -2947,7 +2966,7 @@ async function reduceLiveCiAggregate(
   // A partial/paginated read can't tell "never appears" from "appears on a page we didn't fetch" -- only a
   // COMPLETE read's absence is a confident signal worth a short surfacing cap (#selfhost-ci-deferral-staleness).
   const hasMissingRequiredContext = anyMissingRequiredContext && !checkRunsIncomplete && !statusIncomplete;
-  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, ciCompletenessWarning };
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, advisoryHoldDetails, ciCompletenessWarning };
 }
 
 /**
@@ -2968,8 +2987,9 @@ export async function fetchLiveCiAggregate(
   // Completed red checks/statuses still fail the aggregate even when they are not branch-protection-required.
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
   // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
   const checkRuns: LiveCiCheckRun[] = [];
@@ -3014,6 +3034,7 @@ export async function fetchLiveCiAggregate(
     requiredContexts,
     checkRunsIncomplete,
     statusIncomplete,
+    advisoryCheckRuns,
     // Lazily read the check-SUITES backstop only when the reducer finds the cheaper sources fully settled; a fetch
     // error returns null so the reducer fails closed exactly as the inline path did.
     fetchSuites: async () => {
@@ -3051,6 +3072,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
   token: string | undefined,
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null,
 ): Promise<LiveCiAggregate | null> {
   if (!headSha || !token) return null;
   const [owner, name] = repoFullName.split("/");
@@ -3132,6 +3154,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
     requiredContexts,
     checkRunsIncomplete: false,
     statusIncomplete: false,
+    advisoryCheckRuns,
     fetchSuites: async () => suites, // already fetched in the same query — never a second round-trip
   });
 }
@@ -3149,14 +3172,13 @@ export async function fetchLiveCiAggregatePreferGraphQl(
   token: string | undefined,
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null,
 ): Promise<LiveCiAggregate> {
   if (isStatusRollupGraphQlEnabled(env)) {
-    // fetchLiveCiAggregateViaGraphQl handles all its own errors and returns null on any uncertainty (it never
-    // rejects), so a null result — not a throw — is the fall-back-to-REST signal.
-    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey);
+    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns);
     if (rollup) return rollup;
   }
-  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey);
+  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns);
 }
 
 /**
@@ -3628,6 +3650,7 @@ export function deserializeCachedCiAggregate(
       hasMissingRequiredContext: cached.ciHasMissingRequiredContext ?? false,
       failingDetails,
       nonRequiredFailingDetails,
+      advisoryHoldDetails: [],
       ciCompletenessWarning: cached.ciCompletenessWarning ?? null,
     };
   } catch {

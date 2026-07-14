@@ -14,7 +14,8 @@
 // fetchLiveCiAggregateWithRequiredContexts, expectedCiContextsKeyPart, resolvedRequiredContextsKeyPart,
 // evictLiveFactOnReject) stay unexported, matching their original (never-exported) visibility.
 
-import { getPullRequestDetailSyncState } from "../db/repositories";
+import { advisoryCheckRunsKeyPart } from "../github/advisory-check-runs.js";
+import type { AdvisoryCheckRunSpec } from "@loopover/engine";
 import {
   cachedFetchLivePullRequestMergeState,
   CI_STATE_CACHE_METRIC,
@@ -62,6 +63,15 @@ function expectedCiContextsKeyPart(expectedCiContexts: ReadonlyArray<string> | n
 function resolvedRequiredContextsKeyPart(requiredContexts: ReadonlySet<string> | null | undefined): string {
   if (!requiredContexts || requiredContexts.size === 0) return "";
   return JSON.stringify([...requiredContexts].sort());
+}
+
+function liveCiAggregateConfigKeyPart(
+  expectedCiContexts: ReadonlyArray<string> | null | undefined,
+  advisoryCheckRuns: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined,
+): string {
+  const advisoryPart = advisoryCheckRunsKeyPart(advisoryCheckRuns);
+  const contextsPart = expectedCiContextsKeyPart(expectedCiContexts);
+  return advisoryPart ? `${contextsPart}|advisory:${advisoryPart}` : contextsPart;
 }
 
 // RC2 + #selfhost-ci-verification: the EFFECTIVE required-status-check contexts for this repo/baseRef, merging
@@ -148,10 +158,14 @@ async function cachedFetchLiveCiAggregate(
     // ci-verification gate review finding). The live-fetched aggregate is still returned to THIS caller either way.
     requiredContextsResolved: boolean;
     admissionKey?: GitHubRateLimitAdmissionKey | undefined;
+    advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<LiveCiAggregate> {
   const cached = await getPullRequestDetailSyncState(env, args.repoFullName, args.prNumber).catch(() => null);
-  if (!args.forceRefresh && cached && isCiStateCacheFresh(cached, args.headSha, args.requiredContextsKey)) {
+  // #4372: the durable cache does not persist advisoryHoldDetails yet, so repos that opt into
+  // gate.advisoryCheckRuns must always take the live path — otherwise a cache hit would drop the hold signal.
+  const skipDurableCache = Boolean(args.advisoryCheckRuns?.length);
+  if (!args.forceRefresh && !skipDurableCache && cached && isCiStateCacheFresh(cached, args.headSha, args.requiredContextsKey)) {
     const deserialized = deserializeCachedCiAggregate(cached);
     if (deserialized) {
       incr(CI_STATE_CACHE_METRIC, { field: "aggregate", result: "hit" });
@@ -159,7 +173,15 @@ async function cachedFetchLiveCiAggregate(
     }
   }
   incr(CI_STATE_CACHE_METRIC, { field: "aggregate", result: args.forceRefresh ? "forced" : "miss" });
-  const live = await fetchLiveCiAggregatePreferGraphQl(env, args.repoFullName, args.headSha, args.token, args.requiredContexts, args.admissionKey);
+  const live = await fetchLiveCiAggregatePreferGraphQl(
+    env,
+    args.repoFullName,
+    args.headSha,
+    args.token,
+    args.requiredContexts,
+    args.admissionKey,
+    args.advisoryCheckRuns,
+  );
   if (args.requiredContextsResolved) {
     await writeThroughCiStateCache(env, args.repoFullName, args.prNumber, cached, args.headSha, args.requiredContextsKey, live);
   }
@@ -178,6 +200,7 @@ function fetchLiveCiAggregateWithRequiredContexts(
     expectedCiContexts: ReadonlyArray<string> | null | undefined;
     forceRefresh: boolean;
     admissionKey?: GitHubRateLimitAdmissionKey | undefined;
+    advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<LiveCiAggregate> {
   // CI refresh callers need fresh check/status state; branch protection contexts move slowly enough to stay
@@ -194,10 +217,11 @@ function fetchLiveCiAggregateWithRequiredContexts(
         headSha: args.headSha,
         token: args.token,
         requiredContexts,
-        requiredContextsKey: resolvedRequiredContextsKeyPart(requiredContexts),
+        requiredContextsKey: `${resolvedRequiredContextsKeyPart(requiredContexts)}|cfg:${liveCiAggregateConfigKeyPart(args.expectedCiContexts, args.advisoryCheckRuns)}`,
         forceRefresh: args.forceRefresh,
         requiredContextsResolved: resolved,
         admissionKey: args.admissionKey,
+        advisoryCheckRuns: args.advisoryCheckRuns,
       }),
     );
 }
@@ -213,9 +237,16 @@ export function cachedLiveCiAggregate(
     token: string | undefined;
     expectedCiContexts: ReadonlyArray<string> | null | undefined;
     admissionKey?: GitHubRateLimitAdmissionKey | undefined;
+    advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<LiveCiAggregate> {
-  const key = liveFactKey(args.repoFullName, args.headSha, args.baseRef, liveFactTokenPart(args.token), expectedCiContextsKeyPart(args.expectedCiContexts));
+  const key = liveFactKey(
+    args.repoFullName,
+    args.headSha,
+    args.baseRef,
+    liveFactTokenPart(args.token),
+    liveCiAggregateConfigKeyPart(args.expectedCiContexts, args.advisoryCheckRuns),
+  );
   const cached = args.facts.ciAggregates.get(key);
   if (cached) return cached;
   const next = evictLiveFactOnReject(
@@ -231,6 +262,7 @@ export function cachedLiveCiAggregate(
       expectedCiContexts: args.expectedCiContexts,
       forceRefresh: false,
       admissionKey: args.admissionKey,
+      advisoryCheckRuns: args.advisoryCheckRuns,
     }),
   );
   args.facts.ciAggregates.set(key, next);
@@ -248,9 +280,16 @@ export function refreshLiveCiAggregate(
     token: string | undefined;
     expectedCiContexts: ReadonlyArray<string> | null | undefined;
     admissionKey?: GitHubRateLimitAdmissionKey | undefined;
+    advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined;
   },
 ): Promise<LiveCiAggregate> {
-  const key = liveFactKey(args.repoFullName, args.headSha, args.baseRef, liveFactTokenPart(args.token), expectedCiContextsKeyPart(args.expectedCiContexts));
+  const key = liveFactKey(
+    args.repoFullName,
+    args.headSha,
+    args.baseRef,
+    liveFactTokenPart(args.token),
+    liveCiAggregateConfigKeyPart(args.expectedCiContexts, args.advisoryCheckRuns),
+  );
   const next = evictLiveFactOnReject(
     args.facts.ciAggregates,
     key,
@@ -264,6 +303,7 @@ export function refreshLiveCiAggregate(
       expectedCiContexts: args.expectedCiContexts,
       forceRefresh: true,
       admissionKey: args.admissionKey,
+      advisoryCheckRuns: args.advisoryCheckRuns,
     }),
   );
   args.facts.ciAggregates.set(key, next);
@@ -355,9 +395,26 @@ export function reuseOrRefreshLiveCiAggregate(
   token: string | undefined,
   expectedCiContexts: ReadonlyArray<string> | null | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
+  advisoryCheckRuns?: ReadonlyArray<AdvisoryCheckRunSpec> | null | undefined,
 ): Promise<LiveCiAggregate> {
-  const key = liveFactKey(repoFullName, headSha, baseRef, liveFactTokenPart(token), expectedCiContextsKeyPart(expectedCiContexts));
+  const key = liveFactKey(
+    repoFullName,
+    headSha,
+    baseRef,
+    liveFactTokenPart(token),
+    liveCiAggregateConfigKeyPart(expectedCiContexts, advisoryCheckRuns),
+  );
   const cached = facts.forcedCiAggregateKeys.has(key) ? facts.ciAggregates.get(key) : undefined;
   if (cached) return cached;
-  return refreshLiveCiAggregate(env, { repoFullName, facts, prNumber, headSha, baseRef, token, expectedCiContexts, admissionKey });
+  return refreshLiveCiAggregate(env, {
+    repoFullName,
+    facts,
+    prNumber,
+    headSha,
+    baseRef,
+    token,
+    expectedCiContexts,
+    admissionKey,
+    advisoryCheckRuns,
+  });
 }

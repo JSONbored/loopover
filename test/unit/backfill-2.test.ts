@@ -198,7 +198,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], ciCompletenessWarning: null });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -365,6 +365,101 @@ describe("GitHub backfill", () => {
       expect(aggregate.nonRequiredFailingDetails).toEqual([
         { name: "Contributor trust", summary: "Manual review needed", detailsUrl: "https://superagent.example/checks/contributor-trust" },
       ]);
+    });
+
+    it("configured advisory check-runs (#4372) are excluded from ciState/hasPending and routed to advisoryHoldDetails when non-pass", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              {
+                name: "Example trust scan",
+                status: "completed",
+                conclusion: "action_required",
+                app: { slug: "example-trust-app" },
+                output: { title: "Needs operator review" },
+                details_url: "https://example.test/checks/trust",
+              },
+              {
+                name: "Example trust scan",
+                status: "in_progress",
+                conclusion: null,
+                app: { slug: "example-trust-app" },
+              },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const advisoryCheckRuns = [{ name: "Example trust scan", appSlug: "example-trust-app" }];
+      const aggregate = await fetchLiveCiAggregate(
+        env,
+        "owner/example-repo",
+        "sha4372",
+        "public-token",
+        new Set(["validate"]),
+        undefined,
+        advisoryCheckRuns,
+      );
+
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.hasPending).toBe(false);
+      expect(aggregate.hasVisiblePending).toBe(false);
+      expect(aggregate.failingDetails).toEqual([]);
+      expect(aggregate.nonRequiredFailingDetails).toEqual([]);
+      expect(aggregate.advisoryHoldDetails).toEqual([
+        {
+          name: "Example trust scan",
+          summary: "Needs operator review",
+          detailsUrl: "https://example.test/checks/trust",
+          appSlug: "example-trust-app",
+        },
+      ]);
+    });
+
+    it("configured advisory check-runs stay byte-identical for unconfigured repos and settled pass conclusions", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/check-runs?")) {
+          return Response.json({
+            check_runs: [
+              { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+              {
+                name: "Example trust scan",
+                status: "completed",
+                conclusion: "success",
+                app: { slug: "example-trust-app" },
+              },
+            ],
+          });
+        }
+        if (url.includes("/status?")) return Response.json({ statuses: [] });
+        if (url.includes("/check-suites?")) return Response.json({ check_suites: [{ status: "completed", app: { slug: "github-actions" } }] });
+        return new Response("not found", { status: 404 });
+      });
+
+      const unconfigured = await fetchLiveCiAggregate(env, "owner/example-repo", "sha4372b", "public-token", new Set(["validate"]));
+      expect(unconfigured.advisoryHoldDetails).toEqual([]);
+      expect(unconfigured.ciState).toBe("passed");
+
+      const configured = await fetchLiveCiAggregate(
+        env,
+        "owner/example-repo",
+        "sha4372b",
+        "public-token",
+        new Set(["validate"]),
+        undefined,
+        [{ name: "Example trust scan", appSlug: "example-trust-app" }],
+      );
+      expect(configured.advisoryHoldDetails).toEqual([]);
+      expect(configured.ciState).toBe("passed");
     });
 
     it("REGRESSION (#4812): a third-party action_required check-run on a repo with NO branch-protection required contexts configured at all is still non-blocking, not folded into failingDetails by the 'assume required when unknown' fallback", async () => {

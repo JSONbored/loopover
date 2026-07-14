@@ -97,6 +97,10 @@ export interface MergeReadiness {
    *  neither auto-close the PR nor vanish without a trace). Rendered as its own non-blocking collapsible,
    *  independent of `ciState`. */
   nonRequiredFailingDetails?: CheckFailureDetail[];
+  /** Configured advisory check-runs (#4372) that completed with a non-pass conclusion -- excluded from
+   *  `ciState`/pending but routed to manual review; surfaced here so the maintainer sees which check/app
+   *  triggered the hold. */
+  advisoryHoldDetails?: CheckFailureDetail[];
 }
 
 /** The structured synthesis of the reviewers' notes that drives BOTH the legacy unified comment
@@ -568,6 +572,19 @@ function nonRequiredFailingChecksBlock(readiness: MergeReadiness | undefined): s
   return lines.join("\n");
 }
 
+function advisoryHoldChecksBlock(readiness: MergeReadiness | undefined): string {
+  const details = readiness?.advisoryHoldDetails ?? [];
+  const lines = details
+    .map((detail) => {
+      const name = escapePublicHtmlAngles(detail.name.trim());
+      if (!name) return "";
+      const reason = detail.summary?.trim() ? ` — ${escapePublicHtmlAngles(detail.summary.trim())}` : "";
+      return `- ${name}${reason}`;
+    })
+    .filter((line) => line.length > 0);
+  return lines.join("\n");
+}
+
 function signalTable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   const blockerCount = (input.blockers ?? []).length;
   const reviewerEvidence =
@@ -704,6 +721,11 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   const nonRequiredFailingChecks = nonRequiredFailingChecksBlock(input.readiness);
   if (nonRequiredFailingChecks && verbosity !== "quiet") {
     blocks.push(details("Flagged checks (non-blocking)", nonRequiredFailingChecks, undefined, collapsiblesOpen));
+  }
+
+  const advisoryHoldChecks = advisoryHoldChecksBlock(input.readiness);
+  if (advisoryHoldChecks && verbosity !== "quiet") {
+    blocks.push(details("Advisory check-runs (manual review)", advisoryHoldChecks, undefined, collapsiblesOpen));
   }
 
   blocks.push(signalTable(input, ctx));

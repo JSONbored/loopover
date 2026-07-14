@@ -64,6 +64,20 @@ describe("planAgentMaintenanceActions (#778)", () => {
     const collision = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, migrationCollisionLabel: "migration-review", migrationCollisionHold: { reason: "live migrations/** collision", comment: "Please rebase." }, pr: { labels: [], mergeableState: "clean" } }));
     expect(collision.some((a) => a.actionClass === "label" && a.label === "migration-review")).toBe(true);
     expect(classes(collision)).not.toContain("merge");
+
+    const advisory = planAgentMaintenanceActions(input({
+      conclusion: "success",
+      autonomy: { merge: "auto", review_state_label: "auto" },
+      manualReviewLabel: "manual-review",
+      advisoryCheckHold: {
+        checkNames: ["Example trust scan"],
+        reason: "advisory check-run hold (Example trust scan)",
+        comment: "LoopOver: a configured advisory check-run needs maintainer action before this PR can merge:\n- Example trust scan (example-trust-app)",
+      },
+      pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+    }));
+    expect(advisory.some((a) => a.actionClass === "label" && a.label === "manual-review")).toBe(true);
+    expect(classes(advisory)).not.toContain("merge");
   });
 
   it("uses manualReviewLabel for manual holds without enabling ready/changes review-state labels", () => {

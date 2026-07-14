@@ -28,6 +28,7 @@ describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
       ciCompletenessWarning: null,
     });
     const facts = emptyFacts();

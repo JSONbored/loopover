@@ -410,6 +410,22 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).not.toContain("**CI checks failing**");
   });
 
+  it("renders configured advisory check-run holds as a manual-review section (#4372)", () => {
+    const md = renderUnifiedReviewComment(
+      {
+        ...base,
+        readiness: {
+          ciState: "passed",
+          advisoryHoldDetails: [{ name: "Example trust scan", summary: "Needs operator review" }],
+        },
+      },
+      {},
+    );
+    expect(md).toContain("Advisory check-runs (manual review)");
+    expect(md).toContain("- Example trust scan — Needs operator review");
+    expect(md).not.toContain("**CI checks failing**");
+  });
+
   it("omits the 'Flagged checks' section when nonRequiredFailingDetails is absent/empty (default, byte-identical)", () => {
     expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "passed" } }, {})).not.toContain("Flagged checks");
     expect(renderUnifiedReviewComment({ ...base, readiness: { ciState: "passed", nonRequiredFailingDetails: [] } }, {})).not.toContain("Flagged checks");

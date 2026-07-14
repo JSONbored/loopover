@@ -281,6 +281,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     claCheckRunName: "checkRunName:",
     claCheckRunAppSlug: "checkRunAppSlug:",
     expectedCiContexts: "expectedCiContexts:",
+    advisoryCheckRuns: "advisoryCheckRuns:",
     aiJudgmentBlockersMode: "aiJudgmentBlockers:",
     copycatMode: "copycat:",
     copycatMinScore: "copycat:",
@@ -5087,6 +5088,29 @@ describe("gate.claMode / gate.cla CLA / license-compatibility gate config (#2564
     const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
     expect(eff.claGateMode).toBe("advisory");
     expect(eff.claConsentPhrase).toBe("agree to the CLA");
+  });
+});
+
+describe("gate.advisoryCheckRuns (#4372)", () => {
+  it("parses a clean list of name/appSlug pairs, sets present, and round-trips", () => {
+    const m = parseFocusManifest({
+      gate: {
+        advisoryCheckRuns: [{ name: "Example trust scan", appSlug: "example-trust-app" }],
+      },
+    });
+    expect(m.gate.advisoryCheckRuns).toEqual([{ name: "Example trust scan", appSlug: "example-trust-app" }]);
+    expect(m.gate.present).toBe(true);
+    const round = parseFocusManifest({ gate: gateConfigToJson(m.gate) as Record<string, unknown> });
+    expect(round.gate.advisoryCheckRuns).toEqual(m.gate.advisoryCheckRuns);
+  });
+
+  it("drops entries missing name or appSlug and keeps valid ones", () => {
+    const m = parseFocusManifest({
+      gate: {
+        advisoryCheckRuns: [{ name: "Example trust scan" }, { name: "Other", appSlug: "other-app" }] as never,
+      },
+    });
+    expect(m.gate.advisoryCheckRuns).toEqual([{ name: "Other", appSlug: "other-app" }]);
   });
 });
 

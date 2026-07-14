@@ -380,6 +380,11 @@ export type AgentActionPlanInput = {
   // still closes normally -- only the "verdict=failure, driven solely by this AI-judgment blocker" path is held. The
   // gate check itself still reports failure (the merge stays blocked) -- only the one-shot CLOSE is suppressed.
   aiReviewLowConfidenceHold?: { reason: string; comment: string } | undefined;
+  // Configured advisory check-run hold (#4372): a third-party app's completed, non-pass check-run that must never
+  // block CI pass/fail/pending but must route an otherwise-green PR to manual review instead of merging through
+  // a flag the operator installed an app to raise. Resolved by the trigger from the live CI aggregate's
+  // advisoryHoldDetails + settings.advisoryCheckRuns.
+  advisoryCheckHold?: { checkNames: readonly string[]; reason: string; comment: string } | undefined;
   // Screenshot-table gate (#2006): a DETERMINISTIC verdict (no AI, zero hallucination risk) that an in-scope
   // visual/frontend PR's body is missing a before/after screenshot table (or has an image outside a table, or
   // a screenshot committed to the repo instead of uploaded to the PR) AND (#4110) the bot's own visual-capture
@@ -813,6 +818,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     guardrailHit ||
     input.migrationCollisionHold !== undefined ||
     input.unlinkedIssueMatchHold !== undefined ||
+    input.advisoryCheckHold !== undefined ||
     (input.unlinkedIssueMatchClose !== undefined && !acting("close"));
   const labels = resolveAgentDispositionLabels(input);
   // Canonical (reviewbot non-content-gate) policy, tuned to the operator's minimize-manual goal: merge-or-close
@@ -955,6 +961,21 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
+  // 1e) advisory-check-run manual-review fallback (#4372) — same shape as the migration/unlinked fallbacks
+  // above: when review_state_label is OFF, a configured advisory check-run's non-pass conclusion still suppresses
+  // merge and must surface manual-review + an actionable comment naming the triggering check/app.
+  if (reviewGood && input.advisoryCheckHold !== undefined && !acting("review_state_label") && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: approval("merge"),
+      reason: `verdict=${conclusion}; ${input.advisoryCheckHold.reason}`,
+      label: labels.manualReview,
+      labelOp: "add",
+      comment: sanitizePublicComment(input.advisoryCheckHold.comment),
+    });
+  }
+
   // 1e) unlinked-issue-match REPEAT manual-review fallback when `close` autonomy can't act (gate-review
   // finding): mirrors 1d, but for the escalated-repeat case folded into `heldForManualReview` above only
   // when close isn't acting — without this, a confirmed repeat would silently MERGE with no visible signal
@@ -1000,6 +1021,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
             ? `verdict=${conclusion}; ${input.migrationCollisionHold.reason}`
             : input.unlinkedIssueMatchHold !== undefined
               ? `verdict=${conclusion}; ${input.unlinkedIssueMatchHold.reason}`
+              : input.advisoryCheckHold !== undefined
+                ? `verdict=${conclusion}; ${input.advisoryCheckHold.reason}`
               : input.unlinkedIssueMatchClose !== undefined
                 ? `verdict=${conclusion}; ${input.unlinkedIssueMatchClose.reason}`
                 : heldForManualReview
@@ -1021,6 +1044,8 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
           ? { comment: sanitizePublicComment(input.migrationCollisionHold.comment) }
           : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.unlinkedIssueMatchHold !== undefined
             ? { comment: sanitizePublicComment(input.unlinkedIssueMatchHold.comment) }
+            : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.advisoryCheckHold !== undefined
+              ? { comment: sanitizePublicComment(input.advisoryCheckHold.comment) }
             : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.unlinkedIssueMatchClose !== undefined
               ? { comment: sanitizePublicComment(input.unlinkedIssueMatchClose.comment) }
               : {}),

@@ -100,7 +100,7 @@ describe("loopover-miner CLI helpers", () => {
       "../../packages/gittensory-miner/package.json",
       { with: { type: "json" } }
     );
-    expect(packageJson.default.version).toBe("1.0.0");
+    expect(packageJson.default.version).toBe("2.0.0");
   });
 });
 
@@ -319,7 +319,7 @@ describe("loopover-miner startup update check (#2331)", () => {
 
   it("serves --version without blocking when update checks are disabled", () => {
     const output = runCapture(["--version", "--no-update-check"]);
-    expect(output).toContain("@loopover/miner/1.0.0");
+    expect(output).toContain("@loopover/miner/2.0.0");
   });
 
   it("serves --help immediately without waiting for a slow registry check", async () => {

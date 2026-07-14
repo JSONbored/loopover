@@ -203,6 +203,9 @@ export {
   type DenyVerdict,
   type ProposedToolCall,
 } from "./miner/deny-hooks.js";
+// Pure public-comment redaction moved out of src/github/commands.ts (#4882) -- side-effect-free string logic
+// with high fan-in; the command layer now re-exports it from here.
+export { sanitizePublicComment } from "./public-comment-redaction.js";
 export {
   DEFAULT_SYNTHESIS_CONFIG,
   PROPOSAL_STATUSES,

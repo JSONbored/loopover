@@ -338,6 +338,14 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(queueHealth.findings.some((f) => f.code === "inactive_draft_prs")).toBe(true);
   });
 
+  it("REGRESSION (#linked-issue-sparse-first-upsert): does not flag missing_linked_issue when bodyObservedAt is explicitly null, but still flags it once observed", () => {
+    const unobserved = buildPullRequestAdvisory(REPO, { ...PR, linkedIssues: [], bodyObservedAt: null }, { requireLinkedIssue: true });
+    expect(unobserved.findings.some((f) => f.code === "missing_linked_issue")).toBe(false);
+
+    const observed = buildPullRequestAdvisory(REPO, { ...PR, linkedIssues: [], bodyObservedAt: "2026-07-14T00:00:00.000Z" }, { requireLinkedIssue: true });
+    expect(observed.findings.some((f) => f.code === "missing_linked_issue")).toBe(true);
+  });
+
   it("exercises gate holds, readiness score branches, and linked-issue advisory paths", () => {
     const advisory = buildPullRequestAdvisory(REPO, PR, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true, linkedIssueAuthorLogins: ["miner1"] });
     expect(advisory.findings.some((f) => f.code === "missing_linked_issue")).toBe(true);

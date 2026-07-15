@@ -75,6 +75,49 @@ describe("advisory rules", () => {
     expect(advisory.findings.map((finding) => finding.code)).toContain("missing_linked_issue");
   });
 
+  it("REGRESSION (#linked-issue-sparse-first-upsert): does NOT flag a not-yet-body-observed PR as missing a linked issue", () => {
+    // pr.bodyObservedAt EXPLICITLY null (a real DB row) means no genuine body sync has landed yet -- the empty
+    // linkedIssues here is unverified, not a confirmed empty body. Firing the finding on this state is exactly
+    // the false-positive auto-close bug (PRs #5985/#5994) that motivated tracking this field.
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 16,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: ["feature"],
+      linkedIssues: [],
+      bodyObservedAt: null,
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
+
+    expect(advisory.conclusion).toBe("success");
+    expect(advisory.findings.map((finding) => finding.code)).not.toContain("missing_linked_issue");
+  });
+
+  it("still flags missing linked issue once bodyObservedAt is stamped (a genuinely observed empty body)", () => {
+    const pr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 17,
+      title: "Add registry sync",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: ["feature"],
+      linkedIssues: [],
+      bodyObservedAt: "2026-07-14T00:00:00.000Z",
+    };
+
+    const advisory = buildPullRequestAdvisory(repo, pr, { requireLinkedIssue: true });
+
+    expect(advisory.conclusion).toBe("neutral");
+    expect(advisory.findings.map((finding) => finding.code)).toContain("missing_linked_issue");
+  });
+
   it("does NOT flag a cited-but-unverified linked issue as missing (byte-identical to today when the caller hasn't confirmed it's dead)", () => {
     const pr: PullRequestRecord = {
       repoFullName: repo.fullName,

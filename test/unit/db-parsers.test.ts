@@ -526,6 +526,35 @@ describe("database row parser hardening", () => {
     const created = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 9, title: "New PR", state: "open", user: { login: "bob" }, labels: [] });
     expect(created.linkedIssues).toEqual([]);
     expect(created.linkedIssueClaimedAt).toBeNull();
+    // REGRESSION (#linked-issue-sparse-first-upsert): the empty linkedIssues above is UNVERIFIED, not a
+    // confirmed empty body -- bodyObservedAt must stay null so downstream hard-rule enforcement can tell the
+    // two apart and skip the "no linked issue" close until a genuine body sync arrives.
+    expect(created.bodyObservedAt).toBeNull();
+    const stored = await getPullRequest(env, "owner/repo", 9);
+    expect(stored?.bodyObservedAt).toBeNull();
+  });
+
+  it("REGRESSION (#linked-issue-sparse-first-upsert): a full first-ever sync stamps bodyObservedAt immediately", async () => {
+    const env = createTestEnv();
+    // A genuinely observed body -- even one with no closing reference -- proves the empty linkedIssues result
+    // is trustworthy, so bodyObservedAt is set on the very first (non-sparse) upsert.
+    const created = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 11, title: "New PR", state: "open", user: { login: "bob" }, labels: [], body: "no closing reference here" });
+    expect(created.linkedIssues).toEqual([]);
+    expect(typeof created.bodyObservedAt).toBe("string");
+    const stored = await getPullRequest(env, "owner/repo", 11);
+    expect(typeof stored?.bodyObservedAt).toBe("string");
+  });
+
+  it("REGRESSION (#linked-issue-sparse-first-upsert): a later sparse sync does not clear an already-stamped bodyObservedAt", async () => {
+    const env = createTestEnv();
+    const first = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 12, title: "New PR", state: "open", user: { login: "bob" }, labels: [], body: "no closing reference here" });
+    expect(typeof first.bodyObservedAt).toBe("string");
+
+    // A later narrower webhook event omits body entirely -- the once-set observation timestamp must survive.
+    const resynced = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 12, title: "New PR", state: "open", user: { login: "bob" }, labels: [] });
+    expect(resynced.bodyObservedAt).toBe(first.bodyObservedAt);
+    const stored = await getPullRequest(env, "owner/repo", 12);
+    expect(stored?.bodyObservedAt).toBe(first.bodyObservedAt);
   });
 
   it("countRecentDeadLetters counts github_app.dlq_dead_lettered audits since a cutoff, independent of any ops flag (#1276)", async () => {

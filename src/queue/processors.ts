@@ -7555,6 +7555,7 @@ async function maybeApplyManifestPolicyGate(
       testFileCount,
       passedValidationCount,
       hasNoIssueRationale: hasClearNoIssueRationale(args.pr),
+      bodyObserved: args.pr.bodyObservedAt !== null,
     });
     const policyCodes = new Set([
       "manifest_linked_issue_required",

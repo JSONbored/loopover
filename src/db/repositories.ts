@@ -348,7 +348,12 @@ export async function upsertPullRequestFromGitHub(
   const syncedAt = nowIso();
   const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? syncedAt) : null;
   const existingClaimRows = await db
-    .select({ linkedIssuesJson: pullRequests.linkedIssuesJson, linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt, payloadJson: pullRequests.payloadJson })
+    .select({
+      linkedIssuesJson: pullRequests.linkedIssuesJson,
+      linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt,
+      payloadJson: pullRequests.payloadJson,
+      bodyObservedAt: pullRequests.bodyObservedAt,
+    })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
     .limit(1);
@@ -375,6 +380,10 @@ export async function upsertPullRequestFromGitHub(
     existingClaimRow,
     observedLinkedIssueClaimedAt,
   );
+  // A genuinely observed body (even an explicitly empty one) proves this PR's linked-issue extraction is
+  // trustworthy going forward; a sparse payload (pr.body === undefined) proves nothing either way and must not
+  // start the clock. Set once, keep forever (#linked-issue-sparse-first-upsert).
+  const bodyObservedAt = existingClaimRow?.bodyObservedAt ?? (pr.body !== undefined ? syncedAt : null);
   await db
     .insert(pullRequests)
     .values({
@@ -393,6 +402,7 @@ export async function upsertPullRequestFromGitHub(
       labelsJson: jsonString(record.labels),
       linkedIssuesJson,
       linkedIssueClaimedAt,
+      bodyObservedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(payload),
       updatedAt: syncedAt,
@@ -412,12 +422,13 @@ export async function upsertPullRequestFromGitHub(
         labelsJson: jsonString(record.labels),
         linkedIssuesJson,
         linkedIssueClaimedAt,
+        bodyObservedAt,
         lastSeenOpenAt,
         payloadJson: jsonString(payload),
         updatedAt: syncedAt,
       },
     });
-  return { ...record, body, linkedIssues, linkedIssueClaimedAt };
+  return { ...record, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(
@@ -6213,6 +6224,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     updatedAt: payload.updated_at ?? row.updatedAt,
     closedAt: payload.closed_at,
     linkedIssueClaimedAt: row.linkedIssueClaimedAt,
+    bodyObservedAt: row.bodyObservedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,

@@ -536,6 +536,11 @@ export type PullRequestRecord = {
    * duplicate winners by claim order instead of PR number ONLY when {@link createdAt} is unavailable on either
    * side of a comparison. */
   linkedIssueClaimedAt?: string | null | undefined;
+  /** First time LoopOver observed a GENUINE (possibly empty) `body` for this PR, as opposed to a narrower
+   *  webhook event whose embedded pull_request sub-object omits `body` entirely (#linked-issue-sparse-first-
+   *  upsert). `null`/absent means no real body has ever been synced yet — callers enforcing a linked-issue
+   *  requirement must treat that as unverified, never as "confirmed no linked issue". Set once, never cleared. */
+  bodyObservedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
   /** Latest deterministic slop assessment (0-100) and band, persisted by the public-surface processor when

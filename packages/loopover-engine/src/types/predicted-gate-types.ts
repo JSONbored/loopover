@@ -79,6 +79,7 @@ export type PullRequestRecord = {
   updatedAt?: string | null | undefined;
   closedAt?: string | null | undefined;
   linkedIssueClaimedAt?: string | null | undefined;
+  bodyObservedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
   slopRisk?: number | null | undefined;

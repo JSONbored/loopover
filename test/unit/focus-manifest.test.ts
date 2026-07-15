@@ -619,6 +619,19 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(true);
   });
 
+  it("REGRESSION (#linked-issue-sparse-first-upsert): does NOT require a linked issue when the caller reports the body was never genuinely observed", () => {
+    // A webhook-driven caller passes bodyObserved: false when PullRequestRecord.bodyObservedAt is still null
+    // (a sparse first-ever sync) -- the zero linkedIssueCount is unverified in that state, not confirmed empty,
+    // so this must not fire the same false-positive auto-close bug PRs #5985/#5994 hit.
+    const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1, bodyObserved: false });
+    expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(false);
+  });
+
+  it("still requires a linked issue when bodyObserved is explicitly true (a genuinely observed empty body)", () => {
+    const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1, bodyObserved: true });
+    expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(true);
+  });
+
   it("REGRESSION (#no-issue-rationale-exemption): does not require a linked issue when the caller reports a clear no-issue rationale", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1, hasNoIssueRationale: true });
     expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_required")).toBe(false);

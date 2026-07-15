@@ -3981,6 +3981,190 @@ describe("queue processors", () => {
     expect(JSON.stringify(gatePatches[0])).toContain("Configured validation evidence missing");
   });
 
+  // REGRESSION (#linked-issue-sparse-first-upsert): a narrower webhook event's embedded pull_request sub-object
+  // can omit `body` entirely (undefined, not GitHub's explicit `null` for a genuinely empty description) --
+  // this is the FIRST-EVER sync for the PR, so there's no prior row's linkedIssuesJson to fall back to
+  // (#linked-issue-sparse-payload-preserve only guards a RESYNC). Without bodyObservedAt tracking, the empty
+  // linkedIssues this derives gets trusted as "confirmed no linked issue" and the manifest gate closes the PR
+  // outright -- this is what happened to PRs #5985/#5994 in production.
+  it("does NOT flag manifest_linked_issue_required on a first-ever sync whose payload omits body entirely", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      reviewCheckMode: "required",
+      linkedIssueGateMode: "off",
+      manifestPolicyGateMode: "block",
+      requireLinkedIssue: false,
+      typeLabelsEnabled: false,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { linkedIssuePolicy: "required" });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 46,
+      path: "src/feature.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    });
+
+    const gatePatches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-sparse-body/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 904 }, { status: 201 });
+      if (url.includes("/check-runs/904") && method === "PATCH") {
+        gatePatches.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return Response.json({ id: 904, html_url: "https://github.com/checks/904" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-sparse-body-first-sync",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 46,
+          title: "First sync via a sparse event shape",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate-sparse-body" },
+          labels: [],
+          // No `body` key at all -- simulates a narrower webhook event's embedded pull_request sub-object.
+        },
+      },
+    });
+
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 46);
+    expect(stored?.bodyObservedAt).toBeNull();
+    expect(gatePatches).toHaveLength(1);
+    expect(gatePatches[0]).toMatchObject({ status: "completed", conclusion: "success" });
+    expect(JSON.stringify(gatePatches[0])).not.toContain("Maintainer requires a linked issue");
+    expect(JSON.stringify(gatePatches[0])).not.toContain("manifest_linked_issue_required");
+  });
+
+  // Companion to the sparse-first-sync test above: once a genuine (even empty) body has been observed for the
+  // same PR, the manifest gate must resume enforcing linkedIssuePolicy: "required" normally -- the fix only
+  // silences the false positive for the unverified window, it does not disable the policy.
+  it("still flags manifest_linked_issue_required once a genuine empty body has been observed", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertInstallation(env, {
+      installation: {
+        id: 123,
+        account: { login: "JSONbored", id: 1, type: "User" },
+        repository_selection: "selected",
+        permissions: { metadata: "read", pull_requests: "write", issues: "write" },
+        events: ["pull_request"],
+      },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "off",
+      publicSurface: "off",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      reviewCheckMode: "required",
+      linkedIssueGateMode: "off",
+      manifestPolicyGateMode: "block",
+      requireLinkedIssue: false,
+      typeLabelsEnabled: false,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { linkedIssuePolicy: "required" });
+    await upsertPullRequestFile(env, {
+      repoFullName: "JSONbored/gittensory",
+      pullNumber: 47,
+      path: "src/feature.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      changes: 1,
+      payload: {},
+    });
+
+    const gatePatches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/gate-observed-body/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/check-runs") && method === "POST") return Response.json({ id: 905 }, { status: 201 });
+      if (url.includes("/check-runs/905") && method === "PATCH") {
+        gatePatches.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return Response.json({ id: 905, html_url: "https://github.com/checks/905" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "gate-observed-empty-body",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: {
+          number: 47,
+          title: "No description at all",
+          state: "open",
+          user: { login: "contributor" },
+          head: { sha: "gate-observed-body" },
+          labels: [],
+          body: null,
+        },
+      },
+    });
+
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 47);
+    expect(typeof stored?.bodyObservedAt).toBe("string");
+    expect(gatePatches).toHaveLength(1);
+    expect(gatePatches[0]).toMatchObject({ status: "completed", conclusion: "failure" });
+    expect(JSON.stringify(gatePatches[0])).toContain("Maintainer requires a linked issue");
+  });
+
   // REGRESSION (#4719 gate-review finding): passedValidationCount previously came ONLY from a PR-body
   // prose match (hasValidationNote), with zero connection to the PR's actual CI results -- a fully green
   // PR whose body simply doesn't happen to use a "tested"/"validated" word still tripped

@@ -262,7 +262,12 @@ function addPullRequestFindings(
       detail: `The pull request state is ${pr.state}.`,
     });
   }
-  const noLinkedIssueCited = pr.linkedIssues.length === 0;
+  // A sparse first-ever webhook sync (pr.bodyObservedAt EXPLICITLY null -- see #linked-issue-sparse-first-
+  // upsert) proves nothing about whether an issue is linked; only a genuinely observed body can confirm "none
+  // cited". Strict !== so `undefined` (every caller that predates this field, or that builds a
+  // PullRequestRecord directly rather than reading a DB row -- e.g. this engine's own local/preflight callers,
+  // which always hand in a freshly-read body and never hit the webhook race) stays byte-identical.
+  const noLinkedIssueCited = pr.linkedIssues.length === 0 && pr.bodyObservedAt !== null;
   if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) && requireLinkedIssue) {
     findings.push({
       code: "missing_linked_issue",

@@ -653,12 +653,19 @@ export function buildFocusManifestGuidance(args: {
   // required/preferred manifest policy must not keep flagging a PR whose body already explains why no
   // issue is linked, same exemption the "Linked issue" review-panel signal already applies.
   hasNoIssueRationale?: boolean | undefined;
+  // Whether the caller has ever genuinely observed this PR's body (as opposed to deriving linkedIssueCount from
+  // a sparse webhook payload that omitted body entirely -- see PullRequestRecord.bodyObservedAt and
+  // #linked-issue-sparse-first-upsert). Default true so callers that always pass a real body directly (e.g. the
+  // MCP preflight tools) stay byte-identical; a webhook-driven caller reading from the DB must pass this
+  // explicitly so a not-yet-observed PR can't trip `manifest_linked_issue_required` off a false empty count.
+  bodyObserved?: boolean | undefined;
 }): FocusManifestGuidance {
   const { manifest } = args;
   const changedPaths = args.changedPaths.filter((path) => typeof path === "string" && path.length > 0);
   const labels = (args.labels ?? []).map((label) => label.toLowerCase());
   const linkedIssueCount = Math.max(0, args.linkedIssueCount ?? 0);
   const hasNoIssueRationale = args.hasNoIssueRationale ?? false;
+  const bodyObserved = args.bodyObserved ?? true;
   const testFileCount = Math.max(0, args.testFileCount ?? 0);
   const passedValidationCount = Math.max(0, args.passedValidationCount ?? 0);
   const codeFileCount = changedPaths.filter(isCodeFile).length;
@@ -733,7 +740,7 @@ export function buildFocusManifestGuidance(args: {
     publicNextSteps.push(`Consider a maintainer-preferred label (${manifest.preferredLabels.slice(0, 3).join(", ")}).`);
   }
 
-  if (manifest.linkedIssuePolicy === "required" && linkedIssueCount === 0 && !hasNoIssueRationale) {
+  if (manifest.linkedIssuePolicy === "required" && linkedIssueCount === 0 && bodyObserved && !hasNoIssueRationale) {
     findings.push({
       code: "manifest_linked_issue_required",
       severity: "warning",

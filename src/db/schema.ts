@@ -451,6 +451,12 @@ export const pullRequests = sqliteTable(
     labelsJson: text("labels_json").notNull().default("[]"),
     linkedIssuesJson: text("linked_issues_json").notNull().default("[]"),
     linkedIssueClaimedAt: text("linked_issue_claimed_at"),
+    // First time LoopOver observed a GENUINE (possibly empty) `body` for this PR, as opposed to a narrower
+    // webhook event whose embedded pull_request sub-object omits `body` entirely (#linked-issue-sparse-first-
+    // upsert). NULL means no real body has ever been synced yet -- linked-issue hard-rule enforcement must
+    // treat that as "unverified", never as "confirmed no linked issue". Set once, never cleared (mirrors
+    // linkedIssueHardRuleViolatedAt below).
+    bodyObservedAt: text("body_observed_at"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
     // Latest deterministic slop assessment (loopover-computed; written separately from the GitHub sync).

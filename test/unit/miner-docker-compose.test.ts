@@ -25,6 +25,13 @@ describe("docker-compose.miner.yml (#5177)", () => {
     expect(miner.command).toContain("run");
   });
 
+  it("tags the built image with the post-rename name (loopover-miner:latest)", () => {
+    // Regression for #5935: the image tag must match the Dockerfile's `loopover-miner` ENTRYPOINT and the name
+    // every other fleet-mode doc uses (DEPLOYMENT.md, k8s/miner-deployment.yaml), not the pre-rename
+    // `gittensory-miner:latest`, so `docker images` cross-references from those docs actually resolve.
+    expect(compose.services.miner.image).toBe("loopover-miner:latest");
+  });
+
   it("persists state on a named volume and restarts unless stopped", () => {
     const miner = compose.services.miner;
     expect(miner.restart).toBe("unless-stopped");

@@ -1,4 +1,4 @@
-# docker-compose for gittensory-miner (AMS) fleet mode (#5177).
+# docker-compose for loopover-miner (AMS) fleet mode (#5177).
 #
 # Runs the miner as a long-lived CLI worker instead of a hand-assembled `docker run`. Build context is the
 # MONOREPO ROOT (../..) because the Dockerfile needs the full workspace on disk before `npm ci` — see the
@@ -24,8 +24,8 @@ services:
     build:
       context: ../..
       dockerfile: packages/loopover-miner/Dockerfile
-    image: gittensory-miner:latest
-    # ENTRYPOINT is `gittensory-miner`; `run` is the continuous fleet-worker loop.
+    image: loopover-miner:latest
+    # ENTRYPOINT is `loopover-miner`; `run` is the continuous fleet-worker loop.
     command: ["run"]
     restart: unless-stopped
     # Operator-supplied secrets/config (GITHUB_TOKEN, optional provider keys). Copy the .example, fill it in,

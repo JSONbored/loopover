@@ -14,8 +14,13 @@ import { appendGovernorEvent } from "./governor-ledger.js";
 
 /**
  * Evaluate a write action against the full Governor precedence ladder, persist the resulting ledger event, and
- * advance rate-limit bucket/backoff state when the rate-limit stage actually ran (kill-switch and dry-run
- * short-circuit before rate-limit is evaluated, so bucket state is untouched in those cases).
+ * advance rate-limit bucket/backoff state only for the two outcomes that actually consumed (or were denied at)
+ * the rate-limit stage: a final `"allow"` verdict advances the bucket, and a `"rate_limit"`-stage denial bumps
+ * backoff. Every other stage -- kill-switch, dry-run, budget-cap, non-convergence, reputation-throttle,
+ * self-plagiarism, internal_error -- denies for a reason unrelated to rate limiting and must leave bucket/backoff
+ * state untouched, since no real write happened and the rate-limit stage's own "allowed" sub-verdict (still
+ * present in `decision.detail.rateLimit` once that stage has cleared) does not mean the action was ultimately
+ * allowed.
  *
  * @param {import("@loopover/engine").GovernorChokepointInput} input
  * @param {{ append?: typeof appendGovernorEvent }} [options]
@@ -33,19 +38,17 @@ export function evaluateGovernorChokepointGate(input, options = {}) {
 
   let rateLimitBuckets = input.rateLimitBuckets;
   let rateLimitBackoffAttempts = input.rateLimitBackoffAttempts;
-  if (decision.detail.rateLimit) {
-    if (decision.detail.rateLimit.allowed) {
-      rateLimitBuckets = recordWriteRateLimitAllowed(
-        input.rateLimitBuckets,
-        input.actionClass,
-        input.repoFullName,
-        input.nowMs,
-        input.rateLimitPolicies,
-      );
-      rateLimitBackoffAttempts = clearWriteRateLimitBackoff(input.rateLimitBackoffAttempts, input.actionClass, input.repoFullName);
-    } else {
-      rateLimitBackoffAttempts = recordWriteRateLimitDenied(input.rateLimitBackoffAttempts, input.actionClass, input.repoFullName);
-    }
+  if (decision.stage === "allow") {
+    rateLimitBuckets = recordWriteRateLimitAllowed(
+      input.rateLimitBuckets,
+      input.actionClass,
+      input.repoFullName,
+      input.nowMs,
+      input.rateLimitPolicies,
+    );
+    rateLimitBackoffAttempts = clearWriteRateLimitBackoff(input.rateLimitBackoffAttempts, input.actionClass, input.repoFullName);
+  } else if (decision.stage === "rate_limit") {
+    rateLimitBackoffAttempts = recordWriteRateLimitDenied(input.rateLimitBackoffAttempts, input.actionClass, input.repoFullName);
   }
 
   return { decision, recorded, rateLimitBuckets, rateLimitBackoffAttempts };

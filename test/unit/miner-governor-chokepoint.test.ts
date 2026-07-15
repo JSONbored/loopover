@@ -144,6 +144,8 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.decision.stage).toBe("budget_cap");
     expect(result.recorded.eventType).toBe("denied");
     expect(result.decision.detail.convergence).toBeUndefined();
+    expect(result.rateLimitBuckets).toEqual({ global: {}, perRepo: {} });
+    expect(result.rateLimitBackoffAttempts).toEqual({});
   });
 
   it("a non-convergence denial records to the ledger before reputation/self-plagiarism run", () => {
@@ -157,6 +159,8 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.decision.stage).toBe("non_convergence");
     expect(result.recorded.eventType).toBe("denied");
     expect(result.decision.detail.reputation).toBeUndefined();
+    expect(result.rateLimitBuckets).toEqual({ global: {}, perRepo: {} });
+    expect(result.rateLimitBackoffAttempts).toEqual({});
   });
 
   it("a reputation-throttle denial records to the ledger as throttled before self-plagiarism runs", () => {
@@ -169,6 +173,8 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.decision.stage).toBe("reputation_throttle");
     expect(result.recorded.eventType).toBe("throttled");
     expect(result.decision.detail.selfPlagiarism).toBeUndefined();
+    expect(result.rateLimitBuckets).toEqual({ global: {}, perRepo: {} });
+    expect(result.rateLimitBackoffAttempts).toEqual({});
   });
 
   it("reputation throttle runs but does not throttle on insufficient history, reaching allow", () => {
@@ -222,6 +228,8 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.decision.allowed).toBe(false);
     expect(result.decision.stage).toBe("self_plagiarism");
     expect(result.recorded.eventType).toBe("throttled");
+    expect(result.rateLimitBuckets).toEqual({ global: {}, perRepo: {} });
+    expect(result.rateLimitBackoffAttempts).toEqual({});
   });
 
   it("self-plagiarism runs but allows a fingerprint distinct from recent submissions, reaching allow", () => {

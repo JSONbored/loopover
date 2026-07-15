@@ -266,8 +266,21 @@ const RELAY_PENDING_MAX_PER_INSTALLATION = 500;
 
 export type RelayPendingEvent = { deliveryId: string; eventName: string; rawBody: string };
 
+// Bulk-delete drop logs (this function and retryFailedRelays below) sample at most this many rows' identifying
+// info — an operator needs to see WHICH installation(s) lost events without a direct DB query, but a busy prune
+// can span hundreds of rows, so the log payload itself must stay bounded.
+const RELAY_DROP_LOG_SAMPLE_SIZE = 20;
+
 /** Drop pull-mode rows that exceeded the raw-body retention window, even if their engine never polls. */
 async function pruneRelayPending(env: Env): Promise<number> {
+  // Sampled BEFORE the delete: a plain DELETE reports only a count, and the rows are unrecoverable once gone.
+  // Same WHERE predicate as the delete below, capped so a large backlog can't inflate the log payload.
+  const expiring = await env.DB
+    .prepare(
+      "SELECT delivery_id, event_name, installation_id FROM orb_relay_pending WHERE created_at < datetime('now', '-' || ? || ' hours') ORDER BY created_at, delivery_id LIMIT ?",
+    )
+    .bind(RELAY_PENDING_TTL_HOURS, RELAY_DROP_LOG_SAMPLE_SIZE)
+    .all<{ delivery_id: string; event_name: string; installation_id: number }>();
   const pruned = await env.DB
     .prepare("DELETE FROM orb_relay_pending WHERE created_at < datetime('now', '-' || ? || ' hours')")
     .bind(RELAY_PENDING_TTL_HOURS)
@@ -275,7 +288,13 @@ async function pruneRelayPending(env: Env): Promise<number> {
   // Make pull-mode loss VISIBLE too (parity with the push-path drop): a pruned row is a webhook a long-down tailnet
   // container never drained — emit an alertable error-level log (distinct event name) so it leaves a Sentry trace.
   if (pruned.meta.changes > 0) {
-    console.error(JSON.stringify({ level: "error", event: "orb_relay_pending_dropped", message: `${pruned.meta.changes} pull-mode webhook(s) expired undrained after ${RELAY_PENDING_TTL_HOURS}h`, count: pruned.meta.changes }));
+    console.error(JSON.stringify({
+      level: "error",
+      event: "orb_relay_pending_dropped",
+      message: `${pruned.meta.changes} pull-mode webhook(s) expired undrained after ${RELAY_PENDING_TTL_HOURS}h`,
+      count: pruned.meta.changes,
+      sample: expiring.results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, installationId: r.installation_id })),
+    }));
   }
   return pruned.meta.changes;
 }
@@ -387,7 +406,14 @@ export async function storeRelayFailure(
  *  is removed. Never throws — a bad DB row or a persistently-down container is dropped (with an alertable log,
  *  below) after exhaustion. */
 export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fetch }): Promise<void> {
-  // Prune rows whose TTL has elapsed or whose attempt budget is exhausted.
+  // Prune rows whose TTL has elapsed or whose attempt budget is exhausted. Sampled BEFORE the delete (see
+  // pruneRelayPending above) so the drop log can name WHICH events were given up on.
+  const expiring = await env.DB
+    .prepare(
+      "SELECT delivery_id, event_name, installation_id FROM orb_relay_failures WHERE expires_at < datetime('now') OR attempts >= ? ORDER BY created_at, delivery_id LIMIT ?",
+    )
+    .bind(RELAY_RETRY_MAX_ATTEMPTS, RELAY_DROP_LOG_SAMPLE_SIZE)
+    .all<{ delivery_id: string; event_name: string; installation_id: number }>();
   const pruned = await env.DB
     .prepare("DELETE FROM orb_relay_failures WHERE expires_at < datetime('now') OR attempts >= ?")
     .bind(RELAY_RETRY_MAX_ATTEMPTS)
@@ -396,7 +422,13 @@ export async function retryFailedRelays(env: Env, opts?: { fetchImpl?: typeof fe
   // retries exhausted) — e.g. a container down for over an hour. Emit an alertable structured log so the loss
   // leaves a trace instead of vanishing silently.
   if (pruned.meta.changes > 0) {
-    console.error(JSON.stringify({ level: "error", event: "orb_relay_events_dropped", message: `${pruned.meta.changes} relay event(s) dropped after ${RELAY_RETRY_MAX_ATTEMPTS} retries or 1h TTL`, count: pruned.meta.changes }));
+    console.error(JSON.stringify({
+      level: "error",
+      event: "orb_relay_events_dropped",
+      message: `${pruned.meta.changes} relay event(s) dropped after ${RELAY_RETRY_MAX_ATTEMPTS} retries or 1h TTL`,
+      count: pruned.meta.changes,
+      sample: expiring.results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, installationId: r.installation_id })),
+    }));
   }
   // Skip rows still inside their per-failure backoff window (#1950): a row whose last attempt was under
   // RELAY_RETRY_BACKOFF_MINUTES ago waits for a later tick, so a down container is not re-POSTed every ~2 min.

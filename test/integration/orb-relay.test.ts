@@ -527,8 +527,29 @@ describe("retryFailedRelays", () => {
     await retryFailedRelays(e);
     const row = await db(e).prepare("SELECT delivery_id FROM orb_relay_failures WHERE delivery_id='exhausted-1'").first();
     expect(row ?? null).toBeNull(); // pruned on the DELETE pass before the SELECT
-    // The drop is no longer silent OR warn-only — an alertable level:error log reaches the Sentry forwarder.
-    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_events_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    // The drop is no longer silent OR warn-only — an alertable level:error log reaches the Sentry forwarder, and
+    // now names the dropped row so an operator can tell WHICH installation lost an event (#relay-drop-context).
+    const line = String(errLog.mock.calls.find(([l]) => String(l).includes("orb_relay_events_dropped"))?.[0]);
+    expect(line).toContain('"level":"error"');
+    expect(line).toContain('"deliveryId":"exhausted-1"');
+    expect(line).toContain('"eventName":"pull_request"');
+    expect(line).toContain('"installationId":9300');
+  });
+
+  it("caps the drop-log sample while `count` still reports the true total (#relay-drop-context)", async () => {
+    const e = brokeredEnv();
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (let i = 0; i < 25; i += 1) {
+      await db(e)
+        .prepare("INSERT INTO orb_relay_failures (delivery_id, event_name, installation_id, raw_body, attempts) VALUES (?, ?, ?, ?, ?)")
+        .bind(`cap-${String(i).padStart(2, "0")}`, "pull_request", 9301, "{}", 5)
+        .run();
+    }
+    await retryFailedRelays(e);
+    const line = errLog.mock.calls.find(([l]) => String(l).includes("orb_relay_events_dropped"))?.[0];
+    const parsed = JSON.parse(String(line)) as { count: number; sample: unknown[] };
+    expect(parsed.count).toBe(25); // the real total, from the DELETE itself
+    expect(parsed.sample).toHaveLength(20); // capped at RELAY_DROP_LOG_SAMPLE_SIZE, not an unbounded dump
   });
 
   it("PRUNES expired rows (expires_at in the past) without attempting to forward", async () => {
@@ -844,8 +865,29 @@ describe("pullRelayPending", () => {
     expect(events.map((ev) => ev.deliveryId)).toEqual(["fresh-1"]); // the 25h-old row was pruned (TTL 24h)
     const stale = await db(e).prepare("SELECT delivery_id FROM orb_relay_pending WHERE delivery_id='stale-1'").first();
     expect(stale ?? null).toBeNull();
-    // Pull-mode loss is now traced for the operator at error level (parity with the push-path drop).
-    expect(errLog.mock.calls.some(([line]) => String(line).includes("orb_relay_pending_dropped") && String(line).includes('"level":"error"'))).toBe(true);
+    // Pull-mode loss is now traced for the operator at error level (parity with the push-path drop), and names
+    // the dropped row so an operator can tell WHICH installation lost a webhook (#relay-drop-context).
+    const line = String(errLog.mock.calls.find(([l]) => String(l).includes("orb_relay_pending_dropped"))?.[0]);
+    expect(line).toContain('"level":"error"');
+    expect(line).toContain('"deliveryId":"stale-1"');
+    expect(line).toContain('"eventName":"pull_request"');
+    expect(line).toContain('"installationId":9706');
+  });
+
+  it("caps the drop-log sample while `count` still reports the true total (#relay-drop-context)", async () => {
+    const e = brokeredEnv();
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (let i = 0; i < 25; i += 1) {
+      await db(e)
+        .prepare("INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, created_at) VALUES (?, ?, ?, ?, datetime('now', '-25 hours'))")
+        .bind(`cap-${String(i).padStart(2, "0")}`, 9707, "pull_request", "{}")
+        .run();
+    }
+    await pullRelayPending(e, 9707);
+    const line = errLog.mock.calls.find(([l]) => String(l).includes("orb_relay_pending_dropped"))?.[0];
+    const parsed = JSON.parse(String(line)) as { count: number; sample: unknown[] };
+    expect(parsed.count).toBe(25); // the real total, from the DELETE itself
+    expect(parsed.sample).toHaveLength(20); // capped at RELAY_DROP_LOG_SAMPLE_SIZE, not an unbounded dump
   });
 });
 

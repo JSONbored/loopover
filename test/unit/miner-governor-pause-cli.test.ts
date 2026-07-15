@@ -247,6 +247,71 @@ describe("loopover-miner governor pause/resume/status CLI (#4851)", () => {
     expect(String(error.mock.calls[0]?.[0])).toBe("boom");
   });
 
+  it("#5914: parse-error paths emit {ok:false,error} on stdout when --json is set", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runGovernorPause(["--verbose", "--json"])).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "Unknown option: --verbose",
+    });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    expect(await runGovernorResume(["extra", "--json"])).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: expect.stringContaining("Usage: loopover-miner governor resume"),
+    });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    expect(await runGovernorStatus(["extra", "--json"])).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: expect.stringContaining("Usage: loopover-miner governor status"),
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("#5914: catch-error paths emit {ok:false,error} on stdout when --json is set", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      await runGovernorPause(["--json"], {
+        openGovernorState: () => {
+          throw new Error("disk full");
+        },
+      }),
+    ).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ ok: false, error: "disk full" });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    expect(
+      await runGovernorResume(["--json"], {
+        openGovernorState: () => {
+          throw "boom";
+        },
+      }),
+    ).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ ok: false, error: "boom" });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    expect(
+      await runGovernorStatus(["--json"], {
+        openGovernorState: () => {
+          throw new Error("status_db");
+        },
+      }),
+    ).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ ok: false, error: "status_db" });
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it("opens and closes the default on-disk governor state when no override is supplied", async () => {
     const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-cli-default-"));
     roots.push(root);

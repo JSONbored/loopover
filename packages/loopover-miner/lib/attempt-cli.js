@@ -27,7 +27,7 @@ import { initEventLedger } from "./event-ledger.js";
 import { initAttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
 import { openWorktreeAllocator } from "./worktree-allocator.js";
-import { resolveRejectionSignaled } from "./rejection-signal.js";
+import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveRejectionSignaled } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 import { fetchSelfReviewContext } from "./self-review-context.js";
 import { buildCodingTaskSpec } from "./coding-task-spec.js";
@@ -212,14 +212,14 @@ export async function runAttempt(args, options = {}) {
     attemptLog = (options.initAttemptLog ?? initAttemptLog)();
     governorLedger = (options.initGovernorLedger ?? initGovernorLedger)();
 
-    // Checked before acquiring a worktree slot: a banned repo should never consume one. This resolves the
-    // first of rejectionSignaled's two documented triggers (an explicit AI-usage-policy ban, #5132 follow-up)
-    // -- the second (a prior own-submission rejection on this exact repo) remains a documented gap, see
-    // rejection-signal.js's own header for why.
+    // Checked before acquiring a worktree slot: a rejection-signaled repo should never consume one.
+    // resolveRejectionSignaled resolves both documented triggers (#5132 policy ban, #5655 own-rejection
+    // history) and returns a trigger-specific reason string for accurate audit-trail labeling.
     const resolveRejection = options.resolveRejectionSignaled ?? resolveRejectionSignaled;
-    const rejectionSignaled = await resolveRejection(parsed.repoFullName, { fetchImpl: options.fetchImpl });
-    if (rejectionSignaled) {
-      const reason = "ai_usage_policy_ban";
+    const rejectionSignal = await resolveRejection(parsed.repoFullName, { fetchImpl: options.fetchImpl });
+    if (rejectionSignal) {
+      const reason =
+        rejectionSignal === true ? REJECTION_REASON_AI_USAGE_POLICY_BAN : rejectionSignal;
       attemptLog.appendAttemptLogEvent({
         eventType: "attempt_aborted",
         attemptId,
@@ -247,7 +247,9 @@ export async function runAttempt(args, options = {}) {
         console.log(JSON.stringify(rejectedResult, null, 2));
       } else {
         console.error(
-          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's AI-usage policy bans automated/AI-authored contributions.`,
+          reason === REJECTION_REASON_OWN_SUBMISSION_REJECTED
+            ? `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this miner was previously rejected on this repo.`
+            : `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's AI-usage policy bans automated/AI-authored contributions.`,
         );
       }
       options.onResult?.(rejectedResult);

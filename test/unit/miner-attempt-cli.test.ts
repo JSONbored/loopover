@@ -18,6 +18,10 @@ import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/gov
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/loopover-miner/lib/attempt-cli.js";
 import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/loopover-miner/lib/attempt-worktree.js";
+import {
+  REJECTION_REASON_AI_USAGE_POLICY_BAN,
+  REJECTION_REASON_OWN_SUBMISSION_REJECTED,
+} from "../../packages/loopover-miner/lib/rejection-signal.js";
 import { DEFAULT_AMS_POLICY_SPEC, DEFAULT_MINER_GOAL_SPEC, parseFocusManifest } from "../../packages/loopover-engine/src/index";
 
 const roots: string[] = [];
@@ -1088,7 +1092,7 @@ describe("runAttempt (#5132)", () => {
     const acquireSpy = vi.spyOn(allocator, "acquire");
     const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
     const appendEventSpy = vi.spyOn(eventLedger, "appendEvent");
-    const resolveRejectionSignaledSpy = vi.fn().mockResolvedValue(true);
+    const resolveRejectionSignaledSpy = vi.fn().mockResolvedValue(REJECTION_REASON_AI_USAGE_POLICY_BAN);
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -1123,11 +1127,55 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => true,
+      resolveRejectionSignaled: async () => REJECTION_REASON_AI_USAGE_POLICY_BAN,
     });
 
     expect(exitCode).toBe(5);
     expect(error).toHaveBeenCalledWith(expect.stringContaining("AI-usage policy bans automated/AI-authored contributions"));
+  });
+
+  it("REGRESSION (#6055): labels own-rejection-history aborts as own_submission_rejected in --json output", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const appendAttemptLogEventSpy = vi.spyOn(attemptLog, "appendAttemptLogEvent");
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => REJECTION_REASON_OWN_SUBMISSION_REJECTED,
+    });
+
+    expect(exitCode).toBe(5);
+    expect(appendAttemptLogEventSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "attempt_aborted", reason: REJECTION_REASON_OWN_SUBMISSION_REJECTED }),
+    );
+    const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(payload).toMatchObject({
+      outcome: "blocked_rejection_signaled",
+      reason: REJECTION_REASON_OWN_SUBMISSION_REJECTED,
+    });
+  });
+
+  it("REGRESSION (#6055): reports a human-readable message for own-rejection-history aborts", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveRejectionSignaled: async () => REJECTION_REASON_OWN_SUBMISSION_REJECTED,
+    });
+
+    expect(exitCode).toBe(5);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("this miner was previously rejected on this repo"));
   });
 
   it("passes options.fetchImpl through to resolveRejectionSignaled", async () => {
@@ -1265,7 +1313,7 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => rejectedLedgers.eventLedger,
       initAttemptLog: () => rejectedLedgers.attemptLog,
       initGovernorLedger: () => rejectedLedgers.governorLedger,
-      resolveRejectionSignaled: async () => true,
+      resolveRejectionSignaled: async () => REJECTION_REASON_AI_USAGE_POLICY_BAN,
       onResult,
     });
     expect(rejectedExit).toBe(5);
@@ -1467,7 +1515,7 @@ describe("runAttempt: real claim-ledger wiring (#5393)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
-      resolveRejectionSignaled: async () => true,
+      resolveRejectionSignaled: async () => REJECTION_REASON_AI_USAGE_POLICY_BAN,
     });
 
     expect(claimIssueSpy).not.toHaveBeenCalled();

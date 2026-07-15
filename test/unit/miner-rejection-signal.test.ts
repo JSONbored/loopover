@@ -5,6 +5,8 @@ vi.mock("@loopover/engine", async () => {
 });
 
 import {
+  REJECTION_REASON_AI_USAGE_POLICY_BAN,
+  REJECTION_REASON_OWN_SUBMISSION_REJECTED,
   resolveOwnRejectionHistory,
   resolveRejectionSignaled,
 } from "../../packages/loopover-miner/lib/rejection-signal.js";
@@ -39,7 +41,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
       "CONTRIBUTING.md": () => textResponse("Welcome, contributors!"),
     });
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
   it("returns false when neither policy doc bans AI contributions", async () => {
@@ -57,7 +59,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
       "CONTRIBUTING.md": () => textResponse("Do not submit AI-generated code."),
     });
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
   it("does not fetch CONTRIBUTING.md when a non-empty AI-USAGE.md decides the policy", async () => {
@@ -68,7 +70,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
 
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
 
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0]?.[0]).toContain("AI-USAGE.md");
   });
@@ -110,7 +112,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
 
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
 
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
   it("treats an oversized non-streamed policy document as absent", async () => {
@@ -131,7 +133,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
 
     // AI-USAGE.md is treated as absent (oversized), so the verdict falls through to CONTRIBUTING.md's ban.
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
   it("cancels a streamed policy document once it exceeds the byte limit", async () => {
@@ -195,7 +197,7 @@ describe("resolveRejectionSignaled (#5132)", () => {
 
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
 
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
   it("fails open to false when both docs 404", async () => {
@@ -382,11 +384,11 @@ describe("resolveRejectionSignaled combines both triggers (#5655)", () => {
       }),
       listSubmissions,
     });
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
     expect(listSubmissions).not.toHaveBeenCalled();
   });
 
-  it("returns true from the own-rejection-history trigger when the policy docs are clean", async () => {
+  it("returns own_submission_rejected from the own-rejection-history trigger when the policy docs are clean", async () => {
     const policyFetch = routedFetch({
       "AI-USAGE.md": () => textResponse("AI contributions are welcome here."),
       "CONTRIBUTING.md": () => textResponse("Welcome, contributors!"),
@@ -398,7 +400,7 @@ describe("resolveRejectionSignaled combines both triggers (#5655)", () => {
       fetchImpl,
       listSubmissions: () => [{ pullRequestNumber: 42 }],
     });
-    expect(result).toBe(true);
+    expect(result).toBe(REJECTION_REASON_OWN_SUBMISSION_REJECTED);
   });
 
   it("returns false when neither trigger fires (clean policy + no prior rejection)", async () => {

@@ -14,8 +14,14 @@ import { resolveRejection } from "./rejection-state-machine.js";
 // resolved by resolveOwnRejectionHistory (#5655), closing the gap this header previously documented: it checks
 // each of this miner's recorded own-submissions on the repo (governor-state.js's listRecentOwnSubmissions,
 // #5134) against its live PR outcome via rejection-state-machine.js's resolveRejection (#4278) -- consuming both
-// upstream modules without modifying either. resolveRejectionSignaled now returns true if EITHER trigger fires,
-// so `rejectionSignaled` finally means what iterate-policy.ts's doc comment has always said.
+// upstream modules without modifying either. resolveRejectionSignaled now returns a trigger-specific reason
+// string if EITHER trigger fires (or `false` when neither does), so `rejectionSignaled` finally means what
+// iterate-policy.ts's doc comment has always said.
+
+/** @typedef {"ai_usage_policy_ban" | "own_submission_rejected"} RejectionSignaledReason */
+
+export const REJECTION_REASON_AI_USAGE_POLICY_BAN = "ai_usage_policy_ban";
+export const REJECTION_REASON_OWN_SUBMISSION_REJECTED = "own_submission_rejected";
 
 const DEFAULT_RAW_CONTENT_BASE_URL = "https://raw.githubusercontent.com";
 const MAX_POLICY_DOC_BYTES = 128 * 1024;
@@ -149,13 +155,14 @@ export async function resolveOwnRejectionHistory(repoFullName, options = {}) {
 }
 
 /**
- * Resolve whether the target repo has an explicit, live AI-usage-policy ban -- the first of
- * `rejectionSignaled`'s two documented triggers. Returns `false` (never throws) on any fetch/parse failure,
- * matching resolveAiPolicyVerdict's own fail-open default for an absent/unreadable policy doc.
+ * Resolve whether the target repo has signaled it does not want automated/AI-authored contributions --
+ * either trigger documented above. Returns `false` (never throws) on any fetch/parse failure for the policy
+ * docs, matching resolveAiPolicyVerdict's own fail-open default for an absent/unreadable policy doc. When a
+ * trigger fires, returns a trigger-specific reason string so callers can label audit-trail events accurately.
  *
  * @param {string} repoFullName
  * @param {{ rawContentBaseUrl?: string, fetchImpl?: import("./self-review-context.js").SelfReviewContextFetch }} [options]
- * @returns {Promise<boolean>}
+ * @returns {Promise<false | RejectionSignaledReason>}
  */
 export async function resolveRejectionSignaled(repoFullName, options = {}) {
   const target = parseRepoFullName(repoFullName);
@@ -167,7 +174,8 @@ export async function resolveRejectionSignaled(repoFullName, options = {}) {
 
   const verdict = resolveAiPolicyVerdict({ aiUsage, contributing });
   // First trigger: an explicit live AI-usage-policy ban. A ban short-circuits -- no need to also check history.
-  if (!verdict.allowed) return true;
+  if (!verdict.allowed) return REJECTION_REASON_AI_USAGE_POLICY_BAN;
   // Second trigger (#5655): a prior submission from this same miner on this exact repo was closed/rejected.
-  return resolveOwnRejectionHistory(repoFullName, options);
+  const ownHistoryRejected = await resolveOwnRejectionHistory(repoFullName, options);
+  return ownHistoryRejected ? REJECTION_REASON_OWN_SUBMISSION_REJECTED : false;
 }

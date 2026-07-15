@@ -95,4 +95,22 @@ describe("runPortfolioDashboard (#4287)", () => {
     });
     expect(err).not.toHaveBeenCalled();
   });
+
+  it("reports store/runtime failures as parseable JSON on stdout when --json is set", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const brokenStore = () => {
+      throw new Error("queue_db");
+    };
+
+    expect(runPortfolioDashboard(["--json"], { initPortfolioQueue: brokenStore })).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ ok: false, error: "queue_db" });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    error.mockClear();
+    expect(runPortfolioDashboard([], { initPortfolioQueue: brokenStore })).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toBe("queue_db");
+    expect(log).not.toHaveBeenCalled();
+  });
 });

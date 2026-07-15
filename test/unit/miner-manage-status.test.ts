@@ -286,4 +286,22 @@ describe("loopover-miner manage status (#2325)", () => {
     expect(runManageStatus(["acme/widgets"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner manage status [--json]");
   });
+
+  it("reports store/runtime failures as parseable JSON on stdout when --json is set", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const brokenStore = () => {
+      throw new Error("queue_db");
+    };
+
+    expect(runManageStatus(["--json"], { initPortfolioQueue: brokenStore })).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ ok: false, error: "queue_db" });
+    expect(error).not.toHaveBeenCalled();
+
+    log.mockClear();
+    error.mockClear();
+    expect(runManageStatus([], { initPortfolioQueue: brokenStore })).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toBe("queue_db");
+    expect(log).not.toHaveBeenCalled();
+  });
 });

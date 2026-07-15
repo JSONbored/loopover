@@ -9,7 +9,7 @@
 // collector below is factored so it is directly reusable once such a channel exists.
 
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
-import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const QUEUE_STATUS_KEYS = ["queued", "in_progress", "done"];
 
@@ -94,12 +94,15 @@ export function runPortfolioDashboard(args = [], options = {}) {
     return reportCliFailure(argsWantJson(args), parsed.error);
   }
   const ownsQueue = options.initPortfolioQueue === undefined;
-  const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+  let portfolioQueue;
   try {
+    portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
     const summary = collectPortfolioDashboard({ portfolioQueue }, { nowMs: Number.isFinite(options.nowMs) ? options.nowMs : Date.now() });
     console.log(parsed.json ? JSON.stringify(summary, null, 2) : renderPortfolioDashboardTable(summary));
     return 0;
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
-    if (ownsQueue) portfolioQueue.close();
+    if (ownsQueue) portfolioQueue?.close();
   }
 }

@@ -1,7 +1,7 @@
 import { initEventLedger } from "./event-ledger.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initRunStateStore } from "./run-state.js";
-import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 /** Event vocabulary for manage-phase PR snapshots written by manage poll. (#2325) */
 export const MANAGE_PR_UPDATE_EVENT = "manage_pr_update";
@@ -219,10 +219,13 @@ export function runManageStatus(args = [], options = {}) {
   const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
   const ownsEventLedger = options.initEventLedger === undefined;
   const ownsRunStateStore = options.initRunStateStore === undefined;
-  const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
-  const eventLedger = (options.initEventLedger ?? initEventLedger)();
-  const runStateStore = (options.initRunStateStore ?? initRunStateStore)();
+  let portfolioQueue;
+  let eventLedger;
+  let runStateStore;
   try {
+    portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+    eventLedger = (options.initEventLedger ?? initEventLedger)();
+    runStateStore = (options.initRunStateStore ?? initRunStateStore)();
     const rows = collectManageStatus({ portfolioQueue, eventLedger });
     const runPortfolio = collectRunPortfolio({ portfolioQueue, eventLedger, runStateStore });
     if (parsed.json) {
@@ -233,9 +236,11 @@ export function runManageStatus(args = [], options = {}) {
       console.log(`${renderManageStatusTable(rows)}\n\n${renderRunPortfolioTable(runPortfolio)}`);
     }
     return 0;
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
-    if (ownsPortfolioQueue) portfolioQueue.close();
-    if (ownsEventLedger) eventLedger.close();
-    if (ownsRunStateStore) runStateStore.close();
+    if (ownsPortfolioQueue) portfolioQueue?.close();
+    if (ownsEventLedger) eventLedger?.close();
+    if (ownsRunStateStore) runStateStore?.close();
   }
 }

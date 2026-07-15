@@ -92,7 +92,11 @@ describe("check-engine-parity script", () => {
 
   it("discovers real in-scope pairs in the repository (regression guard)", () => {
     const pairs = discoverEngineParityPairs({ root: process.cwd() });
-    expect(pairs.length).toBeGreaterThanOrEqual(14);
+    // Floor tracks the count of still-hand-duplicated in-scope twins, minus a small margin so unrelated
+    // additions don't trip it while a broken scanner returning ~0 still does. #6194 converged the last four
+    // settings twins (autonomy/command-authorization/contributor-blacklist/pr-type-label) onto their engine
+    // shims, so the floor drops from 14 to 10 — the `.some()` structural checks below are the real guard.
+    expect(pairs.length).toBeGreaterThanOrEqual(10);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "guardrail-config.ts")).toBe(true);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "change-guardrail.ts")).toBe(true);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "duplicate-winner.ts")).toBe(false);

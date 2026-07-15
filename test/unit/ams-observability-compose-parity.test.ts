@@ -16,7 +16,9 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 const rootComposeText = read("docker-compose.yml");
 const minerComposeText = read("packages/loopover-miner/docker-compose.miner.yml");
 const overrideText = read("packages/loopover-miner/docker-compose.miner.override.yml.example");
-const deploymentDoc = read("packages/loopover-miner/DEPLOYMENT.md");
+// The fleet-mode/ams-observability bridging walkthrough moved to the docs website (#6022);
+// DEPLOYMENT.md is now a short pointer stub.
+const deploymentDoc = read("apps/loopover-ui/src/routes/docs.ams-deployment.tsx");
 
 const rootCompose = parse(rootComposeText) as {
   services: Record<string, { profiles?: string[]; volumes?: string[] }>;
@@ -71,8 +73,8 @@ describe("AMS fleet-mode ↔ ams-observability compose bridge (#5805)", () => {
     expect(Object.keys(override.services)).toEqual(["miner"]);
   });
 
-  it("DEPLOYMENT.md documents the override, the combined three-file command, and the shared variable", () => {
-    expect(deploymentDoc).toContain("Running fleet mode alongside ORB's `ams-observability` profile");
+  it("the docs.ams-deployment page documents the override, the combined three-file command, and the shared variable", () => {
+    expect(deploymentDoc).toContain("Running fleet mode alongside ORB's ams-observability profile");
     expect(deploymentDoc).toContain("docker-compose.miner.override.yml");
     // the exact combined invocation, all three -f files present
     expect(deploymentDoc).toContain("-f docker-compose.yml");

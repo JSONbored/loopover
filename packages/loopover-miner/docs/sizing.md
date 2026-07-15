@@ -91,6 +91,7 @@ docker run --rm -v miner-sizing-1:/data alpine du -ah /data
 - The 333 MB fleet image is dominated by the Node 24 base image and `node_modules`; `npm prune --omit=dev` in
   the Dockerfile already strips dev dependencies from the runtime stage.
 
-See [`DEPLOYMENT.md`](../DEPLOYMENT.md) for the laptop-mode and fleet-mode setup walkthroughs these numbers
-apply to, and [`docs/operations-runbook.md`](operations-runbook.md) for operational scenarios beyond initial
+See the [AMS deployment guide](https://loopover.ai/docs/ams-deployment) for the laptop-mode and
+fleet-mode setup walkthroughs these numbers apply to, and
+[`docs/operations-runbook.md`](operations-runbook.md) for operational scenarios beyond initial
 sizing.

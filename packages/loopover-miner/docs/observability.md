@@ -7,8 +7,8 @@ operations, see your ops runbook.
 ## What's observable
 
 The miner writes append-only SQLite ledgers under `LOOPOVER_MINER_CONFIG_DIR` (default
-`~/.config/loopover-miner` on a laptop, or `/data/miner` in the fleet Docker image — see
-[`DEPLOYMENT.md`](../DEPLOYMENT.md)):
+`~/.config/loopover-miner` on a laptop, or `/data/miner` in the fleet Docker image — see the
+[AMS deployment guide](https://loopover.ai/docs/ams-deployment)):
 
 - **`attempt-log.sqlite3`** — the driver-level attempt event trace (event type, action class, mode, reason,
   timestamps), table `attempt_log_events`. One `attempt_outcome_summary` row per completed attempt also carries

@@ -135,6 +135,6 @@ which axis (if any) triggered an abandon, for an operator reading the attempt lo
 
 - [`operations-runbook.md`](operations-runbook.md) — SQLite `busy_timeout` concurrency, corruption recovery, multi-process collisions, post-upgrade migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
 - [`env-reference.md`](env-reference.md) — env vars including ledger path overrides.
-- [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet deployment and state directory layout.
+- [AMS deployment guide](https://loopover.ai/docs/ams-deployment) — laptop vs fleet deployment and state directory layout.
 - [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.loopover-miner.yml` targeting policy.
 - [`../README.md#mcp-server`](../README.md#mcp-server) — the `loopover-miner-mcp` read-only tool surface for querying this driver's resolved status (provider, model env-var name, CLI presence) and the rest of AMS's local state over MCP.

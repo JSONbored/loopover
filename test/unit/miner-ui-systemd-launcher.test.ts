@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = join(process.cwd());
 const SERVICE_PATH = join(REPO_ROOT, "systemd/loopover-miner-ui.service.example");
 const MINER_UI_README_PATH = join(REPO_ROOT, "apps/loopover-miner-ui/README.md");
-const DEPLOYMENT_PATH = join(REPO_ROOT, "packages/loopover-miner/DEPLOYMENT.md");
+// The Bare-host deployment walkthrough moved to the docs website (#6022); DEPLOYMENT.md is now a
+// short pointer stub.
+const DEPLOYMENT_PATH = join(REPO_ROOT, "apps/loopover-ui/src/routes/docs.ams-deployment.tsx");
 const MINER_UI_PACKAGE_JSON_PATH = join(REPO_ROOT, "apps/loopover-miner-ui/package.json");
 
 describe("miner-ui persistent-service launcher (#4852)", () => {

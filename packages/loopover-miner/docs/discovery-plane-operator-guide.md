@@ -70,7 +70,7 @@ After-the-fact duplicate adjudication (`isDuplicateClusterWinnerByClaim` in `@lo
 
 ## Invariants
 
-Mirrors [`DEPLOYMENT.md`](../DEPLOYMENT.md) tone — concrete guarantees for operators:
+Mirrors the [AMS deployment guide](https://loopover.ai/docs/ams-deployment) tone — concrete guarantees for operators:
 
 - **Default OFF** — no hosted discovery-index traffic and no discovery-plane telemetry unless the operator opts in.
 - **Metadata-only index queries** — responses are issue/listing metadata compatible with local `normalizeCandidate` shape; no source upload, no clone, no repo archive.
@@ -103,4 +103,4 @@ The server operating doc (maintainer-only) will restate the same boundary: **nev
 - [`cross-repo-discovery-phase1.md`](cross-repo-discovery-phase1.md) — local, metadata-only Phase 1 discovery (no hosted plane).
 - [`operations-runbook.md`](operations-runbook.md) — SQLite concurrency, corruption recovery, multi-process collisions, post-upgrade migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
 - [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.loopover-miner.yml` targeting policy.
-- [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet deployment and core miner invariants.
+- [AMS deployment guide](https://loopover.ai/docs/ams-deployment) — laptop vs fleet deployment and core miner invariants.

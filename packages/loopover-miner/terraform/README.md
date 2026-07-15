@@ -50,7 +50,7 @@ The module provisions the **host**; you finish the miner setup over SSH (secrets
 3. Run the miner container against the mounted volume using the existing
    [`../docker-compose.miner.yml`](../docker-compose.miner.yml) (its state mount is already pinned to
    `/data/miner`, which `terraform output data_mount` confirms). Full run/upgrade guidance lives in
-   [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
+   the [AMS deployment guide](https://loopover.ai/docs/ams-deployment).
 
 ## Outputs
 

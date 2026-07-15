@@ -5,8 +5,8 @@ unattended on a timer (cron or systemd), and for alerting when a run fails. Thes
 most likely to run on a schedule; everything they need is local and they make no interactive prompts.
 
 > **Scope:** scheduling + failure alerting for `manage poll` / `discover`. For local-state recovery see
-> [`operations-runbook.md`](operations-runbook.md); for deployment layout see
-> [`../DEPLOYMENT.md`](../DEPLOYMENT.md).
+> [`operations-runbook.md`](operations-runbook.md); for deployment layout see the
+> [AMS deployment guide](https://loopover.ai/docs/ams-deployment).
 
 ## The exit-code contract (what to alert on)
 

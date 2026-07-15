@@ -4,10 +4,15 @@ import { describe, expect, it } from "vitest";
 
 const DEPLOYMENT_PATH = join(process.cwd(), "packages/loopover-miner/DEPLOYMENT.md");
 const README_PATH = join(process.cwd(), "packages/loopover-miner/README.md");
+// The full walkthrough moved to the docs website (#6022); DEPLOYMENT.md is now a short pointer stub.
+const DEPLOYMENT_PAGE_PATH = join(
+  process.cwd(),
+  "apps/loopover-ui/src/routes/docs.ams-deployment.tsx",
+);
 
 describe("miner deployment guide (#2330)", () => {
   it("documents laptop and fleet modes with required walkthrough sections", () => {
-    const doc = readFileSync(DEPLOYMENT_PATH, "utf8");
+    const doc = readFileSync(DEPLOYMENT_PAGE_PATH, "utf8");
     expect(doc).toContain("Laptop mode");
     expect(doc).toContain("Fleet mode");
     expect(doc).toContain("loopover-miner status");
@@ -44,5 +49,11 @@ describe("miner deployment guide (#2330)", () => {
   it("is linked from the miner package README", () => {
     const readme = readFileSync(README_PATH, "utf8");
     expect(readme).toContain("DEPLOYMENT.md");
+  });
+
+  it("keeps a pointer stub at DEPLOYMENT.md (required by package.json's files list) linking to the docs page", () => {
+    const stub = readFileSync(DEPLOYMENT_PATH, "utf8");
+    expect(stub).toContain("loopover.ai/docs/ams-deployment");
+    expect(stub).toContain("Dockerfile");
   });
 });

@@ -2,7 +2,7 @@
 
 Operator-facing runbook for **local SQLite state**: what the concurrency guarantees actually mean, how to recover from corruption, what to do when two miner processes collide on the same files, and how schema upgrades migrate your on-disk ledgers after a package update.
 
-> **Scope:** AMS local stores only. For laptop/fleet deployment layout see [`../DEPLOYMENT.md`](../DEPLOYMENT.md). For Grafana setup see [#5190](https://github.com/JSONbored/gittensory/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/LoopoverDB).
+> **Scope:** AMS local stores only. For laptop/fleet deployment layout see the [AMS deployment guide](https://loopover.ai/docs/ams-deployment). For Grafana setup see [#5190](https://github.com/JSONbored/gittensory/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/LoopoverDB).
 
 ## Local state at a glance
 
@@ -43,7 +43,7 @@ PRAGMA busy_timeout = 5000;
 | Claim / queue stores | **`INSERT … ON CONFLICT`** and **`UPDATE … RETURNING`** patterns avoid read-then-write races **within one file** |
 | Two **long-running `loopover-miner loop` daemons** on the **same `LOOPOVER_MINER_CONFIG_DIR`** | **Unsupported.** `busy_timeout` reduces transient lock errors; it does **not** make multi-process loop workers safe on one volume |
 
-**Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in [`../DEPLOYMENT.md`](../DEPLOYMENT.md)).
+**Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in the [AMS deployment guide](https://loopover.ai/docs/ams-deployment)).
 
 ### Quick health check
 
@@ -237,7 +237,7 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 
 ## Related docs
 
-- [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet, volumes, systemd, scaling rules
+- [AMS deployment guide](https://loopover.ai/docs/ams-deployment) — laptop vs fleet, volumes, systemd, scaling rules
 - [`../README.md`](../README.md#local-storage) — store inventory
 - [`env-reference.md`](env-reference.md) — per-store path overrides
 - [`coding-agent-driver.md`](coding-agent-driver.md) — attempt log semantics

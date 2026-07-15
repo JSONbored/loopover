@@ -17,6 +17,10 @@ import type { DeploymentDocsReality } from "../../packages/loopover-miner/lib/de
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");
 const DEPLOYMENT_MD = resolve(MINER_DIR, "DEPLOYMENT.md");
+// The full deployment walkthrough lives on the docs website now (#6022); DEPLOYMENT.md is a short
+// pointer stub. Combine both sources so this audit keeps covering every env var / file path /
+// subcommand claim the walkthrough makes, not just the ones that survived the stub-down.
+const DEPLOYMENT_PAGE = resolve(REPO_ROOT, "apps/loopover-ui/src/routes/docs.ams-deployment.tsx");
 const BIN_DIR = resolve(MINER_DIR, "bin");
 const BIN_ENTRY = resolve(BIN_DIR, "loopover-miner.js");
 const LIB_DIR = resolve(MINER_DIR, "lib");
@@ -55,7 +59,8 @@ const ALWAYS_IN_SYNC: DeploymentDocsReality = {
 };
 
 describe("loopover-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
-  const markdown = readFileSync(DEPLOYMENT_MD, "utf8");
+  const markdown =
+    readFileSync(DEPLOYMENT_MD, "utf8") + "\n" + readFileSync(DEPLOYMENT_PAGE, "utf8");
   const claims = {
     envVars: extractEnvVarClaims(markdown),
     filePaths: extractFilePathClaims(markdown),

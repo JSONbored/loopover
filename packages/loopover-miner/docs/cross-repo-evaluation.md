@@ -75,4 +75,5 @@ Pure functions live in [`lib/cross-repo-evaluation.js`](../lib/cross-repo-evalua
 
 This harness is **readiness-only**: it does not run the coding agent, open PRs, or call forge APIs. A green report
 means the miner’s repo-agnostic stack-detection and coding-task-spec path is prepared for the benchmark repo; a live
-attempt still needs credentials, governor policy, and queue state as documented in [`DEPLOYMENT.md`](../DEPLOYMENT.md).
+attempt still needs credentials, governor policy, and queue state as documented in the
+[AMS deployment guide](https://loopover.ai/docs/ams-deployment).

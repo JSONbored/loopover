@@ -5,10 +5,11 @@ import {
 } from "../../src/services/repo-onboarding-pack";
 import { createTestEnv } from "../helpers/d1";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
-import { parseFocusManifestContent } from "../../src/signals/focus-manifest";
+import { parseFocusManifestContent, compileFocusManifestPolicy, parseFocusManifest } from "../../src/signals/focus-manifest";
 import { compileRepoPolicyCompilerOutput } from "../../src/signals/repo-policy-compiler";
 import {
   buildRepoOnboardingPackPreview,
+  focusManifestPolicyToCompilerOutput,
   isRepoOnboardingPackPublicSafe,
   type RepoPolicyCompilerOutput,
 } from "../../src/signals/onboarding-pack";
@@ -59,6 +60,20 @@ const POLICY_COMPILER_FIXTURE: RepoPolicyCompilerOutput = {
     "Private owner note: only maintainers should see internal calibration context.",
   ],
 };
+
+describe("focusManifestPolicyToCompilerOutput (#5943)", () => {
+  it("matches compileRepoPolicyCompilerOutput's labelPolicy.note for the same manifest", () => {
+    const repoFullName = "octo/widgets";
+    const manifest = parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "required" });
+    const generatedAt = "2026-01-01T00:00:00.000Z";
+    const viaCompiler = compileRepoPolicyCompilerOutput({ repoFullName, manifest, generatedAt });
+    const viaAdapter = focusManifestPolicyToCompilerOutput(
+      compileFocusManifestPolicy(repoFullName, manifest, { generatedAt }),
+    );
+    expect(viaAdapter.labelPolicy?.note).toBe(viaCompiler.labelPolicy?.note);
+    expect(viaAdapter.labelPolicy?.note).toBe("Link a tracked issue before opening a pull request.");
+  });
+});
 
 describe("buildRepoOnboardingPackPreview", () => {
   it("cross-links policy compiler output into onboarding pack inputs for issue 248", () => {

@@ -112,7 +112,7 @@ function issueDiscoverySummary(preference: FocusManifestLanePreference, summary:
   return "Issue discovery is optional; confirm maintainer scope before filing new issues.";
 }
 
-function labelPolicyNote(linkedIssuePolicy: string): string {
+export function labelPolicyNote(linkedIssuePolicy: string): string {
   if (linkedIssuePolicy === "required") return "Link a tracked issue before opening a pull request.";
   if (linkedIssuePolicy === "preferred") return "Link a tracked issue when one exists.";
   return "Use labels to explain accepted scope, not to promise outcomes.";

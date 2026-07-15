@@ -305,6 +305,7 @@ describe("buildRegistrationReadiness", () => {
     expect(report.onboardingPackPreview?.previewOnly).toBe(true);
     expect(report.onboardingPackPreview?.repoFullName).toBe("octo/manifest");
     expect(report.onboardingPackPreview?.contributionLanes.length).toBeGreaterThan(0);
+    expect(report.onboardingPackPreview?.labelPolicy.note).toBe("Link a tracked issue before opening a pull request.");
     expect(JSON.stringify(report.onboardingPackPreview)).not.toMatch(FORBIDDEN_PUBLIC_LANGUAGE);
   });
 

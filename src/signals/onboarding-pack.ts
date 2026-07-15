@@ -1,4 +1,5 @@
 import { isFocusManifestPublicSafe, type FocusManifestPolicy } from "./focus-manifest";
+import { labelPolicyNote } from "./repo-policy-compiler";
 import { nowIso } from "../utils/json";
 
 export type RepoPolicyContributionLane = {
@@ -99,6 +100,7 @@ export function focusManifestPolicyToCompilerOutput(policy: FocusManifestPolicy)
       preferredLabels: policy.publicSafe.labelPolicy.preferredLabels,
       requiredLabels: [],
       discouragedLabels: [],
+      note: labelPolicyNote(policy.publicSafe.validation.linkedIssuePolicy),
     },
     validationExpectations: policy.publicSafe.validation.expectations,
     readinessWarnings: policy.publicSafe.readinessWarnings,

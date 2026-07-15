@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,8 @@ import { describe, expect, it } from "vitest";
 import { formatLintReport, readManifestTextForLint } from "../../scripts/loopover-config-lint";
 import { lintManifestText } from "../../src/selfhost/config-lint";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../../src/signals/focus-manifest";
+
+const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
 describe("formatLintReport (#2906)", () => {
   it("reports a valid manifest's summary and recognized fields, no warnings", () => {
@@ -93,5 +96,73 @@ describe("readManifestTextForLint (#2923 regression)", () => {
 
       expect(() => readManifestTextForLint(path)).toThrow(`file exceeds ${MAX_FOCUS_MANIFEST_BYTES} bytes: ${path}`);
     });
+  });
+});
+
+describe("loopover-config-lint --json (#5931)", () => {
+  function withTempDir(run: (dir: string) => void): void {
+    const dir = mkdtempSync(join(tmpdir(), "gittensory-config-lint-json-"));
+    try {
+      run(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("prints a parseable JSON report for a clean manifest and exits 0", () => {
+    withTempDir((dir) => {
+      const path = join(dir, "manifest.yml");
+      writeFileSync(path, "wantedPaths:\n  - src/\n");
+
+      const stdout = execFileSync(TSX_BIN, ["scripts/loopover-config-lint.ts", path, "--json"], {
+        encoding: "utf8",
+      });
+
+      expect(JSON.parse(stdout)).toEqual({
+        path,
+        ok: true,
+        warnings: [],
+        recognizedFields: ["wantedPaths"],
+        summary: "Manifest parsed 1 recognized field.",
+      });
+    });
+  });
+
+  it("prints a parseable JSON report for a manifest with an unknown field and exits 1", () => {
+    withTempDir((dir) => {
+      const path = join(dir, "manifest.yml");
+      writeFileSync(path, "unknownSecretKey: super-secret-value\n");
+
+      let stdout = "";
+      let status = 0;
+      try {
+        stdout = execFileSync(TSX_BIN, ["scripts/loopover-config-lint.ts", path, "--json"], {
+          encoding: "utf8",
+        });
+      } catch (error) {
+        stdout = String((error as { stdout?: string }).stdout ?? "");
+        status = (error as { status?: number }).status ?? 0;
+      }
+
+      expect(status).toBe(1);
+      expect(JSON.parse(stdout)).toEqual({
+        path,
+        ok: false,
+        warnings: [
+          "Manifest contained no recognized focus fields; falling back to deterministic signals.",
+          "Manifest contains unknown top-level field: unknownSecretKey.",
+        ],
+        recognizedFields: [],
+        summary: "Manifest has 2 warnings.",
+      });
+      // Never echoes the raw supplied value into the JSON report either (mirrors formatLintReport's redaction).
+      expect(stdout).not.toContain("super-secret-value");
+    });
+  });
+
+  it("documents --json in the CLI's usage/help text", () => {
+    const stdout = execFileSync(TSX_BIN, ["scripts/loopover-config-lint.ts", "--help"], { encoding: "utf8" });
+
+    expect(stdout).toContain("--json");
   });
 });

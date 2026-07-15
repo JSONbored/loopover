@@ -8,14 +8,15 @@ import { lintManifestText, type SelfHostConfigLintResult } from "../src/selfhost
 import { MAX_FOCUS_MANIFEST_BYTES } from "../src/signals/focus-manifest";
 
 function usage(): string {
-  return `Usage: npm run selfhost:config-lint -- [path]
+  return `Usage: npm run selfhost:config-lint -- [path] [--json]
 
 Validates a LoopOver focus manifest (.loopover.yml, a per-repo/global self-host
 private-config file, or any equivalent YAML/JSON file with the same shape) and reports
 unrecognized top-level fields and parser warnings, without echoing any of the file's values.
 
 Options:
-  path   Manifest file to lint. Defaults to ".loopover.yml" in the current directory.`;
+  path    Manifest file to lint. Defaults to ".loopover.yml" in the current directory.
+  --json  Print the lint result as JSON instead of the human-formatted report.`;
 }
 
 export function readManifestTextForLint(path: string): string {
@@ -50,7 +51,8 @@ function main(): void {
     console.log(usage());
     return;
   }
-  const path = args[0] ?? ".loopover.yml";
+  const jsonMode = args.includes("--json");
+  const path = args.find((arg) => !arg.startsWith("--")) ?? ".loopover.yml";
   let text;
   try {
     text = readManifestTextForLint(path);
@@ -60,7 +62,7 @@ function main(): void {
     process.exit(1);
   }
   const result = lintManifestText(text);
-  console.log(formatLintReport(path, result));
+  console.log(jsonMode ? JSON.stringify({ path, ...result }, null, 2) : formatLintReport(path, result));
   if (!result.ok) process.exit(1);
 }
 

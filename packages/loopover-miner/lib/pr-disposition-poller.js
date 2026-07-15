@@ -11,6 +11,8 @@
 // "open" means "wait for a human to actually merge or close the PR", a potentially much longer, unbounded
 // wait) -- composing them into one poller would conflate two different backoff/timeout policies.
 
+import { fetchWithRetry } from "./http-retry.js";
+
 const defaultApiBaseUrl = "https://api.github.com";
 const defaultMinIntervalMs = 60_000;
 const defaultMaxIntervalMs = 5 * 60_000;
@@ -97,13 +99,16 @@ function githubError(response, payload) {
 }
 
 async function fetchPullRequest(target, prNumber, options) {
-  // Bounded so a stalled connection can't hang a poll cycle forever (#miner-github-read-timeouts) -- a fresh
-  // AbortSignal.timeout() per call, matching ci-poller.js's sibling fetchWithRetry treatment.
-  const response = await options.fetchFn(apiUrl(options.apiBaseUrl, repoPath(target, `/pulls/${prNumber}`)), {
-    method: "GET",
-    headers: githubHeaders(options.githubToken),
-    signal: AbortSignal.timeout(options.requestTimeoutMs),
-  });
+  // Retry transient network errors / 5xx around this single call (#4829), matching ci-poller.js's
+  // githubGetJsonResponse -- distinct from this poller's OWN outer pending-retry loop. requestTimeoutMs bounds
+  // each individual attempt with a fresh AbortSignal.timeout() (a stalled connection can't hang a poll cycle
+  // forever -- #miner-github-read-timeouts); the injected sleepFn keeps the retry backoff instant in tests.
+  const response = await fetchWithRetry(
+    options.fetchFn,
+    apiUrl(options.apiBaseUrl, repoPath(target, `/pulls/${prNumber}`)),
+    { method: "GET", headers: githubHeaders(options.githubToken) },
+    { sleepFn: options.sleepFn, timeoutMs: options.requestTimeoutMs },
+  );
   const payload = await response.json().catch(() => null);
   if (!response.ok) throw githubError(response, payload);
   return payload;

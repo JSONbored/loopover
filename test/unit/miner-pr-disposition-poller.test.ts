@@ -29,6 +29,24 @@ describe("PR disposition poller (#5135)", () => {
     expect((init?.headers as Record<string, string>).authorization).toBe("Bearer github-token");
   });
 
+  it("retries a transient 5xx from the GitHub API during a poll and completes (#4829)", async () => {
+    let attempts = 0;
+    const fetchFn = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) return jsonResponse({}, { status: 503 }); // a brief transient server error
+      return prResponse({ state: "closed", merged: true, closed_at: "2026-07-12T00:00:00Z" });
+    });
+
+    const result = await pollPrDisposition("acme/widgets", 42, {
+      apiBaseUrl: API,
+      fetchFn,
+      sleepFn: async () => {}, // keep the per-call retry backoff instant
+    });
+
+    expect(attempts).toBe(2); // the 503 was retried, then succeeded — not surfaced as an immediate failure
+    expect(result).toMatchObject({ state: "closed", merged: true });
+  });
+
   it("returns terminal merged disposition immediately, without further polling", async () => {
     const fetchFn = vi.fn(async () =>
       prResponse({ state: "closed", merged: true, closed_at: "2026-07-12T00:00:00Z" }),

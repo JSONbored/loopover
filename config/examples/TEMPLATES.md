@@ -69,7 +69,7 @@ Point `LOOPOVER_REPO_CONFIG_DIR` at that directory (default `/config` in `docker
 These patterns apply to common JSONbored repos. **Do not copy real maintainer logins or thresholds
 into public git** — use the private mount for anything marked *private* below.
 
-### `JSONbored/gittensory` (dogfooding)
+### `JSONbored/loopover` (dogfooding)
 
 - **Public** `.loopover.yml` in the repo: work-area guardrails, test expectations, gate dimensions
   contributors should understand.
@@ -89,7 +89,7 @@ into public git** — use the private mount for anything marked *private* below.
 
 ### `JSONbored/metagraphed` (sibling product repo)
 
-- Same split as `gittensory`: public manifest for transparent contributor guidance; private mount
+- Same split as `loopover`: public manifest for transparent contributor guidance; private mount
   for thresholds and maintainer-only rules.
 - Use `repo-override.loopover.yml` when one repo needs different `expectedCiContexts` or
   `gate.checkMode: disabled` while sharing a fleet-wide `global.loopover.yml` baseline.

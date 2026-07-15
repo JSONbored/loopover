@@ -6,7 +6,7 @@ contains no real policy, thresholds, logins, or repo names — copy what you nee
 mounted config directory and edit it there (never in this repo).
 
 See **[TEMPLATES.md](./TEMPLATES.md)** for the full template catalog (minimal + exhaustive
-`gittensory.yml` starters, public-vs-private usage, and fleet notes for `gittensory`,
+`loopover.yml` starters, public-vs-private usage, and fleet notes for `loopover`,
 `awesome-claude`, and `metagraphed` without committing private policy).
 
 The private config directory is read by `src/selfhost/private-config.ts` and is kept **out of the

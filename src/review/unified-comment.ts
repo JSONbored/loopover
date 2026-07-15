@@ -158,6 +158,20 @@ export interface UnifiedReviewInput {
   summary: string;
   /** Consensus blocking issues (shown expanded when present). */
   blockers?: string[];
+  /** Structured, per-finding fix context for blocker-severity inline findings (#6068) — one entry per finding
+   *  with a commentable location, each already rendered (by `buildFixHandoffBlock`,
+   *  src/review/fix-handoff-render.ts) into a copy-paste-ready markdown block (location + instruction +
+   *  suggested diff). Rendered as its own "Copy AI fix context" collapsible right after each blocker,
+   *  mirroring CodeRabbit's per-finding "Prompt for AI Agents" pattern — the whole-PR "Copy for AI agents"
+   *  block above stays as the aggregate option. Structural shape (just `.body`) so the host can pass
+   *  `FixHandoffBlock[]` without this renderer importing that type — stays self-contained. NOT correlated
+   *  with the `blockers` strings above (they come from separate sources — gate hard-blockers, review-thread
+   *  findings, and this AI-findings source do not share one array) — rendered as its own supplementary group
+   *  after the blockers list, not matched 1:1 to a specific bullet. Absent/empty (default; the host only
+   *  passes these when `review.fixHandoff` is on AND a fresh review produced blocker-severity inline
+   *  findings) ⇒ no section, byte-identical. `path`/`line` are only used to label each collapsible so
+   *  multiple entries stay distinguishable while collapsed. */
+  blockerFixContext?: ReadonlyArray<{ path: string; line?: number; body: string }>;
   /** Non-blocking suggestions (collapsed). */
   nits?: string[];
   /** CI + merge-state readiness. */
@@ -743,6 +757,15 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     blocks.push(buildAiContextBlock(blockersAll, collapsiblesOpen));
   }
 
+  // Per-finding "Copy AI fix context" (#6068): one collapsible per blocker-severity inline finding, each a
+  // self-contained copy-paste-ready block (location + instruction + suggested diff) for a contributor's own
+  // local coding agent -- the CodeRabbit-style per-finding companion to the whole-PR block above. Never
+  // gated by verbosity, same rationale as the blockers section itself.
+  for (const entry of input.blockerFixContext ?? []) {
+    const location = entry.line && entry.line > 0 ? `${entry.path}:${entry.line}` : entry.path;
+    blocks.push(details("🔧 Copy AI fix context", entry.body, location, collapsiblesOpen));
+  }
+
   // Category breakdown (#2150): a compact, deterministic one-liner of the finding mix (e.g. "2 correctness ·
   // 1 security"). Omitted entirely when no finding carries a category (default) ⇒ byte-identical. Pure tally, no
   // AI, no gate impact.
@@ -830,6 +853,7 @@ export function buildUnifiedReviewInput(opts: {
   maxFindingsCaps?: { blockers: number | null; nits: number | null };
   linkedIssueSatisfaction?: { status: "addressed" | "partial" | "unaddressed"; rationale: string };
   inlineFindings?: ReadonlyArray<{ category?: UnifiedFindingCategory | undefined }>;
+  blockerFixContext?: ReadonlyArray<{ path: string; line?: number; body: string }>;
 }): UnifiedReviewInput {
   const ex = extractReviewSummary(opts.reviews);
   const changedFiles = typeof opts.changedFiles === "number" ? opts.changedFiles : opts.changedFiles.length;
@@ -850,6 +874,7 @@ export function buildUnifiedReviewInput(opts: {
     ...(opts.maxFindingsCaps !== undefined ? { maxFindingsCaps: opts.maxFindingsCaps } : {}),
     ...(opts.linkedIssueSatisfaction !== undefined ? { linkedIssueSatisfaction: opts.linkedIssueSatisfaction } : {}),
     ...(opts.inlineFindings !== undefined ? { inlineFindings: opts.inlineFindings } : {}),
+    ...(opts.blockerFixContext !== undefined ? { blockerFixContext: opts.blockerFixContext } : {}),
   };
 }
 

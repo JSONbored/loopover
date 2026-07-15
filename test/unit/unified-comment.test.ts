@@ -591,6 +591,53 @@ describe("renderUnifiedReviewComment", () => {
     expect(md).not.toContain("Safe summary </details>");
     expect(md).not.toContain("Body <!-- comment -->");
   });
+
+  describe("blockerFixContext (#6068)", () => {
+    it("renders one 'Copy AI fix context' collapsible per entry, labeled with its path:line", () => {
+      const md = renderUnifiedReviewComment({
+        ...base,
+        decision: "close",
+        blockers: ["Null check missing."],
+        blockerFixContext: [
+          { path: "src/foo.ts", line: 10, body: "**Fix handoff — Blocker at `src/foo.ts:10`**\nNull check missing." },
+          { path: "src/bar.ts", line: 20, body: "**Fix handoff — Blocker at `src/bar.ts:20`**\nAnother defect." },
+        ],
+      });
+      expect(md).toContain("<details><summary><b>🔧 Copy AI fix context</b> — src/foo.ts:10</summary>");
+      expect(md).toContain("<details><summary><b>🔧 Copy AI fix context</b> — src/bar.ts:20</summary>");
+      expect(md.match(/🔧 Copy AI fix context/g)?.length).toBe(2);
+    });
+
+    it("labels the collapsible with just the path when line is absent or the 0 no-line sentinel", () => {
+      const withoutLine = renderUnifiedReviewComment({ ...base, decision: "close", blockerFixContext: [{ path: "src/foo.ts", body: "x" }] });
+      expect(withoutLine).toContain("— src/foo.ts</summary>");
+      expect(withoutLine).not.toContain("src/foo.ts:0");
+      const zeroLine = renderUnifiedReviewComment({ ...base, decision: "close", blockerFixContext: [{ path: "src/foo.ts", line: 0, body: "x" }] });
+      expect(zeroLine).toContain("— src/foo.ts</summary>");
+      expect(zeroLine).not.toContain("src/foo.ts:0");
+    });
+
+    it("renders independently of the plain-text blockers list — present even with zero string blockers", () => {
+      const md = renderUnifiedReviewComment({ ...base, decision: "merge", blockerFixContext: [{ path: "src/foo.ts", line: 1, body: "x" }] });
+      expect(md).not.toContain("Why this is blocked");
+      expect(md).toContain("🔧 Copy AI fix context");
+    });
+
+    it("omits every 'Copy AI fix context' collapsible when absent (default, byte-identical)", () => {
+      const md = renderUnifiedReviewComment({ ...base, decision: "close", blockers: ["x"] });
+      expect(md).not.toContain("🔧 Copy AI fix context");
+    });
+
+    it("angle-escapes blockerFixContext body content (public-safe)", () => {
+      const md = renderUnifiedReviewComment({
+        ...base,
+        decision: "close",
+        blockerFixContext: [{ path: "src/foo.ts", line: 1, body: "Suggested fix </details><!-- hidden -->" }],
+      });
+      expect(md).toContain("Suggested fix &lt;/details&gt;&lt;!-- hidden --&gt;");
+      expect(md).not.toContain("Suggested fix </details>");
+    });
+  });
 });
 
 describe("'Copy for AI agents' block", () => {

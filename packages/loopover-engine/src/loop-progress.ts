@@ -53,15 +53,27 @@ export function buildProgressSnapshot(state: LoopProgressState): ProgressSnapsho
   };
 }
 
+/** Same activity entry by every displayed field. New activity always appends to the tail, so comparing the
+ *  newest entry catches a tail that stayed the same length but shifted content — the case a length-only
+ *  check misses once the tail is capped at {@link MAX_PROGRESS_ACTIVITY} (#6171). */
+function sameActivity(a: LoopProgressActivity | undefined, b: LoopProgressActivity | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.step === b.step && a.detail === b.detail && a.at === b.at;
+}
+
 /** True when `next` differs from `prev` in a way worth pushing to the customer — so the surface streams
  *  ON CHANGE instead of polling on a fixed interval (#4800's acceptance). A null `prev` (the first snapshot)
- *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail's length. */
+ *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail. The tail is
+ *  checked by both length AND newest entry: once it fills to MAX_PROGRESS_ACTIVITY a new event evicts the
+ *  oldest and appends the newest, so length stays constant — a length-only check would stop firing for
+ *  activity-only updates from that point on (#6171). */
 export function progressChanged(prev: ProgressSnapshot | null, next: ProgressSnapshot): boolean {
   if (prev === null) return true;
   return (
     prev.phase !== next.phase ||
     prev.status !== next.status ||
     prev.iteration !== next.iteration ||
-    prev.recentActivity.length !== next.recentActivity.length
+    prev.recentActivity.length !== next.recentActivity.length ||
+    !sameActivity(prev.recentActivity.at(-1), next.recentActivity.at(-1))
   );
 }

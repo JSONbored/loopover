@@ -58,4 +58,40 @@ describe("progressChanged — push on change, not on a fixed interval (#4800)", 
   it("does not push when nothing displayed has changed", () => {
     expect(progressChanged(base, buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] })))).toBe(false);
   });
+
+  it("pushes on a new activity event once the tail is full at the cap (#6171)", () => {
+    // Once recentActivity fills to MAX_PROGRESS_ACTIVITY a new event evicts the oldest and appends the newest,
+    // so the tail length stays constant — the length-only check missed this and stopped firing (#6171).
+    const full = Array.from({ length: MAX_PROGRESS_ACTIVITY }, (_, i) => ({ step: `s${i}` }));
+    const prev = buildProgressSnapshot(running({ recentActivity: full }));
+    const nextState = running({ recentActivity: [...full.slice(1), { step: "s-new" }] });
+    const next = buildProgressSnapshot(nextState);
+    expect(prev.recentActivity).toHaveLength(MAX_PROGRESS_ACTIVITY);
+    expect(next.recentActivity).toHaveLength(MAX_PROGRESS_ACTIVITY);
+    expect(prev.recentActivity.length === next.recentActivity.length).toBe(true); // length alone can't tell them apart
+    expect(progressChanged(prev, next)).toBe(true);
+  });
+
+  it("pushes when the newest activity entry differs in step, detail, or at (same tail length)", () => {
+    const p = buildProgressSnapshot(running({ recentActivity: [{ step: "a", detail: "d", at: "t1" }] }));
+    expect(progressChanged(p, buildProgressSnapshot(running({ recentActivity: [{ step: "b", detail: "d", at: "t1" }] })))).toBe(true);
+    expect(progressChanged(p, buildProgressSnapshot(running({ recentActivity: [{ step: "a", detail: "e", at: "t1" }] })))).toBe(true);
+    expect(progressChanged(p, buildProgressSnapshot(running({ recentActivity: [{ step: "a", detail: "d", at: "t2" }] })))).toBe(true);
+  });
+
+  it("does not push when the newest activity entry matches on every field", () => {
+    const p = buildProgressSnapshot(running({ recentActivity: [{ step: "a", detail: "d", at: "t1" }] }));
+    expect(progressChanged(p, buildProgressSnapshot(running({ recentActivity: [{ step: "a", detail: "d", at: "t1" }] })))).toBe(false);
+  });
+
+  it("does not push when both activity tails are empty (newest entry undefined on both sides)", () => {
+    const empty = buildProgressSnapshot(running({ recentActivity: [] }));
+    expect(progressChanged(empty, buildProgressSnapshot(running({ recentActivity: [] })))).toBe(false);
+  });
+
+  it("pushes when one tail is empty and the other has activity (newest entry undefined on one side)", () => {
+    const empty = buildProgressSnapshot(running({ recentActivity: [] }));
+    const oneItem = buildProgressSnapshot(running({ recentActivity: [{ step: "a" }] }));
+    expect(progressChanged(empty, oneItem)).toBe(true);
+  });
 });

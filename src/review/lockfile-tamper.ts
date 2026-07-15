@@ -113,8 +113,8 @@ function versionChanged(removed: string | undefined, added: string | undefined):
  *  actively maintained repo's lockfile and is out of scope here. */
 function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandidate[] {
   const byEntry = new Map<string, MutableCandidate>();
-  let currentEntryKey: string | null = null;
-  let currentPackageName: string | null = null;
+  let activeEntry: { entryKey: string; packageName: string } | null = null;
+  let innerObjectDepth = 0;
   let sawPackagesEntry = false;
 
   const entryFor = (entryKey: string, packageName: string): MutableCandidate => {
@@ -140,22 +140,29 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
       const key = objectHeader[1]!;
       const nodeModulesPackage = npmPackageFromNodeModulesPath(key);
       if (nodeModulesPackage) {
-        currentEntryKey = key;
-        currentPackageName = nodeModulesPackage;
+        activeEntry = { entryKey: key, packageName: nodeModulesPackage };
+        innerObjectDepth = 0;
         sawPackagesEntry = true;
+      } else if (activeEntry) {
+        innerObjectDepth++;
       } else if (!sawPackagesEntry && !CONTAINER_KEYS.has(key)) {
-        currentEntryKey = key;
-        currentPackageName = key;
+        activeEntry = { entryKey: key, packageName: key };
+        innerObjectDepth = 0;
       } else {
-        currentEntryKey = null;
-        currentPackageName = null;
+        activeEntry = null;
+        innerObjectDepth = 0;
       }
       continue;
     }
     if (body === "}" || body.startsWith("},")) {
-      currentEntryKey = null;
-      currentPackageName = null;
+      if (innerObjectDepth > 0) {
+        innerObjectDepth--;
+      } else {
+        activeEntry = null;
+      }
     }
+    const currentEntryKey = activeEntry?.entryKey ?? null;
+    const currentPackageName = activeEntry?.packageName ?? null;
     if (!currentEntryKey || !currentPackageName || line.sign === " ") continue;
 
     const resolvedMatch = /^"resolved"\s*:\s*"([^"]*)"/.exec(body);

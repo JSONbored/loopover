@@ -368,4 +368,57 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding?.detail).toContain("evil-pkg");
     expect(finding?.detail).toContain("outside registry.npmjs.org");
   });
+
+  // #5837: a nested "dependencies" sub-object inside a node_modules/... entry must not permanently drop
+  // tracking — resolved/integrity/version lines AFTER that sub-object must still attribute to the outer entry.
+  it("still flags tampered resolved/integrity when a nested dependencies sub-object precedes those fields (#5837)", () => {
+    const lockPatch = [
+      '@@ -1,14 +1,14 @@',
+      '     "node_modules/foo": {',
+      '       "dependencies": {',
+      '         "bar": {',
+      '           "version": "1.0.0"',
+      '         }',
+      '       },',
+      '-      "version": "1.0.0",',
+      '-      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '-      "integrity": "sha512-old=="',
+      '+      "version": "1.0.0",',
+      '+      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '+      "integrity": "sha512-tampered=="',
+      '     },',
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("foo");
+  });
+
+  it("composes nested-dependencies tracking with full-path entry keying for two nested copies of the same package (#5837)", () => {
+    const lockPatch = [
+      '@@ -1,24 +1,24 @@',
+      '     "node_modules/foo": {',
+      '       "dependencies": {',
+      '         "left-pad": {',
+      '           "version": "1.0.0"',
+      '         }',
+      '       },',
+      '       "version": "1.0.0",',
+      '-      "integrity": "sha512-old1=="',
+      '+      "integrity": "sha512-new1=="',
+      '     },',
+      '     "node_modules/bar/node_modules/foo": {',
+      '       "devDependencies": {',
+      '         "left-pad": {',
+      '           "version": "2.0.0"',
+      '         }',
+      '       },',
+      '       "version": "2.0.0",',
+      '-      "integrity": "sha512-old2=="',
+      '+      "integrity": "sha512-tampered2=="',
+      '     },',
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("foo");
+  });
 });

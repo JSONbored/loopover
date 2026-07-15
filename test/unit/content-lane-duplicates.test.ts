@@ -837,4 +837,40 @@ describe("per-repo ContentRepoSpec override (a self-hosted curated list re-param
     expect(directoryIndexToSignals(entries)[0]?.urls).toEqual(["https://github.com/o/r"]); // default url fields read githubUrl
     expect(directoryIndexToSignals(entries, {}, customSpec({ urlFields: new Set() }))[0]?.urls).toEqual([]); // custom empty set → none
   });
+
+  // #5941 — before the fix, directory-index synthesis always emitted a hardcoded URL-field list, so a custom
+  // ContentRepoSpec.urlFields set never reached extractContentDuplicateSignals and corpus urls stayed [].
+  it("directoryIndexToSignals emits custom ContentRepoSpec urlFields into corpus urls (regression #5941)", () => {
+    const entries = [
+      {
+        category: "tools",
+        slug: "x",
+        title: "X",
+        description: "d",
+        myLink: "https://example.com/custom",
+        githubUrl: "https://github.com/o/r",
+      },
+    ];
+    const spec = customSpec({ urlFields: new Set(["myLink"]) });
+    const signals = directoryIndexToSignals(entries, {}, spec);
+    expect(signals[0]?.urls).toEqual(["https://example.com/custom"]);
+    expect(signals[0]?.urls).not.toContain("https://github.com/o/r");
+  });
+
+  it("default AWESOME_CLAUDE_CONTENT_SPEC still synthesizes the prior camelCase URL fields unchanged (#5941)", () => {
+    const entries = [
+      {
+        category: "skills",
+        slug: "foo",
+        title: "Foo",
+        description: "d",
+        githubUrl: "https://github.com/acme/foo",
+        websiteUrl: "https://acme.example",
+        myLink: "https://should-not-appear.example",
+      },
+    ];
+    const signals = directoryIndexToSignals(entries);
+    expect(signals[0]?.urls).toEqual(["https://github.com/acme/foo", "https://acme.example"]);
+    expect(signals[0]?.urls).not.toContain("https://should-not-appear.example");
+  });
 });

@@ -2874,8 +2874,9 @@ describe("queue processors", () => {
       expect(postedBody).toContain("<!-- gittensory-pr-panel:v1 -->");
       // The UNIFIED shape, which the legacy body never emits: a full-comment GitHub alert wrapper…
       expect(postedBody).toMatch(/> \[!(TIP|NOTE|WARNING|CAUTION)\]/);
-      // …and the renderer's synthesized "Code review" signal row (bold first table label).
-      expect(postedBody).toContain("**Code review**");
+      // …and the renderer's synthesized "Code review" decision-driver row (#6067: the always-visible
+      // "Decision drivers" bullet list, not a table row anymore).
+      expect(postedBody).toContain("- ✅ Code review — No blockers");
       // Public-safe by construction — no internal trust/economics fields leak through the unified renderer.
       expect(postedBody).not.toMatch(/wallet|hotkey|reward|trust score/i);
       // #review-audit (#4220): the comment reads the LIVE `dirty` merge-state (not the stale stored one), so it must

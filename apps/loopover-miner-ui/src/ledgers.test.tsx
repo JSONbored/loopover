@@ -156,6 +156,58 @@ describe("LedgersPage (#4855)", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
     });
 
+    it("passes the typed pause reason through to the pause action (#6186)", async () => {
+      const pausedResult: GovernorPauseStateResult = {
+        ok: true,
+        pauseState: { paused: true, reason: "deploying a hotfix", pausedAt: "2026-07-13T12:30:00.000Z" },
+      };
+      const pauseGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => pausedResult);
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseStateDefault}
+          pauseGovernorAction={pauseGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Pause reason"), { target: { value: "deploying a hotfix" } });
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      expect(pauseGovernorAction).toHaveBeenCalledWith("deploying a hotfix");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+    });
+
+    it("passes undefined to the pause action when the reason field is left empty (#6186)", async () => {
+      const pauseGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: { paused: true, reason: null, pausedAt: "2026-07-13T12:30:00.000Z" },
+      }));
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseStateDefault}
+          pauseGovernorAction={pauseGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("");
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      expect(pauseGovernorAction).toHaveBeenCalledWith(undefined);
+    });
+
+    it("shows the reason input only while unpaused, not once the governor is paused (#6186)", async () => {
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={async () => ({
+            ok: true,
+            pauseState: { paused: true, reason: "bad PR", pausedAt: "2026-07-13T12:00:00.000Z" },
+          })}
+        />,
+      );
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+      expect(screen.queryByLabelText("Pause reason")).toBeNull();
+    });
+
     it("clicking Resume governor calls the injected resume action and updates the displayed state from its result", async () => {
       const initiallyPaused: GovernorPauseState = { paused: true, reason: null, pausedAt: "2026-07-13T12:00:00.000Z" };
       const resumeGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({

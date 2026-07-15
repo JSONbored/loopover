@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
+import { Input } from "@loopover/ui-kit/components/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
 import { CLAIM_STATUSES, fetchLedgers, type ClaimStatus, type LedgersResult } from "../lib/ledgers";
@@ -64,9 +65,12 @@ export function GovernorControlSection({
 }: {
   result: GovernorPauseStateResult | null;
   pending: boolean;
-  onPause: () => void;
+  onPause: (reason?: string) => void;
   onResume: () => void;
 }) {
+  // Optional pause reason, mirroring the CLI's `governor pause [--reason <text>]`; an empty field
+  // is passed through as `undefined` so it matches the CLI's own optional-flag behavior.
+  const [reason, setReason] = useState("");
   return (
     <section className="grid gap-3">
       <h3 className="font-display text-token-base font-semibold">Governor control</h3>
@@ -88,9 +92,20 @@ export function GovernorControlSection({
               Resume governor
             </Button>
           ) : (
-            <Button size="sm" variant="destructive" disabled={pending} onClick={onPause}>
-              Pause governor
-            </Button>
+            <>
+              <Input
+                type="text"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                disabled={pending}
+                placeholder="Reason (optional)"
+                aria-label="Pause reason"
+                className="w-auto flex-1 min-w-[12rem]"
+              />
+              <Button size="sm" variant="destructive" disabled={pending} onClick={() => onPause(reason || undefined)}>
+                Pause governor
+              </Button>
+            </>
           )}
         </div>
       )}
@@ -183,7 +198,7 @@ export function LedgersPage({
 }: {
   loadLedgers?: () => Promise<LedgersResult>;
   loadGovernorPauseState?: () => Promise<GovernorPauseStateResult>;
-  pauseGovernorAction?: () => Promise<GovernorPauseStateResult>;
+  pauseGovernorAction?: (reason?: string) => Promise<GovernorPauseStateResult>;
   resumeGovernorAction?: () => Promise<GovernorPauseStateResult>;
 }) {
   const [result, setResult] = useState<LedgersResult | null>(null);
@@ -231,7 +246,7 @@ export function LedgersPage({
           <GovernorControlSection
             result={pauseState}
             pending={actionPending}
-            onPause={() => runGovernorAction(pauseGovernorAction)}
+            onPause={(reason) => runGovernorAction(() => pauseGovernorAction(reason))}
             onResume={() => runGovernorAction(resumeGovernorAction)}
           />
           <LedgersView result={result} />

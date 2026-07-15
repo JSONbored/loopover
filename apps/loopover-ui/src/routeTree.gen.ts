@@ -33,6 +33,7 @@ import { Route as DocsSelfHostingReesAnalyzersRouteImport } from './routes/docs.
 import { Route as DocsSelfHostingReesRouteImport } from './routes/docs.self-hosting-rees'
 import { Route as DocsSelfHostingRagRouteImport } from './routes/docs.self-hosting-rag'
 import { Route as DocsSelfHostingQuickstartRouteImport } from './routes/docs.self-hosting-quickstart'
+import { Route as DocsSelfHostingUnifiedAmsOrbRouteImport } from './routes/docs.self-hosting-unified-ams-orb'
 import { Route as DocsSelfHostingOperationsRouteImport } from './routes/docs.self-hosting-operations'
 import { Route as DocsSelfHostingGithubAppRouteImport } from './routes/docs.self-hosting-github-app'
 import { Route as DocsSelfHostingDocsAuditRouteImport } from './routes/docs.self-hosting-docs-audit'
@@ -194,6 +195,12 @@ const DocsSelfHostingQuickstartRoute =
   DocsSelfHostingQuickstartRouteImport.update({
     id: '/self-hosting-quickstart',
     path: '/self-hosting-quickstart',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const DocsSelfHostingUnifiedAmsOrbRoute =
+  DocsSelfHostingUnifiedAmsOrbRouteImport.update({
+    id: '/self-hosting-unified-ams-orb',
+    path: '/self-hosting-unified-ams-orb',
     getParentRoute: () => DocsRoute,
   } as any)
 const DocsSelfHostingOperationsRoute =
@@ -444,6 +451,7 @@ export interface FileRoutesByFullPath {
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-unified-ams-orb': typeof DocsSelfHostingUnifiedAmsOrbRoute
   '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
   '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
   '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
@@ -505,6 +513,7 @@ export interface FileRoutesByTo {
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-unified-ams-orb': typeof DocsSelfHostingUnifiedAmsOrbRoute
   '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
   '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
   '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
@@ -570,6 +579,7 @@ export interface FileRoutesById {
   '/docs/self-hosting-github-app': typeof DocsSelfHostingGithubAppRoute
   '/docs/self-hosting-operations': typeof DocsSelfHostingOperationsRoute
   '/docs/self-hosting-quickstart': typeof DocsSelfHostingQuickstartRoute
+  '/docs/self-hosting-unified-ams-orb': typeof DocsSelfHostingUnifiedAmsOrbRoute
   '/docs/self-hosting-rag': typeof DocsSelfHostingRagRoute
   '/docs/self-hosting-rees': typeof DocsSelfHostingReesRoute
   '/docs/self-hosting-rees-analyzers': typeof DocsSelfHostingReesAnalyzersRoute
@@ -961,6 +971,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsSelfHostingQuickstartRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/self-hosting-unified-ams-orb': {
+      id: '/docs/self-hosting-unified-ams-orb'
+      path: '/self-hosting-unified-ams-orb'
+      fullPath: '/docs/self-hosting-unified-ams-orb'
+      preLoaderRoute: typeof DocsSelfHostingUnifiedAmsOrbRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/self-hosting-operations': {
       id: '/docs/self-hosting-operations'
       path: '/self-hosting-operations'
@@ -1303,6 +1320,7 @@ interface DocsRouteChildren {
   DocsSelfHostingGithubAppRoute: typeof DocsSelfHostingGithubAppRoute
   DocsSelfHostingOperationsRoute: typeof DocsSelfHostingOperationsRoute
   DocsSelfHostingQuickstartRoute: typeof DocsSelfHostingQuickstartRoute
+  DocsSelfHostingUnifiedAmsOrbRoute: typeof DocsSelfHostingUnifiedAmsOrbRoute
   DocsSelfHostingRagRoute: typeof DocsSelfHostingRagRoute
   DocsSelfHostingReesRoute: typeof DocsSelfHostingReesRoute
   DocsSelfHostingReesAnalyzersRoute: typeof DocsSelfHostingReesAnalyzersRoute
@@ -1341,6 +1359,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsSelfHostingGithubAppRoute: DocsSelfHostingGithubAppRoute,
   DocsSelfHostingOperationsRoute: DocsSelfHostingOperationsRoute,
   DocsSelfHostingQuickstartRoute: DocsSelfHostingQuickstartRoute,
+  DocsSelfHostingUnifiedAmsOrbRoute: DocsSelfHostingUnifiedAmsOrbRoute,
   DocsSelfHostingRagRoute: DocsSelfHostingRagRoute,
   DocsSelfHostingReesRoute: DocsSelfHostingReesRoute,
   DocsSelfHostingReesAnalyzersRoute: DocsSelfHostingReesAnalyzersRoute,

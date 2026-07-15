@@ -72,6 +72,7 @@ const AUDIENCES: Audience[] = [
     primary: { to: "/docs/beta-onboarding", label: "Beta onboarding" },
     links: [
       { to: "/docs/maintainer-self-hosting", label: "Self-host reviews" },
+      { to: "/docs/self-hosting-unified-ams-orb", label: "Unified ORB + AMS" },
       { to: "/docs/self-hosting-docs-audit", label: "Self-host docs audit" },
       { to: "/docs/maintainer-install-trust", label: "Install & trust guide" },
       { to: "/docs/github-app", label: "GitHub App configuration" },

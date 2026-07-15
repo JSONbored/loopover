@@ -95,7 +95,7 @@ app.post("/v1/enrich", async (c) => {
     }
 
     const brief = await buildBrief(parsed.payload, undefined, {
-      requestId: c.req.header("x-gittensory-request-id") ?? c.req.header("x-request-id"),
+      requestId: c.req.header("x-loopover-request-id") ?? c.req.header("x-request-id"),
       traceId: traceIdFromTraceparent(c.req.header("traceparent")),
     });
     recordEnrichOutcome("ok", startedAtMs);

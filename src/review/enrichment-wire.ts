@@ -450,7 +450,7 @@ export async function buildReviewEnrichment(
         "user-agent": "loopover-selfhost/1.0",
         accept: "application/json",
         "content-type": "application/json",
-        "x-gittensory-request-id": requestId,
+        "x-loopover-request-id": requestId,
         ...(sharedSecret ? { authorization: `Bearer ${sharedSecret}` } : {}),
       },
       body: JSON.stringify({

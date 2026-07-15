@@ -248,7 +248,7 @@ describe("buildReviewEnrichment", () => {
       (calls[0]!.init.headers as Record<string, string>)["user-agent"],
     ).toBe("loopover-selfhost/1.0");
     expect(
-      (calls[0]!.init.headers as Record<string, string>)["x-gittensory-request-id"],
+      (calls[0]!.init.headers as Record<string, string>)["x-loopover-request-id"],
     ).toMatch(/^[-0-9a-fA-Fa-z]+$/);
     expect((calls[0]!.init.headers as Record<string, string>).accept).toBe(
       "application/json",

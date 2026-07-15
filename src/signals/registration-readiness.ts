@@ -177,6 +177,7 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
   const blockers = [
     ...(!isRegistered ? ["Repository is not registered in the latest LoopOver registry snapshot."] : []),
     ...(configFragile ? ["Repository config quality is fragile."] : []),
+    ...(configNeedsAttention ? ["Repository config quality needs attention before registration promotion."] : []),
     ...(intakeBlocked ? ["Contributor intake health is blocked."] : []),
   ];
 
@@ -200,7 +201,9 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
   };
 
   const warnings = [
-    ...(configNeedsAttention ? ["Repository config quality needs attention before registration promotion."] : []),
+    // configNeedsAttention is a blocker (not a warning), mirroring how configFragile is treated — the two
+    // needs-attention tiers of the same configQuality.level stay consistent, and blockers fully explains
+    // ready === false without double-flagging the same fact as a warning (#5946).
     ...(contributorIntakeHealth.level === "strained" ? ["Contributor intake is strained; expect more maintainer triage."] : []),
     ...(settings.publicSurface === "off" ? ["GitHub App public surface is disabled; maintainers will not get comment/label assistance."] : []),
     ...testCoverageHealth.warnings,
@@ -209,7 +212,9 @@ export function buildRegistrationReadiness(input: RegistrationReadinessInput): R
     ...upstreamRegistryDriftWarnings,
   ];
 
-  const ready = blockers.length === 0 && !configFragile && !configNeedsAttention;
+  // configFragile and configNeedsAttention are now both blockers, so blockers.length === 0 alone fully
+  // determines readiness — blockers is the single source of truth for every ready === false reason (#5946).
+  const ready = blockers.length === 0;
 
   return {
     repoFullName,

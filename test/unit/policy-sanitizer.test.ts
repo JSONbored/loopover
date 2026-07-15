@@ -650,7 +650,9 @@ describe("readiness warnings sanitizer", () => {
       contributorIntakeHealth: { ...base.contributorIntakeHealth, level: "strained" },
     });
 
-    expect(report.warnings).toEqual(expect.arrayContaining(["Repository config quality needs attention before registration promotion.", "Contributor intake is strained; expect more maintainer triage."]));
+    // config-attention is a blocker (not a warning) since #5946; strained-intake stays a warning.
+    expect(report.blockers).toEqual(expect.arrayContaining(["Repository config quality needs attention before registration promotion."]));
+    expect(report.warnings).toEqual(expect.arrayContaining(["Contributor intake is strained; expect more maintainer triage."]));
     expect(report.warnings.join(" ")).not.toMatch(PRIVATE_TERMS_PATTERN);
     expect(report.blockers.join(" ")).not.toMatch(PRIVATE_TERMS_PATTERN);
   });

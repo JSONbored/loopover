@@ -210,9 +210,30 @@ describe("buildRegistrationReadiness", () => {
     });
 
     expect(report.ready).toBe(false);
-    expect(report.warnings).toEqual(
-      expect.arrayContaining(["Repository config quality needs attention before registration promotion.", "Contributor intake is strained; expect more maintainer triage."]),
-    );
+    // "needs attention" is a blocker (mirroring "fragile"), not a warning; the strained-intake note stays a warning.
+    expect(report.blockers).toContain("Repository config quality needs attention before registration promotion.");
+    expect(report.warnings).toEqual(expect.arrayContaining(["Contributor intake is strained; expect more maintainer triage."]));
+    expect(report.warnings).not.toContain("Repository config quality needs attention before registration promotion.");
+  });
+
+  // #5946: with config "needs attention" as the ONLY gating condition (everything else healthy), the report was
+  // ready === false while blockers was []. blockers must now fully explain ready === false on its own.
+  it("lists config-needs-attention in blockers when it is the only gating condition (regression for #5946)", () => {
+    const repo = repoFor("octo/attention", configFor({ repo: "octo/attention" }));
+    const base = signalsFor(repo, [], [], [label("bug")]);
+    const report = buildRegistrationReadiness({
+      repoFullName: repo.fullName,
+      repo,
+      settings: settingsFor(repo.fullName),
+      installation: healthyInstall,
+      ...base,
+      configQuality: { ...base.configQuality, level: "needs_attention" },
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain("Repository config quality needs attention before registration promotion.");
+    expect(report.blockers.length).toBeGreaterThan(0);
+    expect(report.warnings).not.toContain("Repository config quality needs attention before registration promotion.");
   });
 
   it("keeps the report free of forbidden public language", () => {

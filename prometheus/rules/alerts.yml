@@ -386,7 +386,7 @@ groups:
         annotations:
           summary: "loopover Orb export error rate above 5%"
           description: "{{ $value | humanizePercentage }} of Orb usage-event exports failed over the last 15m (sustained 15m). Billable events may not be reaching Orb."
-          runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. Recorded-but-unexported events (loopover_orb_events_recorded_total vs _exported_total diverging) confirm a stuck exporter."
+          runbook: "Verify Orb API credentials/connectivity and check level=error logs around orb export. A sustained rise in loopover_orb_export_errors_total while loopover_orb_events_exported_total stays flat confirms a stuck exporter."
 
       - alert: LoopoverWebhookEnqueueFailures
         # A webhook accepted by the receiver but not durably queued becomes GitHub

@@ -1,5 +1,5 @@
 #!/bin/sh
-# gittensory-miner local-state restore (#4872): the read side of scripts/backup-miner.sh. STOP the miner (and
+# loopover-miner local-state restore (#4872): the read side of scripts/backup-miner.sh. STOP the miner (and
 # any loop/systemd/docker service) before running this -- it overwrites the live state directory and does not
 # detect a running process itself, the same "stop first" precondition operations-runbook.md's "ledger
 # corrupted" scenario already documents for manual recovery.
@@ -15,14 +15,14 @@
 #   sh scripts/restore-miner.sh --yes /path/to/backups/<ts>   # restores a specific backup
 set -eu
 
-STATE_DIR="${LOOPOVER_MINER_CONFIG_DIR:-$HOME/.config/gittensory-miner}"
+STATE_DIR="${LOOPOVER_MINER_CONFIG_DIR:-$HOME/.config/loopover-miner}"
 BACKUP_DIR="${LOOPOVER_MINER_BACKUP_DIR:-$STATE_DIR/backups}"
 
 usage() {
   cat <<USAGE >&2
 Usage: $0 --yes [BACKUP_DIR]
 
-Restores gittensory-miner local state from a backup produced by backup-miner.sh.
+Restores loopover-miner local state from a backup produced by backup-miner.sh.
 
   BACKUP_DIR   A specific timestamped backup directory. Defaults to the newest one
                under \$LOOPOVER_MINER_BACKUP_DIR ($BACKUP_DIR).
@@ -98,4 +98,4 @@ for db in "$SOURCE"/*.sqlite3; do
   echo "[restore-miner] restored $name"
 done
 
-echo "[restore-miner] complete. Run 'gittensory-miner doctor --json' to verify."
+echo "[restore-miner] complete. Run 'loopover-miner doctor --json' to verify."

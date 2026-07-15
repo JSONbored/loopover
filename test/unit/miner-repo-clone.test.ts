@@ -147,4 +147,35 @@ describe("ensureRepoCloned (#5132)", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("git_clone_failed");
   });
+
+  it("rejects a dash-prefixed baseBranch before invoking git (#5923)", async () => {
+    const root = tempRoot("loopover-miner-repo-clone-unsafe-branch-");
+    const originPath = initOriginRepo(root);
+    const cloneBaseDir = join(root, "cache");
+    await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: originPath });
+
+    let runGitCalls = 0;
+    const runGit = async () => {
+      runGitCalls += 1;
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: originPath, baseBranch: "--force", runGit });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_base_branch");
+    expect(runGitCalls).toBe(0);
+  });
+
+  it("rejects a dash-prefixed remoteUrl before invoking git (#5923)", async () => {
+    const root = tempRoot("loopover-miner-repo-clone-unsafe-url-");
+    const cloneBaseDir = join(root, "cache");
+    let runGitCalls = 0;
+    const runGit = async () => {
+      runGitCalls += 1;
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "--upload-pack=evil", runGit });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("invalid_remote_url");
+    expect(runGitCalls).toBe(0);
+  });
 });

@@ -37,6 +37,11 @@ function isPathTraversalSegment(segment) {
   return segment === "." || segment === "..";
 }
 
+// Reject values that git would interpret as options when passed as argv (e.g. `--upload-pack=...`).
+function isUnsafeGitArgValue(value) {
+  return typeof value === "string" && value.startsWith("-");
+}
+
 function normalizeRepoFullName(repoFullName) {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
@@ -81,9 +86,16 @@ export async function ensureRepoCloned(repoFullName, options = {}) {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 120_000;
   const runGit = options.runGit ?? defaultRunGit;
 
+  if (isUnsafeGitArgValue(baseBranch)) {
+    return { ok: false, repoPath, error: "invalid_base_branch" };
+  }
+
   if (!existsSync(repoPath)) {
     mkdirSync(join(cloneBaseDir, target.owner), { recursive: true, mode: 0o700 });
     const cloneUrl = typeof options.remoteUrl === "string" && options.remoteUrl.trim() ? options.remoteUrl.trim() : `https://github.com/${target.owner}/${target.repo}.git`;
+    if (isUnsafeGitArgValue(cloneUrl)) {
+      return { ok: false, repoPath, error: "invalid_remote_url" };
+    }
     const cloned = await runGit(["clone", cloneUrl, repoPath], cloneBaseDir, timeoutMs);
     if (!cloned.ok) return { ok: false, repoPath, error: cloned.stderr || "git_clone_failed" };
     return { ok: true, repoPath };

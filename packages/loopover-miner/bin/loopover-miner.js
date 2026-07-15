@@ -5,6 +5,7 @@ import { configureLogger, extractLogOptions } from "../lib/logger.js";
 import { runDenyCheck } from "../lib/deny-check.js";
 import { runDiscover } from "../lib/discover-cli.js";
 import { runFeasibilityCli } from "../lib/feasibility-cli.js";
+import { runIdeaFeasibilityCli } from "../lib/idea-feasibility-cli.js";
 import { runGovernorCli } from "../lib/governor-ledger-cli.js";
 import { runLedgerCli } from "../lib/event-ledger-cli.js";
 import { runCalibrationCli } from "../lib/calibration-cli.js";
@@ -137,6 +138,10 @@ if (cliArgs[0] === "governor") {
 
 if (cliArgs[0] === "feasibility") {
   process.exit(runFeasibilityCli(cliArgs.slice(1)));
+}
+
+if (cliArgs[0] === "idea-feasibility") {
+  process.exit(runIdeaFeasibilityCli(cliArgs.slice(1)));
 }
 
 // `purge` (#5564) is strictly local + offline like `queue`/`claim`/`governor` above -- it only opens the local

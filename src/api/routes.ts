@@ -932,9 +932,14 @@ export function createApp() {
   // outside a real Workers isolate (see isCloudflareWorkerRuntime) and when WORKER_SENTRY_DSN is unset -- this
   // is the Worker-side counterpart to self-host's own initSentry()/installStructuredLogForwarding(), which
   // this Worker has never had any equivalent of despite being the actual central Orb broker server.
+  /* v8 ignore start -- the TRUE branch only genuinely exercises inside a real Workers isolate (this vitest
+   * run is Node); covered instead by test/workers/worker-runtime.test.ts, which runs under
+   * @cloudflare/vitest-pool-workers and is NOT part of this coverage-instrumented run. isCloudflareWorkerRuntime
+   * itself has its own direct Node-side (false) and real-isolate (true) tests. */
   if (isCloudflareWorkerRuntime()) {
     app.use(sentry(app, (env) => ({ dsn: env.WORKER_SENTRY_DSN, environment: env.WORKER_SENTRY_ENVIRONMENT ?? "production" })));
   }
+  /* v8 ignore stop */
   app.use("*", async (c, next) => {
     const allowedOrigin = allowedCorsOrigin(c.env, c.req.header("origin"));
     if (allowedOrigin) {

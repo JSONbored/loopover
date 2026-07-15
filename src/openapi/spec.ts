@@ -160,6 +160,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/health",
+    summary: "Basic service health check",
     responses: {
       200: { description: "Service health", content: { "application/json": { schema: HealthSchema } } },
     },
@@ -167,6 +168,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/mcp/compatibility",
+    summary: "Public API and MCP compatibility metadata",
     responses: {
       200: { description: "Public-safe API and MCP compatibility metadata", content: { "application/json": { schema: McpCompatibilitySchema } } },
     },
@@ -174,6 +176,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/stats",
+    summary: "Public homepage lifetime stats and gate accuracy",
     responses: {
       200: { description: "Public-safe homepage stats: lifetime PRs handled/merged/closed, gate + slop blocks, and reversal-grounded accuracy. Aggregate counts only.", content: { "application/json": { schema: PublicStatsSchema } } },
       404: { description: "Public stats are disabled (LOOPOVER_PUBLIC_STATS off)" },
@@ -183,6 +186,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/github/repos/{owner}/{repo}/stats",
+    summary: "Public GitHub stars/forks for an allowlisted repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Public GitHub repository stars/forks for the website chrome; PUBLIC_REPO_STATS_ALLOWLIST must explicitly include the owner/repo.", content: { "application/json": { schema: PublicRepoStatsSchema } } },
@@ -193,6 +197,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/public/repos/{owner}/{repo}/quality",
+    summary: "Public per-repo review-quality metrics for an opted-in repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: {
@@ -207,6 +212,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/registry/snapshot",
+    summary: "Latest Gittensor registry snapshot",
     responses: {
       200: { description: "Latest Gittensor registry snapshot", content: { "application/json": { schema: RegistrySnapshotSchema } } },
     },
@@ -214,6 +220,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/registry/changes",
+    summary: "Diff between the two latest registry snapshots",
     responses: {
       200: { description: "Diff between latest registry snapshots", content: { "application/json": { schema: RegistryChangeReportSchema } } },
     },
@@ -221,6 +228,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/scoring/model",
+    summary: "Latest private scoring model snapshot",
     responses: {
       200: { description: "Latest private scoring model snapshot", content: { "application/json": { schema: ScoringModelSnapshotSchema } } },
     },
@@ -228,6 +236,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/status",
+    summary: "Upstream Gittensor source and ruleset drift status",
     responses: {
       200: { description: "Upstream Gittensor source/ruleset drift status", content: { "application/json": { schema: UpstreamStatusSchema } } },
     },
@@ -235,6 +244,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/ruleset",
+    summary: "Latest normalized upstream Gittensor ruleset snapshot",
     responses: {
       200: { description: "Latest normalized upstream Gittensor ruleset snapshot", content: { "application/json": { schema: UpstreamRulesetSnapshotSchema } } },
       404: { description: "No upstream ruleset snapshot has been built yet" },
@@ -243,6 +253,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/upstream/drift",
+    summary: "Open and historical upstream drift reports",
     responses: {
       200: {
         description: "Open and historical upstream drift reports",
@@ -261,6 +272,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/scoring/preview",
+    summary: "Preview a private scoring computation for sample input",
     responses: {
       200: { description: "Private scoring preview artifact", content: { "application/json": { schema: ScorePreviewSchema } } },
       400: { description: "Invalid scoring preview input" },
@@ -269,6 +281,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/sync/status",
+    summary: "Repository and installation sync status",
     responses: {
       200: { description: "Repository and installation sync status", content: { "application/json": { schema: SyncStatusSchema } } },
     },
@@ -276,6 +289,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/readiness",
+    summary: "Operational readiness summary for the hosted API",
     responses: {
       200: { description: "Operational readiness summary for hosted API, signal fidelity, and public-review preparation", content: { "application/json": { schema: ReadinessSchema } } },
     },
@@ -283,6 +297,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations",
+    summary: "List GitHub App installations and their health",
     responses: {
       200: {
         description: "GitHub App installations and health",
@@ -300,6 +315,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/health",
+    summary: "GitHub App installation health for one installation",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation health", content: { "application/json": { schema: InstallationHealthSchema } } },
@@ -309,6 +325,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/installations/{id}/repair",
+    summary: "GitHub App installation repair diagnostics",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
@@ -318,6 +335,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/installations/{id}/repair/refresh",
+    summary: "Refresh GitHub App installation repair diagnostics",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Refreshed GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
@@ -327,6 +345,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/notification-model",
+    summary: "Opt-in notification model and PWA-readiness metadata",
     responses: {
       200: {
         description: "Opt-in notification model and PWA-readiness metadata for control-panel routes",
@@ -366,6 +385,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos",
+    summary: "List known repositories",
     responses: {
       200: { description: "Known repositories", content: { "application/json": { schema: RepositorySchema.array() } } },
     },
@@ -373,6 +393,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}",
+    summary: "Repository detail",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repository detail", content: { "application/json": { schema: RepositorySchema } } },
@@ -382,6 +403,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/intelligence",
+    summary: "Canonical repository intelligence bundle",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Canonical repository intelligence bundle", content: { "application/json": { schema: RepoIntelligenceSchema } } },
@@ -390,6 +412,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/issue-quality",
+    summary: "Cached or computed issue quality report for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
@@ -399,6 +422,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/outcome-patterns",
+    summary: "Accepted/rejected PR outcome patterns for a repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Cached or freshly-computed per-repo accepted/rejected PR outcome patterns with freshness envelope and explicit evidence-completeness", content: { "application/json": { schema: RepoOutcomePatternsResponseSchema } } },
@@ -408,6 +432,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/registration-readiness",
+    summary: "Gittensor registration readiness signal for a repo owner",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Gittensor registration readiness signal for repo owners", content: { "application/json": { schema: RegistrationReadinessSchema } } },
@@ -416,6 +441,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/gittensor-config-recommendation",
+    summary: "Recommended .loopover.yml additions for a repo owner",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Private Gittensor config recommendation for repo owners", content: { "application/json": { schema: GittensorConfigRecommendationSchema } } },
@@ -424,6 +450,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    summary: "Repo focus manifest and compiled policy for maintainers",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repo focus manifest and compiled policy for maintainers", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -433,6 +460,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/focus-manifest/refresh",
+    summary: "Refresh the persisted focus manifest cache from the repo file",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Refresh the persisted focus manifest cache from the repo file", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -442,6 +470,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "put",
     path: "/v1/repos/{owner}/{repo}/focus-manifest",
+    summary: "Persist an API-backed focus manifest for a repo",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Persist API-backed focus manifest for a repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -452,6 +481,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/agent/audit-feed",
+    summary: "Maintainer-scoped agent audit feed of executed actions and decisions",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: {
@@ -498,6 +528,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/incident-reports",
+    summary: "Record a post-merge incident report for a pull request",
     request: {
       params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }),
       body: {
@@ -527,6 +558,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/incident-reports",
+    summary: "Record a post-merge incident report (internal operator)",
     request: {
       body: {
         content: {
@@ -557,6 +589,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/self-dogfood/registration-pack",
+    summary: "Private self-dogfood registration pack for the LoopOver repo itself",
     responses: {
       200: { description: "Private self-dogfood registration pack for the LoopOver repo", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       403: { description: "Insufficient role for maintainer-only self-dogfood report" },
@@ -565,6 +598,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/self-dogfood-registration-pack",
+    summary: "Private self-dogfood registration pack for the configured target repo",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Private self-dogfood registration pack when repo matches configured LoopOver target", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -574,6 +608,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/onboarding-pack/preview",
+    summary: "Preview-only repo onboarding pack for an accepted repository",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Preview-only repo onboarding pack for accepted repositories", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -584,6 +619,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/contributor-issue-drafts/generate",
+    summary: "Generate maintainer-reviewed contributor issue drafts from repo policy",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Generate maintainer-reviewed contributor issue drafts from repo policy (dry-run by default)", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -594,6 +630,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/settings",
+    summary: "LoopOver repository automation settings",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "LoopOver repository automation settings", content: { "application/json": { schema: RepositorySettingsSchema } } },
@@ -602,6 +639,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/repos/{owner}/{repo}/settings-preview",
+    summary: "Dry-run preview of the public surface decision for a sample PR",
     request: { params: z.object({ owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Maintainer dry-run preview of the public surface decision for a sample PR (no GitHub mutation)", content: { "application/json": { schema: RepoSettingsPreviewSchema } } },
@@ -611,6 +649,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet",
+    summary: "PR-specific maintainer review packet",
     request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
       200: { description: "PR-specific maintainer review packet", content: { "application/json": { schema: PullRequestMaintainerPacketSchema } } },
@@ -619,6 +658,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/repos/{owner}/{repo}/pulls/{number}/reviewability",
+    summary: "Private PR reviewability score and recommended maintainer action",
     request: { params: z.object({ owner: z.string(), repo: z.string(), number: z.string() }) },
     responses: {
       200: { description: "Private PR reviewability score and maintainer action", content: { "application/json": { schema: PullRequestReviewabilitySchema } } },
@@ -627,6 +667,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/profile",
+    summary: "Contributor evidence profile",
     request: { params: z.object({ login: z.string() }) },
     responses: {
       200: { description: "Contributor evidence profile", content: { "application/json": { schema: ContributorProfileSchema } } },
@@ -635,6 +676,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/decision-pack",
+    summary: "Canonical private contributor decision pack",
     request: { params: z.object({ login: z.string() }) },
     responses: {
       200: {
@@ -647,6 +689,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/open-pr-monitor",
+    summary: "Contributor open-PR monitor with classifications and next steps",
     request: { params: z.object({ login: z.string() }) },
     responses: {
       200: {
@@ -658,6 +701,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/contributors/{login}/repos/{owner}/{repo}/decision",
+    summary: "Repo-specific contributor decision from the decision pack",
     request: { params: z.object({ login: z.string(), owner: z.string(), repo: z.string() }) },
     responses: {
       200: { description: "Repo-specific contributor decision from decision pack. May carry freshness 'stale' or 'rebuilding'.", content: { "application/json": { schema: RepoDecisionResponseSchema } } },
@@ -667,6 +711,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/preflight/pr",
+    summary: "Submission preflight result for a pull request",
     responses: {
       200: { description: "Submission preflight result", content: { "application/json": { schema: PreflightResultSchema } } },
       400: { description: "Invalid preflight input" },
@@ -675,6 +720,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/preflight/local-diff",
+    summary: "Local diff preflight result",
     responses: {
       200: { description: "Local diff preflight result", content: { "application/json": { schema: LocalDiffPreflightResultSchema } } },
       400: { description: "Invalid local diff preflight input" },
@@ -683,6 +729,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/local/branch-analysis",
+    summary: "Private local branch analysis for MCP clients",
     responses: {
       200: { description: "Private local branch analysis for MCP clients", content: { "application/json": { schema: LocalBranchAnalysisSchema } } },
       400: { description: "Invalid local branch analysis input" },
@@ -692,6 +739,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/agent/runs",
+    summary: "Queue a Copilot-only agent run",
     responses: {
       202: { description: "Copilot-only agent run queued", content: { "application/json": { schema: AgentRunBundleSchema } } },
       400: { description: "Invalid agent run request" },
@@ -701,6 +749,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs",
+    summary: "List recent agent run bundles for an authenticated actor",
     request: {
       query: z.object({
         actorLogin: z.string().min(1).openapi({
@@ -732,16 +781,23 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/agent/runs/{id}",
+    summary: "Persisted agent run bundle",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Persisted agent run bundle", content: { "application/json": { schema: AgentRunBundleSchema } } },
       404: { description: "Agent run not found" },
     },
   });
-  for (const path of ["/v1/agent/plan-next-work", "/v1/agent/preflight-branch", "/v1/agent/prepare-pr-packet", "/v1/agent/explain-blockers"]) {
+  for (const { path, summary } of [
+    { path: "/v1/agent/plan-next-work", summary: "Plan the agent's next ranked actions" },
+    { path: "/v1/agent/preflight-branch", summary: "Preflight the agent's current local branch" },
+    { path: "/v1/agent/prepare-pr-packet", summary: "Prepare a PR packet for the agent's branch" },
+    { path: "/v1/agent/explain-blockers", summary: "Explain blockers preventing the agent's next action" },
+  ]) {
     registry.registerPath({
       method: "post",
       path,
+      summary,
       responses: {
         200: { description: "Agent run completed with deterministic ranked actions", content: { "application/json": { schema: AgentRunBundleSchema } } },
         202: { description: "Agent run needs snapshot refresh", content: { "application/json": { schema: AgentRunBundleSchema } } },
@@ -753,6 +809,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties",
+    summary: "List known bounty records",
     responses: {
       200: { description: "Known bounty records", content: { "application/json": { schema: BountySchema.array() } } },
     },
@@ -760,6 +817,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/advisory",
+    summary: "Bounty lifecycle advisory",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Bounty lifecycle advisory", content: { "application/json": { schema: BountyAdvisorySchema } } },
@@ -769,6 +827,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/bounties/{id}/lifecycle",
+    summary: "Bounty lifecycle transition history",
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Bounty lifecycle transition history", content: { "application/json": { schema: BountyLifecycleEventsSchema } } },
@@ -778,6 +837,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/github/webhook",
+    summary: "GitHub webhook ingestion endpoint",
     responses: {
       202: { description: "Webhook queued" },
       401: { description: "Invalid webhook signature" },
@@ -786,6 +846,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/orb/ingest",
+    summary: "Batch ingest endpoint for self-hosted ORB reviewers",
     responses: {
       200: { description: "Batch accepted; returns { accepted: number }" },
       400: { description: "Malformed JSON or invalid payload shape" },
@@ -794,6 +855,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/github/start",
+    summary: "Start GitHub web OAuth",
     responses: {
       302: { description: "Redirects to GitHub web OAuth" },
       503: { description: "GitHub OAuth app secret is not configured" },
@@ -802,14 +864,22 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/github/callback",
+    summary: "Complete GitHub web OAuth",
     responses: {
       302: { description: "Completes GitHub web OAuth and redirects to the app" },
     },
   });
-  for (const path of ["/v1/auth/github/device/start", "/v1/auth/github/device/poll", "/v1/auth/github/session", "/v1/auth/logout", "/v1/auth/extension/session"]) {
+  for (const { path, summary } of [
+    { path: "/v1/auth/github/device/start", summary: "Start GitHub device-flow authentication" },
+    { path: "/v1/auth/github/device/poll", summary: "Poll a pending GitHub device-flow authentication" },
+    { path: "/v1/auth/github/session", summary: "Exchange a completed auth flow for a LoopOver session" },
+    { path: "/v1/auth/logout", summary: "Log out of the current LoopOver session" },
+    { path: "/v1/auth/extension/session", summary: "Create an extension-scoped LoopOver session" },
+  ]) {
     registry.registerPath({
       method: "post",
       path,
+      summary,
       responses: {
         200: { description: "Auth request completed" },
         201: { description: "Auth session created" },
@@ -822,6 +892,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/auth/session",
+    summary: "Current auth session, or signed-out state",
     responses: {
       200: { description: "Current auth session, or signed_out when no app session is present" },
     },
@@ -829,26 +900,28 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/overview",
+    summary: "Live app overview assembled from backend data",
     responses: {
       200: { description: "Live app overview assembled from backend data", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       401: { description: "Unauthorized" },
       403: { description: "Insufficient role" },
     },
   });
-  for (const path of [
-    "/v1/app/roles",
-    "/v1/app/miner-dashboard",
-    "/v1/app/maintainer-dashboard",
-    "/v1/app/operator-dashboard",
-    "/v1/app/commands",
-    "/v1/app/commands/usefulness",
-    "/v1/app/digest",
-    "/v1/app/analytics/daily-rollups",
-    "/v1/app/analytics/mcp-compatibility",
+  for (const { path, summary } of [
+    { path: "/v1/app/roles", summary: "Roles available to the current app session" },
+    { path: "/v1/app/miner-dashboard", summary: "Live miner dashboard data" },
+    { path: "/v1/app/maintainer-dashboard", summary: "Live maintainer dashboard data" },
+    { path: "/v1/app/operator-dashboard", summary: "Live operator dashboard data" },
+    { path: "/v1/app/commands", summary: "Available @loopover chat commands" },
+    { path: "/v1/app/commands/usefulness", summary: "Usefulness feedback summary for @loopover chat commands" },
+    { path: "/v1/app/digest", summary: "Live digest summary for the current app session" },
+    { path: "/v1/app/analytics/daily-rollups", summary: "Daily analytics rollups" },
+    { path: "/v1/app/analytics/mcp-compatibility", summary: "MCP client compatibility analytics" },
   ]) {
     registry.registerPath({
       method: "get",
       path,
+      summary,
       responses: {
         200: { description: "Live app API response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
         401: { description: "Unauthorized" },
@@ -858,6 +931,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/selfhost/queue/dead/{id}/replay",
+    summary: "Replay one self-host dead-letter queue job",
     request: {
       params: z.object({
         id: z.string().openapi({ param: { description: "Dead-letter job id." }, example: "812" }),
@@ -875,6 +949,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/app/selfhost/queue/dead/{id}",
+    summary: "Delete one self-host dead-letter queue job",
     request: {
       params: z.object({
         id: z.string().openapi({ param: { description: "Dead-letter job id." }, example: "812" }),
@@ -892,6 +967,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "delete",
     path: "/v1/app/selfhost/queue/dead",
+    summary: "Purge all self-host dead-letter queue jobs",
     responses: {
       200: { description: "Dead-letter jobs purged", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
       401: { description: "Unauthorized" },
@@ -902,6 +978,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/selfhost/queue/dead",
+    summary: "List paginated self-host dead-letter queue jobs",
     request: {
       query: z.object({
         limit: z.string().optional().openapi({
@@ -925,6 +1002,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/analytics/weekly-value-report",
+    summary: "Weekly value report as JSON or Markdown",
     request: {
       query: z.object({
         variant: z.enum(["public", "operator"]).optional().openapi({
@@ -964,6 +1042,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/app/skipped-pr-audit",
+    summary: "Private bounded audit export for skipped PR public-surface decisions",
     request: {
       query: z.object({
         limit: z.string().optional().openapi({
@@ -994,6 +1073,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/app/commands/preview",
+    summary: "Dry-run preview of a sanitized @loopover command response",
     responses: {
       200: { description: "Maintainer dry-run preview of a sanitized @loopover command response (no GitHub mutation)", content: { "application/json": { schema: CommandPreviewResponseSchema } } },
       400: { description: "Invalid request" },
@@ -1002,10 +1082,14 @@ export function buildOpenApiSpec() {
       404: { description: "Command not found" },
     },
   });
-  for (const path of ["/v1/app/commands/feedback", "/v1/app/digest/subscriptions"]) {
+  for (const { path, summary } of [
+    { path: "/v1/app/commands/feedback", summary: "Submit usefulness feedback for a @loopover chat command" },
+    { path: "/v1/app/digest/subscriptions", summary: "Manage digest notification subscriptions" },
+  ]) {
     registry.registerPath({
       method: "post",
       path,
+      summary,
       responses: {
         200: { description: "Live app mutation or preview response", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
         201: { description: "Created", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
@@ -1017,6 +1101,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "get",
     path: "/v1/extension/pull-context",
+    summary: "Browser extension PR context overlay payload",
     request: {
       query: z.object({
         owner: z.string().min(1).openapi({ param: { description: "Repository owner" }, example: "JSONbored" }),
@@ -1034,6 +1119,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/refresh-registry",
+    summary: "Queue an internal Gittensor registry refresh job",
     responses: {
       202: { description: "Registry refresh queued" },
       401: { description: "Invalid internal token" },
@@ -1042,6 +1128,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-registered-repos",
+    summary: "Queue an internal registered-repo backfill job",
     responses: {
       202: { description: "Registered repo backfill queued" },
       401: { description: "Invalid internal token" },
@@ -1050,6 +1137,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-repo-segment",
+    summary: "Queue an internal repository segment backfill job",
     responses: {
       202: { description: "Repository segment backfill queued" },
       400: { description: "Invalid segment request" },
@@ -1059,6 +1147,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/backfill-pr-details",
+    summary: "Queue an internal open PR detail backfill job",
     responses: {
       202: { description: "Open PR detail backfill queued" },
       400: { description: "Invalid PR detail backfill request" },
@@ -1068,26 +1157,28 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/generate-review-recap",
+    summary: "Queue an internal maintainer review recap digest job",
     responses: {
       202: { description: "Maintainer review recap digest queued (#1963)" },
       400: { description: "Missing repoFullName" },
       401: { description: "Invalid internal token" },
     },
   });
-  for (const path of [
-    "/v1/internal/jobs/refresh-scoring-model",
-    "/v1/internal/jobs/refresh-upstream-drift",
-    "/v1/internal/jobs/file-upstream-drift-issues",
-    "/v1/internal/jobs/build-contributor-evidence",
-    "/v1/internal/jobs/build-contributor-decision-packs",
-    "/v1/internal/jobs/build-burden-forecasts",
-    "/v1/internal/jobs/generate-signal-snapshots",
-    "/v1/internal/jobs/generate-weekly-value-report",
-    "/v1/internal/jobs/repair-data-fidelity",
+  for (const { path, summary } of [
+    { path: "/v1/internal/jobs/refresh-scoring-model", summary: "Queue an internal scoring model refresh job" },
+    { path: "/v1/internal/jobs/refresh-upstream-drift", summary: "Queue an internal upstream drift refresh job" },
+    { path: "/v1/internal/jobs/file-upstream-drift-issues", summary: "Queue an internal job to file upstream drift issues" },
+    { path: "/v1/internal/jobs/build-contributor-evidence", summary: "Queue an internal contributor evidence build job" },
+    { path: "/v1/internal/jobs/build-contributor-decision-packs", summary: "Queue an internal contributor decision pack build job" },
+    { path: "/v1/internal/jobs/build-burden-forecasts", summary: "Queue an internal burden forecast build job" },
+    { path: "/v1/internal/jobs/generate-signal-snapshots", summary: "Queue an internal signal snapshot generation job" },
+    { path: "/v1/internal/jobs/generate-weekly-value-report", summary: "Queue an internal weekly value report generation job" },
+    { path: "/v1/internal/jobs/repair-data-fidelity", summary: "Queue an internal data fidelity repair job" },
   ]) {
     registry.registerPath({
       method: "post",
       path,
+      summary,
       responses: {
         202: { description: "Internal job queued" },
         401: { description: "Invalid internal token" },
@@ -1097,6 +1188,7 @@ export function buildOpenApiSpec() {
   registry.registerPath({
     method: "post",
     path: "/v1/internal/bounties/import",
+    summary: "Import an internal bounty snapshot",
     responses: {
       200: { description: "Bounty snapshot imported" },
       401: { description: "Invalid internal token" },

@@ -143,4 +143,19 @@ describe("OpenAPI contract", () => {
       }
     }
   });
+
+  it("gives every operation a non-empty summary (#5810)", () => {
+    const spec = buildOpenApiSpec();
+    const paths = Object.entries(spec.paths ?? {});
+    expect(paths.length).toBeGreaterThan(0);
+    let operationCount = 0;
+    for (const [path, methods] of paths) {
+      for (const [method, operation] of Object.entries(methods as Record<string, { summary?: string }>)) {
+        operationCount += 1;
+        expect(operation.summary, `${method.toUpperCase()} ${path} is missing a summary`).toEqual(expect.any(String));
+        expect(operation.summary!.length > 0, `${method.toUpperCase()} ${path} has an empty summary`).toBe(true);
+      }
+    }
+    expect(operationCount).toBeGreaterThanOrEqual(78);
+  });
 });

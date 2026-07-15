@@ -89,7 +89,6 @@ LOOPOVER_REVIEW_IMPACT_MAP="true"              # deterministic impact map (needs
 LOOPOVER_REVIEW_CULTURE_PROFILE="true"         # repo quality-culture profile (needs review.culture_profile: true)
 LOOPOVER_REVIEW_MEMORY="true"                  # repeat-false-positive suppression (needs review.memory too)
 LOOPOVER_REVIEW_REPUTATION="true"              # submitter-reputation spend control (never shown)
-LOOPOVER_REVIEW_UNIFIED_COMMENT="true"         # one in-place unified PR comment
 LOOPOVER_REVIEW_ENRICHMENT="true"              # external analyzer registry (REES) findings
 LOOPOVER_REVIEW_INLINE_COMMENTS="true"         # diff-anchored inline PR review comments
 LOOPOVER_REVIEW_FIX_HANDOFF="true"             # machine-readable fix-handoff block (contributor-run)

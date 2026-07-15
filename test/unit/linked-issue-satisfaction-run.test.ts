@@ -782,7 +782,6 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
       // feature populates) is itself behind BOTH the global kill-switch AND the (back-compat, manifest-absent)
       // LOOPOVER_REVIEW_REPOS allowlist -- see convergedFeatureActive/resolveConvergedFeature
       // (src/review/feature-activation.ts). Both are required for a repo with no `.loopover.yml` manifest.
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed",
     });
     await persistRegistrySnapshot(
@@ -873,7 +872,6 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
       AI_DAILY_NEURON_BUDGET: "100000",
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed",
     });
     await persistRegistrySnapshot(

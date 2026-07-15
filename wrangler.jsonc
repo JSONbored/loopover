@@ -56,7 +56,6 @@
     // Hosted reviews are retired. Cloudflare now serves the public API + Orb broker only; review execution runs
     // in the self-host container, where Redis-backed transient state is mandatory. The Cloudflare API worker no
     // longer binds Workers AI, Vectorize, R2 review audit storage, or Browser Rendering for review execution.
-    "LOOPOVER_REVIEW_UNIFIED_COMMENT": "false",
     // Inline comments (#inline-comments): leave quiet, non-blocking inline comments on changed lines, on top of
     // the decision summary. Requires the repo in LOOPOVER_REVIEW_REPOS AND review.inline_comments in its
     // .loopover.yml. Default OFF — flag-OFF the model is never asked for inline findings (byte-identical).

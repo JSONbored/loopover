@@ -5562,7 +5562,7 @@ describe("queue processors", () => {
         aiReviewMode: "off",
         typeLabelsEnabled: false,
       });
-      await upsertRepoFocusManifest(env, repoFullName, { testExpectations: ["Run npm run test:ci."], features: { e2eTests: true, unifiedComment: true } });
+      await upsertRepoFocusManifest(env, repoFullName, { testExpectations: ["Run npm run test:ci."], features: { e2eTests: true } });
       // gateEvaluation needs a resolved CI aggregate (mocking the module function directly is far simpler than
       // stubbing every raw status/check-suite endpoint the live CI aggregator would otherwise call) -- but
       // NOT "passed": resolveManifestPassedValidationCount treats a fully-green live CI rollup as validation

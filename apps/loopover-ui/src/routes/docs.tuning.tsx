@@ -195,11 +195,6 @@ function Tuning() {
           reputation. Per-PR.
         </li>
         <li>
-          <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
-          in-place unified comment instead of the legacy multi-panel comment. Per-PR. With the flag
-          off, the legacy comment is byte-identical.
-        </li>
-        <li>
           <code>LOOPOVER_REVIEW_ENRICHMENT</code> — runs the review-enrichment analyzer registry
           (duplication, churn hotspots, blame links, approval integrity, undocumented exports, and
           more) and folds their findings into the review context. Per-PR.

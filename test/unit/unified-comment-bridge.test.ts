@@ -6,7 +6,6 @@ import {
   buildVisualFindingsCollapsible,
   consensusDefectFromFindings,
   gateConclusionToVerdict,
-  isUnifiedReviewCommentEnabled,
   isBoilerplateNit,
   panelRowsToSignalRows,
   PR_PANEL_COMMENT_MARKER,
@@ -1307,25 +1306,6 @@ describe("buildClosedUnifiedCommentBody (closed/skipped PR through the unified r
 // maybePublishPrPublicSurface (flag ON vs OFF) through real webhook delivery is net-new and entangled with the
 // queue/GitHub-client harness. The focused unit coverage here (open + closed body, marker single-source, flag
 // gate, Nit scrub) asserts the bridge contract the processor relies on; the e2e wiring is a separate task.
-
-// #6103: the flag this function reads no longer selects between two comment renderers (the legacy
-// buildPublicPrIntelligenceComment path it used to gate was deleted, having no remaining production
-// caller) -- kept functionally inert so an operator's existing deployment config setting it doesn't error.
-describe("isUnifiedReviewCommentEnabled (pure flag parsing, now inert)", () => {
-  it("parses OFF when the flag is unset or falsy", () => {
-    expect(isUnifiedReviewCommentEnabled({})).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ LOOPOVER_REVIEW_UNIFIED_COMMENT: undefined })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ LOOPOVER_REVIEW_UNIFIED_COMMENT: "false" })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ LOOPOVER_REVIEW_UNIFIED_COMMENT: "0" })).toBe(false);
-    expect(isUnifiedReviewCommentEnabled({ LOOPOVER_REVIEW_UNIFIED_COMMENT: "" })).toBe(false);
-  });
-
-  it("is ON only for an explicit truthy value", () => {
-    for (const value of ["1", "true", "yes", "on", "TRUE", "On"]) {
-      expect(isUnifiedReviewCommentEnabled({ LOOPOVER_REVIEW_UNIFIED_COMMENT: value })).toBe(true);
-    }
-  });
-});
 
 describe("comment size-budget guard (#6069)", () => {
   it("leaves a normal-sized comment completely untouched (no trimming, no note)", () => {

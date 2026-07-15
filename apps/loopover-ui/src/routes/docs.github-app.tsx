@@ -307,11 +307,6 @@ review:
           never surfaced publicly. Per-PR.
         </li>
         <li>
-          <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> — renders the public PR comment as one
-          in-place unified comment instead of the legacy multi-panel comment. Per-PR; flag-off keeps
-          the legacy comment byte-identical.
-        </li>
-        <li>
           <code>LOOPOVER_REVIEW_OPS</code> — read-only observability: a cron anomaly scan over your
           own review-outcome data plus a bearer-gated stats aggregate. Global (not scoped by the
           repo allowlist).
@@ -338,9 +333,9 @@ review:
       </p>
       <CodeBlock
         lang="bash"
-        code={`# Roll grounding + the unified comment onto one repo:
+        code={`# Roll grounding + RAG context onto one repo:
 LOOPOVER_REVIEW_GROUNDING="true"
-LOOPOVER_REVIEW_UNIFIED_COMMENT="true"
+LOOPOVER_REVIEW_RAG="true"
 LOOPOVER_REVIEW_REPOS="JSONbored/loopover"`}
       />
 

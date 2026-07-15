@@ -1,4 +1,5 @@
-// Unified PR review comment renderer (convergence — see docs/LOOPOVER_REVIEW_UNIFIED_COMMENT.md).
+// Unified PR review comment renderer (convergence). The sole comment-rendering path since #6103 — no
+// operator flag selects it anymore.
 //
 // Produces ONE in-place comment in the loopover SHAPE (colored alert sidebar + readiness
 // signal table + collapsibles + re-run + earning footer) with reviewbot's deep review folded

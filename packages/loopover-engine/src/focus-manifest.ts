@@ -261,7 +261,7 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // level `false` behaves like any other plain override with no floor/ceiling. This is activation wiring only
 // -- no tier reads the resolved value yet (sibling sub-issues #4739-#4746 build the deterministic/LLM/panel
 // behavior that will gate on it).
-export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "unifiedComment", "safety", "grounding", "e2eTests", "screenshots", "improvementSignal"] as const;
+export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "safety", "grounding", "e2eTests", "screenshots", "improvementSignal"] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
@@ -542,15 +542,15 @@ export type FocusManifestReviewConfig = {
    *  otherwise) — this is an ADDITIONAL opt-in on top of `review.inline_comments`, not a replacement gate.
    *  null/false (default, absent) = no suggestion blocks = byte-identical behavior. (#1956) */
   suggestions: boolean | null;
-  /** `review.changed_files_summary`: when true, the unified review comment (only rendered at all when the
-   *  `unifiedComment` convergence feature is on) gains a deterministic, no-AI "Changed files" collapsible: one
-   *  row per file category (source/test/docs/config/generated), with file counts and +/- totals, via the
-   *  existing `classifyChangedFile` classifier (`src/review/changed-files-classify.ts`, built for this table
-   *  under #2143). null/false (default, absent) = no changed-files section = byte-identical behavior. (#1957) */
+  /** `review.changed_files_summary`: when true, the unified review comment gains a deterministic, no-AI
+   *  "Changed files" collapsible: one row per file category (source/test/docs/config/generated), with file
+   *  counts and +/- totals, via the existing `classifyChangedFile` classifier
+   *  (`src/review/changed-files-classify.ts`, built for this table under #2143). null/false (default, absent)
+   *  = no changed-files section = byte-identical behavior. (#1957) */
   changedFilesSummary: boolean | null;
-  /** `review.effort_score`: when true, the unified review comment (only rendered when the `unifiedComment`
-   *  convergence feature is on) gains a compact "review effort: N/5 (~M min)" chip — a deterministic, no-AI
-   *  complexity/time estimate from `estimateReviewEffort` (`src/review/review-effort.ts`), weighting each
+  /** `review.effort_score`: when true, the unified review comment gains a compact "review effort: N/5 (~M min)"
+   *  chip — a deterministic, no-AI complexity/time estimate from `estimateReviewEffort`
+   *  (`src/review/review-effort.ts`), weighting each
    *  changed file's added lines by its category (source costs most; generated/vendored/lockfiles cost least)
    *  plus a fixed per-file overhead. Mirrors `changedFilesSummary` exactly: same table, same deterministic
    *  source, same display-only (never touches the AI prompt) shape. null/false (default, absent) = no chip =
@@ -1021,7 +1021,6 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   present: false,
   rag: null,
   reputation: null,
-  unifiedComment: null,
   safety: null,
   grounding: null,
   e2eTests: null,

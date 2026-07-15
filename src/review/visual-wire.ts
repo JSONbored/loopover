@@ -2,7 +2,7 @@
 //
 // Single env switch: LOOPOVER_REVIEW_SCREENSHOTS. Default OFF (unset/"false") — when OFF the processor
 // never calls buildCapture, so the review path is byte-identical to today. Truthy follows the codebase
-// convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isUnifiedReviewCommentEnabled).
+// convention (`/^(1|true|yes|on)$/i`, same as isSafetyEnabled / isRagEnabled).
 //
 // `screenshots` is a `ConvergedFeatureKey` (#4616): per-repo activation — the global flag here AND (a per-repo
 // `.loopover.yml` `features.screenshots` override OR the `LOOPOVER_REVIEW_REPOS` cutover allowlist

@@ -21,7 +21,7 @@ The old vendor/embed plan is obsolete. The review system now lives in **gittenso
 
 - **Single project:** gittensory is the only source repo for the converged review system.
 - **Native port:** review features live under `src/review/**`, `src/queue/processors.ts`, and related first-party modules.
-- **Public comment path:** the unified in-place PR comment is driven by the native bridge and the `LOOPOVER_REVIEW_UNIFIED_COMMENT` flag.
+- **Public comment path:** the unified in-place PR comment is rendered unconditionally by the native bridge — it is the only comment-rendering path (the legacy multi-panel renderer and its `LOOPOVER_REVIEW_UNIFIED_COMMENT` flag were retired).
 - **Infra model:** D1 / Queue / AI / optional Vectorize / optional R2 / optional Browser bindings are declared directly in gittensory.
 - **Config model:** rollout is controlled by `LOOPOVER_REVIEW_*` flags plus the per-repo allowlist `LOOPOVER_REVIEW_REPOS`.
 - **Parity model:** parity is measured as a shadow/deploy-time comparison against authoritative legacy audit rows; local checkout validation proves structure and safety, not historical decision identity.
@@ -48,7 +48,6 @@ Those are operator actions. This repo should document them clearly and avoid imp
 
 Primary native review flags and surfaces:
 
-- `LOOPOVER_REVIEW_UNIFIED_COMMENT` — single public PR comment
 - `LOOPOVER_REVIEW_SAFETY` — prompt-injection defang + secret scan
 - `LOOPOVER_REVIEW_GROUNDING` — CI + full-file grounding
 - `LOOPOVER_REVIEW_RAG` — retrieval-augmented context

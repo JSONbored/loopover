@@ -1,7 +1,7 @@
 // Convergence (cutover) per-repo gate: an allowlist that activates the PER-PR converged review features one
 // repo at a time, so the cutover can be rolled forward (and rolled back) on a single repo without flipping the
 // global flags off for everyone. Each per-PR converged feature ALREADY has a global switch (LOOPOVER_REVIEW_SAFETY /
-// _GROUNDING / _RAG / _REPUTATION, LOOPOVER_REVIEW_UNIFIED_COMMENT); this adds a SECOND, repo-scoped gate that must
+// _GROUNDING / _RAG / _REPUTATION); this adds a SECOND, repo-scoped gate that must
 // ALSO pass for the feature to run on a given PR's repo.
 //
 // Single env var: LOOPOVER_REVIEW_REPOS — a comma-separated allowlist of repo full-names

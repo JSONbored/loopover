@@ -1369,7 +1369,6 @@ describe("queue processors", () => {
   it("screenshot-table gate (#4110): a persisted bot capture from an earlier pass satisfies the gate, no body table needed", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await upsertInstallation(env, {
@@ -1475,7 +1474,6 @@ describe("queue processors", () => {
     const markSpy = vi.spyOn(repositoriesModule, "markPullRequestVisualCaptureSatisfied").mockRejectedValueOnce(new Error("D1 write failed"));
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await upsertInstallation(env, {

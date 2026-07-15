@@ -51,6 +51,25 @@ function installMemoryResponseCache(): Map<string, CachedGitHubResponse> {
   return store;
 }
 
+/** graphqlCacheKey (src/github/graphql-cache.ts) awaits two real `crypto.subtle.digest` calls before the
+ *  single-flight map is checked. Real WebCrypto digests are backed by a genuine OS thread pool, so two
+ *  concurrent callers with IDENTICAL inputs can still complete their digest awaits in either relative
+ *  order depending on real thread scheduling -- verified empirically (~11% failure rate over 500 trials in
+ *  a tight Node loop, zero CPU contention needed) BEFORE this stub existed. Swapping in a pure-JS,
+ *  deterministic digest removes that real-thread dependency: both calls now resolve via plain microtasks,
+ *  whose relative ordering is governed only by the single-threaded JS event loop and is NOT sensitive to
+ *  system load. This makes the coalescing race deterministic without touching the single-flight logic
+ *  itself or changing what the test proves. Must be paired with `digestSpy.mockRestore()` -- this file's
+ *  `afterEach` only unstubs `vi.stubGlobal`/env, not `vi.spyOn` mocks. */
+function stubDeterministicDigest() {
+  return vi.spyOn(crypto.subtle, "digest").mockImplementation(async (_algorithm, data) => {
+    const bytes = ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : new Uint8Array(data as ArrayBuffer);
+    let hash = 0;
+    for (const byte of bytes) hash = (hash * 31 + byte) >>> 0;
+    return new Uint8Array(Array.from({ length: 32 }, (_, i) => (hash >>> (i % 4) * 8) & 0xff)).buffer;
+  });
+}
+
 afterEach(() => {
   clearGitHubResponseCacheForTest();
   clearGitHubGraphQlCacheForTest();
@@ -177,6 +196,7 @@ describe("fetchCachedGitHubGraphQl", () => {
 
   it("single-flights concurrent cold misses for the same query", async () => {
     installMemoryResponseCache();
+    const digestSpy = stubDeterministicDigest();
     let fetches = 0;
     vi.stubGlobal("fetch", async () => {
       fetches += 1;
@@ -184,14 +204,18 @@ describe("fetchCachedGitHubGraphQl", () => {
       return Response.json({ data: { repository: { issues: { totalCount: 1 } } } });
     });
 
-    const [a, b] = await Promise.all([
-      fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a"),
-      fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a"),
-    ]);
+    try {
+      const [a, b] = await Promise.all([
+        fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a"),
+        fetchCachedGitHubGraphQl(TOTALS_QUERY, "token-a"),
+      ]);
 
-    expect(fetches).toBe(1);
-    expect(a.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
-    expect(b.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
+      expect(fetches).toBe(1);
+      expect(a.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+      expect(b.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
+    } finally {
+      digestSpy.mockRestore();
+    }
   });
 
   it("does not coalesce concurrent cold misses when admission keys differ", async () => {

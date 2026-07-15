@@ -472,8 +472,7 @@ describe("processGitHubWebhook records the reputation outcome on a terminal PR (
   it("FLAG-ON: a closed+merged PR webhook records a 'merged' outcome for the submitter", async () => {
     const { processJob } = await import("../../src/queue/processors");
     const { upsertRepositorySettings } = await import("../../src/db/repositories");
-    // LOOPOVER_REVIEW_UNIFIED_COMMENT on so the closing-PR comment path takes the unified-renderer branch.
-    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_UNIFIED_COMMENT: "true" });
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
     // Gate enabled so the closing-PR public-surface path (skipped-gate + unified closed comment) executes.
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory" });
     // External calls (token/miner/github) are best-effort + caught; stub them so nothing throws.

@@ -230,8 +230,7 @@ function HowReviewsWork() {
       <h2>3. The unified review comment</h2>
       <p>
         The result is rendered as <strong>one in-place comment</strong> on the PR — updated in place
-        on each push rather than stacked — when <code>LOOPOVER_REVIEW_UNIFIED_COMMENT</code> is on
-        for the repo. It has three parts, top to bottom:
+        on each push rather than stacked. It has three parts, top to bottom:
       </p>
       <ul>
         <li>
@@ -240,14 +239,16 @@ function HowReviewsWork() {
           scans first.
         </li>
         <li>
-          <strong>The signal table</strong> — a compact row-per-signal summary: each dimension that
-          ran, its state (pass / advisory / block), and a short reason. This is the at-a-glance map
-          of why the verdict came out the way it did.
+          <strong>Decision drivers</strong> — a short, always-visible checklist of the signals that
+          actually decided the verdict: the AI code review and the gate result. This is the
+          at-a-glance answer to why the verdict came out the way it did.
         </li>
         <li>
-          <strong>Collapsibles</strong> — expandable sections for the detail behind each signal: the
-          AI review notes, the slop warnings, duplicate matches, manifest findings. Folded away by
-          default so the comment stays short, opened when a reader wants the evidence.
+          <strong>Collapsibles</strong> — expandable sections for everything else: a "Context &amp;
+          advisory signals" table (linked issue, related work, validation posture, contributor
+          context — signals that inform but never block the verdict), the AI review notes, slop
+          warnings, duplicate matches, manifest findings. Folded away by default so the comment
+          stays short, opened when a reader wants the evidence.
         </li>
       </ul>
       <p>
@@ -265,7 +266,10 @@ function HowReviewsWork() {
       </Callout>
 
       <h2>4. The signals behind a verdict</h2>
-      <p>Each row in the signal table comes from a named finding. The common ones you will see:</p>
+      <p>
+        Each row in the advisory signals table comes from a named finding. The common ones you will
+        see:
+      </p>
       <ul>
         <li>
           <code>secret_leak</code> — the safety scan (<code>LOOPOVER_REVIEW_SAFETY</code>) found a

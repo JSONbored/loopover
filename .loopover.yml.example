@@ -483,7 +483,6 @@ review:
     # max_files: 25
 
   # Unified-comment display toggles (#1957 / #1955 / #2069). Bool | null. Default: null/false — byte-identical.
-  # Only take effect when the `features.unifiedComment` feature is enabled.
   # changed_files_summary: false
   # When true, the unified review comment gains a deterministic "Changed files" summary table.
   # effort_score: false
@@ -1120,7 +1119,7 @@ settings:
   #   intentRouting: false # Closed-set intent classifier for unrecognized @loopover mentions -> existing Q&A commands only. Ollama-ONLY, same as chatQa (never uses chatQaFrontierFallback). Co-requisite: commandRateLimitPolicy: hold. Default: false.
 
 # Per-repo activation overrides for the converged review features that ship behind a deployment-wide
-# LOOPOVER_REVIEW_* env kill-switch (rag/reputation/unifiedComment/safety/grounding/e2eTests/screenshots/
+# LOOPOVER_REVIEW_* env kill-switch (rag/reputation/safety/grounding/e2eTests/screenshots/
 # improvementSignal). Each key is `true` (force on for this repo, subject to the env flag still being
 # enabled), `false` (force off), or omitted (falls back to the LOOPOVER_REVIEW_REPOS allowlist default --
 # an operator who sets nothing keeps today's behavior). Exception: `safety` is force-on-only -- an untrusted
@@ -1134,14 +1133,13 @@ settings:
 # `review.visual.enabled: false` as an always-available additional force-off); this key only answers "does
 # capture run for this repo at all," the same question its siblings answer for their own feature.
 # `e2eTests` (#4190) and `improvementSignal` (#4738, foundation phase of the #4737 PR-improvement-signal
-# epic) remain plain symmetric overrides like rag/reputation/unifiedComment -- neither carries a
+# epic) remain plain symmetric overrides like rag/reputation -- neither carries a
 # security-hardening or full-file-fetch rationale that would justify a force-on/force-off asymmetry.
 # `improvementSignal` is activation wiring only for now -- no tier reads the resolved
 # value yet.
 # features:
 #   rag: true
 #   reputation: false
-#   unifiedComment: true
 #   safety: true
 #   grounding: true
 #   e2eTests: false

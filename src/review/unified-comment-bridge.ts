@@ -948,10 +948,3 @@ export function buildClosedUnifiedCommentBody(args: { repoFullName: string; pull
     footerMarkdown: args.footerMarkdown,
   });
 }
-
-/** Truthy-env flag check, matching the codebase convention (e.g. SCORING_TIME_DECAY_ENABLED). */
-export function isUnifiedReviewCommentEnabled(env: {
-  LOOPOVER_REVIEW_UNIFIED_COMMENT?: string | undefined;
-}): boolean {
-  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_REVIEW_UNIFIED_COMMENT ?? "").trim());
-}

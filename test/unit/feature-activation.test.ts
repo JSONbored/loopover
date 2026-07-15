@@ -10,7 +10,6 @@ const REPO = "JSONbored/gittensory";
 const FLAG: Record<ConvergedFeatureKey, string> = {
   rag: "LOOPOVER_REVIEW_RAG",
   reputation: "LOOPOVER_REVIEW_REPUTATION",
-  unifiedComment: "LOOPOVER_REVIEW_UNIFIED_COMMENT",
   safety: "LOOPOVER_REVIEW_SAFETY",
   grounding: "LOOPOVER_REVIEW_GROUNDING",
   e2eTests: "LOOPOVER_REVIEW_E2E_TESTS",
@@ -26,7 +25,6 @@ function manifestWith(features: Partial<Record<ConvergedFeatureKey, boolean>>): 
     present: false,
     rag: null,
     reputation: null,
-    unifiedComment: null,
     safety: null,
     grounding: null,
     e2eTests: null,
@@ -205,7 +203,7 @@ describe("resolveConvergedFeature — screenshots remain allowlist-bound", () =>
 describe("resolveConvergedFeature — improvementSignal is a plain symmetric override (#4738)", () => {
   // The full resolution matrix the #4738 acceptance criteria calls out explicitly: env off; env on + no
   // override; env on + repo true; env on + repo false. improvementSignal has no safety/grounding-style
-  // asymmetry, so this mirrors the generic "standard mode" shape rag/reputation/unifiedComment/e2eTests use.
+  // asymmetry, so this mirrors the generic "standard mode" shape rag/reputation/e2eTests use.
   it("is off when the global env flag is off, regardless of a per-repo override or the allowlist (env off)", () => {
     const e = env({ LOOPOVER_REVIEW_REPOS: REPO }); // LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL unset
     expect(resolveConvergedFeature(e, manifestWith({ improvementSignal: true }), "improvementSignal", REPO)).toBe(false);

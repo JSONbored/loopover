@@ -13,7 +13,7 @@
 //
 // `resolveFeatureActivation` below is now the ONE pure core every one of those precedence shapes reduces to.
 // `resolveConvergedFeature` and `resolveManifestOnlyFeature` are the two thin adapters over it in actual use:
-//   - `resolveConvergedFeature` — the `features:`-block keys (rag/reputation/unifiedComment/safety/grounding/
+//   - `resolveConvergedFeature` — the `features:`-block keys (rag/reputation/safety/grounding/
 //     e2eTests/screenshots): env kill-switch → per-repo `features:` override → `LOOPOVER_REVIEW_REPOS`
 //     allowlist default. Safety, grounding, and screenshots are the named exceptions this shape has; see
 //     `FEATURE_MODE` below.
@@ -35,7 +35,6 @@ import { isImprovementSignalEnabled } from "./improvement-signal-wire";
 import { isRagEnabled } from "./rag-wire";
 import { isReputationEnabled } from "./reputation-wire";
 import { isSafetyEnabled } from "./safety";
-import { isUnifiedReviewCommentEnabled } from "./unified-comment-bridge";
 import { isScreenshotsEnabled } from "./visual-wire";
 import type { ConvergedFeatureKey, FocusManifest } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -44,7 +43,7 @@ import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
  * The four per-feature activation precedence shapes actually in use across loopover's advisory review
  * capabilities (#4616):
  *  - `"standard"`: `override` fully controls (`true` forces on, `false` forces off); `null` (unset) falls back
- *    to `allowlisted`. rag / reputation / unifiedComment / e2eTests / improvementSignal.
+ *    to `allowlisted`. rag / reputation / e2eTests / improvementSignal.
  *  - `"forceOnOnly"`: `override` can only force ON (bypassing the allowlist); an untrusted `false` is "no
  *    opinion" and falls through to `allowlisted` — for a feature where a lower-trust, repo-controlled override
  *    must never be able to silently defeat the operator's own enablement. safety (#2269).
@@ -80,7 +79,6 @@ export function resolveFeatureActivation(globalFlagOn: boolean, override: boolea
 const FEATURE_GLOBAL_FLAG: Record<ConvergedFeatureKey, (env: Env) => boolean> = {
   rag: isRagEnabled,
   reputation: isReputationEnabled,
-  unifiedComment: isUnifiedReviewCommentEnabled,
   safety: isSafetyEnabled,
   grounding: isGroundingEnabled,
   e2eTests: isE2eTestGenerationEnabled,

@@ -26,7 +26,7 @@ import { errorMessage } from "../utils/json";
 
 /** True when the operator enabled inline comments globally. Flag-OFF (default) ⇒ the caller never asks the model
  *  for inline findings, so this module is never reached. Truthy follows the codebase convention (same regex as
- *  isUnifiedReviewCommentEnabled / isSafetyEnabled). */
+ *  isRagEnabled / isSafetyEnabled). */
 export function isInlineCommentsEnabled(env: {
   LOOPOVER_REVIEW_INLINE_COMMENTS?: string | undefined;
 }): boolean {
@@ -40,7 +40,7 @@ export function isInlineCommentsEnabled(env: {
  *  `.loopover.yml` `review.inlineComments` override (`true`/`false`) now FULLY controls the feature by itself
  *  — a repo can turn this on without needing the LOOPOVER_REVIEW_REPOS cutover allowlist at all. (3)
  *  `manifestToggle` unset (`undefined`) preserves this feature's ORIGINAL design exactly: unlike
- *  rag/reputation/safety/unifiedComment/grounding (which already fall back to the cutover allowlist when their
+ *  rag/reputation/safety/grounding (which already fall back to the cutover allowlist when their
  *  manifest field is unset), inline comments have always required an EXPLICIT per-repo opt-in — being on the
  *  allowlist alone was never sufficient, so this stays `false` regardless of the allowlist, byte-identical to
  *  every repo's behavior before this change (now expressed as `resolveManifestOnlyFeature`'s `"manifestOnly"`

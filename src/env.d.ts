@@ -302,11 +302,6 @@ declare global {
      *  secret, never a public var. When absent, BYOK is unavailable and review uses the configured instance
      *  reviewer when available. */
     TOKEN_ENCRYPTION_SECRET?: string;
-    /** #6103: retired -- the unified-comment bridge is now the ONLY PR-comment renderer unconditionally (the
-     *  legacy `buildPublicPrIntelligenceComment` panel this flag used to switch away from was deleted, having
-     *  no remaining production caller). No longer read; kept only so an operator's existing deployment config
-     *  setting it doesn't error. Safe to remove from any env once noticed. */
-    LOOPOVER_REVIEW_UNIFIED_COMMENT?: string;
     /** Inline comments (#inline-comments): when truthy (AND the repo is in LOOPOVER_REVIEW_REPOS AND the repo's
      *  `.loopover.yml` sets `review.inline_comments: true`), the AI reviewer ALSO leaves quiet, NON-BLOCKING
      *  inline comments on specific changed lines, layered on top of the decision summary. Default OFF —

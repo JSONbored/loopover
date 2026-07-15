@@ -435,7 +435,6 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
       <CodeBlock
         filename=".env"
         code={`LOOPOVER_REVIEW_REPOS=owner/repo,owner/another
-LOOPOVER_REVIEW_UNIFIED_COMMENT=true
 LOOPOVER_REVIEW_INLINE_COMMENTS=false
 LOOPOVER_REVIEW_SAFETY=true
 LOOPOVER_REVIEW_GROUNDING=true
@@ -481,17 +480,16 @@ settings:
   agentDryRun: false
 features:
   safety: true
-  unifiedComment: true
   rag: false
   reputation: false`}
       />
       <p>
         The <code>features:</code> block above overrides a deployment-wide{" "}
-        <code>LOOPOVER_REVIEW_*</code> flag (rag, reputation, unifiedComment, safety) for this one
-        repo, with three states per key: <code>true</code> forces the capability on for this repo
-        (still subject to the env flag itself being enabled — it can never turn on a capability the
-        operator has fully disabled at the deployment level); <code>false</code> forces it off for
-        this repo regardless of the env flag; and omitting the key entirely falls back to the{" "}
+        <code>LOOPOVER_REVIEW_*</code> flag (rag, reputation, safety) for this one repo, with three
+        states per key: <code>true</code> forces the capability on for this repo (still subject to
+        the env flag itself being enabled — it can never turn on a capability the operator has fully
+        disabled at the deployment level); <code>false</code> forces it off for this repo regardless
+        of the env flag; and omitting the key entirely falls back to the{" "}
         <code>LOOPOVER_REVIEW_REPOS</code> allowlist default, i.e. today's behavior for an operator
         who hasn't set anything here. See <Link to="/docs/tuning">Tuning your reviews</Link> for the
         full <code>LOOPOVER_REVIEW_*</code> flag list this overrides.

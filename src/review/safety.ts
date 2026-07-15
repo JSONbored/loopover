@@ -3,7 +3,7 @@
 //
 // Single env switch: LOOPOVER_REVIEW_SAFETY. Default OFF (unset/"false") — when OFF none of the helpers here
 // alter inputs or findings, so the review path is byte-identical to today. Truthy follows the codebase
-// convention (`/^(1|true|yes|on)$/i`, same as isUnifiedReviewCommentEnabled / isEnabled).
+// convention (`/^(1|true|yes|on)$/i`, same as isRagEnabled / isEnabled).
 
 import type { AdvisoryFinding } from "../types";
 import { neutralizePromptInjection, safeReviewTitle } from "./prompt-injection";

@@ -348,8 +348,8 @@ export function refreshLiveMergeState(
 // refreshLiveMergeState's #4220 doc comment above prohibits for this act-boundary-adjacent disposition input.
 // So this only reuses a memoized value when its key is ALSO in forcedMergeStateKeys/forcedCiAggregateKeys --
 // i.e. it was written by a FORCED (genuinely-live-this-pass) call, never by a cached-path reader. On a genuine
-// miss (no forced call ran yet this pass, e.g. unifiedCommentAllowed was false) this falls through to a REAL
-// live refresh, so behavior can only ever improve (fewer calls) over the pre-fix code, never go staler.
+// miss (no forced call has run yet this pass) this falls through to a REAL live refresh, so behavior can only
+// ever improve (fewer calls) over the pre-fix code, never go staler.
 export function reuseOrRefreshLiveMergeState(
   env: Env,
   repoFullName: string,

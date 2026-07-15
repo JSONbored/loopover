@@ -2720,10 +2720,9 @@ describe("queue processors", () => {
 
   // #1007 convergence (Stage D) / #6103: the public PR-panel comment is rendered by the UNIFIED renderer
   // (GitHub alert + synthesized "Code review" row / Decision drivers) unconditionally now -- leading with
-  // the same panel marker so the in-place upsert updates the same comment. `LOOPOVER_REVIEW_UNIFIED_COMMENT`
-  // below is kept for historical parity with sibling tests; it's inert (no longer read for this decision).
+  // the same panel marker so the in-place upsert updates the same comment.
   it("renders the unified PR-review comment when the gate evaluates", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -2909,7 +2908,6 @@ describe("queue processors", () => {
   it("#4744: threads the improvement-signal row into the unified comment when the converged feature resolves on", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
     });
@@ -3088,7 +3086,6 @@ describe("queue processors", () => {
   it("#4745: threads the real slop band into the Improvement row's quadrant prefix when both improvementSignal and slop evidence collection are on", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
     });
@@ -3259,7 +3256,7 @@ describe("queue processors", () => {
   });
 
   it("INVARIANT (#4498): the disposition planner reuses the public surface's own live mergeable_state/CI read instead of re-fetching a third time", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -3381,7 +3378,6 @@ describe("queue processors", () => {
   it("threads review.visual config into the capture pipeline and renders a Visual preview section (#3609 / #3610)", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await persistRegistrySnapshot(
@@ -3529,7 +3525,6 @@ describe("queue processors", () => {
   it("skips the capture pipeline entirely when review.visual.enabled is false, even though the env-var gate allows it (#4083)", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
     });
     await persistRegistrySnapshot(
@@ -3673,7 +3668,7 @@ describe("queue processors", () => {
   // unified branch already does for the readiness chip — no separate call, no AI. Mirrors the base unified-comment
   // test above but adds the manifest opt-in and asserts the new section's presence + content.
   it("renders the Changed files summary when review.changed_files_summary is on in .loopover.yml", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -3846,7 +3841,7 @@ describe("queue processors", () => {
   // from the SAME PR-files fetch the unified branch already does (no separate call). Mirrors the
   // changed_files_summary test above but asserts the effort chip's presence + exact value instead.
   it("renders the review effort chip when review.effort_score is on in .loopover.yml", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -4028,7 +4023,7 @@ describe("queue processors", () => {
   // for the readiness chip and gate verdict, no extra fetch. Mirrors the effort_score test above but asserts
   // the auto-merge-readiness table's presence + condition marks instead.
   it("renders the Auto-merge readiness collapsible when review.auto_merge_summary is on in .loopover.yml", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -4372,7 +4367,7 @@ describe("queue processors", () => {
   // manifest caps into `buildUnifiedCommentBody` and the renderer truncates blocker/nit lists with a "+N more"
   // footer. Mirrors the effort_score test above but asserts display-only truncation instead.
   it("truncates unified-comment blockers when review.max_findings is set in .loopover.yml (#2049)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -4692,7 +4687,7 @@ describe("queue processors", () => {
   }
 
   it("FLAG-OFF (default): review.memory in .loopover.yml alone never suppresses the readiness warning (operator kill-switch required)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     // review.memory: true in the manifest, but NO LOOPOVER_REVIEW_MEMORY env flag on this env -- byte-identical.
     const postedBody = await runReadinessWarningPass(env, {
       deliveryId: "review-memory-flag-off",
@@ -4703,7 +4698,7 @@ describe("queue processors", () => {
   });
 
   it("FLAG-ON: suppresses a readiness warning EXACTLY matching a previously recorded suppression signal", async () => {
-    const seedEnv = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const seedEnv = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     // A throwaway pass (flag/manifest both off — byte-identical review path) against a SEPARATE, disposable D1
     // instance just to learn the finding's REAL, LIVE-computed readiness score (a pure function of the fixed
     // PR/settings fixture above, so it reproduces identically for the real pass below on its own fresh `env`).
@@ -4717,7 +4712,7 @@ describe("queue processors", () => {
     // Reconstructs buildQualityGateWarning's exact title+detail template (src/rules/advisory.ts) from the live
     // score + the qualityGateMinScore: 100 configured above, so the computed patternHash matches the real finding.
     const detail = `The public readiness score is ${score}/100, below the repository threshold of 100/100.`;
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1", LOOPOVER_REVIEW_MEMORY: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
     await recordReviewSuppression(env, {
       repoFullName: "JSONbored/gittensory",
       category: "readiness_score_below_threshold",
@@ -4738,7 +4733,7 @@ describe("queue processors", () => {
   });
 
   it("FLAG-ON, no stored signals: neither suppresses nor demotes -- the warning renders exactly as if review.memory were off (REGRESSION: the all-clear branch where the store read succeeds but finds nothing to apply)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1", LOOPOVER_REVIEW_MEMORY: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
     // Flag is fully ON (env + manifest) and the suppression-store read succeeds, but NO signal has ever been
     // recorded for this repo -- applyReviewMemorySuppression's own empty-signals short-circuit returns
     // suppressedCount: 0, demotedCount: 0, so processors.ts's "anything to apply?" check is false and
@@ -4752,7 +4747,7 @@ describe("queue processors", () => {
   });
 
   it("FLAG-ON: DEMOTES (keeps, but does not suppress) a same-category readiness warning that does not exactly match any stored signal", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1", LOOPOVER_REVIEW_MEMORY: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
     // A signal for the SAME category but a patternHash that can never match this PR's real finding -- exercises
     // the "demote" (scope-matched, hash-mismatched) branch instead of "suppress".
     await recordReviewSuppression(env, {
@@ -4771,7 +4766,7 @@ describe("queue processors", () => {
   });
 
   it("FLAG-ON, fail-safe: a suppression-store read error leaves the readiness warning untouched rather than throwing", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_UNIFIED_COMMENT: "1", LOOPOVER_REVIEW_MEMORY: "true" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_MEMORY: "true" });
     const listSpy = vi.spyOn(repositoriesModule, "listReviewSuppressions").mockRejectedValue(new Error("D1 unavailable"));
     try {
       const postedBody = await runReadinessWarningPass(env, {
@@ -4852,7 +4847,6 @@ describe("queue processors", () => {
   it("renders finding categories in the inline comment label and the unified comment's Finding categories section when review.finding_categories is on", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_INLINE_COMMENTS: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
       AI: {
@@ -4944,7 +4938,6 @@ describe("queue processors", () => {
     let aiCalls = 0;
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Fresh.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
       AI_SUMMARIES_ENABLED: "true",
       AI_PUBLIC_COMMENTS_ENABLED: "true",
@@ -4989,7 +4982,6 @@ describe("queue processors", () => {
   it("emits the Fix handoff collapsible in the unified comment when review.fixHandoff + the operator flag are on", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
-      LOOPOVER_REVIEW_UNIFIED_COMMENT: "1",
       LOOPOVER_REVIEW_INLINE_COMMENTS: "true",
       LOOPOVER_REVIEW_FIX_HANDOFF: "true",
       LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory",
@@ -5064,7 +5056,7 @@ describe("queue processors", () => {
   // real diff/changed-file count on the first review, and (D3) the failing check name + its per-check WHY render
   // under a "CI checks failing" section (not just a bare "CI failing" chip).
   it("inline-fetches the PR files and renders failing CI check names + reasons in the unified comment (FIX B + D3)", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token", LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -5221,7 +5213,7 @@ describe("queue processors", () => {
   // under its own non-blocking "Flagged checks" section, so a maintainer can act on it without the PR being
   // silently waved through OR silently closed.
   it("REGRESSION (#4414-class advisory holds): a non-required third-party action_required check renders as a non-blocking 'Flagged checks' note, not a CI failure", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token", LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(
@@ -5369,7 +5361,7 @@ describe("queue processors", () => {
   });
 
   it("REGRESSION (#4414-class advisory holds): a bare non-required action_required check (no output/details_url) still renders under 'Flagged checks', name-only", async () => {
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token", LOOPOVER_REVIEW_UNIFIED_COMMENT: "1" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), GITHUB_PUBLIC_TOKEN: "public-token" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload(

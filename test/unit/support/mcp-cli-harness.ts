@@ -144,6 +144,7 @@ export async function startFixtureServer(
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
     validateConfigWarnings?: string[];
+    intakeStatus?: number;
   } = {},
 ) {
   server = createServer(async (request, response) => {
@@ -438,6 +439,42 @@ export async function startFixtureServer(
           },
         }),
       );
+      return;
+    }
+    if (request.url === "/v1/repos/owner/repo/issue-quality" && request.method === "GET") {
+      if (options.intakeStatus && options.intakeStatus >= 400) {
+        response.statusCode = options.intakeStatus;
+        response.end(JSON.stringify({ error: "issue_quality_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ repoFullName: "owner/repo", generatedAt: "2026-05-30T00:00:00.000Z", issues: [{ number: 12, actionability: "high" }] }));
+      return;
+    }
+    if (request.url === "/v1/repos/owner/repo/registration-readiness" && request.method === "GET") {
+      if (options.intakeStatus && options.intakeStatus >= 400) {
+        response.statusCode = options.intakeStatus;
+        response.end(JSON.stringify({ error: "registration_readiness_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ repoFullName: "owner/repo", registered: false, directPrLaneReady: true, appInstalled: false }));
+      return;
+    }
+    if (request.url === "/v1/repos/owner/repo/gittensor-config-recommendation" && request.method === "GET") {
+      if (options.intakeStatus && options.intakeStatus >= 400) {
+        response.statusCode = options.intakeStatus;
+        response.end(JSON.stringify({ error: "config_recommendation_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ repoFullName: "owner/repo", privateOnly: true, recommendations: [] }));
+      return;
+    }
+    if (request.url?.startsWith("/v1/app/skipped-pr-audit") && request.method === "GET") {
+      if (options.intakeStatus && options.intakeStatus >= 400) {
+        response.statusCode = options.intakeStatus;
+        response.end(JSON.stringify({ error: "skipped_pr_audit_unavailable" }));
+        return;
+      }
+      response.end(JSON.stringify({ generatedAt: "2026-05-30T00:00:00.000Z", limit: 20, hasMore: false, items: [{ prNumber: 7, reason: "duplicate", remediation: "link the canonical PR" }] }));
       return;
     }
     response.statusCode = 404;

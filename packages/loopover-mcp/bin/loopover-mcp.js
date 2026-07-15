@@ -166,6 +166,13 @@ const ownerRepoShape = {
   repo: z.string().min(1),
 };
 
+const skippedPrAuditShape = {
+  repoFullName: z.string().trim().min(1).max(200).optional(),
+  reason: z.string().trim().min(1).max(64).optional(),
+  since: z.string().trim().min(1).max(64).optional(),
+  limit: z.number().int().positive().optional(),
+};
+
 const loginShape = {
   login: z.string().min(1),
 };
@@ -579,6 +586,22 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_feasibility_gate",
     description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local loopover-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
   },
+  {
+    name: "loopover_get_issue_quality",
+    description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
+  },
+  {
+    name: "loopover_get_registration_readiness",
+    description: "Preview-only registration-readiness report for a repository: what's missing/present before/after registering with LoopOver (direct-PR and issue-discovery lane readiness, label policy, maintainer-cut readiness, queue health, docs, and the GitHub App install state). Advisory only, not a registration action.",
+  },
+  {
+    name: "loopover_get_config_recommendation",
+    description: "Return recommended .loopover.yml additions for a repository, derived from the repo's live, currently-active configured behavior (the raw dashboard/API-configured settings, not a yml-merged view — so the recommendation never compares itself against an override that already exists). Advisory only, not a write action.",
+  },
+  {
+    name: "loopover_get_skipped_pr_audit",
+    description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
+  },
 ];
 
 function stdioToolDescription(name) {
@@ -628,6 +651,59 @@ registerStdioTool(
   async ({ owner, repo }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_issue_quality",
+  {
+    description: stdioToolDescription("loopover_get_issue_quality"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver issue-quality report.", await apiGet(`${prefix}/issue-quality`));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_registration_readiness",
+  {
+    description: stdioToolDescription("loopover_get_registration_readiness"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver registration-readiness report.", await apiGet(`${prefix}/registration-readiness`));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_config_recommendation",
+  {
+    description: stdioToolDescription("loopover_get_config_recommendation"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver config recommendation.", await apiGet(`${prefix}/gittensor-config-recommendation`));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_skipped_pr_audit",
+  {
+    description: stdioToolDescription("loopover_get_skipped_pr_audit"),
+    inputSchema: skippedPrAuditShape,
+  },
+  async ({ repoFullName, reason, since, limit }) => {
+    const query = new URLSearchParams();
+    if (repoFullName) query.set("repoFullName", repoFullName);
+    if (reason) query.set("reason", reason);
+    if (since) query.set("since", since);
+    if (limit != null) query.set("limit", String(limit));
+    const qs = query.toString();
+    return toolResult("LoopOver skipped-PR audit trail.", await apiGet(`/v1/app/skipped-pr-audit${qs ? `?${qs}` : ""}`));
   },
 );
 

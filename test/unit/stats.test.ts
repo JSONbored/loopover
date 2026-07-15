@@ -10,7 +10,6 @@ import {
   cycleTimeMs,
   EMPTY_CYCLE_TIME,
   EMPTY_FINDING_ACCEPTANCE,
-  handleParity,
   handleStats,
   isParityCutoverReady,
   MIN_PARITY_SAMPLE,
@@ -285,93 +284,6 @@ describe("computeStats — gate-decision read is fail-safe", () => {
     const out = await computeStats(gateThrowingEnv(), { days: 30, bucket: "day", nowMs: NOW });
     expect(out.gateActions).toEqual([]);
     expect(out.projects).toEqual(["awesome-claude"]); // the rest of the payload still computes
-  });
-});
-
-describe("handleParity — bearer-gated, CORS-open cross-system parity feed", () => {
-  const PARITY_DEPS: StatsEvalDeps = {
-    computeGateEval: async () => ({ rows: [], hasSignal: false }),
-    computeTuningRecommendations: () => [],
-    computeGateParity: async () => ({
-      authoritative: "reviewbot",
-      shadow: "gittensory",
-      hasSignal: true,
-      rows: [
-        { project: "gittensory", pairedSamples: 40, bothMerge: 40, bothClose: 0, bothHold: 0, disagree: 0, agreementRate: 1, unsafeDisagreements: 0, byReasonCode: [] },
-        { project: "gittensory", pairedSamples: 5, bothMerge: 5, bothClose: 0, bothHold: 0, disagree: 0, agreementRate: 1, unsafeDisagreements: 0, byReasonCode: [] },
-      ],
-    }),
-  };
-  const req = (headers: Record<string, string> = {}, method = "GET") =>
-    new Request("https://w.dev/gittensory/internal/parity?days=90&shadow=gittensory", { method, headers });
-
-  it("204s a CORS preflight with no auth", async () => {
-    const res = await handleParity(req({}, "OPTIONS"), stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), "gittensory");
-    expect(res.status).toBe(204);
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
-  });
-
-  it("401s when the token is unset or wrong", async () => {
-    expect((await handleParity(req({ authorization: "Bearer anything" }), stubEnv(), "gittensory")).status).toBe(401); // unset
-    const env = stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" });
-    expect((await handleParity(req(), env, "gittensory")).status).toBe(401); // no header
-    expect((await handleParity(req({ authorization: "Bearer nope" }), env, "gittensory")).status).toBe(401); // wrong
-  });
-
-  it("200s with the parity report + per-row cutoverReady for the correct token", async () => {
-    const res = await handleParity(req({ authorization: "Bearer s3cret" }), stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), "gittensory", PARITY_DEPS);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
-    const body = (await res.json()) as { authoritative: string; shadow: string; cutoverReady: Array<{ project: string; ready: boolean }> };
-    expect(body.authoritative).toBe("reviewbot");
-    expect(body.shadow).toBe("gittensory");
-    // first row (40 paired, perfect agreement, 0 unsafe) is cutover-ready; the thin 5-sample row is not.
-    expect(body.cutoverReady).toEqual([{ project: "gittensory", ready: true }, { project: "gittensory", ready: false }]);
-  });
-
-  it("forwards the ?authoritative / ?shadow params (non-null branch) and uses ?days override", async () => {
-    let seen: { days: number; authoritative?: string; shadow?: string } | undefined;
-    const deps: StatsEvalDeps = {
-      computeGateEval: async () => ({ rows: [], hasSignal: false }),
-      computeTuningRecommendations: () => [],
-      computeGateParity: async (_env, o) => {
-        seen = { days: o.days, ...(o.authoritative !== undefined ? { authoritative: o.authoritative } : {}), ...(o.shadow !== undefined ? { shadow: o.shadow } : {}) };
-        return { authoritative: o.authoritative ?? "a", shadow: o.shadow ?? "s", hasSignal: false, rows: [] };
-      },
-    };
-    const r = new Request("https://w.dev/gittensory/internal/parity?days=14&authoritative=reviewbot&shadow=gittensory", {
-      method: "GET",
-      headers: { authorization: "Bearer s3cret" },
-    });
-    const res = await handleParity(r, stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), "gittensory", deps);
-    expect(res.status).toBe(200);
-    expect(seen).toEqual({ days: 14, authoritative: "reviewbot", shadow: "gittensory" });
-  });
-
-  it("omits authoritative/shadow (the {} branch) and defaults days to 90 when those params are absent", async () => {
-    let seen: { days: number; hasAuthoritative: boolean; hasShadow: boolean } | undefined;
-    const deps: StatsEvalDeps = {
-      computeGateEval: async () => ({ rows: [], hasSignal: false }),
-      computeTuningRecommendations: () => [],
-      computeGateParity: async (_env, o) => {
-        seen = { days: o.days, hasAuthoritative: "authoritative" in o, hasShadow: "shadow" in o };
-        return { authoritative: "reviewbot", shadow: "gittensory", hasSignal: false, rows: [] };
-      },
-    };
-    // No days / authoritative / shadow params → days defaults to 90, both spreads collapse to {}.
-    const r = new Request("https://w.dev/gittensory/internal/parity", { method: "GET", headers: { authorization: "Bearer s3cret" } });
-    const res = await handleParity(r, stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), "gittensory", deps);
-    expect(res.status).toBe(200);
-    expect(seen).toEqual({ days: 90, hasAuthoritative: false, hasShadow: false });
-  });
-
-  it("uses the default deps (defaultStatsEvalDeps) when none are injected — empty parity, no cutoverReady rows", async () => {
-    const res = await handleParity(req({ authorization: "Bearer s3cret" }), stubEnv({ LOOPOVER_REVIEW_STATS_TOKEN: "s3cret" }), "gittensory");
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { authoritative: string; cutoverReady: unknown[] };
-    // default emptyParity uses the URL's shadow=gittensory and a default authoritative=reviewbot.
-    expect(body.authoritative).toBe("reviewbot");
-    expect(body.cutoverReady).toEqual([]);
   });
 });
 

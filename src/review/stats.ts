@@ -481,34 +481,6 @@ export async function computeStats(
   };
 }
 
-/** GET /<slug>/internal/parity?days=90&shadow=loopover — bearer-gated, CORS-open cross-system gate
- *  parity feed (the per-repo cutover gate). Scoped to the agent's own project. Mirrors handleStats. */
-export async function handleParity(
-  request: Request,
-  env: Env,
-  project: string,
-  deps: StatsEvalDeps = defaultStatsEvalDeps,
-): Promise<Response> {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
-  const expected = readSecret(env, STATS_TOKEN_SECRET);
-  const provided = request.headers.get("authorization") ?? "";
-  if (!expected || !timingSafeEqual(provided, `Bearer ${expected}`)) {
-    return new Response("unauthorized", { status: 401, headers: CORS_HEADERS });
-  }
-  const params = new URL(request.url).searchParams;
-  const authoritative = params.get("authoritative");
-  const shadow = params.get("shadow");
-  const parity = await deps.computeGateParity(env, {
-    days: Number(params.get("days") ?? 90),
-    nowMs: Date.now(),
-    project,
-    ...(authoritative !== null ? { authoritative } : {}),
-    ...(shadow !== null ? { shadow } : {}),
-  });
-  const cutoverReady = parity.rows.map((r) => ({ project: r.project, ready: isParityCutoverReady(r) }));
-  return Response.json({ ...parity, cutoverReady }, { headers: CORS_HEADERS });
-}
-
 /** GET /stats/data?days=90&bucket=day — bearer-gated, CORS-open aggregate feed for the local dashboard. */
 export async function handleStats(request: Request, env: Env, deps: StatsEvalDeps = defaultStatsEvalDeps): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });

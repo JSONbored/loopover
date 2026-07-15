@@ -265,6 +265,7 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
 import { deleteLiveOverride, listOverrideAudit, sanitizeOverridePayload, type StorageEnv } from "../review/auto-apply";
+import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig } from "../review/ops";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { isRagEnabled } from "../review/rag-wire";
@@ -924,6 +925,16 @@ function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: 
  *  presence alone, is what keeps it from ever activating inside a self-hoster's own Node process. */
 export function isCloudflareWorkerRuntime(): boolean {
   return typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
+}
+
+/** The {@link OpsAgentConfig} the `/v1/internal/decision` + `/v1/internal/calibration` operator read endpoints
+ *  run under: the app slug (the `project` namespace the review agent records its `review_targets`/`review_audit`
+ *  rows under — the same `GITHUB_APP_SLUG` fallback operator-dashboard's config uses) plus the
+ *  `INTERNAL_JOB_TOKEN` secret name. The handlers' own `requireInternalAuth` re-checks that bearer, so they gate
+ *  on the SAME `INTERNAL_JOB_TOKEN` the `/v1/internal/*` middleware already enforces — one logical gate. */
+function internalOpsAgentConfig(env: Env): OpsAgentConfig {
+  const slug = env.GITHUB_APP_SLUG?.trim() || "loopover";
+  return { slug, secrets: { internalSecret: "INTERNAL_JOB_TOKEN" } };
 }
 
 export function createApp() {
@@ -3772,6 +3783,17 @@ export function createApp() {
     if (!isParityAuditEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     return c.json(await computePredictedGateAgreement(c.env, { days: 90, nowMs: Date.now() }));
   });
+
+  // Operator decision-trail: the full state + cached terminal decision + audit log for ONE review target, so any
+  // gate verdict is explainable on demand (?repo=<owner/repo>&number=<n>[&kind=pull_request|issue]). Bearer-gated
+  // by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN); handleInternalDecision re-checks that same token and
+  // 400s a missing/invalid repo+number, 404s an unknown target. Aggregate review state only — no PR content.
+  app.get("/v1/internal/decision", (c) => handleInternalDecision(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
+
+  // Operator calibration: confidence-vs-outcome curve + a recommended confidence floor for the review agent.
+  // Bearer-gated by the `/v1/internal/*` middleware (INTERNAL_JOB_TOKEN); handleInternalCalibration re-checks it.
+  // Fails safe to an empty-but-shaped report when there is no review signal yet. Aggregate counts only.
+  app.get("/v1/internal/calibration", (c) => handleInternalCalibration(c.req.raw, c.env, internalOpsAgentConfig(c.env)));
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };

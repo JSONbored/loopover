@@ -47,6 +47,27 @@ Consistent with the boundary below, the runner is **read/measure-only**: it prod
 metric but never acts on it (no autonomy bump, no threshold tune). Acting on the combined accuracy — the
 calibration-gated circuit-breaker — remains maintainer-only (#2352).
 
+## The task bridge: leakage-safe replay tasks by construction (#6160)
+
+Before a replay run can produce the `{ replayPlan, revealedHistory }` results the runner scores, the frozen
+snapshot at commit T has to become a replay *task* — and that task must not leak the future. The leakage-safe
+generator ([`lib/replay-task-generation.js`](../lib/replay-task-generation.js), #3011) was built for exactly this
+(scrub GitHub deep-links / `#refs` / commit SHAs that only exist post-T, and *reject* a freeze point whose context
+still carries an unscrubbable bare issue number), but it shipped with **no callers** — nothing turned a #3010
+snapshot into a task, so its scrub/lint was never run on real historical-replay data.
+
+[`lib/replay-task-bridge.js`](../lib/replay-task-bridge.js) (#6160) is that missing seam.
+`generateLeakageSafeReplayTask` reads the snapshot's own free-text context (README-at-T, commit subjects, reachable
+tag names — the fields a forward reference can hide in), derives the leakage context the snapshot already knows
+(every pre-T commit SHA it carries, so a snapshot's own commits are never mistaken for a leak), and hands both to
+`generateReplayTask`, which **lints then scrubs the frozen context before returning a task**. A snapshot whose
+context leaks post-T state is therefore either scrubbed or rejected up front, never frozen into a scorable task.
+
+Two edges are honestly out of scope here and remain the next connective steps: the git-only snapshot cannot know
+issue numbers, so `knownIssueMax` / `revealedIssueNumbers` are supplied by the caller; and the replay *executor*
+that drives a frozen task to a `replayPlan` (and nothing yet calls `exportReplaySnapshot`) is still unbuilt. This
+bridge wires the two halves that exist — snapshot → leakage-safe task.
+
 ## Value-weighting: durable correctness, not volume
 
 Raw merge/close precision is not the real objective, and a contributor reading a dashboard number should understand

@@ -69,7 +69,7 @@ const RETIRED_FIELD_MIGRATION_WARNINGS: Record<string, string> = {
   blockedPaths: "blockedPaths is retired; use settings.hardGuardrailGlobs for path holds.",
 };
 
-function unknownTopLevelWarnings(text: string | null | undefined): string[] {
+export function unknownTopLevelWarnings(text: string | null | undefined): string[] {
   const raw = text ?? "";
   const trimmed = raw.trim();
   if (!trimmed || isOversize(raw)) return [];

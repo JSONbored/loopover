@@ -11,6 +11,7 @@ import {
   type FocusManifest,
   type FocusManifestSource,
 } from "../signals/focus-manifest";
+import { unknownTopLevelWarnings } from "../selfhost/config-lint";
 
 export type FocusManifestValidationStatus = "ok" | "warn" | "error";
 
@@ -28,7 +29,10 @@ export function buildFocusManifestValidation(input: {
   source?: FocusManifestSource | undefined;
 }): FocusManifestValidationResult {
   const manifest = parseFocusManifestContent(input.content, input.source ?? "repo_file");
-  const warnings = [...manifest.warnings];
+  // Warn on unrecognized top-level fields (e.g. a typo'd `gates:` instead of `gate:`), matching the
+  // selfhost config-lint validator — parseFocusManifestContent reads only known fields, so a mistyped
+  // block is otherwise silently dropped with no warning (#5929).
+  const warnings = [...manifest.warnings, ...unknownTopLevelWarnings(input.content)];
   const normalized = focusManifestToNormalizedJson(manifest);
   return {
     present: manifest.present,

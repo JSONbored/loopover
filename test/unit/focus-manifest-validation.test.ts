@@ -129,4 +129,15 @@ maintainerRecap:
     expect(result.status).toBe("error");
     expect(result.warnings.join(" ")).toMatch(/must be a mapping/i);
   });
+
+  it("warns on an unrecognized top-level field (e.g. a typo'd `gates:` for `gate:`), matching config-lint (#5929)", () => {
+    // A recognized field plus a typo'd block: previously the typo was silently dropped with status "ok".
+    const result = buildFocusManifestValidation({ content: "wantedPaths:\n  - src/\ngates:\n  enabled: true\n" });
+    expect(result.status).toBe("warn");
+    expect(result.warnings.join(" ")).toMatch(/unknown top-level field/i);
+    expect(result.warnings.join(" ")).toMatch(/gates/);
+    // A clean manifest still carries no unknown-field warning.
+    const clean = buildFocusManifestValidation({ content: "wantedPaths:\n  - src/\n" });
+    expect(clean.warnings.join(" ")).not.toMatch(/unknown top-level field/i);
+  });
 });

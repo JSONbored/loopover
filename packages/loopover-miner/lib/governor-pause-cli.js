@@ -6,7 +6,6 @@
 // existing single-row scalar-state table, not a new store: a pause flag has no relational key of its own, the
 // same reasoning that table's other scalar fields (rate-limit buckets, cap usage) already rely on.
 
-import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { openGovernorState } from "./governor-state.js";
 
 const GOVERNOR_PAUSE_USAGE = "Usage: loopover-miner governor pause [--reason <text>] [--dry-run] [--json]";
@@ -84,8 +83,8 @@ function renderPauseState(pauseState) {
 export async function runGovernorPause(args, options = {}) {
   const parsed = parseGovernorPauseArgs(args);
   if ("error" in parsed) {
-    // Parse failures still honor `--json` via argv (#5914) — same contract as claim-ledger-cli.js.
-    return reportCliFailure(argsWantJson(args), parsed.error);
+    console.error(parsed.error);
+    return 2;
   }
 
   if (parsed.dryRun) {
@@ -110,14 +109,16 @@ export async function runGovernorPause(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    return reportCliFailure(parsed.json, describeCliError(error));
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
   }
 }
 
 export async function runGovernorResume(args, options = {}) {
   const parsed = parseGovernorResumeArgs(args);
   if ("error" in parsed) {
-    return reportCliFailure(argsWantJson(args), parsed.error);
+    console.error(parsed.error);
+    return 2;
   }
 
   if (parsed.dryRun) {
@@ -141,14 +142,16 @@ export async function runGovernorResume(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    return reportCliFailure(parsed.json, describeCliError(error));
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
   }
 }
 
 export async function runGovernorStatus(args, options = {}) {
   const parsed = parseNoArgsSubcommand(args, GOVERNOR_STATUS_USAGE);
   if ("error" in parsed) {
-    return reportCliFailure(argsWantJson(args), parsed.error);
+    console.error(parsed.error);
+    return 2;
   }
 
   try {
@@ -162,6 +165,7 @@ export async function runGovernorStatus(args, options = {}) {
       return 0;
     });
   } catch (error) {
-    return reportCliFailure(parsed.json, describeCliError(error));
+    console.error(error instanceof Error ? error.message : String(error));
+    return 2;
   }
 }

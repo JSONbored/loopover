@@ -1,5 +1,5 @@
 // #4777: retire every gittensory_-prefixed deprecated alias that #4775 left in place for one
-// minor-version deprecation cycle. This suite pins the post-retirement shape: exactly the 37
+// minor-version deprecation cycle. This suite pins the post-retirement shape: exactly the 41
 // canonical loopover_-prefixed stdio tools are registered, none of their old gittensory_-prefixed
 // alias names resolve anymore, no description carries a stale deprecation notice, and the CLI's
 // `tools --json` listing stays in lockstep with what the live server actually registers.
@@ -46,14 +46,14 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
   });
   afterEach(disconnect);
 
-  it("lists exactly 37 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
+  it("lists exactly 41 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
     const primary = names.filter((n) => n.startsWith("loopover_"));
     const legacy = names.filter((n) => n.startsWith("gittensory_"));
-    expect(primary.length).toBe(37);
+    expect(primary.length).toBe(41);
     expect(legacy.length).toBe(0);
-    expect(names.length).toBe(37);
+    expect(names.length).toBe(41);
   });
 
   it("no loopover_ tool's description carries a stale deprecation notice", async () => {
@@ -63,11 +63,11 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
     }
   });
 
-  it("`loopover-mcp tools --json` reports the same 37-tool count the live server registers", async () => {
+  it("`loopover-mcp tools --json` reports the same 41-tool count the live server registers", async () => {
     const { tools } = await client.listTools();
     const payload = JSON.parse(run(["tools", "--json"])) as { count: number; tools: Array<{ name: string }> };
     expect(payload.count).toBe(tools.length);
-    expect(payload.count).toBe(37);
+    expect(payload.count).toBe(41);
     expect([...payload.tools.map((t) => t.name)].sort()).toEqual([...tools.map((t) => t.name)].sort());
   });
 });

@@ -966,6 +966,9 @@ async function closeRepeatedDraftCyclingIfDetected(
   /* v8 ignore next -- unreachable given the call site's own author-only increment guarantee; see comment above. */
   if (!converter || !authorLogin || converter !== authorLogin) return;
   if (isProtectedAutomationAuthor(pr.authorLogin)) return;
+  // Honor the maintainer's trusted-contributor allowlist, same as the two sibling review-evasion guards
+  // (closeReviewEvasionSelfCloseIfReviewed / closeReviewEvasionDraftConversionIfReviewed) already do (#6165).
+  if (isAutoCloseExempt(pr.authorLogin, settings.autoCloseExemptLogins)) return;
   if (!pr.headSha) return;
   const headSha = pr.headSha;
   if (await hasMaintainerOrOwnerPermission(env, installationId, repoFullName, authorLogin)) return;

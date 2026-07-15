@@ -2952,6 +2952,22 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(strike?.outcome).toBe("completed");
     });
 
+    it("REGRESSION (#6165): honors settings.autoCloseExemptLogins -- the shared allowlist the two sibling review-evasion guards already use, even after a repeated cycle", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      await setupEvasionRepo(env, { autoCloseExemptLogins: ["contributor"] });
+      await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
+
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-exempt-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+      await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-exempt-2", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
+
+      // Exempt author: the repeated-draft-cycling guard must skip enforcement just like its two siblings do.
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
+      const audit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("github_app.review_evasion_closed").first<{ n: number }>();
+      expect(audit?.n).toBe(0);
+    });
+
     it("does nothing when reviewEvasionProtection is off, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);

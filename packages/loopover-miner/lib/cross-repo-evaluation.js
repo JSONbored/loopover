@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildCodingTaskSpec } from "./coding-task-spec.js";
 import { resolveMinerGoalSpec } from "./miner-goal-spec.js";
-import { resolveRepoCloneDir } from "./repo-clone.js";
+import { isValidRepoSegment, resolveRepoCloneDir } from "./repo-clone.js";
 import { detectRepoStack } from "./stack-detection.js";
 
 /** Failure taxonomy surfaced in per-repo reports (#4788). */
@@ -33,14 +33,8 @@ export const DEFAULT_CROSS_REPO_MANIFEST_RELATIVE_PATH = "benchmarks/cross-repo/
 export const MAX_CROSS_REPO_MANIFEST_BYTES = 65_536;
 export const MAX_CROSS_REPO_MANIFEST_REPOS = 100;
 
-const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
-
 function cloneEmptyManifest(warnings = []) {
   return { present: false, manifest: { repos: [] }, warnings };
-}
-
-function isPathTraversalSegment(segment) {
-  return segment === "." || segment === "..";
 }
 
 /** Canonical `owner/repo` with exactly one slash and safe segments; anything else → null. */
@@ -48,8 +42,7 @@ export function normalizeCrossRepoFullName(value) {
   if (typeof value !== "string") return null;
   const [owner, repo, extra] = value.trim().split("/");
   if (!owner || !repo || extra !== undefined) return null;
-  if (!REPO_SEGMENT_PATTERN.test(owner) || !REPO_SEGMENT_PATTERN.test(repo)) return null;
-  if (isPathTraversalSegment(owner) || isPathTraversalSegment(repo)) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return `${owner}/${repo}`;
 }
 

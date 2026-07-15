@@ -2,6 +2,12 @@ export function resolveRepoCloneBaseDir(env?: Record<string, string | undefined>
 
 export function resolveRepoCloneDir(repoFullName: string, env?: Record<string, string | undefined>): string;
 
+export const REPO_SEGMENT_PATTERN: RegExp;
+
+export function isPathTraversalSegment(segment: string): boolean;
+
+export function isValidRepoSegment(segment: unknown): boolean;
+
 export type EnsureRepoClonedResult = { ok: boolean; repoPath: string; error?: string };
 
 export type RunGitFn = (args: string[], cwd: string, timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;

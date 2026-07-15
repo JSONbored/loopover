@@ -58,6 +58,21 @@ describe("loopover-miner claim ledger CLI (#4290)", () => {
     expect(parseClaimClaimArgs(["acme", "42"])).toEqual({
       error: "Repository must be in owner/repo form.",
     });
+    // #5831: an unsafe path-traversal/character-set segment must be rejected here too, matching
+    // repo-clone.js's own validation, instead of being persisted as a claim-ledger key unvalidated --
+    // for both the owner and repo segment independently.
+    expect(parseClaimClaimArgs(["../etc", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseClaimClaimArgs(["acme/..", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseClaimClaimArgs(["acme baz/widgets", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseClaimClaimArgs(["acme/widgets baz", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
     expect(parseClaimClaimArgs(["acme/widgets", "0"])).toEqual({
       error: "issue number must be a positive integer.",
     });

@@ -55,6 +55,16 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(normalizeCrossRepoFullName("../evil/repo")).toBeNull();
       expect(normalizeCrossRepoFullName(12)).toBeNull();
     });
+
+    // #5831: this file's own copy of the path-safety check now comes from repo-clone.js's shared
+    // isValidRepoSegment -- exercise a traversal/invalid-character segment in both the owner and repo
+    // position (a "one slash" value, unlike "../evil/repo" above which is rejected earlier for having two).
+    it("rejects an unsafe owner or repo segment even with exactly one slash", () => {
+      expect(normalizeCrossRepoFullName("../foo")).toBeNull();
+      expect(normalizeCrossRepoFullName("foo/..")).toBeNull();
+      expect(normalizeCrossRepoFullName("ac me/widgets")).toBeNull();
+      expect(normalizeCrossRepoFullName("acme/wid gets")).toBeNull();
+    });
   });
 
   describe("parseCrossRepoEvaluationManifest", () => {

@@ -27,6 +27,7 @@ import { initEventLedger } from "./event-ledger.js";
 import { initAttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
 import { openWorktreeAllocator } from "./worktree-allocator.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { REJECTION_REASON_AI_USAGE_POLICY_BAN, REJECTION_REASON_OWN_SUBMISSION_REJECTED, resolveRejectionSignaled } from "./rejection-signal.js";
 import { cleanupAttemptWorktree, prepareAttemptWorktree } from "./attempt-worktree.js";
 import { fetchSelfReviewContext } from "./self-review-context.js";
@@ -46,6 +47,7 @@ function parseRepoTarget(value) {
   const trimmed = typeof value === "string" ? value.trim() : "";
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return `${owner}/${repo}`;
 }
 

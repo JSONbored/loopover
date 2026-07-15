@@ -165,6 +165,24 @@ describe("parseAttemptArgs (#5132)", () => {
     });
   });
 
+  // #5831: repo-clone.js's path-safety validation (character set + no "."/".." segments) must also gate
+  // this CLI's own early parser, not just the downstream prepareWorktree -> repo-clone.js call -- for
+  // both the owner and repo segment independently.
+  it("rejects a repo target with an unsafe owner or repo segment", () => {
+    expect(parseAttemptArgs(["../etc", "7", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: ../etc",
+    });
+    expect(parseAttemptArgs(["owner/..", "7", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: owner/..",
+    });
+    expect(parseAttemptArgs(["owner baz/repo", "7", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: owner baz/repo",
+    });
+    expect(parseAttemptArgs(["owner/repo baz", "7", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: owner/repo baz",
+    });
+  });
+
   it("rejects a non-positive or non-integer issue number", () => {
     expect(parseAttemptArgs(["acme/widgets", "0", "--miner-login", "alice"])).toEqual({
       error: "Issue number must be a positive integer: 0",

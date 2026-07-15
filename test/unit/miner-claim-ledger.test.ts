@@ -131,6 +131,17 @@ describe("loopover-miner claim ledger (#2314)", () => {
     expect(() => ledger.listClaims({ status: "bogus" as never })).toThrow("invalid_status");
   });
 
+  // #5831: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and persisted as a ledger key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const ledger = tempLedger();
+    expect(() => ledger.recordClaim({ repoFullName: "../etc", issueNumber: 1 })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.recordClaim({ repoFullName: "o/..", issueNumber: 1 })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.recordClaim({ repoFullName: "o baz/a", issueNumber: 1 })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.recordClaim({ repoFullName: "o/a baz", issueNumber: 1 })).toThrow("invalid_repo_full_name");
+  });
+
   it("claim-then-list, then release, excludes released rows from the active-only filter (#3354)", () => {
     const ledger = tempLedger();
     ledger.recordClaim({ repoFullName: "o/a", issueNumber: 10 });

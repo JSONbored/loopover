@@ -66,6 +66,26 @@ describe("loopover-miner event ledger CLI (#2290)", () => {
     });
   });
 
+  // #5831: --repo's own parser must reject the same class of malformed/unsafe identifier repo-clone.js
+  // already rejects, not just "missing slash" -- for both the owner and repo segment independently.
+  it("rejects an unsafe --repo value", () => {
+    expect(parseLedgerListArgs(["--repo", "acme"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseLedgerListArgs(["--repo", "../etc"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseLedgerListArgs(["--repo", "acme/.."])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseLedgerListArgs(["--repo", "acme baz/widgets"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseLedgerListArgs(["--repo", "acme/widgets baz"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+  });
+
   it("filterLedgerEvents and renderLedgerTable format rows", () => {
     const events: LedgerEntry[] = [
       {

@@ -1,5 +1,6 @@
 import { initEventLedger } from "./event-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 const LEDGER_LIST_USAGE =
   "Usage: loopover-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]";
@@ -8,7 +9,7 @@ function parseRepoArg(value, usage) {
   if (!value) return { error: usage };
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
-  if (!owner || !repo || extra !== undefined) {
+  if (!owner || !repo || extra !== undefined || !isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

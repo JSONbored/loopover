@@ -173,6 +173,32 @@ const skippedPrAuditShape = {
   limit: z.number().int().positive().optional(),
 };
 
+// #6152 — stdio counterparts of the `maintain` CLI subcommands (queue/approve/reject/pause/resume/
+// set-level/precision), so an agent on the local MCP server can drive the same maintainer controls
+// without shelling out. Each is backed by the exact REST endpoint its CLI subcommand already calls.
+const decidePendingActionShape = {
+  ...ownerRepoShape,
+  id: z.string().min(1),
+  // The approval-queue route's decision verb is accept|reject (the CLI's approve|reject alias maps onto it).
+  decision: z.enum(["accept", "reject"]),
+};
+
+const setAgentPausedShape = {
+  ...ownerRepoShape,
+  paused: z.boolean(),
+};
+
+const setActionAutonomyShape = {
+  ...ownerRepoShape,
+  action: z.enum(MAINTAIN_ACTION_CLASSES),
+  level: z.enum(MAINTAIN_AUTONOMY_LEVELS),
+};
+
+const gatePrecisionShape = {
+  ...ownerRepoShape,
+  windowDays: z.number().int().positive().optional(),
+};
+
 const loginShape = {
   login: z.string().min(1),
 };
@@ -601,6 +627,26 @@ const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_skipped_pr_audit",
     description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
+  },
+  {
+    name: "loopover_list_pending_actions",
+    description: "List the agent actions staged in a repo's approval queue awaiting a maintainer decision (id, action class, target, reason) — the stdio counterpart of `loopover-mcp maintain queue`. Maintainer-authenticated.",
+  },
+  {
+    name: "loopover_decide_pending_action",
+    description: "Accept (execute) or reject a staged approval-queue action by id — the stdio counterpart of `loopover-mcp maintain approve|reject <id>`. Accept runs it through the live executor; reject cancels it. Repo-scoped; a guessed id from another repo's queue cannot be decided. Maintainer access required.",
+  },
+  {
+    name: "loopover_set_agent_paused",
+    description: "Pause or resume ALL agent actions on a repo (the kill-switch toggle) — the stdio counterpart of `loopover-mcp maintain pause|resume`. Maintainer access required.",
+  },
+  {
+    name: "loopover_set_action_autonomy",
+    description: "Set the autonomy level for one action class via a read-merge-write so the other classes are left untouched — the stdio counterpart of `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
+  },
+  {
+    name: "loopover_get_gate_precision",
+    description: "Return per-gate-type false-positive telemetry for a repo's recorded gate blocks (blocked / blocked-then-merged counts and false-positive rates, with low-sample guards) — the stdio counterpart of `loopover-mcp maintain precision`. Optionally bound the ledger with windowDays. Maintainer-authenticated; read-only measurement.",
   },
 ];
 
@@ -1342,6 +1388,75 @@ registerStdioTool(
       "LoopOver feasibility gate.",
       buildFeasibilityVerdict({ claimStatus: ledgerClaimStatus ?? claimStatus, duplicateClusterRisk, issueStatus, found }),
     );
+  },
+);
+
+// #6152 maintainer controls, stdio side — thin proxies over the SAME REST endpoints the `maintain` CLI
+// subcommands already call (maintainCli, below), so an agent on the local server can run the queue /
+// kill-switch / autonomy / precision maintainer actions without shelling out. The API enforces maintainer
+// authorization; these never decide locally. The remote server mirrors the same five as MCP tools.
+registerStdioTool(
+  "loopover_list_pending_actions",
+  {
+    description: stdioToolDescription("loopover_list_pending_actions"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const queueBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/agent/pending-actions`;
+    return toolResult(`LoopOver agent approval queue for ${owner}/${repo}.`, await apiGet(queueBase));
+  },
+);
+
+registerStdioTool(
+  "loopover_decide_pending_action",
+  {
+    description: stdioToolDescription("loopover_decide_pending_action"),
+    inputSchema: decidePendingActionShape,
+  },
+  async ({ owner, repo, id, decision }) => {
+    const queueBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/agent/pending-actions`;
+    return toolResult(`LoopOver approval-queue decision for ${owner}/${repo}.`, await apiPost(`${queueBase}/${encodeURIComponent(id)}/${decision}`, {}));
+  },
+);
+
+registerStdioTool(
+  "loopover_set_agent_paused",
+  {
+    description: stdioToolDescription("loopover_set_agent_paused"),
+    inputSchema: setAgentPausedShape,
+  },
+  async ({ owner, repo, paused }) => {
+    const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult(`LoopOver agent actions ${paused ? "paused" : "resumed"} for ${owner}/${repo}.`, await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ agentPaused: paused }) }));
+  },
+);
+
+registerStdioTool(
+  "loopover_set_action_autonomy",
+  {
+    description: stdioToolDescription("loopover_set_action_autonomy"),
+    inputSchema: setActionAutonomyShape,
+  },
+  async ({ owner, repo, action, level }) => {
+    const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    // Read-merge-write so setting one action class never clears the others (mirrors maintainCli's set-level).
+    const current = await apiGet(`${repoBase}/settings`);
+    const autonomy = { ...(current.autonomy ?? {}), [action]: level };
+    return toolResult(`LoopOver set ${action} autonomy to ${level} for ${owner}/${repo}.`, await apiFetch(`${repoBase}/settings`, { method: "PUT", body: JSON.stringify({ autonomy }) }));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_gate_precision",
+  {
+    description: stdioToolDescription("loopover_get_gate_precision"),
+    inputSchema: gatePrecisionShape,
+  },
+  async ({ owner, repo, windowDays }) => {
+    const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    // A non-positive/absent window falls through to full history server-side, same as the CLI's ?windowDays.
+    const query = windowDays ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    return toolResult(`LoopOver gate precision for ${owner}/${repo}.`, await apiGet(`${repoBase}/gate-precision${query}`));
   },
 );
 

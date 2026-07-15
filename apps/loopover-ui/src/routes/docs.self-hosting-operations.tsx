@@ -408,9 +408,9 @@ DISCORD_REPO_WEBHOOKS={"owner/repoA":"https://discord.com/api/webhooks/...","own
         <strong>expected steady state, not a leak</strong> — this instance runs{" "}
         <code>scripts/deploy-selfhost-prebuilt.sh</code>, which rebuilds the image from the current
         git checkout on every deploy and intentionally keeps prior layers around in the build cache
-        for faster rebuilds. The <code>loopover-docker-safe-prune</code> systemd timer (below)
-        already runs daily against this exact instance and reclaims it on a schedule, so this is not
-        a number to chase down manually.
+        for faster rebuilds. The <code>loopover-docker-prune</code> systemd timer (below) already
+        runs daily against this exact instance and reclaims it on a schedule, so this is not a
+        number to chase down manually.
       </p>
 
       <h3>When a compose default might need to change</h3>

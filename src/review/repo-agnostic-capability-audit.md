@@ -5,7 +5,7 @@ or implicitly gittensory-specific assumptions that would need to become per-tena
 the review/merge authority model can be handed to an arbitrary rented repository. This is the checklist
 deliverable for **#5744**; a follow-up implementation issue would turn each open item below into config,
 gittensory's own values surviving only as the default. It mirrors the shape of the miner-side audit in
-[`packages/gittensory-miner/docs/repo-agnostic-capability-audit.md`](../../packages/gittensory-miner/docs/repo-agnostic-capability-audit.md)
+[`packages/loopover-miner/docs/repo-agnostic-capability-audit.md`](../../packages/loopover-miner/docs/repo-agnostic-capability-audit.md)
 (the #4780 audit that #4784 resolved). Audit-and-document only — no code changes here.
 
 ## Summary

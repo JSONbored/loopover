@@ -5,7 +5,7 @@
 #
 # This is the CLI-worker profile — it exposes NO public endpoints by default (unlike the root terraform/ module,
 # which provisions the multi-tenant ORB server behind Caddy on 80/443). After `terraform apply`: SSH in, drop your
-# secrets into a .gittensory-miner.env, and start the miner container against /data/miner. See README.md and
+# secrets into a .loopover-miner.env.example, and start the miner container against /data/miner. See README.md and
 # ../docker-compose.miner.yml / ../DEPLOYMENT.md for the run step.
 
 terraform {

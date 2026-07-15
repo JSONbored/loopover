@@ -53,6 +53,8 @@ export function printHelp(input) {
       "  loopover-miner governor metrics                              Print governor rate-limit/cap-usage counters in Prometheus text format",
       "  loopover-miner calibration [--json]                         Report predicted-vs-realized gate accuracy",
       "  loopover-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]",
+      "  loopover-miner idea-feasibility <claimStatus> <duplicateClusterRisk> [--not-resolvable] [--hint <text>]... [--json]",
+      "                                                                 Pre-compute feasibility gate for a freeform Rent-a-Loop idea (#5671)",
       "  loopover-miner hooks check --tool <name> --input <json> [--json]",
       "  loopover-miner state get <owner/repo> [--json]",
       "  loopover-miner state set <owner/repo> <idle|discovering|planning|preparing> [--dry-run] [--json]",

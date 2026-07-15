@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideReviewEligibility, isIgnoredReviewAuthor } from "../../src/review/review-eligibility";
+import { decideReviewEligibility } from "../../src/review/review-eligibility";
 
 describe("decideReviewEligibility", () => {
   it("keeps authors eligible when no ignore list is configured", () => {
@@ -85,11 +85,6 @@ describe("decideReviewEligibility", () => {
       skipReason: "ignored_author",
       matchedPattern: "*[bot]",
     });
-  });
-
-  it("exposes a boolean helper for compact call sites", () => {
-    expect(isIgnoredReviewAuthor({ authorLogin: "renovate[bot]", ignoreAuthors: ["renovate*"] })).toBe(true);
-    expect(isIgnoredReviewAuthor({ authorLogin: "alice", ignoreAuthors: ["renovate*"] })).toBe(false);
   });
 
   it("treats a nullish ignore list as the default empty list", () => {

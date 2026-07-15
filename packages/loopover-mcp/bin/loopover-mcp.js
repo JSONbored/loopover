@@ -444,7 +444,7 @@ const agentRunIdShape = {
 const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_repo_context",
-    description: "Return the canonical repo intelligence bundle from the private LoopOver API.",
+    description: "Return the LoopOver repo-context bundle for a repo — registration state, recommended contribution lane, queue health, duplicate-PR collisions, and config quality — from the private LoopOver API. Takes owner and repo.",
   },
   {
     name: "loopover_get_pr_reviewability",
@@ -496,7 +496,7 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_get_registry_changes",
-    description: "Return latest cached Gittensor registry change report.",
+    description: "Return the latest cached report of changes to the Gittensor repo registry — repositories added, removed, or re-registered upstream. Read-only; takes no parameters.",
   },
   {
     name: "loopover_get_upstream_drift",
@@ -522,11 +522,11 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_get_decision_pack",
-    description: "Return the canonical private contributor decision pack for a GitHub login.",
+    description: "Return the private decision pack for a contributor: the ranked repos and issues to work on next, with per-repo go/raise/avoid guidance. Takes login (the contributor's GitHub username).",
   },
   {
     name: "loopover_explain_repo_decision",
-    description: "Return the contributor/repo decision from the canonical decision pack.",
+    description: "Return the go/raise/avoid decision for one specific contributor-and-repo pair, drawn from that contributor's decision pack — narrower than loopover_get_decision_pack, which returns the whole pack. Takes login (GitHub username), owner, and repo.",
   },
   {
     name: "loopover_compare_pr_variants",
@@ -570,15 +570,15 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_agent_plan_next_work",
-    description: "Run the deterministic LoopOver base-agent planner for a GitHub login.",
+    description: "Run the deterministic LoopOver planner for a contributor and return the single recommended next unit of work (repo, issue, and action). Planning only — does not queue or start a run. Takes login (GitHub username); optional objective and repoFullName narrow the result.",
   },
   {
     name: "loopover_agent_start_run",
-    description: "Create a queued copilot-only LoopOver base-agent run.",
+    description: "Queue a new LoopOver automated-agent run for a contributor. Copilot mode only: it proposes and records work but takes no GitHub actions on its own. Takes objective (what to accomplish) and actorLogin (the contributor's GitHub username); returns the new run's id and status.",
   },
   {
     name: "loopover_agent_get_run",
-    description: "Fetch a persisted LoopOver base-agent run.",
+    description: "Fetch a previously queued LoopOver agent run by its id, including current status and planned actions. Takes runId (the id returned by loopover_agent_start_run).",
   },
   {
     name: "loopover_agent_explain_next_action",

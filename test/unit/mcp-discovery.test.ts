@@ -78,6 +78,34 @@ describe("MCP workspace root boundaries", () => {
   });
 });
 
+describe("MCP tool discovery", () => {
+  beforeEach(connect);
+  afterEach(disconnect);
+
+  it("every tool exposes a non-empty description unique enough to disambiguate from its siblings", async () => {
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    // An LLM client picks a tool from its description text, so two tools sharing identical
+    // wording are indistinguishable and get mis-selected (#6245).
+    const owners = new Map<string, string>();
+    for (const tool of tools) {
+      const description = (tool.description ?? "").trim();
+      expect(description.length, `empty description for ${tool.name}`).toBeGreaterThan(0);
+      const clash = owners.get(description);
+      expect(clash, `${tool.name} duplicates the description of ${clash}`).toBeUndefined();
+      owners.set(description, tool.name);
+    }
+  });
+
+  it("tool descriptions do not expose forbidden public terms", async () => {
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      const text = [tool.name, tool.description ?? ""].join(" ");
+      expect(text).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+    }
+  });
+});
+
 describe("MCP resource discovery", () => {
   beforeEach(connect);
   afterEach(disconnect);

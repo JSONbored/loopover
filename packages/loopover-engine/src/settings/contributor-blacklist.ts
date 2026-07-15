@@ -5,9 +5,11 @@
 // command-authorization.ts (normalize → typed policy + warnings).
 import type { ContributorBlacklistEntry } from "../types/manifest-deps-types.js";
 
-// GitHub logins: 1–39 chars, alphanumeric or single hyphens (not leading/trailing). Anything else is dropped so a
-// malformed entry can never widen the match or break the close path.
-const GITHUB_LOGIN = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
+// GitHub logins: 1–39 chars, alphanumeric or single hyphens (not leading/trailing), plus an optional trailing
+// `[bot]` App-actor suffix (e.g. `dependabot[bot]`) so a maintainer can blacklist a repo-specific bot — the same
+// login shape auto-close-exempt.ts already accepts for exemptions (#6190). Anything else is dropped so a malformed
+// entry can never widen the match or break the close path.
+const GITHUB_LOGIN = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}(?:\[bot\])?$/;
 const MAX_ENTRIES = 1000;
 const MAX_REASON_CHARS = 200;
 const MAX_EVIDENCE = 10;

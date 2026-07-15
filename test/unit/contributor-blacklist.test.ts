@@ -67,6 +67,23 @@ describe("normalizeContributorBlacklist (#1425)", () => {
     expect(entries.map((e) => e.login)).toEqual(["a-b", "user123", "a".repeat(39)]);
   });
 
+  it("accepts a `[bot]`-suffixed App-actor login and enforces it against a matching author (#6190)", () => {
+    const { entries, warnings } = normalizeContributorBlacklist(["evilbot[bot]", "dependabot[bot]", "github-actions[bot]"]);
+    expect(entries.map((e) => e.login)).toEqual(["evilbot[bot]", "dependabot[bot]", "github-actions[bot]"]);
+    expect(warnings).toEqual([]);
+    // enforcement path: a PR author with the blacklisted bot login is actually matched (case-insensitively)
+    expect(isAuthorBlacklisted("evilbot[bot]", entries)).toBe(true);
+    expect(isAuthorBlacklisted("EvilBot[bot]", entries)).toBe(true);
+    expect(findBlacklistEntry("dependabot[bot]", entries)?.login).toBe("dependabot[bot]");
+    // a non-blacklisted bot is not matched
+    expect(isAuthorBlacklisted("innocent[bot]", entries)).toBe(false);
+  });
+
+  it("still drops malformed bot-ish logins (bare `[bot]`, doubled suffix, wrong-case or mid-string brackets)", () => {
+    const { entries } = normalizeContributorBlacklist(["[bot]", "weird[bot][bot]", "user[Bot]", "a[bot]b"]);
+    expect(entries).toEqual([]);
+  });
+
   it("de-duplicates by case-insensitive login, keeping the FIRST (richer) occurrence", () => {
     const { entries } = normalizeContributorBlacklist([{ login: "Mona", reason: "first" }, { login: "mona", reason: "second" }]);
     expect(entries).toEqual([{ login: "Mona", reason: "first" }]);

@@ -40,6 +40,19 @@ describe("gate-verdict/finding-severity calibration convergence (#6170)", () => 
     expect(result.compositeScore).toBe(0.4);
   });
 
+  it("finding-severity: non-zero (default) weights take the normalized path, NOT the objective-only fallback (covers the total>0 branch)", () => {
+    const result = computeFindingSeverityCompositeCalibrationScore({
+      objectiveAnchor: 0.4,
+      pairwise: 0.4,
+      findingSeverity: [
+        { repoFullName: "acme/widgets", replayRunId: "replay-1", reviewRunId: "review-1", optedIn: true, tiers: [{ tier: "blocker", total: 2, confirmed: 2 }] },
+      ],
+    });
+    // Default (non-zero) weights sum to > 0, so the fallback is NOT taken: every component keeps a real share.
+    expect(result.weights.objectiveAnchor).toBeGreaterThan(0);
+    expect(result.weights.structuredFindingSeverity).toBeGreaterThan(0);
+  });
+
   it("gate-verdict: preserves a malformed-repo (invalid_repo) rejected row instead of dropping it; keeps a valid repo and drops a non-string one", () => {
     const result = computeGateVerdictCompositeCalibrationScore({
       objectiveAnchor: 0.5,

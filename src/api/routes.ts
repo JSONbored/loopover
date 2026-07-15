@@ -264,6 +264,7 @@ import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
+import { deleteLiveOverride, listOverrideAudit, sanitizeOverridePayload, type StorageEnv } from "../review/auto-apply";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
 import { isRagEnabled } from "../review/rag-wire";
@@ -2698,6 +2699,36 @@ export function createApp() {
     const gate = await requireRepoMaintainer(c, fullName);
     if (gate instanceof Response) return gate;
     return c.json(await loadMaintainerNoiseReport(c.env, fullName));
+  });
+
+  // #6168 self-tune override admin: the operator-facing read side of the self-tune override store. The
+  // LOOPOVER_REVIEW_SELFTUNE loop only ever writes override_audit rows automatically (via the cron's promote
+  // path); this exposes the audit trail so a self-host operator can inspect it without direct D1 access.
+  // Maintainer-scoped + read-only, mirroring the gate-precision route above.
+  app.get("/v1/repos/:owner/:repo/selftune/overrides/audit", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const limitRaw = Number(c.req.query("limit"));
+    const limit = limitRaw > 0 ? limitRaw : undefined;
+    const audit = await listOverrideAudit(c.env as unknown as StorageEnv, fullName, limit);
+    return c.json({ repoFullName: fullName, audit });
+  });
+
+  // #6168 self-tune override admin: clear the LIVE override for a repo (the operator's "reset to config base"
+  // control). An optional JSON body is treated as a confirmation of the override being cleared and is run
+  // through the same sanitizer the apply path uses — a malformed payload is rejected (400) rather than
+  // silently ignored. Maintainer-scoped; the automatic promote path is untouched.
+  app.delete("/v1/repos/:owner/:repo/selftune/overrides", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const body = await c.req.json().catch(() => null);
+    if (body !== null && sanitizeOverridePayload(body) === null) {
+      return c.json({ error: "invalid_override_payload" }, 400);
+    }
+    await deleteLiveOverride(c.env as unknown as StorageEnv, fullName);
+    return c.json({ repoFullName: fullName, cleared: true });
   });
 
   // One-click "enable advisory mode" — turns on the gate + deterministic rules in advisory (non-blocking)
@@ -5526,6 +5557,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoGatePrecisionPath(path)) return true;
   if (isRepoMaintainerNoisePath(path)) return true;
+  if (isRepoSelftuneOverridesPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
   if (isRepoFocusManifestPath(path)) return true;
@@ -5565,6 +5597,13 @@ function isRepoGatePrecisionPath(path: string): boolean {
 
 function isRepoMaintainerNoisePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/maintainer-noise$/.test(path);
+}
+
+// #6168: let a browser (session) maintainer reach the self-tune override admin routes; the route's own
+// requireRepoMaintainer then enforces per-repo authority (a non-maintainer session → 403). Matches the
+// gate-precision allowlist entry above. Covers both the audit read and the live-override delete.
+function isRepoSelftuneOverridesPath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/selftune\/overrides(?:\/audit)?$/.test(path);
 }
 
 function isRepoSettingsPreviewPath(path: string): boolean {

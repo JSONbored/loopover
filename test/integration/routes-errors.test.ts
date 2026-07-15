@@ -3,6 +3,7 @@ import { createApp } from "../../src/api/routes";
 import { RateLimiter } from "../../src/auth/rate-limit";
 import { createSessionForGitHubUser } from "../../src/auth/security";
 import { persistSignalSnapshot, upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
+import { loadOverride, recordOverrideAudit, type StorageEnv, writeLiveOverride } from "../../src/review/auto-apply";
 import { handleMcpRequest } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -1178,6 +1179,65 @@ describe("api route guards and error branches", () => {
     );
     expect(updated.status).toBe(200);
     await expect(updated.json()).resolves.toMatchObject({ commentMode: "all_prs", checkRunDetailLevel: "standard", backfillEnabled: false });
+  });
+
+  it("exposes and clears self-tune overrides for operators, rejecting unauthorized callers (#6168)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const storage = env as unknown as StorageEnv;
+    const fullName = "JSONbored/gittensory";
+
+    // Seed a live override + two audit rows for the repo the operator will inspect/clear.
+    await writeLiveOverride(storage, fullName, { confidenceFloor: 0.95, scopeCap: { files: 3, lines: 120 } });
+    await recordOverrideAudit(storage, fullName, "override.promoted", { floor: 0.95 });
+    await recordOverrideAudit(storage, fullName, "override.applied", { cap: "3f/120l" });
+
+    // ── Audit read ────────────────────────────────────────────────────────────────────────────────
+    // Unauthenticated → 401 (rejected by the auth middleware before the handler).
+    const auditUnauthenticated = await app.request(`/v1/repos/${fullName}/selftune/overrides/audit`, {}, env);
+    expect(auditUnauthenticated.status).toBe(401);
+
+    // A non-maintainer session reaches the handler (allowlisted path) but is rejected per-repo → 403.
+    const { token: contributorToken } = await createSessionForGitHubUser(env, { login: "plain-contributor", id: 7788 });
+    const auditForbidden = await app.request(`/v1/repos/${fullName}/selftune/overrides/audit`, { headers: { authorization: `Bearer ${contributorToken}` } }, env);
+    expect(auditForbidden.status).toBe(403);
+
+    // Operator (static token), no ?limit → the full trail.
+    const audit = await app.request(`/v1/repos/${fullName}/selftune/overrides/audit`, { headers: apiHeaders(env) }, env);
+    expect(audit.status).toBe(200);
+    const auditBody = (await audit.json()) as { repoFullName: string; audit: { eventType: string; detail: string | null; createdAt: string }[] };
+    expect(auditBody.repoFullName).toBe(fullName);
+    expect(auditBody.audit.map((row) => row.eventType).sort()).toEqual(["override.applied", "override.promoted"]);
+
+    // ?limit trims the trail (covers the limit>0 branch vs the absent-param default above).
+    const auditLimited = await app.request(`/v1/repos/${fullName}/selftune/overrides/audit?limit=1`, { headers: apiHeaders(env) }, env);
+    expect(auditLimited.status).toBe(200);
+    const limitedBody = (await auditLimited.json()) as { audit: unknown[] };
+    expect(limitedBody.audit).toHaveLength(1);
+
+    // ── Live-override clear ───────────────────────────────────────────────────────────────────────
+    const clearUnauthenticated = await app.request(`/v1/repos/${fullName}/selftune/overrides`, { method: "DELETE" }, env);
+    expect(clearUnauthenticated.status).toBe(401);
+
+    const clearForbidden = await app.request(`/v1/repos/${fullName}/selftune/overrides`, { method: "DELETE", headers: { authorization: `Bearer ${contributorToken}` } }, env);
+    expect(clearForbidden.status).toBe(403);
+
+    // A malformed confirmation body is rejected before anything is cleared (400) — the override survives.
+    const clearInvalid = await app.request(`/v1/repos/${fullName}/selftune/overrides`, { method: "DELETE", headers: apiHeaders(env), body: JSON.stringify({ confidenceFloor: 2 }) }, env);
+    expect(clearInvalid.status).toBe(400);
+    await expect(clearInvalid.json()).resolves.toMatchObject({ error: "invalid_override_payload" });
+    expect(await loadOverride(storage, fullName)).not.toBeNull();
+
+    // A valid confirmation body clears the live override.
+    const clearWithBody = await app.request(`/v1/repos/${fullName}/selftune/overrides`, { method: "DELETE", headers: apiHeaders(env), body: JSON.stringify({ confidenceFloor: 0.95 }) }, env);
+    expect(clearWithBody.status).toBe(200);
+    await expect(clearWithBody.json()).resolves.toMatchObject({ repoFullName: fullName, cleared: true });
+    expect(await loadOverride(storage, fullName)).toBeNull();
+
+    // Clearing again with no body is an idempotent no-op (covers the empty-body → null branch).
+    const clearNoBody = await app.request(`/v1/repos/${fullName}/selftune/overrides`, { method: "DELETE", headers: apiHeaders(env) }, env);
+    expect(clearNoBody.status).toBe(200);
+    await expect(clearNoBody.json()).resolves.toMatchObject({ cleared: true });
   });
 });
 

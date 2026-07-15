@@ -47,6 +47,16 @@ describe("linked-issue satisfaction cache (#1961/#3906)", () => {
     expect(await getCachedLinkedIssueSatisfaction(env, "o/r", 9, "sha1", 1, freeFingerprint)).toEqual({ status: "ok", result: { status: "partial", rationale: "r", confidence: 0.7 }, estimatedNeurons: 6 });
   });
 
+  it("does not collide when a '|' inside one text field would shift a delimiter boundary (#5939)", async () => {
+    // A bare "|"-join let an unescaped "|" move a field boundary: {issueText: "foo|bar", prTitle: "baz"}
+    // and {issueText: "foo", prTitle: "bar|baz"} (other fields equal) serialized identically and hashed
+    // to the same fingerprint. JSON.stringify escapes the field values, so the two stay distinct.
+    const base = { byok: false, provider: null, model: null } as const;
+    const a = await linkedIssueSatisfactionCacheInputFingerprint({ ...base, issueText: "foo|bar", prTitle: "baz" });
+    const b = await linkedIssueSatisfactionCacheInputFingerprint({ ...base, issueText: "foo", prTitle: "bar|baz" });
+    expect(a).not.toBe(b);
+  });
+
   it("upserts — a re-run at the same key replaces the stored assessment", async () => {
     const env = createTestEnv();
     const fingerprint = await fp();

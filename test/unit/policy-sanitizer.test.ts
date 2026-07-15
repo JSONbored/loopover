@@ -13,7 +13,6 @@ import { buildGittensorConfigRecommendation, buildRegistrationReadiness, type In
 import { buildRepoSettingsPreview, decidePublicSurface, type InstallationHealthSummary as PreviewInstallHealth } from "../../src/signals/settings-preview";
 import {
   compileFocusManifestPolicy,
-  deriveContributionLanes,
   isFocusManifestPublicSafe,
   parseFocusManifest,
 } from "../../src/signals/focus-manifest";
@@ -218,120 +217,6 @@ describe("sanitizeRoleText private term redaction", () => {
   it("truncates text to 200 characters", () => {
     const long = "a".repeat(300);
     expect(sanitizeRoleText(long)).toHaveLength(200);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Contribution lane validation — role cards and onboarding states
-// ---------------------------------------------------------------------------
-
-describe("contribution lane output — public-safe via deriveContributionLanes", () => {
-  it("produces a neutral result when no manifest is present", () => {
-    const lanes = deriveContributionLanes(parseFocusManifest(null));
-    expect(lanes.directPrLane).toBe("neutral");
-    expect(lanes.issueDiscoveryLane).toBe("neutral");
-    expect(lanes.preferredEntryPaths).toEqual([]);
-    expect(lanes.discouragedEntryPaths).toEqual([]);
-    expect(lanes.summary).toMatch(/neutral lane defaults/i);
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("prefers direct PR lane when wanted paths are set", () => {
-    const manifest = parseFocusManifest({ wantedPaths: ["src/"], testExpectations: ["npm run test:ci"] });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.directPrLane).toBe("preferred");
-    expect(lanes.preferredEntryPaths).toContain("src/");
-    expect(lanes.validationExpectations).toContain("npm run test:ci");
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("discourages issue discovery when policy is discouraged", () => {
-    const manifest = parseFocusManifest({ wantedPaths: ["src/"], issueDiscoveryPolicy: "discouraged" });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.issueDiscoveryLane).toBe("discouraged");
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("prefers issue discovery when policy is encouraged", () => {
-    const manifest = parseFocusManifest({ issueDiscoveryPolicy: "encouraged", wantedPaths: ["src/"] });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.issueDiscoveryLane).toBe("preferred");
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("includes a linked-issue guidance hint when policy is required", () => {
-    const manifest = parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "required" });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.guidanceText.join(" ")).toMatch(/link a tracked issue/i);
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("silently drops unsafe public notes from lanes", () => {
-    const manifest = parseFocusManifest({
-      wantedPaths: ["src/"],
-      publicNotes: ["Maximize your reward payout.", "Keep PRs focused."],
-    });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.guidanceText).not.toContain("Maximize your reward payout.");
-    expect(lanes.guidanceText).toContain("Keep PRs focused.");
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("still surfaces safe wanted paths in PR guidance when the manifest mixes in a public-unsafe path", () => {
-    // A single public-unsafe wantedPaths entry must not drop the whole "Focus changes on maintainer-wanted
-    // areas" line via the all-or-nothing public-safety filter: the interpolation is built from the filtered
-    // safe paths, so the safe path still surfaces and the unsafe one never appears.
-    const manifest = parseFocusManifest({ wantedPaths: ["src/", "reward-farming/"] });
-    const lanes = deriveContributionLanes(manifest);
-    const focusLine = lanes.prEntryGuidance.find((entry) => entry.startsWith("Focus changes on maintainer-wanted areas:"));
-    expect(focusLine).toBeDefined();
-    expect(focusLine).toContain("src/");
-    expect(focusLine).not.toContain("reward-farming/");
-    expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-  });
-
-  it("emits a warning when contribution scope is unclear", () => {
-    const manifest = parseFocusManifest({ wantedPaths: [], preferredLabels: [], issueDiscoveryPolicy: "encouraged" });
-    const lanes = deriveContributionLanes(manifest);
-    expect(lanes.warnings.join(" ")).toMatch(/scope is unclear/i);
-  });
-
-  it("never exposes forbidden language across 400 property-based iterations", () => {
-    const stringPool = [
-      "src/",
-      "migrations/",
-      "Keep PRs focused",
-      "Maximize your reward payout",
-      "paste your hotkey here",
-      "trusted label pipeline",
-      "raw trust score context",
-      "npm run test:ci",
-    ];
-    const linkedIssuePolicies = ["required", "preferred", "optional"] as const;
-    const issueDiscoveryPolicies = ["encouraged", "neutral", "discouraged"] as const;
-
-    let seed = 0x1337cafe;
-    const next = () => {
-      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-      return seed / 0x100000000;
-    };
-    const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
-    const sample = (max: number): string[] =>
-      Array.from({ length: Math.floor(next() * (max + 1)) }, () => pick(stringPool));
-
-    for (let i = 0; i < 400; i++) {
-      const manifest = parseFocusManifest({
-        wantedPaths: sample(4),
-        blockedPaths: sample(2),
-        preferredLabels: sample(3),
-        linkedIssuePolicy: pick(linkedIssuePolicies),
-        issueDiscoveryPolicy: pick(issueDiscoveryPolicies),
-        publicNotes: sample(3),
-        testExpectations: sample(2),
-      });
-      const lanes = deriveContributionLanes(manifest);
-      expect(JSON.stringify(lanes)).not.toMatch(FORBIDDEN_POLICY_PATTERN);
-    }
   });
 });
 

@@ -14,7 +14,7 @@ describe("loopover-mcp CLI — lint-pr-text", () => {
   });
 
   async function env() {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     return { LOOPOVER_API_URL: url, LOOPOVER_TOKEN: "session-token", LOOPOVER_CONFIG_DIR: tempDir, LOOPOVER_API_TIMEOUT_MS: "1000" };
   }

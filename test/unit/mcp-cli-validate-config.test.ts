@@ -14,7 +14,7 @@ describe("loopover-mcp CLI — validate-config", () => {
   });
 
   async function env(options: Parameters<typeof startFixtureServer>[0] = {}) {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer(options);
     return { LOOPOVER_API_URL: url, LOOPOVER_TOKEN: "session-token", LOOPOVER_CONFIG_DIR: tempDir, LOOPOVER_API_TIMEOUT_MS: "1000" };
   }

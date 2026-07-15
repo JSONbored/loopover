@@ -19,7 +19,7 @@ export function run(args: string[], env: Record<string, string> = {}) {
     env: {
       ...process.env,
       LOOPOVER_API_TIMEOUT_MS: "1000",
-      LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+      LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-cli-config-")),
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -36,7 +36,7 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
         env: {
           ...process.env,
           LOOPOVER_API_TIMEOUT_MS: "1000",
-          LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "gittensory-cli-config-")),
+          LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-cli-config-")),
           ...env,
         },
       },
@@ -56,7 +56,7 @@ export function git(cwd: string, ...args: string[]) {
 }
 
 export function createPacketRepo() {
-  const cwd = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+  const cwd = mkdtempSync(join(tmpdir(), "loopover-cli-"));
   git(cwd, "init");
   git(cwd, "config", "user.email", "test@example.com");
   git(cwd, "config", "user.name", "LoopOver Test");

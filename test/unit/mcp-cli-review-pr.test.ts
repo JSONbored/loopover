@@ -387,7 +387,7 @@ describe("loopover-mcp CLI — review-pr", () => {
   });
 
   it("requires --login", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     await expect(runAsync(["review-pr", "--cwd", tempDir], {})).rejects.toThrow(
       /Pass --login/,
     );

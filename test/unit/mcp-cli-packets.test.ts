@@ -24,7 +24,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("caches last-good decision packs and returns explicitly stale local fallback when the API is unavailable", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -74,7 +74,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("ignores incompatible decision-pack cache entries and clears cache entries on request", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -99,7 +99,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("lists cached decision packs with safe metadata only", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -132,7 +132,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("cache list --format ndjson streams one JSON object per cached entry", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -156,7 +156,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("does not use stale decision-pack cache created by a different local token", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const fixtureOptions: { decisionPackStatus?: number } = {};
     const url = await startFixtureServer(fixtureOptions);
     const env = {
@@ -177,7 +177,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("does not use stale decision-pack cache for authorization failures", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const fixtureOptions: { decisionPackStatus?: number } = {};
     const url = await startFixtureServer(fixtureOptions);
     const env = {
@@ -193,7 +193,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("does not use stale decision-pack cache for non-JSON authorization failures", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const fixtureOptions: {
       decisionPackStatus?: number;
       decisionPackErrorBody?: string;
@@ -222,7 +222,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("does not use stale decision-pack cache when local credentials are missing", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -245,7 +245,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("runs base-agent CLI commands against API fixtures", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const env = {
       LOOPOVER_API_URL: url,
@@ -274,7 +274,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("prints copy-paste public-safe markdown for agent packet output", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
     git(tempDir, "config", "user.name", "LoopOver Test");
@@ -303,7 +303,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("rejects unsafe server-provided packet markdown before non-json output", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
     git(tempDir, "config", "user.name", "LoopOver Test");
@@ -343,7 +343,7 @@ describe("loopover-mcp CLI — packets", () => {
   }, 45000);
 
   it("sends bounded structured validation summaries without local logs", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
     git(tempDir, "config", "user.name", "LoopOver Test");
@@ -437,7 +437,7 @@ describe("loopover-mcp CLI — packets", () => {
   });
 
   it("classifies nonzero validation status phrases as failed", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     git(tempDir, "init");
     git(tempDir, "config", "user.email", "test@example.com");
     git(tempDir, "config", "user.name", "LoopOver Test");

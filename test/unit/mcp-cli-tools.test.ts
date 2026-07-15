@@ -23,7 +23,7 @@ describe("loopover-mcp CLI — tools", () => {
   });
 
   it("lists every registered stdio tool with a non-empty description", async () => {
-    configDir = mkdtempSync(join(tmpdir(), "gittensory-cli-tools-"));
+    configDir = mkdtempSync(join(tmpdir(), "loopover-cli-tools-"));
     const apiUrl = await startFixtureServer();
     transport = new StdioClientTransport({
       command: "node",

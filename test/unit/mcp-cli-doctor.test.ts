@@ -24,7 +24,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("runs doctor against a local health/session fixture", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const secretRoot = join(tempDir, "secret-gittensor");
     const secretConfigDir = join(tempDir, "secret-config");
@@ -104,7 +104,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("uses doctor as a first-run auth checklist when no local session is configured", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
@@ -133,7 +133,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("reports a stale global install with an exact upgrade command and npx fallback", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ latestVersion: "9.9.9" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -154,7 +154,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("reports a current install without upgrade guidance", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ latestVersion: mcpPackageJson.version, minMcpVersion: "0.5.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -181,7 +181,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("orders prerelease npm versions correctly (release outranks prerelease of the same core)", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     // Local 0.5.0 (release) vs latest 0.5.0-rc.1 (prerelease) -> local is ahead, not stale.
     const aheadUrl = await startFixtureServer({ latestVersion: "0.5.0-rc.1" });
     const ahead = JSON.parse(
@@ -209,7 +209,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("treats an unavailable npm registry as a warning, not a hard failure", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ npmStatus: 500, compatibilityStatus: 404 });
     const status = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -235,7 +235,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("flags a stale install in doctor with upgrade remediation", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ latestVersion: oneMinorAboveLocal });
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
@@ -252,7 +252,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("reports API compatibility as unavailable when the API does not advertise a minimum version", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ compatibilityStatus: 404 });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -276,7 +276,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("falls back to legacy health compatibility when the endpoint is unavailable", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ compatibilityStatus: 503, minMcpVersion: "0.4.0" });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -290,7 +290,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("uses API recommended package metadata when the npm registry is unavailable", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ npmStatus: 500, latestRecommendedMcpVersion: oneMinorAboveLocal });
     const payload = JSON.parse(
       await runAsync(["status", "--json"], {
@@ -309,7 +309,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("flags API compatibility mismatches with upgrade guidance", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ minMcpVersion: "9.0.0" });
     const env = {
       LOOPOVER_API_URL: url,
@@ -346,7 +346,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("keeps source upload unsupported and fail-closed in the doctor checklist", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--repo", "JSONbored/gittensory", "--json"], {
@@ -373,7 +373,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("points missing local repo readiness at an explicit repo-aware doctor command", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     const payload = JSON.parse(
       await runAsync(["doctor", "--cwd", tempDir, "--json"], {
@@ -398,7 +398,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("does not print configured tokens or local absolute paths in status or doctor output", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer({ latestVersion: "9.9.9", minMcpVersion: "9.0.0" });
     const env = {
       LOOPOVER_API_URL: url,
@@ -421,7 +421,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("keeps doctor exit code 0 by default even when a check fails", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     // No token configured -> the auth check fails -> status "needs_attention".
     const payload = JSON.parse(
@@ -436,7 +436,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("exits non-zero from doctor --exit-code when a check fails", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     let exitCode = 0;
     let stdout = "";
@@ -463,7 +463,7 @@ describe("loopover-mcp CLI — doctor", () => {
   });
 
   it("keeps doctor --exit-code at 0 when checks pass", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "gittensory-cli-"));
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-cli-"));
     const url = await startFixtureServer();
     // runAsync resolves only on a zero exit code, so reaching the assertion proves exit 0.
     const payload = JSON.parse(

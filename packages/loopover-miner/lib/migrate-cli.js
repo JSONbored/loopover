@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { readSchemaVersion } from "./schema-version.js";
+import { argsWantJson, reportCliFailure } from "./cli-error.js";
 import { openClaimLedger, resolveClaimLedgerDbPath } from "./claim-ledger.js";
 import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
 import { initGovernorLedger, resolveGovernorLedgerDbPath } from "./governor-ledger.js";
@@ -17,6 +18,8 @@ import { initPredictionLedger, resolvePredictionLedgerDbPath } from "./predictio
 import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "./portfolio-queue.js";
 import { initRunStateStore, resolveRunStateDbPath } from "./run-state.js";
 import { openPlanStore, resolvePlanStoreDbPath } from "./plan-store.js";
+
+const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
 const STORES = [
   { name: "event-ledger", resolveDbPath: resolveEventLedgerDbPath, open: initEventLedger },
@@ -97,9 +100,16 @@ export function runMigrateChecks(env = process.env, stores = STORES) {
 }
 
 export function runMigrate(args = [], env = process.env) {
+  const json = argsWantJson(args);
+  // Validated BEFORE any store is opened: a typo'd flag must fail fast rather than silently run a full
+  // migration sweep that ignored what the operator actually typed (#5917). `--json` is the only flag this
+  // command takes, so anything else -- an unrecognized flag or a stray positional -- is rejected.
+  const unknown = args.find((token) => token !== "--json");
+  if (unknown !== undefined) return reportCliFailure(json, `Unknown option: ${unknown}. ${MIGRATE_USAGE}`, 2);
+
   const results = runMigrateChecks(env);
   const failed = results.filter((result) => !result.ok);
-  if (args.includes("--json")) {
+  if (json) {
     console.log(JSON.stringify({ ok: failed.length === 0, stores: results }, null, 2));
   } else {
     for (const result of results) {

@@ -161,6 +161,40 @@ describe("loopover-miner migrate (#4871)", () => {
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("1 store(s) failed"));
   });
 
+  it("REGRESSION: runMigrate rejects an unknown flag with exit 2 instead of silently migrating (#5917)", () => {
+    const env = tempEnv();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(runMigrate(["--dryrun"], env)).toBe(2);
+    expect(errorLog).toHaveBeenCalledWith("Unknown option: --dryrun. Usage: loopover-miner migrate [--json]");
+    // Fails fast: no store was swept, so no per-store line was ever printed.
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: runMigrate rejects a stray positional argument with exit 2 (#5917)", () => {
+    const env = tempEnv();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(runMigrate(["event-ledger"], env)).toBe(2);
+    expect(errorLog).toHaveBeenCalledWith("Unknown option: event-ledger. Usage: loopover-miner migrate [--json]");
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("an unknown-argument rejection honors the --json contract on stdout (#5917)", () => {
+    const env = tempEnv();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(runMigrate(["--dryrun", "--json"], env)).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "Unknown option: --dryrun. Usage: loopover-miner migrate [--json]",
+    });
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+
   it("makes no network calls", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     runMigrateChecks(tempEnv());

@@ -458,6 +458,55 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(1);
   });
 
+  it("#4794: never cross-contaminates two tenants' installation tokens under concurrent cold-cache mints", async () => {
+    // Every code path in the token cache (installationTokenCache Map, inFlightMints single-flight Map) is keyed
+    // by installationId -- this proves that keying actually holds under real concurrency, not just in isolation.
+    // A tenant's rented-loop execution context must never receive another tenant's credential (#4794's
+    // acceptance criterion), and GitHub's own API-side scoping is not what this test is exercising -- it proves
+    // OUR cache/mint code never hands out the wrong installation's token to begin with.
+    const privateKey = await generatePrivateKeyPem();
+    const mintsByInstallation = new Map<number, number>();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      const match = /\/app\/installations\/(\d+)\/access_tokens/.exec(url);
+      if (match) {
+        const installationId = Number(match[1]);
+        const count = (mintsByInstallation.get(installationId) ?? 0) + 1;
+        mintsByInstallation.set(installationId, count);
+        return Response.json({
+          token: `installation-${installationId}-token-${count}`,
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const TENANT_A = 111;
+    const TENANT_B = 222;
+
+    // Interleave 5 concurrent callers per tenant, both tenants racing on a cold cache at once.
+    const [aTokens, bTokens] = await Promise.all([
+      Promise.all(Array.from({ length: 5 }, () => createInstallationToken(env, TENANT_A))),
+      Promise.all(Array.from({ length: 5 }, () => createInstallationToken(env, TENANT_B))),
+    ]);
+
+    // Each tenant single-flights to exactly one mint of its OWN installation -- no cross-tenant coalescing.
+    expect(mintsByInstallation.get(TENANT_A)).toBe(1);
+    expect(mintsByInstallation.get(TENANT_B)).toBe(1);
+    expect(new Set(aTokens)).toEqual(new Set([`installation-${TENANT_A}-token-1`]));
+    expect(new Set(bTokens)).toEqual(new Set([`installation-${TENANT_B}-token-1`]));
+    // No caller for tenant A ever received a token minted for tenant B, or vice versa.
+    expect(aTokens.every((t) => t.startsWith(`installation-${TENANT_A}-`))).toBe(true);
+    expect(bTokens.every((t) => t.startsWith(`installation-${TENANT_B}-`))).toBe(true);
+
+    // The warm cache holds the same isolation: re-reading each tenant's token afterward returns ONLY its own.
+    expect(await createInstallationToken(env, TENANT_A)).toBe(`installation-${TENANT_A}-token-1`);
+    expect(await createInstallationToken(env, TENANT_B)).toBe(`installation-${TENANT_B}-token-1`);
+    expect(mintsByInstallation.get(TENANT_A)).toBe(1); // warm read, no second mint
+    expect(mintsByInstallation.get(TENANT_B)).toBe(1);
+  });
+
   it("re-mints an installation token once the cached one is within the expiry safety margin", async () => {
     const privateKey = await generatePrivateKeyPem();
     let mints = 0;
@@ -2459,6 +2508,36 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     expect(second).toBe("ext-token-1"); // second served from the external store, not re-minted
     expect(mints).toBe(1);
     expect(store.has(321)).toBe(true); // written to the external store, not the in-isolate Map
+  });
+
+  it("#4794: the external store (fleet-scale, shared across replicas) also never cross-contaminates two tenants", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const store = new Map<number, { token: string; expiresAtMs: number }>();
+    setInstallationTokenStore({
+      get: async (id) => store.get(id) ?? null,
+      set: async (id, v) => void store.set(id, v),
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const match = /\/app\/installations\/(\d+)\/access_tokens/.exec(input.toString());
+      if (match) {
+        return Response.json({
+          token: `ext-installation-${match[1]}-token`,
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const TENANT_A = 555;
+    const TENANT_B = 666;
+    await Promise.all([createInstallationToken(env, TENANT_A), createInstallationToken(env, TENANT_B)]);
+
+    expect(store.get(TENANT_A)?.token).toBe(`ext-installation-${TENANT_A}-token`);
+    expect(store.get(TENANT_B)?.token).toBe(`ext-installation-${TENANT_B}-token`);
+    // Re-reading each after the other was written confirms no shared-key overwrite occurred.
+    expect(await createInstallationToken(env, TENANT_A)).toBe(`ext-installation-${TENANT_A}-token`);
+    expect(await createInstallationToken(env, TENANT_B)).toBe(`ext-installation-${TENANT_B}-token`);
   });
 
   it("isCacheableGithubUrl: caches safe GitHub GETs but not sensitive endpoints", () => {

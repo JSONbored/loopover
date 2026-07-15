@@ -202,7 +202,7 @@ Prefer these over a markdown checklist for any new tracker/epic:
 
 ```graphql
 mutation { addSubIssue(input: { issueId: "<parent node id>", subIssueId: "<child node id>" }) { issue { number } } }
-mutation { addBlockedBy(input: { issueId: "<blocked node id>", blockedById: "<blocker node id>" }) { issue { number } } }
+mutation { addBlockedBy(input: { issueId: "<blocked node id>", blockingIssueId: "<blocker node id>" }) { issue { number } } }
 ```
 
 Get an issue's GraphQL node ID via `gh api graphql -f query='query { repository(owner:"JSONbored", name:"gittensory") { issue(number: N) { id } } }'` (note: literal query strings without file interpolation are fine with `-f`; only the `@file` file-read syntax requires `-F`).

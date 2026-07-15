@@ -39,6 +39,7 @@ import { buildAttemptGovernorContext, buildAttemptLoopInput } from "./attempt-in
 import { getAttemptHistory } from "./portfolio-queue.js";
 import { loadReputationHistory, recordOwnSubmission } from "./governor-state.js";
 import { runMinerAttempt } from "./attempt-runner.js";
+import { resolveGitHubToken } from "./github-token-resolution.js";
 
 const ATTEMPT_USAGE =
   "Usage: loopover-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--json]";
@@ -137,7 +138,10 @@ export function buildAttemptDeps(env, ledgers) {
     runSlopAssessment: (input) => runSlopAssessment(input),
     appendAttemptLogEvent: (event) => ledgers.attemptLog.appendAttemptLogEvent(event),
     claimLedger: ledgers.claimLedger,
-    fetchLiveIssueSnapshot: (repoFullName, issueNumber) => fetchLiveIssueSnapshot(repoFullName, issueNumber, { githubToken: env.GITHUB_TOKEN }),
+    // resolveGitHubToken (#6116): GITHUB_TOKEN env override wins outright, else a live token from the
+    // authenticated `loopover-mcp login` session -- cached in memory, so repeat calls within this process
+    // don't repeatedly hit the session-fetch endpoint after the first successful resolution.
+    fetchLiveIssueSnapshot: async (repoFullName, issueNumber) => fetchLiveIssueSnapshot(repoFullName, issueNumber, { githubToken: await resolveGitHubToken(env) }),
     eventLedger: ledgers.eventLedger,
     governorLedgerAppend: (event) => ledgers.governorLedger.appendGovernorEvent(event),
     nowMs: ledgers.nowMs,
@@ -317,7 +321,7 @@ export async function runAttempt(args, options = {}) {
     // Real SelfReviewContext (#5145): issue/PR/manifest data at live-gate fidelity for the target repo.
     const fetchReviewContext = options.fetchSelfReviewContext ?? fetchSelfReviewContext;
     const reviewContext = await fetchReviewContext(parsed.repoFullName, {
-      githubToken: env.GITHUB_TOKEN,
+      githubToken: await resolveGitHubToken(env),
       contributorLogin: parsed.minerLogin,
       linkedIssues: [parsed.issueNumber],
     });

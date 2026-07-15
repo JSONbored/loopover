@@ -15,6 +15,7 @@ import { resolveMinerVersion } from "./version.js";
 import { checkStoreIntegrity, describeError } from "./store-maintenance.js";
 import { resolveEventLedgerDbPath } from "./event-ledger.js";
 import { resolveGovernorLedgerDbPath } from "./governor-ledger.js";
+import { hasGitHubTokenSource } from "./github-token-resolution.js";
 import { resolvePredictionLedgerDbPath } from "./prediction-ledger.js";
 import { resolvePortfolioQueueDbPath } from "./portfolio-queue.js";
 import { resolveClaimLedgerDbPath } from "./claim-ledger.js";
@@ -334,17 +335,22 @@ function nonEmptyEnv(value) {
   return typeof value === "string" && value.length > 0;
 }
 
-/** `GITHUB_TOKEN` presence (#5170). A purely offline string check — `doctor` never calls GitHub — but a missing
- *  token fails every real attempt the moment it tries to push a branch or open a PR, so surface it up front
- *  rather than mid-run. Reports presence only; the token value itself is never included in the detail. */
+/** GitHub token presence (#5170, extended by #6116). A purely offline check — `doctor` never calls GitHub — but
+ *  a missing token fails every real attempt the moment it tries to push a branch or open a PR, so surface it up
+ *  front rather than mid-run. Checks BOTH a GITHUB_TOKEN env override AND a recorded `loopover-mcp login`
+ *  session (hasGitHubTokenSource, offline: reads the local config file, makes no network call) -- otherwise a
+ *  user who only ran `loopover-mcp login` (the new primary flow) would see a spurious "not set" warning even
+ *  though AMS would resolve a live token from that session at attempt time. A session recorded here is not
+ *  re-verified as still valid/unexpired -- only an actual attempt (or resolveGitHubToken itself) discovers
+ *  that. Reports presence only; no token value is ever included in the detail. */
 export function checkGitHubTokenPresent(env = process.env) {
-  const present = nonEmptyEnv(env.GITHUB_TOKEN);
+  const present = hasGitHubTokenSource(env);
   return {
     name: "github-token",
     ok: present,
     detail: present
-      ? "GITHUB_TOKEN is set"
-      : "GITHUB_TOKEN is not set — attempts that push a branch or open a PR will fail",
+      ? "A GitHub token is available (GITHUB_TOKEN or a loopover-mcp login session)"
+      : "No GitHub token available — run `loopover-mcp login`, or set GITHUB_TOKEN, before attempts that push a branch or open a PR",
   };
 }
 

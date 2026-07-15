@@ -6,6 +6,7 @@ import {
 } from "./manage-status.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { resolveGitHubToken } from "./github-token-resolution.js";
 
 const MANAGE_POLL_USAGE =
   "Usage: loopover-miner manage poll <owner/repo> <pr#> [--branch <name>] [--dry-run] [--json]";
@@ -187,7 +188,7 @@ export async function runManagePoll(args = [], options = {}) {
           ensurePortfolioRow: false,
           pollCheckRuns: options.pollCheckRuns,
           fetchFn: options.fetchFn,
-          githubToken: options.githubToken ?? process.env.GITHUB_TOKEN ?? "",
+          githubToken: options.githubToken ?? (await resolveGitHubToken(process.env)) ?? "",
           apiBaseUrl: options.apiBaseUrl,
           maxAttempts: options.maxAttempts,
           minIntervalMs: options.minIntervalMs,
@@ -228,7 +229,7 @@ export async function runManagePoll(args = [], options = {}) {
         ensurePortfolioRow: options.ensurePortfolioRow ?? true,
         pollCheckRuns: options.pollCheckRuns,
         fetchFn: options.fetchFn,
-        githubToken: options.githubToken ?? process.env.GITHUB_TOKEN ?? "",
+        githubToken: options.githubToken ?? (await resolveGitHubToken(process.env)) ?? "",
         apiBaseUrl: options.apiBaseUrl,
         maxAttempts: options.maxAttempts,
         minIntervalMs: options.minIntervalMs,

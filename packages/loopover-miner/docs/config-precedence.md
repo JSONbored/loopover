@@ -74,6 +74,19 @@ There is **no `.loopover-miner.yml` field** for coding-agent mode today.
 
 There is **no `.loopover-miner.yml` forge block** today; `--api-base-url` follows the same CLI → programmatic → default shape for the API host.
 
+### GitHub token value (git operations, #6116)
+
+**Sources:** `GITHUB_TOKEN` (operator env), a `loopover-mcp login` session recorded in the `loopover-mcp` config file (`~/.config/loopover/config.json` by default), programmatic `options.githubToken`.
+
+**Order (`lib/github-token-resolution.js`'s `resolveGitHubToken`, called once at the top of each CLI entrypoint — `loop`, `attempt`, `init --verify-token`, `manage poll` — then threaded down explicitly to every real GitHub caller):**
+
+1. Caller-supplied `options.githubToken` (an explicit override passed programmatically) wins outright.
+2. Else `GITHUB_TOKEN` env — an existing self-host operator's PAT setup keeps working unchanged, no filesystem or network access.
+3. Else a live token fetched from the authenticated `loopover-mcp login` session (`POST /v1/auth/github/token`, cached in memory for the process's lifetime; a failed fetch is not cached, so a later call retries rather than staying stuck).
+4. Else `null` — the caller's own existing "no token" failure mode applies (git operations requiring auth fail the same way they did before this feature existed).
+
+This is a distinct concern from "Discover forge credential env var name" above, which resolves the *name* of an env var to read, not the token *value* itself; `discover --token-env` is unaffected by this section.
+
 ### Local SQLite store paths
 
 **Sources:** per-store `LOOPOVER_MINER_*_DB` env var, then `LOOPOVER_MINER_CONFIG_DIR`, then XDG default (`lib/local-store.js`).

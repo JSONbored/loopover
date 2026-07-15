@@ -350,17 +350,39 @@ describe("loopover-miner doctor — credential presence checks (#5170)", () => {
   describe("checkGitHubTokenPresent", () => {
     it("passes when GITHUB_TOKEN is set and non-empty", () => {
       const check = checkGitHubTokenPresent({ GITHUB_TOKEN: "ghp_present" });
-      expect(check).toMatchObject({ name: "github-token", ok: true, detail: "GITHUB_TOKEN is set" });
+      expect(check).toMatchObject({
+        name: "github-token",
+        ok: true,
+        detail: "A GitHub token is available (GITHUB_TOKEN or a loopover-mcp login session)",
+      });
     });
 
-    it("fails with an actionable message when GITHUB_TOKEN is unset", () => {
-      const check = checkGitHubTokenPresent({});
+    it("fails with an actionable message when GITHUB_TOKEN is unset and no loopover-mcp session exists", () => {
+      const root = tempRoot();
+      const check = checkGitHubTokenPresent({ LOOPOVER_CONFIG_DIR: root });
       expect(check.ok).toBe(false);
-      expect(check.detail).toBe("GITHUB_TOKEN is not set — attempts that push a branch or open a PR will fail");
+      expect(check.detail).toBe(
+        "No GitHub token available — run `loopover-mcp login`, or set GITHUB_TOKEN, before attempts that push a branch or open a PR",
+      );
     });
 
     it("fails when GITHUB_TOKEN is present but empty (the length>0 branch)", () => {
-      expect(checkGitHubTokenPresent({ GITHUB_TOKEN: "" }).ok).toBe(false);
+      const root = tempRoot();
+      expect(checkGitHubTokenPresent({ GITHUB_TOKEN: "", LOOPOVER_CONFIG_DIR: root }).ok).toBe(false);
+    });
+
+    it("passes (#6116) when no GITHUB_TOKEN is set but a loopover-mcp login session is recorded on disk", () => {
+      const root = tempRoot();
+      writeFileSync(
+        join(root, "config.json"),
+        JSON.stringify({ profiles: { default: { session: { token: "session-token" } } } }),
+      );
+      const check = checkGitHubTokenPresent({ LOOPOVER_CONFIG_DIR: root });
+      expect(check).toMatchObject({
+        name: "github-token",
+        ok: true,
+        detail: "A GitHub token is available (GITHUB_TOKEN or a loopover-mcp login session)",
+      });
     });
   });
 

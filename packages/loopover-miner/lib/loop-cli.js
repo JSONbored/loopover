@@ -40,6 +40,7 @@ import { isRejectedPr } from "./rejection-state-machine.js";
 import { buildLoopClosureSummary } from "./loop-closure.js";
 import { attemptLoopReentry } from "./loop-reentry.js";
 import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
+import { resolveGitHubToken } from "./github-token-resolution.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "@loopover/engine";
 
 const LOOP_USAGE =
@@ -264,10 +265,12 @@ export async function runLoop(args, options = {}) {
 
   // Resolved ONCE, at the CLI-entrypoint layer, mirroring manage-poll.js's own runManagePoll (its
   // recordManagePollSnapshot callee has no env fallback of its own either -- the top-level CLI function is
-  // where `process.env.GITHUB_TOKEN` gets read, then threaded down explicitly to every real GitHub caller).
+  // where the GitHub token gets resolved, then threaded down explicitly to every real GitHub caller).
   // pollPrDisposition (unlike runDiscover, which falls back to process.env.GITHUB_TOKEN internally) has NO
   // such fallback -- an unresolved githubToken here would silently poll unauthenticated.
-  const githubToken = options.githubToken ?? env.GITHUB_TOKEN ?? "";
+  // resolveGitHubToken (#6116): GITHUB_TOKEN env override wins outright, else a live token from the
+  // authenticated `loopover-mcp login` session -- cached in memory for this process's lifetime.
+  const githubToken = options.githubToken ?? (await resolveGitHubToken(env)) ?? "";
 
   async function runDiscoveryOnce() {
     await runDiscoverFn(discoverArgv(parsed), {

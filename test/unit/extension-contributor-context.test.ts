@@ -7,8 +7,10 @@ import {
   redactExtensionText,
 } from "../../src/signals/extension-contributor-context";
 import type { ContributorOpportunity, PublicReadinessScore } from "../../src/signals/engine";
+import { PUBLIC_UNSAFE_TERMS } from "../../src/signals/redaction";
 
-const FORBIDDEN_PUBLIC_TERMS = /wallet|hotkey|coldkey|mnemonic|reward|payout|farming|raw trust|trust score|scoreability|reviewability internals|private ranking/i;
+const FORBIDDEN_PUBLIC_TERMS =
+  /wallet|hotkey|coldkey|mnemonic|reward|payout|farming|raw trust|trust score|scoreability|cohort|ranking|miner-originated|human-originated|reviewability/i;
 
 function opportunity(over: Partial<ContributorOpportunity> = {}): ContributorOpportunity {
   return {
@@ -58,6 +60,64 @@ describe("redactExtensionText", () => {
 
   it("leaves safe text untouched", () => {
     expect(redactExtensionText("Maintainer-created issue, good fit.")).toBe("Maintainer-created issue, good fit.");
+  });
+
+  // #5840: FORBIDDEN_EXTENSION_TERMS had drifted from redaction.ts's canonical PUBLIC_UNSAFE_TERMS and let
+  // these economic-identity terms through unredacted.
+  it("redacts bare cohort, previously leaked", () => {
+    expect(redactExtensionText("Cohort diagnostics flagged this PR")).toBe("[redacted] diagnostics flagged this PR");
+  });
+
+  it("redacts bare ranking, previously leaked", () => {
+    expect(redactExtensionText("Your ranking dropped this week")).toBe("Your [redacted] dropped this week");
+  });
+
+  it("redacts miner-originated / human-originated, previously leaked", () => {
+    expect(redactExtensionText("This looks miner-originated, not human-originated")).toBe("This looks [redacted], not [redacted]");
+    // the [-_\s]? separator matches underscore and space forms too, matching PUBLIC_UNSAFE_TERMS.
+    expect(redactExtensionText("miner_originated and human originated")).toBe("[redacted] and [redacted]");
+  });
+
+  it("redacts standalone reviewability while still redacting the compound forms as a whole", () => {
+    expect(redactExtensionText("Reviewability is limited right now")).toBe("[redacted] is limited right now");
+    expect(redactExtensionText("reviewability internals exposed")).toBe("[redacted] exposed");
+    expect(redactExtensionText("private reviewability data")).toBe("[redacted] data");
+  });
+
+  it("stays in sync with the canonical PUBLIC_UNSAFE_TERMS vocabulary (drift guard)", () => {
+    // Every economic-identity term the canonical boundary blocks must also be scrubbed by this overlay, so the
+    // two vocabularies can't silently diverge again. Bare `score` is the one intentional exception: this
+    // surface returns readiness as public BANDS, and redaction.ts's own note records sibling surfaces that
+    // deliberately do not redact a bare `score`.
+    const canonical = new RegExp(PUBLIC_UNSAFE_TERMS, "i");
+    const intentionalExceptions = new Set(["public score"]);
+    const samples = [
+      "reward",
+      "wallet",
+      "hotkey",
+      "coldkey",
+      "mnemonic",
+      "payout",
+      "farming",
+      "raw trust",
+      "trust score",
+      "ranking",
+      "cohort",
+      "miner-originated",
+      "human-originated",
+      "private reviewability",
+      "reviewability",
+      "public score", // intentional exception -- canonical matches it, this overlay deliberately does not
+    ];
+    for (const sample of samples) {
+      expect(canonical.test(sample)).toBe(true); // sanity: the canonical vocabulary really does flag it
+      const redacted = redactExtensionText(sample);
+      if (intentionalExceptions.has(sample)) {
+        expect(redacted).toBe(sample); // band-gated: intentionally left as-is
+      } else {
+        expect(redacted).toBe("[redacted]");
+      }
+    }
   });
 });
 

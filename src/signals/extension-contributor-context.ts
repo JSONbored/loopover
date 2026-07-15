@@ -21,8 +21,14 @@ export function contributorReadinessBand(total: number): ContributorReadinessBan
 // The upstream builders are already contributor-facing, but every string is re-checked here and any
 // forbidden private term (reward/wallet/key material/raw trust score/etc.) is redacted rather than
 // leaked. Kept local (no import) so this module stays cycle-free and the API never 500s on a stray term.
+// The bare `cohort`/`ranking`/`miner-originated`/`human-originated`/`reviewability` alternatives (and the
+// `[-_\s]?` separator on the originated pair) mirror src/signals/redaction.ts's canonical PUBLIC_UNSAFE_TERMS
+// so this overlay stops leaking economic-identity terms that surface drifted away from (#5840). The compound
+// `reviewability` terms stay ordered before the bare word so "reviewability internals"/"private reviewability"
+// still match as a whole. Kept hand-synced (no import) so this module stays cycle-free; a drift-guard test
+// (extension-contributor-context.test.ts) fails if these diverge from PUBLIC_UNSAFE_TERMS again.
 const FORBIDDEN_EXTENSION_TERMS =
-  /\b(?:rewards?|payouts?|farming|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|score[-\s]?(?:estimate|preview|prediction)s?|estimated[-\s]?scores?|scoreability|private[-\s]?reviewability|reviewability[-\s]?internals?|private[-\s]?rankings?)\b/gi;
+  /\b(?:rewards?|payouts?|farming|wallets?|hotkeys?|coldkeys?|seed[-\s]?phrases?|mnemonics?|private[-\s]?keys?|raw[-\s]?trust(?:[-\s]?scores?)?|trust[-\s]?scores?|score[-\s]?(?:estimate|preview|prediction)s?|estimated[-\s]?scores?|scoreability|cohort\w*|ranking\w*|miner[-_\s]?originated|human[-_\s]?originated|private[-\s]?reviewability|reviewability[-\s]?internals?|reviewability|private[-\s]?rankings?)\b/gi;
 
 export function redactExtensionText(text: string): string {
   return text.replace(FORBIDDEN_EXTENSION_TERMS, "[redacted]").replace(/\s+/g, " ").trim();

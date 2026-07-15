@@ -647,6 +647,28 @@ describe("buildFocusManifestGuidance", () => {
     expect(missingTests?.detail).not.toContain("wallet");
   });
 
+  it("filters public-unsafe wantedPaths/preferredLabels entries out of finding details (#5945)", () => {
+    // manifest_off_focus and manifest_missing_preferred_label interpolate wantedPaths/preferredLabels
+    // directly into contributor-facing detail text -- both are maintainer-authored and must be filtered
+    // through isFocusManifestPublicSafe before interpolation, same as testExpectations above (#3304).
+    const unsafeManifest = parseFocusManifest({ wantedPaths: ["wallet-onboarding/"], preferredLabels: ["reward-tracking"] });
+    const guidance = buildFocusManifestGuidance({
+      manifest: unsafeManifest,
+      changedPaths: ["src/x.ts"],
+      labels: [],
+      linkedIssueCount: 1,
+      testFileCount: 1,
+    });
+
+    const offFocus = guidance.findings.find((finding) => finding.code === "manifest_off_focus");
+    expect(offFocus?.detail).toBe("No changed path matches the maintainer-wanted patterns.");
+    expect(offFocus?.detail).not.toContain("wallet");
+
+    const missingLabel = guidance.findings.find((finding) => finding.code === "manifest_missing_preferred_label");
+    expect(missingLabel?.detail).toBe("No maintainer-preferred label applied.");
+    expect(missingLabel?.detail).not.toContain("reward");
+  });
+
   it("treats passing validation as satisfying test expectations", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], linkedIssueCount: 1, testFileCount: 0, passedValidationCount: 2 });
     expect(guidance.findings.some((finding) => finding.code === "manifest_missing_tests")).toBe(false);

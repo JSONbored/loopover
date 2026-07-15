@@ -1660,6 +1660,40 @@ describe("local branch analysis", () => {
     expect(JSON.stringify(analysis.prPacket)).not.toMatch(/reward|score|wallet|hotkey|farming|payout|ranking|trust score/i);
   });
 
+  it("does not leak public-unsafe wantedPaths/preferredLabels through localFindings (#5945)", () => {
+    // manifestGuidance.findings is mapped verbatim into localFindings (the actual /v1 API + MCP
+    // exposure path), so a maintainer-authored public-unsafe wantedPaths/preferredLabels entry must
+    // already be filtered out of the finding detail upstream in buildFocusManifestGuidance -- this
+    // closes the contributor-facing exposure path, not just the guidance-builder unit above.
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: "entrius/allways-ui",
+        branchName: "fix-cache",
+        body: "Fixes #7",
+        changedFiles: [{ path: "src/cache.ts", additions: 4, deletions: 0, status: "modified" }],
+        focusManifest: {
+          source: "repo_file",
+          wantedPaths: ["wallet-onboarding/"],
+          preferredLabels: ["reward-tracking"],
+        },
+      },
+      repo,
+      issues: [{ repoFullName: repo.fullName, number: 7, title: "Cache refresh", state: "open", labels: [], linkedPrs: [] }],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    const offFocus = analysis.localFindings.find((finding) => finding.code === "manifest_off_focus");
+    expect(offFocus?.detail).not.toContain("wallet");
+    const missingLabel = analysis.localFindings.find((finding) => finding.code === "manifest_missing_preferred_label");
+    expect(missingLabel?.detail).not.toContain("reward");
+    expect(JSON.stringify(analysis.localFindings)).not.toMatch(/wallet|reward/i);
+  });
+
   it("ignores a malformed focus manifest without breaking analysis", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

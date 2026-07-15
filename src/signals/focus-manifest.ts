@@ -685,11 +685,16 @@ export function buildFocusManifestGuidance(args: {
   }
 
   if (manifest.wantedPaths.length > 0 && matchedWantedPaths.length === 0 && changedPaths.length > 0) {
+    // Public-safety filter before interpolation (#5945) -- mirrors safeExpectations below. manifest.wantedPaths
+    // is maintainer-authored and never public-safety-checked upstream; without this, a public-unsafe pattern
+    // would leak verbatim into a contributor-facing finding.
+    const safeWantedPaths = manifest.wantedPaths.filter(isFocusManifestPublicSafe).slice(0, 5);
+    const wantedPathsDetail = safeWantedPaths.length > 0 ? ` (${safeWantedPaths.join(", ")})` : "";
     findings.push({
       code: "manifest_off_focus",
       severity: "warning",
       title: "Change is outside maintainer-wanted areas",
-      detail: `No changed path matches the maintainer-wanted patterns (${manifest.wantedPaths.slice(0, 5).join(", ")}).`,
+      detail: `No changed path matches the maintainer-wanted patterns${wantedPathsDetail}.`,
       action: "Refocus the change onto a maintainer-wanted area or explain why this out-of-focus work is needed.",
     });
     publicNextSteps.push("Refocus onto the maintainer-wanted areas, or explain why this out-of-focus change is needed.");
@@ -706,11 +711,20 @@ export function buildFocusManifestGuidance(args: {
   }
 
   if (manifest.preferredLabels.length > 0 && preferredLabelHits.length === 0) {
+    // Public-safety filter before interpolation (#5945) -- mirrors safeExpectations below. Unlike
+    // manifest_off_focus, this finding's ENTIRE detail is built from the label list, so a zero-safe-entries
+    // fallback needs its own sentence, not just a dropped parenthetical -- the title text already says the
+    // same thing and is a static, always-public-safe string.
+    const safePreferredLabels = manifest.preferredLabels.filter(isFocusManifestPublicSafe).slice(0, 5);
+    const preferredLabelsDetail =
+      safePreferredLabels.length > 0
+        ? `Maintainer prefers labels: ${safePreferredLabels.join(", ")}.`
+        : "No maintainer-preferred label applied.";
     findings.push({
       code: "manifest_missing_preferred_label",
       severity: "info",
       title: "No maintainer-preferred label applied",
-      detail: `Maintainer prefers labels: ${manifest.preferredLabels.slice(0, 5).join(", ")}.`,
+      detail: preferredLabelsDetail,
       action: "Consider applying a maintainer-preferred label so triage stays aligned.",
     });
     publicNextSteps.push(`Consider a maintainer-preferred label (${manifest.preferredLabels.slice(0, 3).join(", ")}).`);

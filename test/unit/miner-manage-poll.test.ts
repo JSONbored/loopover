@@ -224,6 +224,27 @@ describe("loopover-miner manage poll (#2323/#2325)", () => {
     expect(error).toHaveBeenCalledWith("github_404: not found");
   });
 
+  it("#6054: --dry-run --json reports poll failures as a parseable {ok:false,error} object", async () => {
+    const initPortfolioQueue = vi.fn();
+    const initEventLedger = vi.fn();
+    const pollCheckRuns = vi.fn().mockRejectedValue(new Error("github_404: not found"));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(
+      await runManagePoll(["acme/widgets", "4", "--dry-run", "--json"], {
+        initPortfolioQueue,
+        initEventLedger,
+        pollCheckRuns,
+      }),
+    ).toBe(2);
+    expect(initPortfolioQueue).not.toHaveBeenCalled();
+    expect(initEventLedger).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "github_404: not found",
+    });
+  });
+
   it("#4847: --dry-run stringifies a thrown non-Error value instead of crashing", async () => {
     const pollCheckRuns = vi.fn().mockRejectedValue("raw_string_fault");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

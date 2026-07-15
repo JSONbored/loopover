@@ -51,7 +51,3 @@ export function decideReviewEligibility(input: ReviewEligibilityInput): ReviewEl
 
   return REVIEW_ELIGIBLE;
 }
-
-export function isIgnoredReviewAuthor(input: ReviewEligibilityInput): boolean {
-  return !decideReviewEligibility(input).eligible;
-}

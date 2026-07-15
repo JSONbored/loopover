@@ -72,6 +72,26 @@ describe("entriesToPortfolioQueue() / selectEligibleBatch() (#4285)", () => {
     expect(() => parseQueueItemId("https://api.github.com::acme/widgets")).toThrow("invalid_queue_item_id");
     expect(() => parseQueueItemId("::acme/widgets::issue:7")).toThrow("invalid_queue_item_id");
     expect(() => parseQueueItemId("https://api.github.com::acme/widgets::")).toThrow("invalid_queue_item_id");
+    expect(() => parseQueueItemId("https://api.github.com::::issue:7")).toThrow("invalid_queue_item_id");
+  });
+
+  it("REGRESSION: queueItemId/parseQueueItemId round-trip an apiBaseUrl containing '::' (IPv6-literal host, #5924)", () => {
+    // The host itself contains "::", so a first-occurrence scan split inside `[::1]` and silently returned
+    // { apiBaseUrl: "https://[", repoFullName: "1]:3000/api/v3", identifier: "acme/widgets::issue-7" }.
+    const apiBaseUrl = "https://[::1]:3000/api/v3";
+    const id = queueItemId(apiBaseUrl, "acme/widgets", "issue-7");
+
+    expect(parseQueueItemId(id)).toEqual({ apiBaseUrl, repoFullName: "acme/widgets", identifier: "issue-7" });
+  });
+
+  it("parseQueueItemId round-trips other multi-separator apiBaseUrl forms without special-casing IPv6 (#5924)", () => {
+    for (const apiBaseUrl of ["https://[::ffff:10.0.0.1]:8443/api/v3", "https://[2001:db8::1]/api/v3", "https://[::]:3000/api/v3"]) {
+      expect(parseQueueItemId(queueItemId(apiBaseUrl, "acme/widgets", "issue:7"))).toEqual({
+        apiBaseUrl,
+        repoFullName: "acme/widgets",
+        identifier: "issue:7",
+      });
+    }
   });
 
   it("entriesToPortfolioQueue falls back to the github.com default when a row's apiBaseUrl is missing (#5563)", () => {

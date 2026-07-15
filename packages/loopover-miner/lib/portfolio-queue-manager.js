@@ -20,20 +20,29 @@ export function queueItemId(apiBaseUrl, repoFullName, identifier) {
   return `${apiBaseUrl}${ITEM_ID_SEPARATOR}${repoFullName}${ITEM_ID_SEPARATOR}${identifier}`;
 }
 
-/** Reverse {@link queueItemId} after engine selection so claims can target SQLite primary keys. */
+/**
+ * Reverse {@link queueItemId} after engine selection so claims can target SQLite primary keys.
+ *
+ * Splits from the END (the last two separators), not the start: `apiBaseUrl` is the only one of the three
+ * fields that can legitimately contain "::" itself — a self-hosted IPv6-literal host like
+ * `https://[::1]:3000/api/v3` is a form normalizeApiBaseUrl accepts — so a first-occurrence scan silently
+ * tore the id apart inside the host and produced three wrong fields with no error, making batchClaim target
+ * the wrong (apiBaseUrl, repoFullName, identifier) row (#5924). A repo full name never contains "::".
+ */
 export function parseQueueItemId(id) {
   if (typeof id !== "string") throw new Error("invalid_queue_item_id");
-  const firstSeparatorIndex = id.indexOf(ITEM_ID_SEPARATOR);
-  if (firstSeparatorIndex <= 0) throw new Error("invalid_queue_item_id");
-  const rest = id.slice(firstSeparatorIndex + ITEM_ID_SEPARATOR.length);
-  const secondSeparatorIndex = rest.indexOf(ITEM_ID_SEPARATOR);
-  if (secondSeparatorIndex <= 0 || secondSeparatorIndex === rest.length - ITEM_ID_SEPARATOR.length) {
-    throw new Error("invalid_queue_item_id");
-  }
+  const lastSeparatorIndex = id.lastIndexOf(ITEM_ID_SEPARATOR);
+  if (lastSeparatorIndex <= 0) throw new Error("invalid_queue_item_id");
+  const head = id.slice(0, lastSeparatorIndex);
+  const secondToLastSeparatorIndex = head.lastIndexOf(ITEM_ID_SEPARATOR);
+  if (secondToLastSeparatorIndex <= 0) throw new Error("invalid_queue_item_id");
+  const repoFullName = head.slice(secondToLastSeparatorIndex + ITEM_ID_SEPARATOR.length);
+  const identifier = id.slice(lastSeparatorIndex + ITEM_ID_SEPARATOR.length);
+  if (!repoFullName || !identifier) throw new Error("invalid_queue_item_id");
   return {
-    apiBaseUrl: id.slice(0, firstSeparatorIndex),
-    repoFullName: rest.slice(0, secondSeparatorIndex),
-    identifier: rest.slice(secondSeparatorIndex + ITEM_ID_SEPARATOR.length),
+    apiBaseUrl: head.slice(0, secondToLastSeparatorIndex),
+    repoFullName,
+    identifier,
   };
 }
 

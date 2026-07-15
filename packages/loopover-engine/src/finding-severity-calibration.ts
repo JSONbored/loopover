@@ -363,7 +363,10 @@ function normalizeCompositeWeights(weights: FindingSeverityCalibrationWeights | 
     ),
   };
   const total = raw.objectiveAnchor + raw.pairwiseJudge + raw.structuredFindingSeverity;
-  if (total <= 0) return DEFAULT_COMPOSITE_WEIGHTS;
+  // Preserve explicitly-zeroed weights rather than substituting the defaults: a caller that zeroes every component
+  // must reach the objective-only fallback in the composite scorer, not silently get the default 45/35/20 blend
+  // (converges with reviewer-consensus-calibration.ts's already-correct behavior; #6170).
+  if (total <= 0) return { objectiveAnchor: 0, pairwiseJudge: 0, structuredFindingSeverity: 0 };
   return {
     objectiveAnchor: raw.objectiveAnchor / total,
     pairwiseJudge: raw.pairwiseJudge / total,

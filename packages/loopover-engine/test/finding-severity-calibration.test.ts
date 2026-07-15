@@ -470,3 +470,16 @@ test("renderAuditMarkdown tolerates malformed pre-ingested rejected rows after s
   assert.deepEqual(result.audit.rejected, []);
   assert.doesNotThrow(() => renderFindingSeverityCalibrationAuditMarkdown(result));
 });
+
+test("computeFindingSeverityCompositeCalibrationScore falls back to objective-only when all weights are explicitly zero (#6170)", () => {
+  const result = computeFindingSeverityCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    findingSeverity: [signal()],
+    weights: { objectiveAnchor: 0, pairwiseJudge: 0, structuredFindingSeverity: 0 },
+  });
+  // Explicitly zeroing every component falls back to objective-only -- NOT the default 45/35/20 blend
+  // (converges with reviewer-consensus-calibration.ts).
+  assert.deepEqual(result.weights, { objectiveAnchor: 1, pairwiseJudge: 0, structuredFindingSeverity: 0 });
+  assert.equal(result.compositeScore, 0.4);
+});

@@ -283,7 +283,8 @@ function sanitizeGateVerdictCalibrationIngestion(
 
   for (const row of ingestion.rejected) {
     if (!isRecord(row)) continue;
-    const repoFullName = typeof row.repoFullName === "string" ? normalizeRepoFullName(row.repoFullName) : null;
+    const repoFullName =
+      typeof row.repoFullName === "string" ? (normalizeRepoFullName(row.repoFullName) ?? normalizeId(row.repoFullName)) : null;
     const replayRunId = typeof row.replayRunId === "string" ? normalizeId(row.replayRunId) : null;
     const gateRunId = typeof row.gateRunId === "string" ? normalizeId(row.gateRunId) : null;
     const reason = row.reason;
@@ -315,7 +316,10 @@ function normalizeCompositeWeights(weights: GateVerdictCalibrationWeights | unde
     ),
   };
   const total = raw.objectiveAnchor + raw.pairwiseJudge + raw.structuredGateVerdict;
-  if (total <= 0) return DEFAULT_COMPOSITE_WEIGHTS;
+  // Preserve explicitly-zeroed weights rather than substituting the defaults: a caller that zeroes every component
+  // must reach the objective-only fallback in the composite scorer, not silently get the default 45/35/20 blend
+  // (converges with reviewer-consensus-calibration.ts's already-correct behavior; #6170).
+  if (total <= 0) return { objectiveAnchor: 0, pairwiseJudge: 0, structuredGateVerdict: 0 };
   return {
     objectiveAnchor: raw.objectiveAnchor / total,
     pairwiseJudge: raw.pairwiseJudge / total,

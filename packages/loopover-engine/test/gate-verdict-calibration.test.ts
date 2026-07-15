@@ -580,3 +580,44 @@ test("computeGateVerdictCompositeCalibrationScore ignores malformed pre-ingested
   assert.deepEqual(result.audit.contributingRepos, []);
   assert.deepEqual(result.audit.rejected, []);
 });
+
+test("computeGateVerdictCompositeCalibrationScore falls back to objective-only when all weights are explicitly zero (#6170)", () => {
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor: 0.4,
+    pairwise: 0.4,
+    gateVerdicts: [
+      {
+        repoFullName: "acme/widgets",
+        replayRunId: "replay-1",
+        gateRunId: "gate-1",
+        optedIn: true,
+        dimensions: [{ dimension: "correctness", outcome: "pass" }],
+      },
+    ],
+    weights: { objectiveAnchor: 0, pairwiseJudge: 0, structuredGateVerdict: 0 },
+  });
+  // Explicitly zeroing every component falls back to objective-only -- NOT the default 45/35/20 blend
+  // (converges with reviewer-consensus-calibration.ts).
+  assert.deepEqual(result.weights, { objectiveAnchor: 1, pairwiseJudge: 0, structuredGateVerdict: 0 });
+  assert.equal(result.compositeScore, 0.4);
+});
+
+test("computeGateVerdictCompositeCalibrationScore preserves a malformed-repo (invalid_repo) rejected row instead of dropping it (#6170)", () => {
+  const result = computeGateVerdictCompositeCalibrationScore({
+    objectiveAnchor: 0.5,
+    pairwise: 0.5,
+    gateVerdicts: {
+      accepted: [],
+      rejected: [
+        { repoFullName: "acme/widgets", replayRunId: "replay-1", gateRunId: "gate-1", reason: "not_opted_in" },
+        { repoFullName: "bad", replayRunId: "replay-2", gateRunId: "gate-2", reason: "invalid_repo" },
+      ],
+    } as never,
+  });
+  // "bad" is not a valid owner/repo (normalizeRepoFullName -> null); the `?? normalizeId` fallback preserves the
+  // raw string instead of dropping the row, matching finding-severity + reviewer-consensus.
+  assert.deepEqual(result.audit.rejected, [
+    { repoFullName: "acme/widgets", replayRunId: "replay-1", gateRunId: "gate-1", reason: "not_opted_in" },
+    { repoFullName: "bad", replayRunId: "replay-2", gateRunId: "gate-2", reason: "invalid_repo" },
+  ]);
+});

@@ -94,6 +94,7 @@ describe("loopover-miner MCP server (#5153 scaffold)", () => {
       "loopover_miner_get_audit_feed",
       "loopover_miner_get_calibration_report",
       "loopover_miner_get_governor_decisions",
+      "loopover_miner_get_manage_status",
       "loopover_miner_get_plan",
       "loopover_miner_get_portfolio_dashboard",
       "loopover_miner_get_run_state",

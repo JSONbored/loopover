@@ -105,6 +105,21 @@ type ToolContract = {
   excluded: string[];
 };
 
+// manage-status is the one tool that opens THREE stores at once, so its rows seed all three seams and vary only the
+// one under test — an un-stubbed seam would otherwise fall through to a real on-disk store.
+const benignEventLedger: MinerMcpServerOptions["initEventLedger"] = () => ({
+  dbPath: "",
+  appendEvent: readThrows,
+  readEvents: () => [],
+  purgeByRepo: readThrows,
+  close() {},
+});
+const benignRunStateStore: MinerMcpServerOptions["initRunStateStore"] = () => ({
+  getRunState: () => null,
+  listRunStates: () => [],
+  close() {},
+});
+
 const READ_ONLY_TOOLS: ToolContract[] = [
   {
     tool: "loopover_miner_status",
@@ -130,6 +145,26 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     valid: { initPortfolioQueue: () => ({ listQueue: () => [], close() {} }) },
     missing: { initPortfolioQueue: openerThrows },
     corrupt: { initPortfolioQueue: () => ({ listQueue: readThrows, close() {} }) },
+    excluded: [],
+  },
+  {
+    tool: "loopover_miner_get_manage_status",
+    args: {},
+    valid: {
+      initPortfolioQueue: () => ({ listQueue: () => [], close() {} }),
+      initEventLedger: benignEventLedger,
+      initRunStateStore: benignRunStateStore,
+    },
+    missing: {
+      initPortfolioQueue: openerThrows,
+      initEventLedger: benignEventLedger,
+      initRunStateStore: benignRunStateStore,
+    },
+    corrupt: {
+      initPortfolioQueue: () => ({ listQueue: readThrows, close() {} }),
+      initEventLedger: benignEventLedger,
+      initRunStateStore: benignRunStateStore,
+    },
     excluded: [],
   },
   {

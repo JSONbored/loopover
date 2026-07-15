@@ -10,6 +10,7 @@ import {
   normalizeAuditFeedMcpFilter,
 } from "../lib/event-ledger-cli.js";
 import { initEventLedger } from "../lib/event-ledger.js";
+import { collectManageStatus, collectRunPortfolio } from "../lib/manage-status.js";
 import { collectPortfolioDashboard } from "../lib/portfolio-dashboard.js";
 import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
 import { initRunStateStore } from "../lib/run-state.js";
@@ -25,6 +26,9 @@ import { initPredictionLedger } from "../lib/prediction-ledger.js";
 //   - loopover_miner_ping (#5153): trivial static health check, reads no AMS state.
 //   - loopover_miner_get_portfolio_dashboard (#5155): read-only per-repo backlog dashboard, wrapping the
 //     existing collectPortfolioDashboard aggregator (no new logic; same data as `queue dashboard --json`).
+//   - loopover_miner_get_manage_status (#5822): read-only manage-phase status joining the portfolio queue, the
+//     event ledger, and run-state via manage-status.js's collectManageStatus/collectRunPortfolio (no new join
+//     logic; same { rows, runPortfolio } shape as `manage status --json`). Never calls GitHub, never mutates.
 //   - loopover_miner_list_claims (#5156): read-only listing of the local claim ledger (optional repo/status
 //     filter passed through to listClaims); exposes no claim/release mutation.
 //   - loopover_miner_get_audit_feed (#5158): read-only metadata-only event-ledger audit feed via
@@ -92,6 +96,36 @@ export function createMinerMcpServer(options = {}) {
         return { content: [{ type: "text", text: JSON.stringify(summary) }] };
       } finally {
         if (ownsQueue) portfolioQueue.close();
+      }
+    },
+  );
+  server.registerTool(
+    "loopover_miner_get_manage_status",
+    {
+      description:
+        "Read-only manage-phase status: the per-managed-PR rows `loopover-miner manage status` reports (branch, CI " +
+        "state, gate verdict, outcome, last-polled-at, queue status/priority) plus the run-level portfolio view " +
+        "(one row per tracked repo: run state, updated-at, PR count). Joins the portfolio queue, the append-only " +
+        "event ledger, and run-state by reusing the existing collectManageStatus/collectRunPortfolio aggregators " +
+        "-- no new join logic -- returning the same { rows, runPortfolio } shape `manage status --json` prints. " +
+        "Read-only: never calls GitHub, never mutates local stores. Takes no arguments.",
+      inputSchema: {},
+    },
+    async () => {
+      const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
+      const ownsEventLedger = options.initEventLedger === undefined;
+      const ownsRunStateStore = options.initRunStateStore === undefined;
+      const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+      const eventLedger = (options.initEventLedger ?? initEventLedger)();
+      const runStateStore = (options.initRunStateStore ?? initRunStateStore)();
+      try {
+        const rows = collectManageStatus({ portfolioQueue, eventLedger });
+        const runPortfolio = collectRunPortfolio({ portfolioQueue, eventLedger, runStateStore });
+        return { content: [{ type: "text", text: JSON.stringify({ rows, runPortfolio }) }] };
+      } finally {
+        if (ownsPortfolioQueue) portfolioQueue.close();
+        if (ownsEventLedger) eventLedger.close();
+        if (ownsRunStateStore) runStateStore.close();
       }
     },
   );

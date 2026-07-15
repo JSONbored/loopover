@@ -65,9 +65,10 @@ export interface MinerMcpServerOptions {
 
 /**
  * Build the miner MCP server with its tools registered (loopover_miner_ping,
- * loopover_miner_get_portfolio_dashboard, loopover_miner_list_claims, loopover_miner_get_audit_feed,
- * loopover_miner_get_run_state, loopover_miner_list_plans, loopover_miner_get_plan,
- * loopover_miner_get_governor_decisions, loopover_miner_status, loopover_miner_get_calibration_report). `options`
- * supplies test injection seams; production callers pass nothing.
+ * loopover_miner_get_portfolio_dashboard, loopover_miner_get_manage_status, loopover_miner_list_claims,
+ * loopover_miner_get_audit_feed, loopover_miner_get_run_state, loopover_miner_list_plans,
+ * loopover_miner_get_plan, loopover_miner_get_governor_decisions, loopover_miner_status,
+ * loopover_miner_get_calibration_report). `options` supplies test injection seams; production callers
+ * pass nothing.
  */
 export function createMinerMcpServer(options?: MinerMcpServerOptions): McpServer;

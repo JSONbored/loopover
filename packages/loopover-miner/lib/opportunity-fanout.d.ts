@@ -20,6 +20,7 @@ export type FanoutOptions = {
   rateLimitHighWaterMark?: number;
   perPage?: number;
   maxPages?: number;
+  requestTimeoutMs?: number;
   sleepFn?: (ms: number) => Promise<unknown>;
   policyDocCache?: PolicyDocCache | null;
   policyVerdictCache?: PolicyVerdictCache | null;

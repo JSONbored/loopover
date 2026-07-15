@@ -333,4 +333,66 @@ describe("fetchCandidateIssues (#2307)", () => {
     expect(result.issues.map((entry) => entry.issueNumber)).toEqual([7]); // results kept, not dropped
     expect(result.warnings).toEqual([]); // no warning — the transient blip recovered
   });
+
+  it("bounds every GitHub request with a per-attempt AbortSignal timeout, defaulting to 10s (#miner-github-read-timeouts)", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/blip/issues?")) return jsonResponse([issue(7)]);
+      return jsonResponse({}, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "blip" }], "token", { apiBaseUrl: API });
+
+    expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(3); // AI-USAGE.md + CONTRIBUTING.md + issues
+    expect(timeoutSpy.mock.calls.length).toBe(fetchSpy.mock.calls.length);
+    expect(timeoutSpy.mock.calls.every(([ms]) => ms === 10_000)).toBe(true);
+    for (const [, init] of fetchSpy.mock.calls) {
+      expect((init as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal);
+    }
+    timeoutSpy.mockRestore();
+  });
+
+  it("honors a custom requestTimeoutMs instead of the 10s default", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/blip/issues?")) return jsonResponse([issue(7)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "blip" }], "token", {
+      apiBaseUrl: API,
+      requestTimeoutMs: 3000,
+    });
+
+    expect(timeoutSpy.mock.calls.length).toBeGreaterThan(0);
+    expect(timeoutSpy.mock.calls.every(([ms]) => ms === 3000)).toBe(true);
+    timeoutSpy.mockRestore();
+  });
+
+  it("falls back to the 10s default when requestTimeoutMs is not finite", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/repos/acme/blip/issues?")) return jsonResponse([issue(7)]);
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "blip" }], "token", {
+      apiBaseUrl: API,
+      requestTimeoutMs: Number.NaN,
+    });
+
+    expect(timeoutSpy.mock.calls.length).toBeGreaterThan(0);
+    expect(timeoutSpy.mock.calls.every(([ms]) => ms === 10_000)).toBe(true);
+    timeoutSpy.mockRestore();
+  });
 });

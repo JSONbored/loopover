@@ -15,6 +15,7 @@ const defaultPerPage = 100;
 // Follow the GitHub Link header past the first page so a repo/search with >100 open issues isn't silently
 // truncated (#4831); cap the follow loop so a pathological Link chain can't run away.
 const defaultMaxPages = 10;
+const defaultRequestTimeoutMs = 10_000;
 
 function normalizeLimit(value, fallback, min, max) {
   if (!Number.isFinite(value)) return fallback;
@@ -123,11 +124,13 @@ async function githubGetJson(url, githubToken, summary, options, extraHeaders = 
   // Retry a transient 5xx from GitHub before dropping this target's results for the whole run (#4830) — the same
   // discipline as the CI/gate-verdict pollers. A thrown network error still propagates to each caller's try/catch.
   // `extraHeaders` carries per-call additions (e.g. a policy-doc If-None-Match, #4842) on top of the base auth set.
+  // requestTimeoutMs bounds each individual attempt so a stalled connection can't hang discovery forever
+  // (#miner-github-read-timeouts) -- fetchWithRetry gives each retry its own fresh AbortSignal.timeout().
   const response = await fetchWithRetry(
     fetch,
     url,
     { method: "GET", headers: { ...githubHeaders(githubToken, options.forge), ...extraHeaders } },
-    { sleepFn: options?.sleepFn },
+    { sleepFn: options?.sleepFn, timeoutMs: options?.requestTimeoutMs },
   );
   recordRateLimit(summary, response);
   const payload = await response.json().catch(() => null);
@@ -503,6 +506,7 @@ function normalizeOptions(options = {}) {
     ),
     perPage: normalizeLimit(options.perPage, defaultPerPage, 1, 100),
     maxPages: normalizeLimit(options.maxPages, defaultMaxPages, 1, 100),
+    requestTimeoutMs: normalizeLimit(options.requestTimeoutMs, defaultRequestTimeoutMs, 1, 60_000),
     // Passed through to the per-fetch retry so tests can inject an instant sleep; undefined uses the real backoff.
     sleepFn: typeof options.sleepFn === "function" ? options.sleepFn : undefined,
     // Optional local ETag cache for policy-doc revalidation (#4842). Absent (null) => every policy doc is fetched

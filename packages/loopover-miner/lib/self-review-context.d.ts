@@ -1,8 +1,8 @@
 import type { SelfReviewContext } from "@loopover/engine";
 
-// bounties/issueQuality are always omitted (see this file's own header comment for why), so the result is
-// SelfReviewContext minus those two optional fields rather than the full type.
-export type SelfReviewContextResult = Omit<SelfReviewContext, "bounties" | "issueQuality">;
+// `bounties` is always omitted (see this file's own header comment for why), so the result is
+// SelfReviewContext minus that optional field rather than the full type.
+export type SelfReviewContextResult = Omit<SelfReviewContext, "bounties">;
 
 // A narrower shape than `typeof fetch` on purpose: this module only ever calls it with a string URL and a
 // plain GET init, and the ambient `fetch` type in this repo's TS program is Cloudflare-Workers-flavored

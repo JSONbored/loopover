@@ -415,6 +415,7 @@ export {
 // (#5145, the miner's real SelfReviewContext fetcher needs to compute inDuplicateCluster the same way the
 // live gate does), not this file's full internal surface.
 export { buildCollisionReport, type CollisionCluster, type CollisionReport } from "./signals/predicted-gate-engine.js";
+export { buildIssueQualityReport } from "./signals/engine.js";
 export type { CollisionItem } from "./types/predicted-gate-types.js";
 // Unlinked-issue candidate pre-filter (#4883), extracted out of src/signals/unlinked-issue-candidates.ts so the
 // miner's self-review can run the SAME deterministic recall pass the maintainer gate uses to flag a PR's

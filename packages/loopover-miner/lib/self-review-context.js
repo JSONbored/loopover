@@ -1,4 +1,4 @@
-import { buildCollisionReport, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "@loopover/engine";
+import { buildCollisionReport, buildIssueQualityReport, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "@loopover/engine";
 
 // Real SelfReviewContext fetcher (#5145, Wave 3.5). Builds the context object the miner's self-review pass
 // (packages/loopover-engine/src/miner/self-review-adapter.ts) needs, at the SAME fidelity the live gate's
@@ -9,13 +9,10 @@ import { buildCollisionReport, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestConte
 //   - `bounties`: bounty data is not GitHub-native in this codebase -- it comes from an external "Gitt"
 //     system that PUSHES data into the live gate's own internal ingest route (src/api/routes.ts). There is
 //     no public endpoint the miner could legitimately pull from instead.
-//   - `issueQuality`: built by buildIssueQualityReport, which lives only in root src/signals/engine.ts and
-//     has never been extracted into @loopover/engine (the same "not yet extracted" situation
-//     src/signals/slop.ts documented before #5133 extracted slop scoring specifically).
 //
-// Both are already optional on SelfReviewContext, and buildPredictedGateVerdict already degrades gracefully
-// without them -- omitting them here is the same tradeoff the live gate itself makes for a repo it hasn't
-// computed bounty/quality data for yet, not a corner cut specific to the miner.
+// `bounties` remains omitted for that reason. `issueQuality` is built from the same live GitHub snapshot
+// as the other fields via buildIssueQualityReport (now exported from @loopover/engine); bounty rows and
+// recent-merged PR history are passed as empty arrays because this fetcher does not yet pull either source.
 
 const GITHUB_API_VERSION = "2022-11-28";
 const DEFAULT_API_BASE_URL = "https://api.github.com";
@@ -297,10 +294,9 @@ async function fetchConfirmedContributor(login, resolved) {
 // >= 2 threshold, inDuplicateCluster would fire on the completely normal case of "one PR already closes
 // this issue," not genuine overlapping/duplicate work. Checks the target ISSUE's presence instead of a
 // not-yet-existing PR number, since the miner's own submission doesn't exist as a real PullRequestRecord yet.
-function computeInDuplicateCluster(repoFullName, issues, pullRequests, targetIssueNumbers) {
+function computeInDuplicateCluster(collisionReport, targetIssueNumbers) {
   if (targetIssueNumbers.length === 0) return false;
-  const report = buildCollisionReport(repoFullName, issues, pullRequests);
-  return report.clusters.some(
+  return collisionReport.clusters.some(
     (cluster) =>
       cluster.risk === "high" &&
       cluster.items.filter((item) => item.type === "pull_request").length >= 2 &&
@@ -310,8 +306,7 @@ function computeInDuplicateCluster(repoFullName, issues, pullRequests, targetIss
 
 /**
  * Build a real SelfReviewContext from live GitHub data, at the same fidelity the live gate's own DB-backed
- * construction produces. See this file's header for the two fields (bounties, issueQuality) deliberately
- * left undefined and why.
+ * construction produces. See this file's header for why `bounties` is deliberately left undefined.
  *
  * @param {string} repoFullName
  * @param {{
@@ -335,7 +330,10 @@ export async function fetchSelfReviewContext(repoFullName, options = {}) {
   ]);
 
   const manifest = parseFocusManifestContent(manifestContent, "repo_file");
-  const inDuplicateCluster = computeInDuplicateCluster(`${target.owner}/${target.repo}`, issues, pullRequests, resolved.linkedIssues);
+  const fullName = `${target.owner}/${target.repo}`;
+  const collisions = buildCollisionReport(fullName, issues, pullRequests);
+  const inDuplicateCluster = computeInDuplicateCluster(collisions, resolved.linkedIssues);
+  const issueQuality = buildIssueQualityReport(repo, issues, pullRequests, fullName, [], collisions, []);
 
   return {
     manifest,
@@ -344,5 +342,6 @@ export async function fetchSelfReviewContext(repoFullName, options = {}) {
     pullRequests,
     confirmedContributor,
     inDuplicateCluster,
+    issueQuality,
   };
 }

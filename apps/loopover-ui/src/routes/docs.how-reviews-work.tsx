@@ -112,10 +112,11 @@ function HowReviewsWork() {
         </li>
         <li>
           <strong>Copycat / plagiarism gate</strong> (<code>copycatGateMode</code>, default{" "}
-          <code>off</code>) — a code containment/similarity check against prior art (repo history,
-          other PRs). Escalating tiers: <code>warn</code>, <code>label</code>, <code>block</code>,
-          plus a further strikes escalation for repeat offenders. Config only today — the detection
-          engine itself has not shipped yet, so setting this has no effect until it does.
+          <code>off</code>) — a code containment/similarity check against prior art (earlier open or
+          recently merged PRs on the same repo). Escalating tiers: <code>warn</code> surfaces an
+          advisory finding only; <code>label</code> also applies a label; <code>block</code> also
+          closes the PR and counts toward the repeat-offender strikes ledger. The direction is
+          always by submission timestamp, so the earlier (original) author is never flagged.
         </li>
         <li>
           <strong>Merge-readiness gate</strong> (<code>mergeReadinessGateMode</code>, default{" "}

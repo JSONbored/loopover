@@ -6198,6 +6198,8 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,
     slopBand: row.slopBand,
+    copycatScore: row.copycatScore,
+    copycatMatchedPullNumber: row.copycatMatchedPullNumber,
     mergeAttemptCount: row.mergeAttemptCount,
     mergeBlockedSha: row.mergeBlockedSha,
     mergeBlockedReason: row.mergeBlockedReason,
@@ -6226,6 +6228,28 @@ export async function updatePullRequestSlopAssessment(
   await db
     .update(pullRequests)
     .set({ slopRisk: assessment.slopRisk, slopBand: assessment.slopBand, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pullNumber)));
+}
+
+/**
+ * Persist or clear the latest deterministic copycat/plagiarism containment assessment (#1969) on an existing
+ * cached PR row. Same write pattern as {@link updatePullRequestSlopAssessment} — kept separate from the
+ * GitHub-sync upsert so a later sync cannot clobber the score; a no-op when the PR row does not exist yet.
+ */
+export async function updatePullRequestCopycatAssessment(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+  assessment: { copycatScore: number | null; copycatMatchedPullNumber: number | null },
+): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({
+      copycatScore: assessment.copycatScore,
+      copycatMatchedPullNumber: assessment.copycatMatchedPullNumber,
+      updatedAt: nowIso(),
+    })
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pullNumber)));
 }
 

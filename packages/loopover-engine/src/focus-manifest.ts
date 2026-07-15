@@ -209,15 +209,14 @@ export type FocusManifestGateConfig = {
   /** `gate.copycat.mode` (#1969): off|warn|label|block, off by default. Config-as-code only -- no DB column
    *  or dashboard toggle. Deliberately a DEDICATED 4-value enum, not the shared `GateRuleMode` tri-state: the
    *  issue's tiered response is warn -> label -> block -> strikes, where "strikes" is a separate escalation
-   *  action (reusing the existing cross-repo banned-contributors ledger once wired) rather than a 5th mode
-   *  value. THIS FIELD IS CURRENTLY INERT -- the similarity/containment detection engine that would actually
-   *  compute a copycat finding does not exist yet (tracked as later, separate PRs against #1969); parsing and
-   *  threading this config end-to-end first proves the plumbing and lets an operator's `.loopover.yml`
-   *  already declare intent without waiting on the detection engine. */
+   *  action (reusing the existing moderation-rules violation ledger -- a `block`-tier close is tagged
+   *  `closeKind: "copycat"`, counted the same way as blacklist/contributor_cap/review_nag) rather than a 5th
+   *  mode value. Read by src/queue/copycat-detection.ts's deterministic containment engine, evaluated
+   *  alongside slop in src/queue/processors.ts. */
   copycatMode: CopycatGateMode | null;
   /** `gate.copycat.minScore` (#1969): containment/similarity score (0-100) at/above which `copycatMode` acts.
-   *  null (unset) ⇒ the (also currently inert) engine's own default threshold once it exists. Same 0-100
-   *  clamp-and-round normalization as `slopMinScore`/`readinessMinScore` above. */
+   *  null (unset) ⇒ the engine's own default threshold (85). Same 0-100 clamp-and-round normalization as
+   *  `slopMinScore`/`readinessMinScore` above. */
   copycatMinScore: number | null;
 };
 

@@ -34,6 +34,12 @@ describe("normalizeModerationRules (#selfhost-mod-engine)", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("accepts copycat (#1969: the containment gate's 'strikes' tier reuses this same violation ledger)", () => {
+    const { rules, warnings } = normalizeModerationRules(["copycat"]);
+    expect(rules).toEqual(["copycat"]);
+    expect(warnings).toEqual([]);
+  });
+
   it("drops unrecognized entries with a warning, keeping the valid ones", () => {
     const { rules, warnings } = normalizeModerationRules(["contributor_cap", "not-a-rule", 42, null]);
     expect(rules).toEqual(["contributor_cap"]);
@@ -143,5 +149,9 @@ describe("constants + event-type map (#selfhost-mod-engine)", () => {
 
   it("review_evasion has its own namespaced event type (#review-evasion-protection)", () => {
     expect(MODERATION_VIOLATION_EVENT_TYPE.review_evasion).toBe("moderation.violation.review_evasion");
+  });
+
+  it("copycat has its own namespaced event type (#1969)", () => {
+    expect(MODERATION_VIOLATION_EVENT_TYPE.copycat).toBe("moderation.violation.copycat");
   });
 });

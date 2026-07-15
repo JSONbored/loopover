@@ -36,6 +36,19 @@ export function addedLineCount(patch: string | undefined): number {
   return n;
 }
 
+/** The actual TEXT of every added (`+`) line in a patch, in order, with the leading `+` stripped — the
+ *  content-level counterpart to {@link addedLineCount} (used by the copycat/plagiarism containment engine,
+ *  #1969, which needs the real line text to shingle-compare, not just a count). Empty for a missing/absent
+ *  patch (binary/too-large file — same "no comparable content" convention `addedLineCount` uses). */
+export function extractAddedLines(patch: string | undefined): string[] {
+  if (!patch) return [];
+  const added: string[] = [];
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added.push(line.slice(1));
+  }
+  return added;
+}
+
 function numericAddedLineCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

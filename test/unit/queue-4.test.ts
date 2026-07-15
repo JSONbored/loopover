@@ -389,6 +389,46 @@ describe("queue processors", () => {
     expect(sync?.status).toMatch(/^(complete|partial)$/);
   });
 
+  it("agent-regate-pr (#1969): a copycat-gated regate persists the containment assessment against an earlier open sibling", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9103, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "copycat-repo", full_name: "owner/copycat-repo", private: false, owner: { login: "owner" } }, 9103);
+    // reviewCheckMode: "required" (not just checkRunMode: "off") is needed so gateEnabled -> shouldEvaluateGate is
+    // true and maybePublishPrPublicSurface proceeds past its early return down to the copycat block (mirrors the
+    // #4603 sub-floor-defect test's settings shape in queue-2.test.ts). copycatGateMode is config-as-code ONLY
+    // (no DB column, per RepositorySettings.copycatGateMode's own doc comment) -- setting it on upsertRepositorySettings
+    // is silently ignored; it must go through the focus-manifest (.loopover.yml) loader instead, below.
+    await upsertRepositorySettings(env, { repoFullName: "owner/copycat-repo", autonomy: { close: "auto" }, gatePack: "oss-anti-slop", reviewCheckMode: "required", checkRunMode: "off", commentMode: "off", publicSurface: "off" });
+    await upsertRepoFocusManifest(env, "owner/copycat-repo", { gate: { copycat: { mode: "warn" } } });
+    // An earlier open sibling PR whose added code the new PR (below) reproduces verbatim.
+    const sourceLines = "function add(a, b) {\nconst total = a + b;\nlogger.debug(total);\nreturn total;\n}\nexport default add;";
+    const sourcePatch = sourceLines.split("\n").map((line) => `+${line}`).join("\n");
+    await upsertPullRequestFromGitHub(env, "owner/copycat-repo", { number: 20, title: "Original", state: "open", user: { login: "original-author" }, head: { sha: "orig20" }, labels: [], body: "x", created_at: "2026-05-01T00:00:00.000Z" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/copycat-repo", pullNumber: 20, path: "src/math.ts", status: "added", additions: 6, deletions: 0, changes: 6, payload: { patch: sourcePatch } });
+    await upsertPullRequestFromGitHub(env, "owner/copycat-repo", { number: 21, title: "Copycat", state: "open", user: { login: "contributor" }, head: { sha: "c21" }, labels: [], body: "x", created_at: "2026-05-28T00:00:00.000Z" });
+    await upsertPullRequestFile(env, { repoFullName: "owner/copycat-repo", pullNumber: 21, path: "src/copy.ts", status: "added", additions: 6, deletions: 0, changes: 6, payload: { patch: sourcePatch } });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/21/files")) return Response.json([{ filename: "src/copy.ts", status: "added", additions: 6, deletions: 0, changes: 6, patch: sourcePatch }]);
+      if (url.endsWith("/pulls/21") && init?.method === "PATCH") return Response.json({ number: 21, state: "closed" });
+      if (url.endsWith("/pulls/21")) return Response.json({ number: 21, title: "Copycat", state: "open", user: { login: "contributor" }, head: { sha: "c21" }, labels: [], body: "x", created_at: "2026-05-28T00:00:00.000Z" });
+      if (url.includes("/commits/c21/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/c21/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.endsWith("/pulls/21/reviews") && init?.method === "POST") return Response.json({ id: 1 });
+      if (url.endsWith("/pulls/21/reviews")) return Response.json([]);
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+
+    await sweepAndDrainPerPr(env, "owner/copycat-repo");
+
+    const assessed = await getPullRequest(env, "owner/copycat-repo", 21);
+    expect(assessed?.copycatScore).toBe(100);
+    expect(assessed?.copycatMatchedPullNumber).toBe(20);
+  });
+
   it("auto-maintain (#778): a repo with no acting autonomy takes no agent action", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await persistRegistrySnapshot(

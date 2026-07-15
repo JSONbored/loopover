@@ -456,6 +456,12 @@ export const pullRequests = sqliteTable(
     // Latest deterministic slop assessment (loopover-computed; written separately from the GitHub sync).
     slopRisk: integer("slop_risk"),
     slopBand: text("slop_band"),
+    // Latest deterministic copycat/plagiarism containment assessment (#1969), same write pattern as slopRisk/
+    // slopBand above -- loopover-computed, separate from the GitHub sync. copycatMatchedPullNumber is the
+    // PR number the score was measured against, or null when no eligible (earlier, unambiguous) prior-art
+    // candidate existed for this assessment.
+    copycatScore: integer("copycat_score"),
+    copycatMatchedPullNumber: integer("copycat_matched_pull_number"),
     // RC3 terminal-fail merges: failed-merge attempt count + the head SHA at which the merge is terminally
     // blocked (perms/required-check/conflict) so the planner stops planning a merge. Keyed to head SHA → a new
     // commit auto-clears it. loopover-computed (executor-written), omitted from the GitHub-sync SET clause.

@@ -36,6 +36,7 @@ import {
   upsertIssueFromGitHub,
   upsertPullRequestFromGitHub,
   updatePullRequestSlopAssessment,
+  updatePullRequestCopycatAssessment,
   upsertPullRequestFile,
   upsertPullRequestReview,
   upsertRecentMergedPullRequest,
@@ -502,6 +503,32 @@ describe("data spine repositories", () => {
 
     // No-op (no throw) when the PR row does not exist yet.
     await expect(updatePullRequestSlopAssessment(env, "owner/sloppr", 999, { slopRisk: 5, slopBand: "low" })).resolves.toBeUndefined();
+  });
+
+  it("persists a per-PR copycat assessment, round-trips it via the cached record, and keeps latest-wins (#1969)", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/copycatpr", { number: 5, title: "Suspicious", state: "open", user: { login: "alice" }, labels: [], body: "x" });
+    // Unassessed by default (copycat off, no eligible prior-art candidate, or PR not yet processed).
+    expect((await getPullRequest(env, "owner/copycatpr", 5))?.copycatScore ?? null).toBeNull();
+    expect((await getPullRequest(env, "owner/copycatpr", 5))?.copycatMatchedPullNumber ?? null).toBeNull();
+
+    await updatePullRequestCopycatAssessment(env, "owner/copycatpr", 5, { copycatScore: 92, copycatMatchedPullNumber: 42 });
+    const assessed = await getPullRequest(env, "owner/copycatpr", 5);
+    expect(assessed?.copycatScore).toBe(92);
+    expect(assessed?.copycatMatchedPullNumber).toBe(42);
+
+    // Latest assessment wins on the next run.
+    await updatePullRequestCopycatAssessment(env, "owner/copycatpr", 5, { copycatScore: 10, copycatMatchedPullNumber: 7 });
+    expect((await getPullRequest(env, "owner/copycatpr", 5))?.copycatMatchedPullNumber).toBe(7);
+
+    // Copycat-off (or no-match) processing can clear a previously persisted assessment.
+    await updatePullRequestCopycatAssessment(env, "owner/copycatpr", 5, { copycatScore: null, copycatMatchedPullNumber: null });
+    const cleared = await getPullRequest(env, "owner/copycatpr", 5);
+    expect(cleared?.copycatScore).toBeNull();
+    expect(cleared?.copycatMatchedPullNumber).toBeNull();
+
+    // No-op (no throw) when the PR row does not exist yet.
+    await expect(updatePullRequestCopycatAssessment(env, "owner/copycatpr", 999, { copycatScore: 5, copycatMatchedPullNumber: 1 })).resolves.toBeUndefined();
   });
 });
 

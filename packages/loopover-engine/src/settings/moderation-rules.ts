@@ -13,11 +13,14 @@
 
 /** The anti-abuse mechanisms this engine can count violations from -- the three ORIGINAL mechanisms
  *  (contributor cap, blacklist, review-nag) plus review-evasion (#review-evasion-protection: a contributor
- *  closing/converting-to-draft their own PR to dodge an active review). Kept as a closed union (not an open
+ *  closing/converting-to-draft their own PR to dodge an active review) and copycat/plagiarism containment
+ *  (#1969: the "strikes" tier of the copycat gate's own warn -> label -> block -> strikes response reuses
+ *  this SAME generic violation ledger rather than a bespoke counter -- a `block`-tier copycat close is tagged
+ *  `closeKind: "copycat"`, counted exactly like any other rule here). Kept as a closed union (not an open
  *  string) so an unrecognized value is always a normalization error, never silently accepted. */
-export type ModerationRuleType = "contributor_cap" | "blacklist" | "review_nag" | "review_evasion";
+export type ModerationRuleType = "contributor_cap" | "blacklist" | "review_nag" | "review_evasion" | "copycat";
 
-const ALL_MODERATION_RULE_TYPES: readonly ModerationRuleType[] = ["contributor_cap", "blacklist", "review_nag", "review_evasion"];
+const ALL_MODERATION_RULE_TYPES: readonly ModerationRuleType[] = ["contributor_cap", "blacklist", "review_nag", "review_evasion", "copycat"];
 
 /** The `audit_events.event_type` recorded for each rule's violation -- namespaced under `moderation.violation.*`
  *  so a cross-eventType, cross-repo count query (see `db/repositories.ts`) can scope to exactly this family. */
@@ -26,6 +29,7 @@ export const MODERATION_VIOLATION_EVENT_TYPE: Record<ModerationRuleType, string>
   blacklist: "moderation.violation.blacklist",
   review_nag: "moderation.violation.review_nag",
   review_evasion: "moderation.violation.review_evasion",
+  copycat: "moderation.violation.copycat",
 };
 
 export const DEFAULT_MODERATION_WARNING_LABEL = "mod:warning";

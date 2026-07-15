@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addedLineCount, buildUnifiedReviewDiff, diffFilePriority, keepHighSignalHunks, totalAddedLineCount } from "../../src/review/review-diff";
+import { addedLineCount, buildUnifiedReviewDiff, diffFilePriority, extractAddedLines, keepHighSignalHunks, totalAddedLineCount } from "../../src/review/review-diff";
 
 describe("diffFilePriority — source survives, noise drops first", () => {
   it("ranks source(0) < tests(1) < docs(2) < lockfiles/generated(4)", () => {
@@ -54,6 +54,26 @@ describe("addedLineCount — counts +lines, ignores +++ header", () => {
     expect(addedLineCount("@@\n+a\n+b\n-c\n d")).toBe(2);
     expect(addedLineCount("+++ b/file.ts\n+real")).toBe(1);
     expect(addedLineCount(undefined)).toBe(0);
+  });
+});
+
+describe("extractAddedLines — the content-level counterpart to addedLineCount (#1969)", () => {
+  it("returns the text of only the substantive added lines, leading + stripped, ignoring the +++ header", () => {
+    expect(extractAddedLines("@@\n+a\n+b\n-c\n d")).toEqual(["a", "b"]);
+    expect(extractAddedLines("+++ b/file.ts\n+real")).toEqual(["real"]);
+  });
+
+  it("returns an empty array for a missing/absent patch", () => {
+    expect(extractAddedLines(undefined)).toEqual([]);
+  });
+
+  it("returns an empty array when there are no added lines at all", () => {
+    expect(extractAddedLines("@@\n-removed\n context")).toEqual([]);
+  });
+
+  it("agrees with addedLineCount's count on the same patch (regression: the two must never drift)", () => {
+    const patch = "+++ b/file.ts\n@@\n+one\n+two\n-three\n context\n+four";
+    expect(extractAddedLines(patch)).toHaveLength(addedLineCount(patch));
   });
 });
 

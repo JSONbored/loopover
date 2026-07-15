@@ -33,6 +33,11 @@ export const DEFAULT_CONTRIBUTOR_CAP_LABEL = "over-contributor-limit";
 // configurable per-repo via `.loopover.yml` (`settings.reviewNagLabel`); the planner uses the resolved label
 // and falls back to this default, mirroring DEFAULT_BLACKLIST_LABEL's shape.
 export const DEFAULT_REVIEW_NAG_LABEL = "review-nag-cooldown";
+// Default label applied by the copycat/plagiarism containment gate (#1969), both at its `label` tier (applied
+// standalone, PR otherwise continues through the normal pipeline) and coupled to its `block` tier's close. Same
+// configurable-with-fallback shape as DEFAULT_BLACKLIST_LABEL — a repo can override it via `.loopover.yml`
+// (`settings.copycatLabel`); this is only the fallback when unset.
+export const DEFAULT_COPYCAT_LABEL = "copycat";
 // Default label applied to a PR re-closed for review-evasion (#review-evasion-protection): a contributor
 // closing/converting-to-draft their own PR while an active review pass is running. NOT hardcoded -- a repo
 // can override it via `.loopover.yml` (`settings.reviewEvasionLabel`); this is only the fallback when unset.
@@ -122,7 +127,7 @@ export type PlannedAgentAction = {
   // mutates via the Issues API and is exempt from the PR-write-permission gate `close` must pass, so without
   // this correlation a transient write-permission denial could leave a PR mislabeled "closed for X" while it
   // is, in fact, still open).
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "screenshot_table" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "screenshot_table" | "heuristic" | "copycat";
   // For a CI-driven heuristic close, the CI state that must still hold at actuation time. Other heuristic
   // closes (gate verdict, duplicate/slop, conflict) do not depend on red CI and must not be blocked by green CI.
   // ALWAYS set for a heuristic close (never omitted) -- see the field's doc comment on AgentPendingActionParams
@@ -340,6 +345,26 @@ export type AgentActionPlanInput = {
   // Absent ⇒ the default (`DEFAULT_REVIEW_NAG_LABEL` = "review-nag-cooldown"); explicit `null` ⇒ close WITHOUT
   // any label (#label-scoping). Gated on `close` autonomy, NOT `label` — same shape as {@link blacklistLabel}.
   reviewNagLabel?: string | null | undefined;
+  // Copycat/plagiarism containment (#1969): the deterministic containment engine (src/queue/copycat-detection.ts)
+  // has already scored this PR against its candidate prior-art set before this input was built — `matched: true`
+  // means the best-scoring candidate cleared the configured threshold with an unambiguous (earlier-submission)
+  // direction. Unlike blacklistMatch/contributorCapMatch/reviewNagMatch, this alone does NOT short-circuit —
+  // whether it does depends on `copycatGateMode` (see the block below): `block` short-circuits exactly like
+  // those three; `label` only adds a standalone label (maybePlanCopycatLabel) and lets the normal pipeline
+  // continue; `warn`/`off` never reach here with matched:true at all (the caller only sets this when the
+  // engine's own wouldAct, which already requires a non-off mode, was true). `matchedPullNumber` is a PR
+  // number — already public on GitHub — so it, unlike blacklistMatch's private reason, is safe to interpolate
+  // into the public close/label reason text.
+  copycatMatch?: { matched: boolean; score: number; matchedPullNumber: number } | undefined;
+  // `gate.copycat.mode` resolved for this repo (off/warn/label/block); selects which of the two copycat
+  // behaviors above (if either) applies. Absent ⇒ "off" (no effect), matching every other gate mode's
+  // absent-means-off convention.
+  copycatGateMode?: "off" | "warn" | "label" | "block" | undefined;
+  // The repo-configured label applied by the copycat gate (#1969), resolved from `.loopover.yml`. Absent ⇒ the
+  // default (`DEFAULT_COPYCAT_LABEL` = "copycat"); explicit `null` ⇒ act WITHOUT any label (#label-scoping).
+  // At `block` tier this rides `close` autonomy (inseparable metadata on the close, like blacklistLabel); at
+  // `label` tier it rides its own `label` autonomy (see maybePlanCopycatLabel).
+  copycatLabel?: string | null | undefined;
   // Flag-then-close double-check for the linked-issue hard rule (#linked-issue-verify-before-close). When
   // `verifyBeforeClose` is true (the default), a violation FLAGS the PR (pending-closure label + warning comment)
   // on first detection and only CLOSES on a LATER evaluation when the violation STILL holds AND the PR already
@@ -585,6 +610,14 @@ function reviewNagCloseMessage(authorLogin: string, pingCount: number, maxPings:
   return `LoopOver closed this because @${authorLogin} pinged @loopover ${pingCount} times, above this repository's configured limit of ${maxPings}. Please wait for the cooldown window to pass before requesting review again. This is an automated maintenance action.`;
 }
 
+// The close comment for the copycat/plagiarism containment gate's `block` tier (#1969). `matchedPullNumber` is a
+// PR number — already public on GitHub — so, unlike blacklistCloseMessage's deliberately-static text, it's safe
+// to interpolate; the raw containment score/threshold are NOT interpolated (private scoring internals stay off
+// the public surface, matching this repo's public-safe-comment convention).
+function copycatCloseMessage(matchedPullNumber: number): string {
+  return `LoopOver is closing this pull request on the maintainer's behalf. Its added code overlaps prior art already submitted in #${matchedPullNumber} above this repository's configured threshold. This is an automated maintenance action — to pursue original work, please open a new pull request.`;
+}
+
 // The close comment for the screenshot-table gate (#2006). `reason` is the repo-configured (or built-in
 // default) templated contract message — already public-safe by construction (it is either the maintainer's own
 // configured `.loopover.yml` text or the static DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, never AI/user-derived),
@@ -624,6 +657,29 @@ function maybePlanAssign(actions: PlannedAgentAction[], input: AgentActionPlanIn
     requiresApproval: autonomyRequiresApproval(level),
     reason: "auto-assign PR opener",
     assignee: input.pr.authorLogin,
+  });
+}
+
+/**
+ * Plan the copycat/plagiarism containment gate's `label` tier (#1969): unlike the `block` tier's short-circuit
+ * above, `label` mode does NOT stop merit/CI/AI analysis — it only flags the PR with a label for a human to
+ * look at while the normal pipeline continues untouched, so it rides its own `label` autonomy class (not
+ * coupled to `close`) and is applied independently, like maybePlanAssign, regardless of CI/merge state.
+ */
+function maybePlanCopycatLabel(actions: PlannedAgentAction[], input: AgentActionPlanInput): void {
+  if (input.copycatGateMode !== "label" || input.copycatMatch?.matched !== true) return;
+  if (input.authorIsOwner || input.authorIsAdmin || input.authorIsAutomationBot) return;
+  const label = resolveNullableLabel(input.copycatLabel, DEFAULT_COPYCAT_LABEL);
+  if (label === null) return;
+  const level = resolveAutonomy(input.autonomy, "label");
+  if (!isActingAutonomyLevel(level)) return;
+  actions.push({
+    actionClass: "label",
+    closeKind: "copycat",
+    requiresApproval: autonomyRequiresApproval(level),
+    reason: "copycat containment above threshold",
+    label,
+    labelOp: "add",
   });
 }
 
@@ -727,6 +783,31 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     return actions;
   }
 
+  // Copycat/plagiarism containment, `block` tier only (#1969): same zero-hallucination short-circuit shape as
+  // blacklist/contributor-cap/review-nag above — the containment engine already resolved "matched" precision-
+  // first (unambiguous earlier-submission direction + score above threshold) before this input was built, so a
+  // match at `block` mode fires ahead of ALL merit/CI/AI analysis, tagged `closeKind: "copycat"` so it feeds the
+  // moderation-rules strike ledger the same way blacklist/contributor_cap/review_nag do. `label` mode does NOT
+  // short-circuit here — see maybePlanCopycatLabel below, called from the normal (non-short-circuiting) part of
+  // the pipeline instead.
+  const copycatContributor = !input.authorIsOwner && !input.authorIsAdmin && !input.authorIsAutomationBot;
+  if (input.copycatMatch?.matched === true && copycatContributor && input.copycatGateMode === "block") {
+    const label = resolveNullableLabel(input.copycatLabel, DEFAULT_COPYCAT_LABEL);
+    if (acting("close")) {
+      actions.push({
+        actionClass: "close",
+        requiresApproval: approval("close"),
+        reason: "copycat containment above threshold",
+        closeReasons: ["copycat containment above threshold"],
+        closeComment: sanitizePublicComment(copycatCloseMessage(input.copycatMatch.matchedPullNumber)),
+        closeKind: "copycat",
+        ...(input.pr.headSha ? { expectedHeadSha: input.pr.headSha } : {}),
+      });
+    }
+    if (acting("close") && label !== null) actions.push({ actionClass: "label", autonomyClass: "close", closeKind: "copycat", requiresApproval: approval("close"), reason: "copycat containment above threshold", label, labelOp: "add" });
+    return actions;
+  }
+
   // Screenshot-table gate (#2006): same zero-hallucination short-circuit shape as the blacklist above — fires
   // ahead of ALL merit/CI/AI analysis, for a CONTRIBUTOR only. The trigger has already resolved scope (label/
   // path match) and run the deterministic body/diff-OR-bot-capture check (#4110) before ever setting this
@@ -761,6 +842,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // check is still pending. Every deterministic no-review short-circuit above (blacklist/cap/review-nag) already
   // returned before reaching this line, so none of them are affected.
   maybePlanAssign(actions, input);
+  maybePlanCopycatLabel(actions, input);
 
   // CI state over ALL of the PR's checks (required OR not — codecov/patch included) — reviewbot's ci_red
   // parity. A red CI is NEVER approved/merged and is itself a close-worthy signal (non-owner). While CI is

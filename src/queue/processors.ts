@@ -32,6 +32,7 @@ import {
   listPullRequestFiles,
   listRecentMergedPullRequests,
   updatePullRequestSlopAssessment,
+  updatePullRequestCopycatAssessment,
   listRepoPullRequestFilePaths,
   listRepoSyncStates,
   listRepoSyncSegments,
@@ -369,6 +370,8 @@ export {
 // `import { ... } from "../../src/queue/processors"` keeps working unchanged.
 import { runAiSlopForAdvisory, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "./slop-detection";
 export { runAiSlopForAdvisory, shouldCollectSlopEvidence, shouldRunSlopAiAdvisory } from "./slop-detection";
+import { runCopycatAssessment, shouldCollectCopycatEvidence } from "./copycat-detection";
+export { runCopycatAssessment, shouldCollectCopycatEvidence } from "./copycat-detection";
 // #4013 step 5: the 5 review-evasion entry points, imported for this file's own webhook-handler call
 // sites. No re-export here (unlike the shims above) -- none of these 5 functions were ever exported from
 // this file, so there is no existing external `import { ... } from "../../src/queue/processors"` to keep
@@ -465,6 +468,7 @@ import {
 } from "../review/unified-comment";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment, type SlopBand } from "../signals/slop";
+import { copycatWouldActOnPersistedScore } from "../signals/copycat";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { runLoopOverLinkedIssueSatisfaction } from "../services/linked-issue-satisfaction-run";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -2435,6 +2439,15 @@ function buildAgentMaintenancePlanInput(args: {
       : {}),
     // Always threaded (the DB layer populates it, default "slop"); the planner applies its own fallback.
     blacklistLabel: settings.blacklistLabel,
+    // Copycat/plagiarism containment (#1969): re-derive "matched" from the PERSISTED score (written by the
+    // gate-evaluation pass that already ran the containment engine, src/queue/copycat-detection.ts — never
+    // re-run here) rather than the live per-PR score, since this actuation pass reads the re-fetched `pr` row.
+    // Absent copycatGateMode (config-as-code only, no DB column — see RepositorySettings.copycatGateMode's own
+    // doc comment) defaults to "off" the same way copycatWouldActOnPersistedScore itself does.
+    ...(copycatWouldActOnPersistedScore(pr.copycatScore, pr.copycatMatchedPullNumber, settings.copycatGateMode, settings.copycatGateMinScore) && pr.copycatMatchedPullNumber !== null && pr.copycatMatchedPullNumber !== undefined
+      ? { copycatMatch: { matched: true, score: pr.copycatScore ?? 0, matchedPullNumber: pr.copycatMatchedPullNumber } }
+      : {}),
+    copycatGateMode: settings.copycatGateMode,
     ...(screenshotTableMatch !== undefined ? { screenshotTableMatch } : {}),
     ...(contributorCapMatch !== undefined ? { contributorCapMatch } : {}),
     // Always threaded (the DB layer populates it, default "over-contributor-limit"); the planner applies its
@@ -8451,7 +8464,8 @@ async function maybePublishPrPublicSurface(
       null;
     if (
       shouldCollectSlopEvidence(settings) ||
-      settings.manifestPolicyGateMode !== "off"
+      settings.manifestPolicyGateMode !== "off" ||
+      shouldCollectCopycatEvidence(settings)
     ) {
       gateFiles = await getReviewFiles();
     }
@@ -8528,6 +8542,26 @@ async function maybePublishPrPublicSurface(
           });
         }
       }
+    }
+    // Copycat/plagiarism containment (#1969): only when opted in (copycatGateMode !== "off"). Surfaces the
+    // deterministic containment finding as advisory context (no gate-level hard block here — see
+    // planAgentMaintenanceActions's own copycat short-circuit for the label/close/strikes actuation, which
+    // reads the score persisted below rather than re-running this candidate-fetching pass). Best-effort:
+    // persistence failure never aborts gate evaluation.
+    if (shouldCollectCopycatEvidence(settings)) {
+      const copycat = await runCopycatAssessment(env, {
+        repoFullName,
+        pr: { number: pr.number, createdAt: pr.createdAt },
+        files: gateFiles ?? [],
+        otherOpenPullRequests,
+        mode: settings.copycatGateMode,
+        minScore: settings.copycatGateMinScore,
+      });
+      advisory.findings.push(...copycat.findings);
+      await updatePullRequestCopycatAssessment(env, repoFullName, pr.number, {
+        copycatScore: copycat.score,
+        copycatMatchedPullNumber: copycat.matchedPullNumber,
+      }).catch(() => undefined);
     }
     // Linked-issue satisfaction assessment (#1961/#3906, opt-in via linkedIssueSatisfactionGateMode). Assesses
     // only the PR's primary linked issue -- see runLinkedIssueSatisfactionForAdvisory's own doc comment for

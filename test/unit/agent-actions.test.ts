@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import { AGENT_LABEL_CHANGES, AGENT_LABEL_MIGRATION_COLLISION, AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, DEFAULT_BLACKLIST_LABEL, DEFAULT_CONTRIBUTOR_CAP_LABEL, DEFAULT_COPYCAT_LABEL, DEFAULT_REVIEW_NAG_LABEL, downgradeCloseToHold, downgradeMergeToHold, isProtectedAutomationAuthor, planAgentMaintenanceActions, type AgentActionPlanInput, type PlannedAgentAction } from "../../src/settings/agent-actions";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../../src/review/review-thread-findings";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
@@ -1900,6 +1900,123 @@ describe("contributor blacklist short-circuit (#1425)", () => {
     const plan = planAgentMaintenanceActions(blacklisted({ blacklistMatch: { matched: true, reason: privateReason } }));
     expect(plan[0]?.closeComment).not.toContain(privateReason);
     expect(plan[0]?.closeComment).toContain("blocked from contributing");
+  });
+});
+
+describe("copycat/plagiarism containment gate (#1969)", () => {
+  const copycatMatched = (extra: Partial<AgentActionPlanInput> = {}) =>
+    input({
+      conclusion: "success",
+      autonomy: { close: "auto", label: "auto", approve: "auto", merge: "auto" },
+      copycatMatch: { matched: true, score: 92, matchedPullNumber: 42 },
+      copycatGateMode: "block",
+      ...extra,
+    });
+
+  it("block tier: closes + labels, winning over a passing gate (no merit review / merge) — same shape as blacklist", () => {
+    const plan = planAgentMaintenanceActions(copycatMatched());
+    expect(classes(plan)).toEqual(["close", "label"]); // short-circuit: no approve/merge despite a SUCCESS gate
+    expect(plan[0]).toMatchObject({ actionClass: "close", closeKind: "copycat" });
+    expect(plan[0]?.closeReasons).toEqual(["copycat containment above threshold"]);
+    expect(plan[1]).toMatchObject({ actionClass: "label", label: DEFAULT_COPYCAT_LABEL, labelOp: "add", closeKind: "copycat", autonomyClass: "close" });
+  });
+
+  it("block tier: names the matched (public) PR number in the close comment, never the raw score", () => {
+    const plan = planAgentMaintenanceActions(copycatMatched({ copycatMatch: { matched: true, score: 97, matchedPullNumber: 777 } }));
+    expect(plan[0]?.closeComment).toContain("#777");
+    expect(plan[0]?.closeComment).not.toContain("97");
+  });
+
+  it("block tier: pins the close to the reviewed head, mirroring blacklist (#2452)", () => {
+    const plan = planAgentMaintenanceActions(copycatMatched({ pr: { labels: [], headSha: "h-reviewed" } }));
+    expect(plan.find((a) => a.actionClass === "close")).toMatchObject({ closeKind: "copycat", expectedHeadSha: "h-reviewed" });
+  });
+
+  it("block tier: omits expectedHeadSha when the PR record has no headSha (defensive fallback)", () => {
+    const plan = planAgentMaintenanceActions(copycatMatched());
+    expect(plan.find((a) => a.actionClass === "close")?.expectedHeadSha).toBeUndefined();
+  });
+
+  it("block tier: an explicit null copycatLabel closes WITHOUT any label", () => {
+    const withLabel = planAgentMaintenanceActions(copycatMatched());
+    expect(classes(withLabel)).toEqual(["close", "label"]);
+    const withoutLabel = planAgentMaintenanceActions(copycatMatched({ copycatLabel: null }));
+    expect(classes(withoutLabel)).toEqual(["close"]);
+  });
+
+  it("block tier: the label rides on `close` autonomy, not `label` — `label: auto` alone plans nothing, `close: auto` alone plans both", () => {
+    expect(planAgentMaintenanceActions(copycatMatched({ autonomy: {} }))).toEqual([]);
+    expect(planAgentMaintenanceActions(copycatMatched({ autonomy: { label: "auto" } }))).toEqual([]);
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ autonomy: { close: "auto" } })))).toEqual(["close", "label"]);
+  });
+
+  it("block tier: fires AHEAD of CI — closes even while CI is still pending (not the pending early-return)", () => {
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ ciState: "pending" })))).toEqual(["close", "label"]);
+  });
+
+  it("block tier: NEVER fires for the owner, an admin login, or an automation bot (standing rule)", () => {
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ authorIsOwner: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ authorIsAdmin: true })))).not.toContain("close");
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ authorIsAutomationBot: true })))).not.toContain("close");
+  });
+
+  it("block tier: no-ops when copycatMatch.matched is false (normal disposition runs)", () => {
+    expect(classes(planAgentMaintenanceActions(copycatMatched({ copycatMatch: { matched: false, score: 0, matchedPullNumber: 42 } })))).not.toContain("close");
+  });
+
+  it("label tier: adds a standalone label but does NOT short-circuit — merit/CI analysis still runs (approve/merge still reachable)", () => {
+    const plan = planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", pr: { labels: [], reviewDecision: "APPROVED" } }));
+    const labelAction = plan.find((a) => a.actionClass === "label" && a.closeKind === "copycat");
+    expect(labelAction).toMatchObject({ label: DEFAULT_COPYCAT_LABEL, labelOp: "add", requiresApproval: false });
+    // No close was planned for the copycat reason — the label-tier match never reaches the block-tier branch.
+    expect(plan.some((a) => a.actionClass === "close" && a.closeKind === "copycat")).toBe(false);
+  });
+
+  it("label tier: uses its OWN `label` autonomy, not `close` — `close: auto` alone (no `label`) plans nothing", () => {
+    expect(
+      planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", autonomy: { close: "auto" } })).some(
+        (a) => a.closeKind === "copycat",
+      ),
+    ).toBe(false);
+    expect(
+      planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", autonomy: { label: "auto" } })).some(
+        (a) => a.actionClass === "label" && a.closeKind === "copycat",
+      ),
+    ).toBe(true);
+  });
+
+  it("label tier: an explicit null copycatLabel means no label at all", () => {
+    expect(
+      planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", copycatLabel: null })).some((a) => a.closeKind === "copycat"),
+    ).toBe(false);
+  });
+
+  it("label tier: NEVER fires for the owner, an admin login, or an automation bot", () => {
+    for (const flag of ["authorIsOwner", "authorIsAdmin", "authorIsAutomationBot"] as const) {
+      expect(
+        planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", [flag]: true })).some((a) => a.closeKind === "copycat"),
+      ).toBe(false);
+    }
+  });
+
+  it("label tier: no-ops when copycatMatch is absent or unmatched", () => {
+    expect(planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", copycatMatch: undefined })).some((a) => a.closeKind === "copycat")).toBe(false);
+    expect(
+      planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "label", copycatMatch: { matched: false, score: 0, matchedPullNumber: 42 } })).some(
+        (a) => a.closeKind === "copycat",
+      ),
+    ).toBe(false);
+  });
+
+  it("warn tier and absent mode never act at all (advisory-only; no label, no close)", () => {
+    expect(planAgentMaintenanceActions(copycatMatched({ copycatGateMode: "warn" })).some((a) => a.closeKind === "copycat")).toBe(false);
+    expect(planAgentMaintenanceActions(copycatMatched({ copycatGateMode: undefined })).some((a) => a.closeKind === "copycat")).toBe(false);
+  });
+
+  it("uses the repo-configured copycatLabel at block tier, defaulting to 'copycat' when unset", () => {
+    expect(DEFAULT_COPYCAT_LABEL).toBe("copycat");
+    expect(planAgentMaintenanceActions(copycatMatched({ copycatLabel: "plagiarism-flag" }))[1]).toMatchObject({ label: "plagiarism-flag" });
+    expect(planAgentMaintenanceActions(copycatMatched())[1]).toMatchObject({ label: "copycat" });
   });
 });
 

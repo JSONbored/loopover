@@ -542,6 +542,11 @@ export type PullRequestRecord = {
    *  the repo opted into slop. `null`/absent = not assessed (slop off, or PR not yet processed). */
   slopRisk?: number | null | undefined;
   slopBand?: string | null | undefined;
+  /** Latest deterministic copycat/plagiarism containment assessment (0-100) and matched prior-art PR number
+   *  (#1969), persisted the same way as slopRisk/slopBand above. `null`/absent = not assessed (copycat off,
+   *  no eligible prior-art candidate, or PR not yet processed). */
+  copycatScore?: number | null | undefined;
+  copycatMatchedPullNumber?: number | null | undefined;
   /** RC3 terminal-fail merges: failed auto-merge attempt count, and the head SHA at which the merge is
    *  terminally blocked (with a human-readable reason). When mergeBlockedSha === headSha the planner suppresses
    *  the `merge` disposition (held for a human); a new commit clears the block. */
@@ -615,8 +620,10 @@ export type GateRuleMode = "off" | "advisory" | "block";
 
 /** `gate.copycat.mode` (#1969) -- a dedicated 4-value enum rather than the shared {@link GateRuleMode}
  *  tri-state, since the issue's tiered response is warn -> label -> block -> strikes (where "strikes" is a
- *  separate escalation action reusing the existing cross-repo banned-contributors ledger, not a 5th mode
- *  value). See {@link RepositorySettings.copycatGateMode}'s doc comment for the currently-inert status. */
+ *  separate escalation action reusing the existing moderation-rules violation ledger -- a `block`-tier close
+ *  is tagged `closeKind: "copycat"`, counted the same way as blacklist/contributor_cap/review_nag, escalating
+ *  to the global contributor blacklist once the ban threshold is reached -- not a 5th mode value). See
+ *  {@link RepositorySettings.copycatGateMode}'s doc comment for how each tier acts. */
 export type CopycatGateMode = "off" | "warn" | "label" | "block";
 
 /** Review-check publish surface (#2852). Controls ONLY whether/how the "LoopOver Orb Review Agent" check-run
@@ -783,15 +790,15 @@ export type RepositorySettings = {
    *  for check-run detection so contributor-controlled same-name runs cannot satisfy a blocking CLA gate. */
   claCheckRunAppSlug?: string | null | undefined;
   /** Copycat/plagiarism detection (#1969). `off` (default/absent) = no check; `warn`/`label`/`block` are
-   *  escalating tiers a future containment/similarity engine would act on (`block` additionally hard-blocks;
-   *  a further "strikes" escalation reuses the existing cross-repo banned-contributors ledger once wired).
-   *  Config-as-code only — no DB column or dashboard toggle; set via `.loopover.yml gate.copycat.mode`.
-   *  CURRENTLY INERT: this field is parsed and threaded end-to-end, but no detection engine reads it yet —
-   *  see {@link CopycatGateMode}'s doc comment in packages/loopover-engine for the tracked follow-up plan. */
+   *  escalating tiers the deterministic containment engine (src/queue/copycat-detection.ts, evaluated in
+   *  src/queue/processors.ts alongside slop) acts on: `warn` surfaces an advisory finding only; `label` also
+   *  applies a label (src/settings/agent-actions.ts's maybePlanCopycatLabel); `block` also closes the PR
+   *  (closeKind: "copycat") and counts toward the moderation-rules strikes ledger. Config-as-code only — no
+   *  DB column or dashboard toggle; set via `.loopover.yml gate.copycat.mode`. */
   copycatGateMode?: CopycatGateMode | undefined;
-  /** `gate.copycat.minScore`: containment/similarity score (0-100) at/above which `copycatGateMode` would act,
-   *  once the detection engine exists. `null`/absent ⇒ the engine's own default threshold. Config-as-code
-   *  only, alongside {@link copycatGateMode}. */
+  /** `gate.copycat.minScore`: containment/similarity score (0-100) at/above which `copycatGateMode` acts.
+   *  `null`/absent ⇒ the engine's own default threshold (85). Config-as-code only, alongside
+   *  {@link copycatGateMode}. */
   copycatGateMinScore?: number | null | undefined;
   /** `gate.expectedCiContexts` (#selfhost-ci-verification): maintainer-declared CI check/status context names to
    *  treat as required when GitHub branch protection returns no readable required-status-checks (unconfigured,
@@ -1164,7 +1171,7 @@ export type RepositorySettings = {
   /** Moderation-rules engine: a per-repo override of WHICH of the anti-abuse mechanisms (contributor cap,
    *  blacklist, review-nag, review-evasion) feed a contributor's shared, cross-repo violation tally.
    *  `undefined`/absent ⇒ inherit the global rule set (`resolveEffectiveModerationRules`'s default shape). */
-  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag" | "review_evasion")[] | undefined;
+  moderationRules?: ("contributor_cap" | "blacklist" | "review_nag" | "review_evasion" | "copycat")[] | undefined;
   /** Moderation-rules engine: per-repo override of the label applied at >=1 lifetime violation. `undefined` ⇒
    *  the global config's `warningLabel` (itself defaulting to `"mod:warning"`). */
   moderationWarningLabel?: string | undefined;
@@ -1451,7 +1458,7 @@ export type AgentPendingActionParams = {
   // (#2127), and the actuation-time live-CI re-check (#2364) — which only applies to a heuristic close — still
   // fires correctly once the row is replayed through pendingActionToPlanned, rather than silently skipping for
   // a lost discriminator.
-  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "screenshot_table" | "heuristic";
+  closeKind?: "linked-issue-hard-rule" | "blacklist" | "contributor_cap" | "review_nag" | "screenshot_table" | "heuristic" | "copycat";
   // For a CI-driven heuristic close, persist the CI state that must still hold when the staged action replays
   // (#2364). This is separate from closeKind because heuristic closes also cover non-CI adverse signals.
   // ALWAYS set (to "failed" or "not_required") for a freshly planned heuristic close (#2478) -- never omitted --

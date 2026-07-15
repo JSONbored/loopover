@@ -42,7 +42,10 @@ try {
   loadMinerFileSecrets();
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  // Exit 2, not 1: a broken secret mount is a real startup failure, and docs/unattended-scheduling.md's
+  // exit-code contract is 0 (success) / 2 (failure — "Alert on this"). Exiting 1 here would slip past an
+  // operator whose alerting keys strictly on exit code 2 (#6162).
+  process.exit(2);
 }
 
 // Opt-in Sentry (#6011): a complete no-op unless the operator sets LOOPOVER_MINER_SENTRY_DSN themselves. Must

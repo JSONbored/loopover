@@ -149,7 +149,7 @@ describe("loadMinerFileSecrets (#5178)", () => {
       expect(result.stderr).not.toContain("ghp_end_to_end_value");
     });
 
-    it("fails the process fast with a clear error when GITHUB_TOKEN_FILE points at a missing file", () => {
+    it("fails the process fast with the documented failure exit code (2) when GITHUB_TOKEN_FILE points at a missing file (#6162)", () => {
       const result = spawnSync("node", [bin, "status"], {
         encoding: "utf8",
         env: {
@@ -159,7 +159,8 @@ describe("loadMinerFileSecrets (#5178)", () => {
         },
       });
 
-      expect(result.status).toBe(1);
+      // Exit 2 (not 1) so it matches docs/unattended-scheduling.md's 0/2 contract and an operator's exit-code-2 alerting.
+      expect(result.status).toBe(2);
       expect(result.stderr).toContain("GITHUB_TOKEN_FILE");
       expect(result.stderr).toContain("/definitely/does/not/exist/github_token");
     });

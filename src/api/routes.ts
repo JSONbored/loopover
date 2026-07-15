@@ -264,7 +264,7 @@ import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled } from "../review/ops-wire";
-import { deleteLiveOverride, listOverrideAudit, sanitizeOverridePayload, type StorageEnv } from "../review/auto-apply";
+import { deleteLiveOverride, listOverrideAudit, loadOverride, loadShadowOverride, sanitizeOverridePayload, type StorageEnv } from "../review/auto-apply";
 import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig } from "../review/ops";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
@@ -2967,6 +2967,31 @@ export function createApp() {
     });
     await persistSignal(c.env, "pr-reviewability", `${fullName}#${number}`, fullName, reviewability as unknown as Record<string, JsonValue>, reviewability.generatedAt);
     return c.json(reviewability);
+  });
+
+  // Read-only view of a repo's CURRENT effective self-tuned gate thresholds (#6247, groundwork for #6209).
+  // Returns only the resolved effective values from auto-apply.ts's live override — never the raw
+  // override_audit history or the shadow's queued recommendation, just a flag that a shadow is soaking.
+  // Gated behind the same most-conservative repo-scoped read precedent the reviewability route (#6154) uses.
+  app.get("/v1/repos/:owner/:repo/gate-config/effective", async (c) => {
+    const unauthorized = await requireStaticProtectedApiToken(c);
+    if (unauthorized) return unauthorized;
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    if (identity?.kind === "static" && identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    const storageEnv = c.env as unknown as StorageEnv;
+    const [override, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
+    return c.json({
+      repoFullName: fullName,
+      effective: {
+        confidenceFloor: override?.confidenceFloor ?? null,
+        scopeCap: {
+          files: override?.scopeCap?.files ?? null,
+          lines: override?.scopeCap?.lines ?? null,
+        },
+      },
+      shadowPending: shadow !== null,
+    });
   });
 
   app.get("/v1/repos/:owner/:repo/outcome-patterns", async (c) => {

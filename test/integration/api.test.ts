@@ -43,6 +43,7 @@ import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
+import { recordOverrideAudit, writeLiveOverride, writeShadowOverride, type StorageEnv } from "../../src/review/auto-apply";
 import { createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
 
@@ -6708,6 +6709,63 @@ describe("api routes", () => {
       ]),
     );
     expect(JSON.stringify(malformedPayload.policy.publicSafe)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+  });
+
+  it("exposes only a repo's effective self-tuned gate thresholds, never the raw override audit trail (#6247)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    // No override yet → effective values are all null and no shadow is soaking.
+    const empty = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", { headers: apiHeaders(env) }, env);
+    expect(empty.status).toBe(200);
+    await expect(empty.json()).resolves.toEqual({
+      repoFullName: "entrius/allways-ui",
+      effective: { confidenceFloor: null, scopeCap: { files: null, lines: null } },
+      shadowPending: false,
+    });
+
+    // A live override surfaces as the resolved effective values; a soaking shadow shows only as a boolean
+    // flag (never its queued recommendation); and audit rows exist but must never surface in this read.
+    const storageEnv = env as unknown as StorageEnv;
+    await writeLiveOverride(storageEnv, "entrius/allways-ui", { confidenceFloor: 0.9, scopeCap: { files: 12, lines: 400 } });
+    await writeShadowOverride(storageEnv, "entrius/allways-ui", { confidenceFloor: 0.8 }, "2099-01-01T00:00:00.000Z");
+    await recordOverrideAudit(storageEnv, "entrius/allways-ui", "apply", { note: "audit-detail-must-never-surface" });
+    const populated = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", { headers: apiHeaders(env) }, env);
+    expect(populated.status).toBe(200);
+    const body = (await populated.json()) as unknown;
+    expect(body).toEqual({
+      repoFullName: "entrius/allways-ui",
+      effective: { confidenceFloor: 0.9, scopeCap: { files: 12, lines: 400 } },
+      shadowPending: true,
+    });
+    // Hard guarantee (the whole point of #6247): no audit-history / event / detail fields ever leak.
+    expect(JSON.stringify(body)).not.toMatch(/override_audit|event_type|audit-detail-must-never-surface|"detail"/i);
+
+    // A static mcp credential that IS within the allowlist reads successfully — the allowed side of the gate
+    // (default MCP_READ_REPO_ALLOWLIST is "*"), so isMcpReadRepoAllowed returns true and the request proceeds.
+    const mcpAllowed = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", { headers: mcpHeaders(env) }, env);
+    expect(mcpAllowed.status).toBe(200);
+    await expect(mcpAllowed.json()).resolves.toMatchObject({ effective: { confidenceFloor: 0.9 } });
+
+    // A live override carrying only a confidence floor (no scope cap) still resolves both scopeCap fields to null.
+    const floorOnlyEnv = createTestEnv();
+    await writeLiveOverride(floorOnlyEnv as unknown as StorageEnv, "entrius/allways-ui", { confidenceFloor: 0.5 });
+    const floorOnly = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", { headers: apiHeaders(floorOnlyEnv) }, floorOnlyEnv);
+    expect(floorOnly.status).toBe(200);
+    await expect(floorOnly.json()).resolves.toEqual({
+      repoFullName: "entrius/allways-ui",
+      effective: { confidenceFloor: 0.5, scopeCap: { files: null, lines: null } },
+      shadowPending: false,
+    });
+
+    // The shared static mcp credential is scoped to MCP_READ_REPO_ALLOWLIST, same precedent as reviewability (#6154).
+    const forbiddenEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
+    const forbidden = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", { headers: mcpHeaders(forbiddenEnv) }, forbiddenEnv);
+    expect(forbidden.status).toBe(403);
+    await expect(forbidden.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+
+    // Unauthenticated calls are rejected before any repo lookup.
+    const unauth = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", {}, env);
+    expect(unauth.status).toBe(401);
   });
 });
 

@@ -300,8 +300,13 @@ export function computeTuningRecommendations(report: GateEvalReport): TuningRec[
       continue;
     }
     let flagged = false;
-    // The dangerous error: would auto-merge something the human closed.
-    if (r.mergePrecision != null && r.mergePrecision < RISK_MERGE_PRECISION) {
+    // The dangerous error: would auto-merge something the human closed. Gate on wouldMerge, not just the
+    // top-of-loop `decided` check: mergePrecision is non-null over as few as ONE would-merge, and this warning
+    // carries an auto-applicable TIGHTENING overridePayload -- so without this guard a lone fluke would-merge
+    // (e.g. 9 holds + 1 wrong would-merge) autonomously raises the live floor off a statistically meaningless
+    // sample, exactly the case the sibling breakers planAutoTune / applyAutoTune / planCloseAutoTune all refuse
+    // via `wouldMerge >= AUTOTUNE_MIN_DECIDED` (== MIN_DECIDED).
+    if (r.mergePrecision != null && r.wouldMerge >= MIN_DECIDED && r.mergePrecision < RISK_MERGE_PRECISION) {
       recs.push({
         project: r.project,
         severity: "warn",

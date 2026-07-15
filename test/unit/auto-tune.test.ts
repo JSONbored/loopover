@@ -397,6 +397,15 @@ describe("computeTuningRecommendations (#self-improve)", () => {
     expect(warn?.overridePayload).toEqual({ confidenceFloor: 0.95 });
   });
 
+  it("does NOT warn or attach a tightening payload on a thin WOULD-MERGE sample even when total decided is high (mirrors planAutoTune)", () => {
+    // 9 holds + 1 fluke would-merge the human closed: mergePrecision is 0% over a single would-merge. The
+    // breaker (planAutoTune) refuses to act on so meaningless a sample, so this advisor must not autonomously
+    // raise the live floor (overridePayload) off it either.
+    const recs = computeTuningRecommendations(report([row({ project: "p", decided: 20, wouldMerge: 1, mergeConfirmed: 0, mergeFalse: 1, mergePrecision: 0 })]));
+    expect(recs.find((r) => r.severity === "warn" && /do NOT flip live/i.test(r.message))).toBeUndefined();
+    expect(recs.every((r) => r.overridePayload === undefined)).toBe(true);
+  });
+
   it("WARNs to loosen when it would auto-close PRs the human merged — and attaches NO payload (loosening is never auto-applied)", () => {
     const recs = computeTuningRecommendations(report([row({ project: "p", decided: 15, wouldMerge: 10, mergeConfirmed: 10, mergePrecision: 1.0, wouldClose: 5, closeConfirmed: 3, closeFalse: 2, closePrecision: 0.6 })]));
     const loosen = recs.find((r) => r.severity === "warn" && /loosen/i.test(r.message));

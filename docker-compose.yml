@@ -10,22 +10,25 @@
 #
 # PROFILES — activate optional services by passing --profile <name> (combine freely):
 #
-#   (none)                  SQLite + Redis single-node stack (default — no flags needed)
-#   --profile postgres      pgvector/pg16 shared database (multi-instance capable)
-#   --profile pgbouncer     PgBouncer connection pooler in front of Postgres
-#   --profile qdrant        Qdrant vector database for RAG
-#   --profile ollama        Local Ollama AI backend
-#   --profile gpu           GPU metrics exporter (nvidia-smi -> Prometheus -> Grafana), requires the NVIDIA
-#                           Container Toolkit; combine with --profile ollama on a GPU host
-#   --profile visual-review Headless Chromium (browserless) for before/after PR screenshot capture
-#   --profile rees          Review-enrichment service (REES) for heavier PR analysis, in-network only
-#   --profile litestream    Continuous SQLite backup to S3/B2/R2 via Litestream
-#   --profile workflows     n8n workflow automation (Slack/Teams/email fan-out, scheduled reports)
-#   --profile storage       MinIO S3-compatible object store (Litestream destination, artifact blobs)
-#   --profile caddy         Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
-#   --profile observability Prometheus + Alertmanager + Loki + Promtail + Grafana (pre-wired)
-#   --profile tailscale     Tailscale sidecar — access the stack via your tailnet
-#   --profile runners       GitHub Actions self-hosted runner
+#   (none)                      SQLite + Redis single-node stack (default — no flags needed)
+#   --profile postgres          pgvector/pg16 shared database (multi-instance capable)
+#   --profile pgbouncer         PgBouncer connection pooler in front of Postgres
+#   --profile qdrant            Qdrant vector database for RAG
+#   --profile ollama            Local Ollama AI backend
+#   --profile gpu               GPU metrics exporter (nvidia-smi -> Prometheus -> Grafana), requires the NVIDIA
+#                               Container Toolkit; combine with --profile ollama on a GPU host
+#   --profile visual-review     Headless Chromium (browserless) for before/after PR screenshot capture
+#   --profile rees              Review-enrichment service (REES) for heavier PR analysis, in-network only
+#   --profile litestream        Continuous SQLite backup to S3/B2/R2 via Litestream
+#   --profile workflows         n8n workflow automation (Slack/Teams/email fan-out, scheduled reports)
+#   --profile storage           MinIO S3-compatible object store (Litestream destination, artifact blobs)
+#   --profile caddy             Caddy HTTPS terminator with auto-TLS (set DOMAIN= in .env)
+#   --profile observability     Prometheus + Alertmanager + Loki + Promtail + Grafana (pre-wired)
+#   --profile ams-observability Exports AMS (loopover-miner) attempt-log/prediction-ledger data to the
+#                               AMS Attempt Log / Prediction Ledger Grafana datasources
+#   --profile tailscale         Tailscale sidecar — access the stack via your tailnet
+#   --profile runners           GitHub Actions self-hosted runner
+#   --profile backup            Scheduled Postgres/SQLite + Qdrant-snapshot backups with freshness metrics
 #
 # Examples:
 #   ./scripts/deploy-selfhost-image.sh                            # SQLite + Redis, published image

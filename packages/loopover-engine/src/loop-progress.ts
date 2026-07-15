@@ -53,15 +53,34 @@ export function buildProgressSnapshot(state: LoopProgressState): ProgressSnapsho
   };
 }
 
+/**
+ * True when the activity tail differs — by length, or by CONTENT at the same length.
+ *
+ * Length alone is not enough (#6171): the tail is capped at {@link MAX_PROGRESS_ACTIVITY}, so once a loop has
+ * accumulated that many entries every further event evicts the oldest and appends the newest, holding the
+ * length at the cap forever. A length-only check therefore goes permanently blind to activity exactly on the
+ * long runs that stream the most. Comparing the entries themselves is O(cap) — bounded by that same constant,
+ * so a fixed handful of field reads, not a cost that grows with the run.
+ */
+function activityChanged(prev: readonly LoopProgressActivity[], next: readonly LoopProgressActivity[]): boolean {
+  if (prev.length !== next.length) return true;
+  for (let index = 0; index < next.length; index += 1) {
+    const before = prev[index]!;
+    const after = next[index]!;
+    if (before.step !== after.step || before.detail !== after.detail || before.at !== after.at) return true;
+  }
+  return false;
+}
+
 /** True when `next` differs from `prev` in a way worth pushing to the customer — so the surface streams
  *  ON CHANGE instead of polling on a fixed interval (#4800's acceptance). A null `prev` (the first snapshot)
- *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail's length. */
+ *  always pushes. Compares the displayed axes: phase, status, iteration, and the activity tail's contents. */
 export function progressChanged(prev: ProgressSnapshot | null, next: ProgressSnapshot): boolean {
   if (prev === null) return true;
   return (
     prev.phase !== next.phase ||
     prev.status !== next.status ||
     prev.iteration !== next.iteration ||
-    prev.recentActivity.length !== next.recentActivity.length
+    activityChanged(prev.recentActivity, next.recentActivity)
   );
 }

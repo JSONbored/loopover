@@ -586,9 +586,35 @@ function stdioToolDescription(name) {
   return tool.description;
 }
 
+/** Shared CLI failure output (#5928): mirrors @loopover/miner's cli-error.js contract so a `--json`
+ *  invocation of this CLI never lets a thrown error escape as a raw Node stack trace — when `--json`
+ *  is set, emit a parseable `{ ok: false, error }` object on stdout; otherwise log plain text to stderr. */
+function reportCliFailure(wantsJson, message) {
+  if (wantsJson) {
+    console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+  } else {
+    console.error(message);
+  }
+}
+
+/** True when `--json` (or `--json=...`) appears anywhere in argv, ahead of any parsed option result. */
+function argsWantJson(args) {
+  return args.some((arg) => arg === "--json" || arg?.startsWith("--json="));
+}
+
+/** Normalize a thrown value to a safe error string for CLI output. */
+function describeCliError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 if (cliArgs[0] && cliArgs[0] !== "--stdio") {
-  const exitCode = await runCli(cliArgs);
-  process.exit(typeof exitCode === "number" ? exitCode : 0);
+  try {
+    const exitCode = await runCli(cliArgs);
+    process.exit(typeof exitCode === "number" ? exitCode : 0);
+  } catch (error) {
+    reportCliFailure(argsWantJson(cliArgs), describeCliError(error));
+    process.exit(1);
+  }
 }
 
 const server = new McpServer({

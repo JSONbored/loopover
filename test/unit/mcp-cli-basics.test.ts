@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { closeFixtureServer, createPacketRepo, run, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
+import { closeFixtureServer, createPacketRepo, run, runAsync, runExpectingFailure, startFixtureServer } from "./support/mcp-cli-harness";
 import mcpPackageJson from "../../packages/loopover-mcp/package.json";
 
 describe("loopover-mcp CLI — basics", () => {
@@ -160,6 +160,27 @@ describe("loopover-mcp CLI — basics", () => {
   it("guides unknown commands to --help", () => {
     expect(() => run(["bogus-command"])).toThrow(/Unknown command: bogus-command/);
     expect(() => run(["bogus-command"])).toThrow(/loopover-mcp --help/);
+  });
+
+  it("emits a parseable { ok: false, error } object on stdout for --json failures instead of a raw stack trace (#5928)", () => {
+    const unknownCommand = runExpectingFailure(["bogus-command", "--json"]);
+    expect(unknownCommand.status).not.toBe(0);
+    expect(unknownCommand.stderr).toBe("");
+    expect(JSON.parse(unknownCommand.stdout)).toMatchObject({ ok: false, error: expect.stringMatching(/Unknown command: bogus-command/) });
+
+    const missingLogin = runExpectingFailure(["preflight", "--json"]);
+    expect(missingLogin.status).not.toBe(0);
+    expect(JSON.parse(missingLogin.stdout)).toMatchObject({ ok: false, error: expect.stringMatching(/Pass --login <github-login> or set LOOPOVER_LOGIN/) });
+
+    const badProfile = runExpectingFailure(["init-client", "--print", "codex", "--agent-profile", "autopilot", "--json"]);
+    expect(badProfile.status).not.toBe(0);
+    expect(JSON.parse(badProfile.stdout)).toMatchObject({ ok: false, error: expect.stringMatching(/Unsupported agent profile/) });
+
+    // the non-`--json` path is unchanged: plain text on stderr, nothing on stdout.
+    const plainFailure = runExpectingFailure(["bogus-command"]);
+    expect(plainFailure.status).not.toBe(0);
+    expect(plainFailure.stdout).toBe("");
+    expect(plainFailure.stderr).toMatch(/Unknown command: bogus-command/);
   });
 
   it("suggests the closest command for a near-miss typo", () => {

@@ -14,16 +14,24 @@ export async function closeFixtureServer() {
 }
 
 export function run(args: string[], env: Record<string, string> = {}) {
-  return execFileSync("node", [bin, ...args], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      LOOPOVER_API_TIMEOUT_MS: "1000",
-      LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-cli-config-")),
-      ...env,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  try {
+    return execFileSync("node", [bin, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        LOOPOVER_API_TIMEOUT_MS: "1000",
+        LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-cli-config-")),
+        ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    // A failing command's message may now land on stdout (the --json contract) or stderr (plain text) --
+    // fold both into the thrown Error's message so callers can keep matching it with toThrow(/regex/).
+    const failure = error as NodeJS.ErrnoException & { stdout?: string };
+    if (failure instanceof Error && failure.stdout) failure.message = `${failure.message}\n${failure.stdout}`;
+    throw failure;
+  }
 }
 
 export function runAsync(args: string[], env: Record<string, string> = {}) {
@@ -42,13 +50,34 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
       },
       (error, stdout, stderr) => {
         if (error) {
-          reject(new Error(`${error.message}\n${stderr}`));
+          reject(new Error(`${error.message}\n${stdout}\n${stderr}`));
           return;
         }
         resolve(stdout);
       },
     );
   });
+}
+
+/** Run a command expected to fail and return its exit code + both streams, instead of throwing --
+ *  for asserting the shape of the failure output itself (e.g. the --json `{ ok: false, error }` contract). */
+export function runExpectingFailure(args: string[], env: Record<string, string> = {}) {
+  try {
+    execFileSync("node", [bin, ...args], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        LOOPOVER_API_TIMEOUT_MS: "1000",
+        LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-cli-config-")),
+        ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { status?: number | null; stdout?: string; stderr?: string };
+    return { status: failure.status ?? null, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
+  }
+  throw new Error(`expected \`node ${bin} ${args.join(" ")}\` to fail`);
 }
 
 export function git(cwd: string, ...args: string[]) {

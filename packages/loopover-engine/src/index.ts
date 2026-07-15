@@ -594,6 +594,16 @@ export {
   type ResultChangedFile,
   type ResultsPayload,
 } from "./results-payload.js";
+// `LoopConsumptionOutcome` is deliberately its own name, not loop-escalation.ts's `LoopRunOutcome` re-exported
+// below: that one is a loop's HEALTH state (running/converged/abandoned/error), whereas a consumption entry
+// only exists for a run that already stopped and only distinguishes finished work from work cut short.
+export {
+  buildLoopConsumptionEntry,
+  totalConsumptionForTenant,
+  type LoopConsumptionEntry,
+  type LoopConsumptionOutcome,
+  type LoopRunFacts,
+} from "./loop-consumption.js";
 export {
   evaluateTenantQuota,
   type QuotaDimension,

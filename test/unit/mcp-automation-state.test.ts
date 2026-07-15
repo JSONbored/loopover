@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LoopoverMcp } from "../../src/mcp/server";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { mergePullRequest } from "../../src/github/pr-actions";
-import { createPendingAgentActionIfAbsent, getPendingAgentAction, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
+import { createPendingAgentActionIfAbsent, getPendingAgentAction, getRepositorySettings, listPendingAgentActions, recordAuditEvent, upsertInstallation, upsertOfficialMinerDetection, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertRepositorySettings } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { createTestEnv } from "../helpers/d1";
 
@@ -149,6 +149,92 @@ describe("MCP loopover_get_automation_state (#784)", () => {
     expect(data.permissionReadiness).toBe("not_required"); // no acting PR-write class
     expect(data.pendingActionCount).toBe(0);
     expect(data.mode).toBe("live"); // nothing paused or dry-run
+  });
+});
+
+describe("MCP loopover_set_agent_paused (#6087)", () => {
+  it("pauses and resumes agent actions for a repo, preserving unrelated settings (read-merge-write)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto" }, agentDryRun: true });
+
+    const client = await connect(env);
+    const paused = await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: true } });
+    expect(paused.isError).toBeFalsy();
+    expect((paused.structuredContent as { repoFullName: string; agentPaused: boolean }).agentPaused).toBe(true);
+
+    const afterPause = await getRepositorySettings(env, "owner/repo");
+    expect(afterPause.agentPaused).toBe(true);
+    expect(afterPause.agentDryRun).toBe(true); // unrelated setting preserved by the read-merge-write
+    expect(afterPause.autonomy).toMatchObject({ merge: "auto" }); // unrelated setting preserved
+
+    const resumed = await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: false } });
+    expect(resumed.isError).toBeFalsy();
+    expect((resumed.structuredContent as { agentPaused: boolean }).agentPaused).toBe(false);
+    expect((await getRepositorySettings(env, "owner/repo")).agentPaused).toBe(false);
+  });
+
+  it("forbids a session without live GitHub write access to the repo, leaving agentPaused untouched", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: true } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect((await getRepositorySettings(env, "owner/repo")).agentPaused).toBe(false);
+  });
+
+  it("denies a static MCP-token caller when the repo is not in MCP_ACTUATION_REPO_ALLOWLIST (#2253)", async () => {
+    const env = createTestEnv({ MCP_ACTUATION_REPO_ALLOWLIST: "" });
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env); // default identity: { kind: "static", actor: "mcp" }
+    const result = await client.callTool({ name: "loopover_set_agent_paused", arguments: { owner: "owner", repo: "repo", paused: true } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/MCP_ACTUATION_REPO_ALLOWLIST/);
+  });
+});
+
+describe("MCP loopover_set_action_autonomy (#6087)", () => {
+  it("sets one action class's autonomy level without clobbering the others (read-merge-write)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval", label: "auto" } });
+
+    const client = await connect(env);
+    const result = await client.callTool({ name: "loopover_set_action_autonomy", arguments: { owner: "owner", repo: "repo", action: "review", level: "observe" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; action: string; level: string; autonomy: Record<string, string> };
+    expect(data.action).toBe("review");
+    expect(data.level).toBe("observe");
+    expect(data.autonomy).toMatchObject({ review: "observe", merge: "auto_with_approval", label: "auto" });
+
+    const persisted = await getRepositorySettings(env, "owner/repo");
+    expect(persisted.autonomy).toMatchObject({ review: "observe", merge: "auto_with_approval", label: "auto" });
+  });
+
+  it("rejects an action class outside the CLI's write surface and a level removed by #4620 via schema validation", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    const client = await connect(env);
+    // "assign" is a valid AgentActionClass but outside MAINTAIN_ACTION_CLASSES (the CLI's set-level surface).
+    const badAction = await client.callTool({ name: "loopover_set_action_autonomy", arguments: { owner: "owner", repo: "repo", action: "assign", level: "auto" } });
+    expect(badAction.isError).toBe(true);
+    // "suggest" is still in the CLI's own (stale) MAINTAIN_AUTONOMY_LEVELS but was removed server-side by #4620.
+    const badLevel = await client.callTool({ name: "loopover_set_action_autonomy", arguments: { owner: "owner", repo: "repo", action: "merge", level: "suggest" } });
+    expect(badLevel.isError).toBe(true);
+    expect((await getRepositorySettings(env, "owner/repo")).autonomy).toEqual({});
+  });
+
+  it("forbids a session without live GitHub write access to the repo, leaving autonomy untouched", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    mockedPermission.mockResolvedValue("read");
+    const client = await connect(env, { kind: "session", actor: "rando" } as AuthIdentity);
+    const result = await client.callTool({ name: "loopover_set_action_autonomy", arguments: { owner: "owner", repo: "repo", action: "merge", level: "auto" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toMatch(/write access/i);
+    expect((await getRepositorySettings(env, "owner/repo")).autonomy).toEqual({});
   });
 });
 

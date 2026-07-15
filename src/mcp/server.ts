@@ -44,6 +44,7 @@ import {
   getPendingAgentAction,
   getPullRequest,
   getRepository,
+  getRepositorySettings,
   isGlobalAgentFrozen,
   getRepoQueueTrendSnapshot,
   listAgentAuditEvents,
@@ -59,6 +60,7 @@ import {
   listIssueWatchSubscriptionsForLogin,
   listNotificationDeliveriesForRecipient,
   upsertIssueWatchSubscription,
+  upsertRepositorySettings,
   listOpenPullRequests,
   listPullRequests,
   listRecentMergedPullRequests,
@@ -152,7 +154,7 @@ import { classifyTestCoverage, isCodeFile, isTestPath, TEST_FRAMEWORKS } from ".
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
-import { AGENT_ACTION_CLASSES, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -521,6 +523,42 @@ const automationStateOutputSchema = {
   permissionReadiness: z.string().optional(),
   actingActionClasses: z.array(z.string()).optional(),
   pendingActionCount: z.number().optional(),
+};
+
+// #6087 (MCP slice) — the write side of the automation control surface: pause/resume and per-action autonomy,
+// the two `maintain` CLI operations (loopover-mcp.js:1783-1800) that had no MCP tool yet. Both read-merge-write
+// over the same repo `settings` row loopover_get_automation_state reads, so unrelated settings groups (and,
+// for autonomy, other action classes) are preserved.
+const setAgentPausedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  paused: z.boolean(),
+};
+
+const setAgentPausedOutputSchema = {
+  repoFullName: z.string().optional(),
+  agentPaused: z.boolean().optional(),
+};
+
+// `action` mirrors the CLI's MAINTAIN_ACTION_CLASSES exactly (loopover-mcp.js:65). `level` intentionally
+// validates against the LIVE AUTONOMY_LEVELS (src/settings/autonomy.ts), not the CLI's own stale
+// MAINTAIN_AUTONOMY_LEVELS -- that list still carries "suggest"/"propose", both removed server-side by #4620
+// and silently dropped by normalizeAutonomyPolicy on persist, so accepting them here would report success on a
+// write that never actually took effect.
+const MAINTAIN_AUTONOMY_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"] as const;
+
+const setActionAutonomyShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  action: z.enum(MAINTAIN_AUTONOMY_ACTION_CLASSES),
+  level: z.enum(AUTONOMY_LEVELS),
+};
+
+const setActionAutonomyOutputSchema = {
+  repoFullName: z.string().optional(),
+  action: z.string().optional(),
+  level: z.string().optional(),
+  autonomy: z.record(z.string(), z.string()).optional(),
 };
 
 // #784 (MCP slice) — surface + decide the approval queue, so an MCP client can do the full loop it can
@@ -2270,6 +2308,32 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getAutomationState(input)),
     );
 
+    // #6087 (MCP control surface, write side): the missing MCP counterpart to `maintain pause`/`resume`
+    // (loopover-mcp.js:1783). Maintainer-manage access required, same as loopover_propose_action.
+    server.registerTool(
+      "loopover_set_agent_paused",
+      {
+        description:
+          "Pause or resume ALL agent actions on a repo (the kill-switch toggle) -- the write-side counterpart to loopover_get_automation_state's agentPaused/mode fields, same as `loopover-mcp maintain pause|resume`. Maintainer access required.",
+        inputSchema: setAgentPausedShape,
+        outputSchema: setAgentPausedOutputSchema,
+      },
+      async (input) => this.toolResult(await this.setAgentPaused(input)),
+    );
+
+    // #6087 (MCP control surface, write side): the missing MCP counterpart to `maintain set-level`
+    // (loopover-mcp.js:1789). Maintainer-manage access required, same as loopover_propose_action.
+    server.registerTool(
+      "loopover_set_action_autonomy",
+      {
+        description:
+          "Set the autonomy level for one action class via a read-merge-write so other classes are left untouched -- the write-side counterpart to loopover_get_automation_state's autonomy map, same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
+        inputSchema: setActionAutonomyShape,
+        outputSchema: setActionAutonomyOutputSchema,
+      },
+      async (input) => this.toolResult(await this.setActionAutonomy(input)),
+    );
+
     server.registerTool(
       "loopover_propose_action",
       {
@@ -3764,6 +3828,36 @@ export class LoopoverMcp {
         actingActionClasses,
         pendingActionCount,
       },
+    };
+  }
+
+  // #6087 — pause/resume: the write-side kill-switch counterpart to loopover_get_automation_state's read-only
+  // mode/agentPaused fields. Reads the RAW settings row (not resolveRepositorySettings's yaml-merged view --
+  // writing back a yaml-only override would wrongly persist it into the DB row) and writes the whole row back,
+  // mirroring the PUT /settings route's own read-merge-write so unrelated settings groups are preserved.
+  private async setAgentPaused(input: z.infer<z.ZodObject<typeof setAgentPausedShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const current = await getRepositorySettings(this.env, fullName);
+    const updated = await upsertRepositorySettings(this.env, { ...current, agentPaused: input.paused });
+    return {
+      summary: `Agent actions ${input.paused ? "paused" : "resumed"} for ${fullName}.`,
+      data: { repoFullName: fullName, agentPaused: updated.agentPaused },
+    };
+  }
+
+  // #6087 — set-level: the write-side per-action-class autonomy dial. Read-merge-write over the autonomy map
+  // (mirrors the CLI's own read-merge-write, loopover-mcp.js:1789-1796) so setting one action class's level
+  // never clobbers the others.
+  private async setActionAutonomy(input: z.infer<z.ZodObject<typeof setActionAutonomyShape>>): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    const current = await getRepositorySettings(this.env, fullName);
+    const autonomy = { ...current.autonomy, [input.action]: input.level };
+    const updated = await upsertRepositorySettings(this.env, { ...current, autonomy });
+    return {
+      summary: `Set ${input.action} autonomy to ${input.level} for ${fullName}.`,
+      data: { repoFullName: fullName, action: input.action, level: input.level, autonomy: updated.autonomy },
     };
   }
 

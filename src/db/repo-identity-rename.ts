@@ -29,16 +29,30 @@ import {
   activeReviewTracking,
   advisories,
   auditEvents,
+  burdenForecasts,
   checkSummaries,
+  collisionEdges,
+  contributorRepoStats,
   gateOutcomes,
+  githubAgentCommandAnswers,
+  githubRateLimitObservations,
   issues,
+  notificationDeliveries,
+  productUsageEvents,
   pullRequestDetailSyncState,
   pullRequestFiles,
   pullRequestReviews,
   pullRequests,
   recentMergedPullRequests,
+  repoGithubTotalsSnapshots,
+  repoLabels,
+  repoQueueTrendSnapshots,
   repositories,
   repositorySettings,
+  repoSnapshots,
+  repoSyncSegments,
+  repoSyncState,
+  signalSnapshots,
 } from "./schema";
 
 function repoParts(fullName: string): { owner: string; name: string } {
@@ -232,6 +246,125 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
     .update(advisories)
     .set({ repoFullName: newFullName, targetKey: sql`replace(${advisories.targetKey}, ${oldFullName}, ${newFullName})` })
     .where(eq(advisories.repoFullName, oldFullName));
+
+  // burdenForecasts: repo_full_name IS the primary key (single row per repo, upsert semantics) -- same
+  // fold-then-rename shape as the repositories/repositorySettings anchor tables above.
+  await db.delete(burdenForecasts).where(eq(burdenForecasts.repoFullName, newFullName));
+  await db.update(burdenForecasts).set({ repoFullName: newFullName }).where(eq(burdenForecasts.repoFullName, oldFullName));
+
+  // repoQueueTrendSnapshots: repo_full_name IS the primary key -- same shape. (Despite the "Snapshots" name
+  // this is a single-row-per-repo upsert table, not an append-only log -- each upsert overwrites the prior row.)
+  await db.delete(repoQueueTrendSnapshots).where(eq(repoQueueTrendSnapshots.repoFullName, newFullName));
+  await db.update(repoQueueTrendSnapshots).set({ repoFullName: newFullName }).where(eq(repoQueueTrendSnapshots.repoFullName, oldFullName));
+
+  // repoSyncState: repo_full_name IS the primary key -- same shape.
+  await db.delete(repoSyncState).where(eq(repoSyncState.repoFullName, newFullName));
+  await db.update(repoSyncState).set({ repoFullName: newFullName }).where(eq(repoSyncState.repoFullName, oldFullName));
+
+  // repoSyncSegments: unique (repo_full_name, segment), id embeds the repo name (`${repoFullName}#${segment}`)
+  // -- fold on the single `segment` column, same inArray shape as pullRequests/gateOutcomes above.
+  const collidingSegments = (
+    await db.select({ segment: repoSyncSegments.segment }).from(repoSyncSegments).where(eq(repoSyncSegments.repoFullName, oldFullName))
+  ).map((row) => row.segment);
+  if (collidingSegments.length > 0) {
+    await db.delete(repoSyncSegments).where(and(eq(repoSyncSegments.repoFullName, newFullName), inArray(repoSyncSegments.segment, collidingSegments)));
+  }
+  await db
+    .update(repoSyncSegments)
+    .set({ repoFullName: newFullName, id: sql`replace(${repoSyncSegments.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(repoSyncSegments.repoFullName, oldFullName));
+
+  // contributorRepoStats: unique (login, repo_full_name), id embeds both (`${login}#${repoFullName}`) --
+  // fold on the single `login` column (the OTHER half of the unique key besides repoFullName itself).
+  const collidingLogins = (
+    await db.select({ login: contributorRepoStats.login }).from(contributorRepoStats).where(eq(contributorRepoStats.repoFullName, oldFullName))
+  ).map((row) => row.login);
+  if (collidingLogins.length > 0) {
+    await db.delete(contributorRepoStats).where(and(eq(contributorRepoStats.repoFullName, newFullName), inArray(contributorRepoStats.login, collidingLogins)));
+  }
+  await db
+    .update(contributorRepoStats)
+    .set({ repoFullName: newFullName, id: sql`replace(${contributorRepoStats.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(contributorRepoStats.repoFullName, oldFullName));
+
+  // repoLabels: unique (repo_full_name, name), id embeds the repo name (`${repoFullName}#${name.toLowerCase()}`)
+  // -- fold on the single `name` column.
+  const collidingLabelNames = (
+    await db.select({ name: repoLabels.name }).from(repoLabels).where(eq(repoLabels.repoFullName, oldFullName))
+  ).map((row) => row.name);
+  if (collidingLabelNames.length > 0) {
+    await db.delete(repoLabels).where(and(eq(repoLabels.repoFullName, newFullName), inArray(repoLabels.name, collidingLabelNames)));
+  }
+  await db
+    .update(repoLabels)
+    .set({ repoFullName: newFullName, id: sql`replace(${repoLabels.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(repoLabels.repoFullName, oldFullName));
+
+  // collisionEdges: id embeds the repo name (`${repoFullName}#${cluster.id}`) but is built in
+  // packages/loopover-engine (buildCollisionEdges) and passed through verbatim by replaceCollisionEdges'
+  // delete-then-insert -- no unique index exists here, so (like pullRequestReviews above) the fold checks
+  // for a PK collision on the id the rename would PRODUCE rather than a business-key tuple.
+  const oldCollisionEdgeIds = (
+    await db.select({ id: collisionEdges.id }).from(collisionEdges).where(eq(collisionEdges.repoFullName, oldFullName))
+  ).map((row) => row.id);
+  const renamedCollisionEdgeIds = oldCollisionEdgeIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedCollisionEdgeIds.length > 0) {
+    await db.delete(collisionEdges).where(inArray(collisionEdges.id, renamedCollisionEdgeIds));
+  }
+  await db
+    .update(collisionEdges)
+    .set({ repoFullName: newFullName, id: sql`replace(${collisionEdges.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(collisionEdges.repoFullName, oldFullName));
+
+  // notificationDeliveries: id is a random UUID (never repo-derived); the only unique constraint is
+  // (dedup_key, channel), columns entirely unrelated to repo_full_name, so renaming repo_full_name alone can
+  // never produce a collision here -- a plain rename. deeplink is this row's own canonical "go look at this"
+  // GitHub URL (github.com/{repoFullName}/...), the same kind of entity-owned link the anchor tables' own
+  // html_url gets rewritten for above -- unlike a *_json snapshot or free-text body, it is structurally the
+  // row's own address, not incidental content.
+  await db
+    .update(notificationDeliveries)
+    .set({ repoFullName: newFullName, deeplink: sql`replace(${notificationDeliveries.deeplink}, ${oldFullName}, ${newFullName})` })
+    .where(eq(notificationDeliveries.repoFullName, oldFullName));
+
+  // githubAgentCommandAnswers: id is a random UUID; both indexes are non-unique, so a plain rename is safe.
+  // responseUrl mirrors deeplink above -- the posted response comment's own GitHub html_url, nullable
+  // (unset until a response comment is actually posted); replace() on a NULL column is a no-op NULL, not an
+  // error, on both SQLite and Postgres.
+  await db
+    .update(githubAgentCommandAnswers)
+    .set({ repoFullName: newFullName, responseUrl: sql`replace(${githubAgentCommandAnswers.responseUrl}, ${oldFullName}, ${newFullName})` })
+    .where(eq(githubAgentCommandAnswers.repoFullName, oldFullName));
+
+  // repoSnapshots: id is a random UUID; no index at all (not even non-unique) -- an append-only history
+  // table where multiple rows legitimately share one repoFullName over time. Plain rename.
+  await db.update(repoSnapshots).set({ repoFullName: newFullName }).where(eq(repoSnapshots.repoFullName, oldFullName));
+
+  // repoGithubTotalsSnapshots: id is a random UUID; only a non-unique index exists. Plain rename.
+  await db.update(repoGithubTotalsSnapshots).set({ repoFullName: newFullName }).where(eq(repoGithubTotalsSnapshots.repoFullName, oldFullName));
+
+  // githubRateLimitObservations: id is a random UUID; repo_full_name is NULLABLE (null for app/installation-
+  // level observations not scoped to any repo) and only non-unique indexes exist. Plain rename, scoped to
+  // rows that actually carry the old name (a null column never matches the WHERE below).
+  await db.update(githubRateLimitObservations).set({ repoFullName: newFullName }).where(eq(githubRateLimitObservations.repoFullName, oldFullName));
+
+  // productUsageEvents: id is a random UUID; repo_full_name is NULLABLE (many product-usage events, e.g.
+  // MCP-surface or generic UI actions, have no associated repo) and only non-unique indexes exist. Plain rename.
+  await db.update(productUsageEvents).set({ repoFullName: newFullName }).where(eq(productUsageEvents.repoFullName, oldFullName));
+
+  // signalSnapshots: id is a random UUID; repo_full_name is NULLABLE (contributor/global-scoped signals
+  // carry no repo at all) and there is no index of any kind on this table. Plain rename.
+  await db.update(signalSnapshots).set({ repoFullName: newFullName }).where(eq(signalSnapshots.repoFullName, oldFullName));
+
+  // Deliberately OUT OF SCOPE: the request-scoped AI/LLM result caches (ai_review_cache, ai_slop_cache,
+  // linked_issue_satisfaction_cache, grounding_file_content_cache) and the RAG chunk/embedding cache
+  // (repo_chunks, a raw-SQL-only REES table). Every one of these is a rebuildable CACHE, not identity
+  // data: a miss after a rename just re-runs one LLM call or one re-index pass at the new name -- graceful,
+  // self-healing, and cheap, unlike an orphaned PR/issue/audit row a contributor or maintainer would
+  // otherwise need a full GitHub API backfill to recover. repo_chunks in particular stores its cache key as
+  // a LOWERCASED, TRUNCATED-TO-64-CHARS hash of `${ownerOnly}:${bareRepoName}` (packages layer), so a safe
+  // in-place string rename isn't even mechanically available without real risk of silently corrupting a
+  // truncated id -- letting it expire and re-index is both simpler and safer than attempting one.
 
   // auditEvents.target_key: an append-only log with no uniqueness on target_key (many rows legitimately
   // share one), so a plain substring rename with no dedupe step is correct and sufficient.

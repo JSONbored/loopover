@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -55,5 +55,44 @@ describe("LoopOver — Resource hub: AMS cross-link (#5189)", () => {
     expect(content).toContain(AMS_GUIDE_URL);
     // The GitHub-blob URL resolves to a real in-repo file: prove it exists so a typo'd path can't ship.
     expect(existsSync(join(process.cwd(), AMS_GUIDE_REPO_PATH))).toBe(true);
+  });
+});
+
+// #5820: the hub is the curated landing page for every provisioned dashboard, but its list is hand-maintained,
+// so miner-usage.json (uid loopover-miner-usage) shipped orphaned — provisioned exactly like the other nine, yet
+// reachable from the hub only by someone who already knew its uid. The AMS panel above links the *guide* for
+// wiring AMS datasources up, never the dashboard itself once that wiring is done. Pinning that one uid would
+// only fix today's miss, so this asserts the invariant over every provisioned dashboard: the NEXT one that
+// forgets to cross-link fails CI instead of silently shipping orphaned.
+const DASHBOARDS_DIR = join(process.cwd(), "grafana/dashboards");
+const HUB_UID = "loopover-hub";
+
+function provisionedDashboards(): { file: string; uid: string }[] {
+  return readdirSync(DASHBOARDS_DIR)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({ file, uid: (JSON.parse(readFileSync(join(DASHBOARDS_DIR, file), "utf8")) as Dashboard).uid }));
+}
+
+/** Every panel's markdown, joined — the hub links dashboards from more than one panel. */
+function hubContent(): string {
+  return readDashboard()
+    .panels.map((panel) => panel.options?.content ?? "")
+    .join("\n");
+}
+
+describe("LoopOver — Resource hub: every provisioned dashboard is linked (#5820)", () => {
+  it("deep-links the Miner usage (AMS) dashboard, not just its wiring guide", () => {
+    expect(hubContent()).toContain("/d/loopover-miner-usage");
+  });
+
+  it("INVARIANT: every provisioned dashboard uid except the hub's own is deep-linked from the hub", () => {
+    const dashboards = provisionedDashboards();
+    // Guard the guard: if the directory read ever matched nothing, the orphan check below would vacuously pass.
+    expect(dashboards.length).toBeGreaterThan(1);
+    expect(dashboards.every((d) => typeof d.uid === "string" && d.uid.length > 0)).toBe(true);
+
+    const content = hubContent();
+    const orphaned = dashboards.filter((d) => d.uid !== HUB_UID && !content.includes(`/d/${d.uid}`));
+    expect(orphaned.map((d) => d.file)).toEqual([]);
   });
 });

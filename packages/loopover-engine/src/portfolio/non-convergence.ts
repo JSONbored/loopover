@@ -45,6 +45,15 @@ export type PortfolioConvergenceVerdict = {
   reasons: string[];
 };
 
+// Normalize any numeric input to a non-negative integer (a non-finite or negative value becomes 0), so no
+// malformed count or threshold can make a verdict wrong (#6173). Byte-identical to the rule this classifier's
+// fail-closed ladder siblings apply -- governor/rate-limit.ts's and governor/budget-cap.ts's own
+// finiteNonNegativeInt -- and kept module-private like theirs (and portfolio/queue.ts's), since every pure
+// module here carries its own copy rather than coupling to a shared util for a one-line clamp.
+function finiteNonNegativeInt(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
 /**
  * Classify one queue item's convergence from its attempt/outcome counts. Pure and deterministic.
  *
@@ -54,12 +63,25 @@ export type PortfolioConvergenceVerdict = {
  * - A sustained streak — `consecutiveFailures` or `reenqueues` at/above its threshold — reads
  *   `non_convergent`. A single failure or re-enqueue below threshold reads `stalled`, not non-convergent.
  * - Attempts in progress with no failure streak read `converging`.
+ *
+ * Every numeric count and threshold is normalized first (#6173), matching the discipline of the fail-closed
+ * ladder this signal is composed into (governor/budget-cap.ts, governor/rate-limit.ts). That keeps a malformed
+ * value from deciding the verdict in the WRONG direction: a non-finite threshold clamps to 0, so the `>=` test
+ * then reads non_convergent — the deny-equivalent verdict — exactly as a malformed ceiling makes budget-cap's
+ * `used >= limit` read `exceeded`, rather than a NaN comparison quietly failing every check and reporting
+ * `converging`. It also keeps `NaN` out of the reason strings a maintainer reads.
  */
 export function classifyPortfolioConvergence(
   input: PortfolioConvergenceInput,
   thresholds: PortfolioConvergenceThresholds = DEFAULT_PORTFOLIO_CONVERGENCE_THRESHOLDS,
 ): PortfolioConvergenceVerdict {
-  if (input.attempts <= 0) {
+  const attempts = finiteNonNegativeInt(input.attempts);
+  const consecutiveFailures = finiteNonNegativeInt(input.consecutiveFailures);
+  const reenqueues = finiteNonNegativeInt(input.reenqueues);
+  const maxConsecutiveFailures = finiteNonNegativeInt(thresholds.maxConsecutiveFailures);
+  const maxReenqueues = finiteNonNegativeInt(thresholds.maxReenqueues);
+
+  if (attempts <= 0) {
     return {
       status: "converging",
       reasons: ["No attempts yet; a first attempt is not evidence of a stuck loop."],
@@ -70,25 +92,21 @@ export function classifyPortfolioConvergence(
   }
 
   const reasons: string[] = [];
-  if (input.consecutiveFailures >= thresholds.maxConsecutiveFailures) {
-    reasons.push(
-      `${input.consecutiveFailures} consecutive failures (≥ ${thresholds.maxConsecutiveFailures}).`,
-    );
+  if (consecutiveFailures >= maxConsecutiveFailures) {
+    reasons.push(`${consecutiveFailures} consecutive failures (≥ ${maxConsecutiveFailures}).`);
   }
-  if (input.reenqueues >= thresholds.maxReenqueues) {
-    reasons.push(
-      `re-enqueued ${input.reenqueues} times without reaching done (≥ ${thresholds.maxReenqueues}).`,
-    );
+  if (reenqueues >= maxReenqueues) {
+    reasons.push(`re-enqueued ${reenqueues} times without reaching done (≥ ${maxReenqueues}).`);
   }
   if (reasons.length > 0) {
     return { status: "non_convergent", reasons };
   }
 
-  if (input.consecutiveFailures > 0 || input.reenqueues > 0) {
+  if (consecutiveFailures > 0 || reenqueues > 0) {
     return {
       status: "stalled",
       reasons: [
-        `${input.consecutiveFailures} consecutive failure(s), ${input.reenqueues} re-enqueue(s) — below the non-convergence threshold.`,
+        `${consecutiveFailures} consecutive failure(s), ${reenqueues} re-enqueue(s) — below the non-convergence threshold.`,
       ],
     };
   }

@@ -1,41 +1,6 @@
-import type { AdvisoryAiRoutingConfig } from "../types";
-
-export const DEFAULT_ADVISORY_AI_ROUTING: AdvisoryAiRoutingConfig = {
-  slop: false,
-  e2eTestGen: false,
-  planner: false,
-  summaries: false,
-  chatQa: false,
-  chatQaFrontierFallback: false,
-  intentRouting: false,
-};
-
-function normalizeField(value: unknown, field: keyof AdvisoryAiRoutingConfig, warnings: string[]): boolean {
-  if (value === undefined) return DEFAULT_ADVISORY_AI_ROUTING[field];
-  if (typeof value === "boolean") return value;
-  warnings.push(`settings.advisoryAiRouting.${field} must be a boolean; using the default "${DEFAULT_ADVISORY_AI_ROUTING[field]}".`);
-  return DEFAULT_ADVISORY_AI_ROUTING[field];
-}
-
-/**
- * Normalize a raw `.loopover.yml settings.advisoryAiRouting` value into a typed config, fail-safe: any
- * malformed field falls back to its own (false) default and pushes a warning rather than rejecting the
- * whole block. Mirrors `normalizeUnlinkedIssueGuardrailConfig`'s per-field discipline.
- */
-export function normalizeAdvisoryAiRoutingConfig(input: unknown, warnings: string[]): AdvisoryAiRoutingConfig {
-  if (input === undefined) return { ...DEFAULT_ADVISORY_AI_ROUTING };
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    warnings.push("settings.advisoryAiRouting must be an object; using the default (every capability off).");
-    return { ...DEFAULT_ADVISORY_AI_ROUTING };
-  }
-  const record = input as Record<string, unknown>;
-  return {
-    slop: normalizeField(record.slop, "slop", warnings),
-    e2eTestGen: normalizeField(record.e2eTestGen, "e2eTestGen", warnings),
-    planner: normalizeField(record.planner, "planner", warnings),
-    summaries: normalizeField(record.summaries, "summaries", warnings),
-    chatQa: normalizeField(record.chatQa, "chatQa", warnings),
-    chatQaFrontierFallback: normalizeField(record.chatQaFrontierFallback, "chatQaFrontierFallback", warnings),
-    intentRouting: normalizeField(record.intentRouting, "intentRouting", warnings),
-  };
-}
+// advisory-ai-routing-config, converged onto @loopover/engine (#6203). This src/ file was a hand-maintained twin
+// of the engine copy; it is now a thin re-export shim so the single implementation lives at
+// packages/loopover-engine/src/review/advisory-ai-routing-config.ts (imported via relative source path, not the
+// published package, to match this repo's existing engine-consumption convention — see
+// src/settings/auto-close-exempt.ts).
+export * from "../../packages/loopover-engine/src/review/advisory-ai-routing-config";

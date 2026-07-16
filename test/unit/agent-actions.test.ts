@@ -1819,7 +1819,7 @@ describe("CONCRETE_EVIDENCE_BLOCKER_CODES parity — hand-typed literals still m
     { code: "surface_lane_reject", file: "src/review/content-lane-wire.ts" },
     { code: "manifest_missing_tests", file: "src/signals/focus-manifest.ts" },
     { code: "manifest_linked_issue_required", file: "src/signals/focus-manifest.ts" },
-    { code: "pre_merge_check_required", file: "src/review/pre-merge-checks.ts" },
+    { code: "pre_merge_check_required", file: "packages/loopover-engine/src/review/pre-merge-checks.ts" },
     { code: "lockfile_tamper_risk", file: "src/review/lockfile-tamper.ts" },
     { code: "missing_linked_issue", file: "src/rules/advisory.ts" },
     { code: "self_authored_linked_issue", file: "src/rules/advisory.ts" },

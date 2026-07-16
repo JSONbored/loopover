@@ -20,6 +20,7 @@ import {
   runIssueRagRetrieval,
   validateIssueRagInput,
 } from "./issue-rag";
+import { recordMcpToolCall } from "./telemetry";
 import {
   authenticatePrivateToken,
   extractBearerToken,
@@ -1631,6 +1632,9 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const server = new LoopoverMcp(c.env, identity).createServer();
   try {
     const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, getExecutionContext(c));
+    if (typeof usageMetadata.toolName === "string") {
+      recordMcpToolTelemetry(c.env, usageMetadata.toolName, response.status < 400, Date.now() - startedAt);
+    }
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
       role: "miner",
@@ -1646,6 +1650,9 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
     }).catch(() => undefined);
     return response;
   } catch (error) {
+    if (typeof usageMetadata.toolName === "string") {
+      recordMcpToolTelemetry(c.env, usageMetadata.toolName, false, Date.now() - startedAt);
+    }
     await recordProductUsageEvent(c.env, {
       surface: "mcp",
       role: "miner",
@@ -1660,6 +1667,18 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
       metadata: usageMetadata,
     }).catch(() => undefined);
     throw error;
+  }
+}
+
+// Single chokepoint for the #6228 PostHog tool-call telemetry (#6237): every `tools/call` request that
+// reaches handleMcpRequest routes through here exactly once, whether it succeeds or throws. Pure
+// observability -- never lets a telemetry failure reach the caller, matching recordMcpToolCall's own
+// no-op guarantee (#6235) with a second, defensive layer at the actual call site.
+function recordMcpToolTelemetry(env: Env, tool: string, ok: boolean, durationMs: number): void {
+  try {
+    recordMcpToolCall(env, { tool, callerType: "remote", ok, durationMs });
+  } catch {
+    // Telemetry must never affect the tool response (#6237).
   }
 }
 

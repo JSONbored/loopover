@@ -6,6 +6,7 @@ import { createTestEnv } from "../helpers/d1";
 describe("MCP server telemetry", () => {
   afterEach(() => {
     vi.doUnmock("agents/mcp");
+    vi.doUnmock("../../src/mcp/telemetry");
     vi.resetModules();
   });
 
@@ -146,5 +147,79 @@ describe("MCP server telemetry", () => {
         metadata: expect.objectContaining({ rpcMethod: "ping" }),
       }),
     ]);
+  });
+
+  it("records exactly one recordMcpToolCall, tagged callerType remote, on a successful tool invocation (#6237)", async () => {
+    vi.resetModules();
+    vi.doMock("agents/mcp", () => ({
+      createMcpHandler: () => () => Response.json({ ok: true }),
+    }));
+    const recordMcpToolCall = vi.fn();
+    vi.doMock("../../src/mcp/telemetry", () => ({ recordMcpToolCall }));
+    const { handleMcpRequest } = await import("../../src/mcp/server");
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "mcp-remote-telemetry-salt" });
+    const request = new Request("https://api.test/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "tool-call", method: "tools/call", params: { name: "loopover_local_status" } }),
+    });
+
+    await expect(
+      handleMcpRequest({
+        env,
+        executionCtx: { waitUntil() {}, passThroughOnException() {} },
+        req: {
+          method: "POST",
+          raw: request,
+          header: (name: string) => request.headers.get(name) ?? undefined,
+        },
+        json: (body: unknown, status?: number) => Response.json(body, status === undefined ? undefined : { status }),
+      } as never),
+    ).resolves.toMatchObject({ status: 200 });
+
+    expect(recordMcpToolCall).toHaveBeenCalledTimes(1);
+    expect(recordMcpToolCall).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({ tool: "loopover_local_status", callerType: "remote", ok: true, durationMs: expect.any(Number) }),
+    );
+  });
+
+  it("does not let a throwing recordMcpToolCall affect the tool response (#6237)", async () => {
+    vi.resetModules();
+    vi.doMock("agents/mcp", () => ({
+      createMcpHandler: () => () => Response.json({ ok: true, result: "unchanged" }),
+    }));
+    vi.doMock("../../src/mcp/telemetry", () => ({
+      recordMcpToolCall: () => {
+        throw new Error("posthog_unreachable");
+      },
+    }));
+    const { handleMcpRequest } = await import("../../src/mcp/server");
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "mcp-remote-telemetry-throws-salt" });
+    const request = new Request("https://api.test/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "tool-call", method: "tools/call", params: { name: "loopover_local_status" } }),
+    });
+
+    const response = await handleMcpRequest({
+      env,
+      executionCtx: { waitUntil() {}, passThroughOnException() {} },
+      req: {
+        method: "POST",
+        raw: request,
+        header: (name: string) => request.headers.get(name) ?? undefined,
+      },
+      json: (body: unknown, status?: number) => Response.json(body, status === undefined ? undefined : { status }),
+    } as never);
+
+    expect(response.status).toBe(200);
+    await expect(response.clone().json()).resolves.toEqual({ ok: true, result: "unchanged" });
   });
 });

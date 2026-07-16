@@ -1,8 +1,9 @@
 // #4777: retire every gittensory_-prefixed deprecated alias that #4775 left in place for one
-// minor-version deprecation cycle. This suite pins the post-retirement shape: exactly the 42
+// minor-version deprecation cycle. This suite pins the post-retirement shape: exactly the 47
 // canonical loopover_-prefixed stdio tools are registered, none of their old gittensory_-prefixed
 // alias names resolve anymore, no description carries a stale deprecation notice, and the CLI's
 // `tools --json` listing stays in lockstep with what the live server actually registers.
+// (#6152 registered the 5 maintain-surface tools, taking the count from 42 to 47.)
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -46,14 +47,14 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
   });
   afterEach(disconnect);
 
-  it("lists exactly 42 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
+  it("lists exactly 47 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
     const primary = names.filter((n) => n.startsWith("loopover_"));
     const legacy = names.filter((n) => n.startsWith("gittensory_"));
-    expect(primary.length).toBe(42);
+    expect(primary.length).toBe(47);
     expect(legacy.length).toBe(0);
-    expect(names.length).toBe(42);
+    expect(names.length).toBe(47);
   });
 
   it("no loopover_ tool's description carries a stale deprecation notice", async () => {
@@ -63,11 +64,11 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
     }
   });
 
-  it("`loopover-mcp tools --json` reports the same 42-tool count the live server registers", async () => {
+  it("`loopover-mcp tools --json` reports the same 47-tool count the live server registers", async () => {
     const { tools } = await client.listTools();
     const payload = JSON.parse(run(["tools", "--json"])) as { count: number; tools: Array<{ name: string }> };
     expect(payload.count).toBe(tools.length);
-    expect(payload.count).toBe(42);
+    expect(payload.count).toBe(47);
     expect([...payload.tools.map((t) => t.name)].sort()).toEqual([...tools.map((t) => t.name)].sort());
   });
 });

@@ -457,6 +457,52 @@ const agentRunIdShape = {
   runId: z.string().min(1),
 };
 
+// #6152 maintain-surface tools. Each shape mirrors its already-shipped remote counterpart in src/mcp/server.ts
+// (listPendingActionsShape, decidePendingActionShape, setAgentPausedShape, setActionAutonomyShape,
+// ownerRepoWindowShape) so the same call works against either server. The `decision` verb is accept|reject --
+// the approval-queue route's own vocabulary (#779) -- rather than the maintain CLI's approve|reject, because a
+// tool caller is talking to the route, not to the CLI's surface.
+//
+// One deliberate divergence: the remote's listPendingActionsShape takes an optional `status`, which it can honour
+// because it queries the approval-queue store directly. This server reaches the queue only through
+// GET /v1/repos/:owner/:repo/agent/pending-actions, which takes no query parameters and hardcodes status
+// "pending" (src/api/routes.ts). Offering a `status` here would let a caller ask for "rejected", get the pending
+// list, and be told it succeeded -- so it is left out of the schema and the description names the queue as the
+// pending one. An agent picks its arguments from the published schema, so a filter that isn't there is one it
+// won't ask for; a key sent anyway is dropped by the MCP layer before this handler and never reaches the URL.
+const listPendingActionsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+};
+
+const decidePendingActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  id: z.string().min(1),
+  decision: z.enum(["accept", "reject"]),
+};
+
+const setAgentPausedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  paused: z.boolean(),
+};
+
+// Reuses the CLI's own constants, so `maintain set-level`'s validation and this tool's schema can never disagree
+// about what the server accepts.
+const setActionAutonomyShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  action: z.enum(MAINTAIN_ACTION_CLASSES),
+  level: z.enum(MAINTAIN_AUTONOMY_LEVELS),
+};
+
+const gatePrecisionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  windowDays: z.number().int().positive().optional(),
+};
+
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
@@ -671,6 +717,34 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_get_skipped_pr_audit",
     category: "maintainer",
     description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
+  },
+  // #6152 — the maintain CLI's REST surface, exposed as tools so an agent can drive it without shelling out.
+  // Categories mirror the remote server's MCP_TOOL_CATEGORIES entries for the same names, so a caller sees one
+  // consistent grouping across both surfaces.
+  {
+    name: "loopover_list_pending_actions",
+    category: "agent",
+    description: "List the agent actions currently staged and awaiting a decision in a repo's approval queue, so a maintainer can review what is pending. Returns the pending queue only — the same list as `loopover-mcp maintain queue`. Maintainer access required.",
+  },
+  {
+    name: "loopover_decide_pending_action",
+    category: "agent",
+    description: "Accept (execute) or reject a staged approval-queue action by id. Accept runs it through the live executor gates; reject cancels it. Scoped to this repo, same as `loopover-mcp maintain approve|reject <id>`. Maintainer access required.",
+  },
+  {
+    name: "loopover_set_agent_paused",
+    category: "agent",
+    description: "Pause or resume ALL agent actions on a repo (the kill-switch toggle), same as `loopover-mcp maintain pause|resume`. Maintainer access required.",
+  },
+  {
+    name: "loopover_set_action_autonomy",
+    category: "agent",
+    description: "Set the autonomy level for one action class via a read-merge-write, so the other classes are left untouched. Same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
+  },
+  {
+    name: "loopover_get_gate_precision",
+    category: "maintainer",
+    description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
   },
 ];
 
@@ -1441,6 +1515,86 @@ registerStdioTool(
       "LoopOver feasibility gate.",
       buildFeasibilityVerdict({ claimStatus: ledgerClaimStatus ?? claimStatus, duplicateClusterRisk, issueStatus, found }),
     );
+  },
+);
+
+// ── #6152 maintain surface: the REST calls maintainCli already makes, exposed as tools ───────────────────────
+//
+// These five mirror remote tools that have existed since #6087 but were never registered locally, so an agent on
+// the stdio server had to shell out to the `maintain` CLI to reach them. Each one calls the same endpoint its
+// CLI subcommand calls, through the same apiGet/apiPost/apiFetch client (auth, timeouts, and error shaping come
+// from there) -- no new HTTP paths, and no behaviour the CLI doesn't already have.
+
+/** `/v1/repos/:owner/:repo` for a tool's owner+repo input, matching maintainCli's own repoBase. */
+function toolRepoBase(owner, repo) {
+  return `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+}
+
+registerStdioTool(
+  "loopover_list_pending_actions",
+  {
+    description: stdioToolDescription("loopover_list_pending_actions"),
+    inputSchema: listPendingActionsShape,
+  },
+  async ({ owner, repo }) => {
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/agent/pending-actions`);
+    return toolResult(`Agent approval queue for ${owner}/${repo}: ${(payload.pendingActions ?? []).length} pending.`, payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_decide_pending_action",
+  {
+    description: stdioToolDescription("loopover_decide_pending_action"),
+    inputSchema: decidePendingActionShape,
+  },
+  async ({ owner, repo, id, decision }) => {
+    const payload = await apiPost(`${toolRepoBase(owner, repo)}/agent/pending-actions/${encodeURIComponent(id)}/${decision}`, {});
+    return toolResult(`${decision === "accept" ? "Accepted" : "Rejected"} ${id}: ${payload.status ?? "ok"}.`, payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_set_agent_paused",
+  {
+    description: stdioToolDescription("loopover_set_agent_paused"),
+    inputSchema: setAgentPausedShape,
+  },
+  async ({ owner, repo, paused }) => {
+    const payload = await apiFetch(`${toolRepoBase(owner, repo)}/settings`, { method: "PUT", body: JSON.stringify({ agentPaused: paused }) });
+    return toolResult(`Agent actions ${paused ? "paused" : "resumed"} for ${owner}/${repo}.`, payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_set_action_autonomy",
+  {
+    description: stdioToolDescription("loopover_set_action_autonomy"),
+    inputSchema: setActionAutonomyShape,
+  },
+  async ({ owner, repo, action, level }) => {
+    // Read-merge-write, exactly as `maintain set-level` does it: PUT /settings replaces the whole autonomy map,
+    // so sending only this class would silently clear every other one.
+    const base = toolRepoBase(owner, repo);
+    const current = await apiGet(`${base}/settings`);
+    const autonomy = { ...(current.autonomy ?? {}), [action]: level };
+    const payload = await apiFetch(`${base}/settings`, { method: "PUT", body: JSON.stringify({ autonomy }) });
+    return toolResult(`Set ${action} autonomy to ${level} for ${owner}/${repo}.`, payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_get_gate_precision",
+  {
+    description: stdioToolDescription("loopover_get_gate_precision"),
+    inputSchema: gatePrecisionShape,
+  },
+  async ({ owner, repo, windowDays }) => {
+    // The schema already rejects a non-positive windowDays, so an omitted window is the only way to full history
+    // -- matching the route's own behaviour when ?windowDays is absent.
+    const query = windowDays ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/gate-precision${query}`);
+    return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
 );
 

@@ -74,12 +74,28 @@ export function scanRegisteredCommands(binSource) {
   return commands;
 }
 
+/** Prefix the reverse (undocumented-in-reality) check requires -- the bare `MINER_*` alias namespace also
+ *  matches non-env-var exported identifiers (event-type/metric/filename constants), so it is not a reliable
+ *  signal for this direction on its own; only the fully-qualified `LOOPOVER_MINER_` namespace is checked. */
+const REVERSE_CHECK_PREFIX = "LOOPOVER_MINER_";
+/** `DEPLOYMENT.md` documents the whole `LOOPOVER_MINER_<NAME>_DB` family generically via one sentence rather
+ *  than enumerating every store's override by name -- excluded from the reverse check so that deliberate
+ *  documentation choice is never flagged as drift. */
+const REVERSE_CHECK_DB_SUFFIX = "_DB";
+
 /**
- * Cross-check parsed DEPLOYMENT.md claims against reality. `reality` supplies three predicates so this
- * comparison stays pure and filesystem-independent: `hasEnvRead(name)` (a read of that env var exists
- * under packages/loopover-miner/**), `pathExists(relativePath)` (the doc-relative path is on disk),
- * and `isRegisteredCommand(name)` (the subcommand is dispatched by the CLI). Returns the drift findings,
- * each failure naming the specific stale claim rather than a generic mismatch.
+ * Cross-check parsed DEPLOYMENT.md claims against reality. `reality` supplies `hasEnvRead(name)` (a read of
+ * that env var exists under packages/loopover-miner/**), `pathExists(relativePath)` (the doc-relative path is
+ * on disk), `isRegisteredCommand(name)` (the subcommand is dispatched by the CLI), and `envReads` (the full
+ * iterable set of real env-var-read tokens, for the reverse direction below) -- so this comparison stays pure
+ * and filesystem-independent. Returns the drift findings, each failure naming the specific stale claim rather
+ * than a generic mismatch.
+ *
+ * The reverse direction (#6601): a real, currently-read `LOOPOVER_MINER_*` env var with zero mentions in
+ * DEPLOYMENT.md is just as much drift as a documented-but-dead one, but was previously invisible to this
+ * audit. Scoped to the `LOOPOVER_MINER_` prefix (the bare `MINER_*` alias namespace is too noisy, see
+ * REVERSE_CHECK_PREFIX) and excludes the `_DB` suffix family (documented generically, see
+ * REVERSE_CHECK_DB_SUFFIX).
  */
 export function auditDeploymentDocs(claims, reality) {
   const failures = [];
@@ -89,6 +105,13 @@ export function auditDeploymentDocs(claims, reality) {
         `env var "${name}" is documented in DEPLOYMENT.md but no read of it exists under packages/loopover-miner/**`,
       );
     }
+  }
+  const documentedEnvVars = new Set(claims.envVars);
+  for (const name of reality.envReads) {
+    if (!name.startsWith(REVERSE_CHECK_PREFIX)) continue;
+    if (name.endsWith(REVERSE_CHECK_DB_SUFFIX)) continue;
+    if (documentedEnvVars.has(name)) continue;
+    failures.push(`env var "${name}" is read under packages/loopover-miner/** but is not documented in DEPLOYMENT.md`);
   }
   for (const path of claims.filePaths) {
     if (!reality.pathExists(path)) {

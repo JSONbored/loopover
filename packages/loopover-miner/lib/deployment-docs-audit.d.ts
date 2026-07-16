@@ -5,9 +5,12 @@ export type DeploymentDocsClaims = {
   subcommands: string[];
 };
 
-/** Filesystem-independent view of the live source tree the parsed claims are checked against. */
+/** Filesystem-independent view of the live source tree the parsed claims are checked against.
+ *  `envReads` is the full set of real env-var-read tokens (#6601), enumerable for the reverse
+ *  (undocumented-in-reality) direction -- `hasEnvRead` alone only supports a one-name-at-a-time test. */
 export type DeploymentDocsReality = {
   hasEnvRead: (name: string) => boolean;
+  envReads: Iterable<string>;
   pathExists: (relativePath: string) => boolean;
   isRegisteredCommand: (name: string) => boolean;
 };

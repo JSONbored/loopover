@@ -79,6 +79,30 @@ For provider selection and the CLI-specific model/timeout overrides, see
 
 4. Optional per-repo miner goals: copy [`.loopover-miner.yml.example`](../../.loopover-miner.yml.example) to a target repo as `.loopover-miner.yml`. See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md).
 
+## Additional environment variables
+
+Beyond `LOOPOVER_MINER_CONFIG_DIR`/`XDG_CONFIG_HOME` and each store's own `LOOPOVER_MINER_<NAME>_DB`
+override (above), the CLI also honors:
+
+- `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN`, `LOOPOVER_MINER_AMS_COLLECTOR_URL` — the opt-in Orb telemetry
+  export's network-send destination and bearer token (`orb-export.js`).
+- `LOOPOVER_MINER_AMS_POLICY_PATH` — overrides the default `.loopover-ams.yml` lookup path for the
+  operator's local execution-risk policy (`ams-policy.js`).
+- `LOOPOVER_MINER_CHAT_ACTIONS` — feature flag gating the chat-surface's action-dispatch capability
+  (`chat-action-dispatch.js`).
+- `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` — opt-in
+  age/size-bounded pruning for the local ledgers (`store-maintenance.js`). Unset by default: no pruning.
+- `LOOPOVER_MINER_LOG_LEVEL` — overrides the CLI's default log verbosity (`logger.js`).
+- `LOOPOVER_MINER_NO_UPDATE_CHECK` — disables the CLI's background update-check ping (`update-check.js`).
+- `LOOPOVER_MINER_REPO_CLONE_DIR` — overrides the default directory a target repo is cloned into before
+  an attempt (`repo-clone.js`).
+- `LOOPOVER_MINER_SENTRY_DSN`, `LOOPOVER_MINER_SENTRY_ENVIRONMENT` — opt-in crash/error reporting
+  destination and environment tag (`sentry.js`). Unset by default: no reporting.
+- `LOOPOVER_MINER_VERSION` — overrides the release identifier the CLI reports (`version.js`), mainly for
+  test/CI harnesses that need a deterministic version string.
+- `LOOPOVER_MINER_WORKTREE_DIR` — overrides the default base directory attempt worktrees are allocated
+  under (`worktree-allocator.js`).
+
 ## Fleet mode walkthrough
 
 Build the fleet image from the **monorepo root** (the Dockerfile needs the full workspace on disk before `npm ci` — see comments in [`Dockerfile`](Dockerfile)):

@@ -39,6 +39,7 @@ export function buildLiveMinerDeploymentReality() {
   const registered = scanRegisteredCommands(readFileSync(BIN_ENTRY, "utf8"));
   return {
     hasEnvRead: (name) => envReads.has(name),
+    envReads,
     pathExists: (relativePath) => existsSync(resolve(MINER_DIR, relativePath)),
     isRegisteredCommand: (name) => registered.has(name),
   };

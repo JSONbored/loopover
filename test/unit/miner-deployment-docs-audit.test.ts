@@ -43,6 +43,7 @@ function buildLiveReality(): DeploymentDocsReality {
   const registered = scanRegisteredCommands(readFileSync(BIN_ENTRY, "utf8"));
   return {
     hasEnvRead: (name) => envReads.has(name),
+    envReads,
     pathExists: (relativePath) => existsSync(resolve(MINER_DIR, relativePath)),
     isRegisteredCommand: (name) => registered.has(name),
   };
@@ -50,6 +51,7 @@ function buildLiveReality(): DeploymentDocsReality {
 
 const ALWAYS_IN_SYNC: DeploymentDocsReality = {
   hasEnvRead: () => true,
+  envReads: [],
   pathExists: () => true,
   isRegisteredCommand: () => true,
 };
@@ -188,7 +190,7 @@ describe("loopover-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     expect(() =>
       assertDeploymentDocsInSync(
         { envVars: ["LOOPOVER_MINER_GONE"], filePaths: ["gone.yml"], subcommands: ["gone"] },
-        { hasEnvRead: () => false, pathExists: () => false, isRegisteredCommand: () => false },
+        { hasEnvRead: () => false, envReads: [], pathExists: () => false, isRegisteredCommand: () => false },
       ),
     ).toThrow(/LOOPOVER_MINER_GONE[\s\S]*gone\.yml[\s\S]*loopover-miner gone/);
   });
@@ -200,5 +202,52 @@ describe("loopover-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.failures).toEqual([]);
+  });
+
+  describe("auditDeploymentDocs — reverse direction (#6601): real reads undocumented in DEPLOYMENT.md", () => {
+    it("flags a real, undocumented, non-_DB LOOPOVER_MINER_* read by name", () => {
+      const result = auditDeploymentDocs(
+        { envVars: [], filePaths: [], subcommands: [] },
+        { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_LOG_LEVEL"] },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain("LOOPOVER_MINER_LOG_LEVEL");
+      expect(result.failures[0]).toContain("not documented");
+    });
+
+    it("does not flag a real read that is already documented", () => {
+      const result = auditDeploymentDocs(
+        { envVars: ["LOOPOVER_MINER_LOG_LEVEL"], filePaths: [], subcommands: [] },
+        { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_LOG_LEVEL"] },
+      );
+      expect(result).toEqual({ ok: true, failures: [] });
+    });
+
+    it("does not flag an undocumented LOOPOVER_MINER_*_DB token -- documented generically", () => {
+      const result = auditDeploymentDocs(
+        { envVars: [], filePaths: [], subcommands: [] },
+        { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_SOME_NEW_STORE_DB"] },
+      );
+      expect(result).toEqual({ ok: true, failures: [] });
+    });
+
+    it("does not flag an undocumented bare MINER_* token (no LOOPOVER_MINER_ prefix) -- too noisy a signal", () => {
+      const result = auditDeploymentDocs(
+        { envVars: [], filePaths: [], subcommands: [] },
+        { ...ALWAYS_IN_SYNC, envReads: ["MINER_PACKAGE_VERSION"] },
+      );
+      expect(result).toEqual({ ok: true, failures: [] });
+    });
+
+    it("REGRESSION: the live DEPLOYMENT.md documents every real, non-_DB LOOPOVER_MINER_* env var it reads", () => {
+      // The precise assertion this issue's own fix targets: run the reverse direction against the real,
+      // built-from-source tree (not a synthetic fixture), so a future undocumented var fails this test the
+      // same way the CI-wired script does.
+      const reality = buildLiveReality();
+      const result = auditDeploymentDocs(claims, reality);
+      expect(result.ok).toBe(true);
+      expect(result.failures).toEqual([]);
+    });
   });
 });

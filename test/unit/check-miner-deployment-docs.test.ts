@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildLiveMinerDeploymentReality,
   main,
   runMinerDeploymentDocsAudit,
 } from "../../scripts/check-miner-deployment-docs.mjs";
@@ -30,6 +31,16 @@ describe("check-miner-deployment-docs (#6158)", () => {
     expect(exit).toHaveBeenCalledWith(1);
     expect(error).toHaveBeenCalledWith(expect.stringMatching(/DEPLOYMENT\.md is out of sync/i));
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it("buildLiveMinerDeploymentReality populates the enumerable envReads field (#6601)", () => {
+    const reality = buildLiveMinerDeploymentReality();
+    const envReads = [...reality.envReads];
+    expect(envReads.length).toBeGreaterThan(0);
+    expect(envReads).toContain("LOOPOVER_MINER_LOG_LEVEL");
+    // Every token reality.hasEnvRead reports true for must also appear in the enumerable set -- the two
+    // must agree, since hasEnvRead is just a membership test over the same underlying set.
+    expect(reality.hasEnvRead("LOOPOVER_MINER_LOG_LEVEL")).toBe(true);
   });
 
   it("main prints ok and returns 0 on the live tree", () => {

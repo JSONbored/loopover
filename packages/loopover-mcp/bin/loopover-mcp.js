@@ -3453,7 +3453,10 @@ function getApiToken() {
 }
 
 function getEnvApiToken() {
-  return process.env.LOOPOVER_API_TOKEN ?? process.env.LOOPOVER_TOKEN ?? process.env.LOOPOVER_MCP_TOKEN;
+  // Precedence matches the documented order (README, printHelp, the missing-auth error, and the
+  // sanitizer list): the MCP-specific token wins over the generic LOOPOVER_TOKEN, which previously
+  // took priority here and contradicted every other reference to this order.
+  return process.env.LOOPOVER_API_TOKEN ?? process.env.LOOPOVER_MCP_TOKEN ?? process.env.LOOPOVER_TOKEN;
 }
 
 function selectedProfileName(options = {}) {

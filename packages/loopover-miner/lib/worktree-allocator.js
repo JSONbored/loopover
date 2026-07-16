@@ -1,11 +1,19 @@
-import { chmodSync, mkdirSync } from "node:fs";
+// mkdirSync is still needed for the git-worktree CHECKOUT dirs below (resolveWorktreeBaseDir's tree) — that is
+// a filesystem directory, not a store DB path, and is deliberately out of this migration's scope. Only the DB
+// handle's own mkdir/chmod moved into openLocalStoreDb.
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 // Git-worktree-per-attempt allocator (#4297): durable local bookkeeping for which worktree paths are
-// allocated to which fleet attempts. Mirrors the package's existing local-store pattern (run-state.js,
-// claim-ledger.js, portfolio-queue.js) — plain JS + node:sqlite, never phones home.
+// allocated to which fleet attempts. Opens its handle through local-store.js's openLocalStoreDb (#4272), the
+// same call run-state.js / claim-ledger.js / portfolio-queue.js use — plain JS + node:sqlite, never phones
+// home. Going through openLocalStoreDb is what registers the handle for crash-safe cleanup
+// (process-lifecycle.js, #4826), which matters most for exactly this store: a SIGINT/SIGTERM mid-write is what
+// leaves a worktree slot leased to a process that no longer exists (#6600). It previously hand-rolled the
+// identical mkdirSync/chmodSync/PRAGMA sequence and so was never registered, despite this comment already
+// claiming to mirror those three files.
 
 const defaultDbFileName = "worktree-allocator.sqlite3";
 const defaultWorktreeDirName = "worktrees";
@@ -13,20 +21,7 @@ const defaultMaxConcurrency = 2;
 let defaultWorktreeAllocator = null;
 
 export function resolveWorktreeAllocatorDbPath(env = process.env) {
-  const explicitPath = typeof env.LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB === "string"
-    ? env.LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB.trim()
-    : "";
-  if (explicitPath) return explicitPath;
-
-  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
-    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
-    : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
-
-  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
-    ? env.XDG_CONFIG_HOME.trim()
-    : join(homedir(), ".config");
-  return join(configHome, "loopover-miner", defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB", env);
 }
 
 export function resolveWorktreeBaseDir(env = process.env) {
@@ -47,9 +42,7 @@ export function resolveWorktreeBaseDir(env = process.env) {
 }
 
 function normalizeDbPath(dbPath) {
-  const path = (dbPath ?? resolveWorktreeAllocatorDbPath()).trim();
-  if (!path) throw new Error("invalid_worktree_allocator_db_path");
-  return path;
+  return normalizeLocalStoreDbPath(dbPath, resolveWorktreeAllocatorDbPath(), "invalid_worktree_allocator_db_path");
 }
 
 function normalizeWorktreeBaseDir(worktreeBaseDir) {
@@ -154,10 +147,7 @@ export function openWorktreeAllocator(options = {}) {
   const maxConcurrency = normalizeMaxConcurrency(options.maxConcurrency);
   const processPid = Number.isInteger(options.processPid) ? options.processPid : process.pid;
 
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  const db = openLocalStoreDb(resolvedPath);
   ensureSlotTable(db);
   ensureSlots(db, worktreeBaseDir, maxConcurrency);
   reclaimOrphanedAllocations(db);

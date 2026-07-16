@@ -9,9 +9,23 @@ import {
   resolveWorktreeAllocatorDbPath,
   resolveWorktreeBaseDir,
 } from "../../packages/loopover-miner/lib/worktree-allocator.js";
+import {
+  cleanupResourceCount,
+  closeAllCleanupResources,
+  resetProcessLifecycleForTesting,
+} from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
 const roots: string[] = [];
 const allocators: Array<{ close(): void }> = [];
+
+/** Opt an allocator out of the shared afterEach close, for a test that closes the handle itself. `close()` is
+ *  not idempotent (node:sqlite throws "database is not open"), so a test asserting the close path must own the
+ *  handle's lifetime outright rather than be closed a second time on the way out. */
+function ownClose<T extends { close(): void }>(allocator: T): T {
+  const index = allocators.indexOf(allocator);
+  if (index >= 0) allocators.splice(index, 1);
+  return allocator;
+}
 
 function tempAllocator(options: { maxConcurrency?: number; processPid?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), "loopover-miner-worktree-allocator-"));
@@ -97,5 +111,28 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     const first = allocator.acquire("attempt-a", "acme/widgets");
     const second = allocator.acquire("attempt-a", "acme/widgets");
     expect(second.worktreePath).toBe(first.worktreePath);
+  });
+
+  it("registers the store for crash-safe cleanup and unregisters it on close (#6600)", () => {
+    // The whole point of routing through openLocalStoreDb: a SIGINT/SIGTERM mid-write is what leaves a worktree
+    // slot leased to a dead process, so this store must be closed by the signal handlers like its 3 siblings.
+    // Hand-rolling `new DatabaseSync(...)` registered nothing, so this count stayed at 0.
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const allocator = ownClose(tempAllocator({ maxConcurrency: 1 }));
+    expect(cleanupResourceCount()).toBe(1);
+    allocator.close();
+    // The normal close() unregisters, so a long-running loop doesn't accumulate stale handles or double-close.
+    expect(cleanupResourceCount()).toBe(0);
+  });
+
+  it("is closed by closeAllCleanupResources when the process dies mid-write (#6600)", () => {
+    resetProcessLifecycleForTesting();
+    const allocator = ownClose(tempAllocator({ maxConcurrency: 1 }));
+    allocator.acquire("attempt-a", "acme/widgets");
+    expect(cleanupResourceCount()).toBe(1);
+
+    closeAllCleanupResources(); // what installCliSignalHandlers invokes on SIGINT/SIGTERM
+    expect(cleanupResourceCount()).toBe(0);
   });
 });

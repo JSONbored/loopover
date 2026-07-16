@@ -60,9 +60,8 @@ import {
   upstreamSourceSnapshots,
   webhookEvents,
 } from "./schema";
-import { DEFAULT_REVIEW_EVASION_LABEL, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
+import { DEFAULT_REVIEW_EVASION_LABEL } from "../settings/agent-actions";
 import type { LinkedIssueSatisfactionResult } from "../services/linked-issue-satisfaction";
-import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import type {
   Advisory,
   AdvisoryFinding,
@@ -71,7 +70,6 @@ import type {
   AgentActionStatus,
   AgentActionType,
   AutonomyPolicy,
-  AutoMaintainPolicy,
   AgentCommandAnswerRecord,
   AgentCommandFeedbackRecord,
   AgentContextSnapshotRecord,
@@ -168,9 +166,8 @@ import type { GittensorContributorSnapshot, OfficialGittensorMinerDetection } fr
 import { classifyMcpClientVersion, LATEST_RECOMMENDED_MCP_VERSION, MINIMUM_SUPPORTED_MCP_VERSION } from "../services/mcp-compatibility";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { normalizeContributorBlacklist } from "../settings/contributor-blacklist";
-import { normalizeAutoCloseExemptLogins } from "../settings/auto-close-exempt";
 import { DEFAULT_GLOBAL_MODERATION_CONFIG, MAX_MODERATION_VIOLATION_DECAY_DAYS, normalizeModerationLabel, normalizeModerationRules, type GlobalModerationConfig, type ModerationRuleType } from "../settings/moderation-rules";
-import { normalizeAutonomyPolicy, normalizeAutoMaintainPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
+import { normalizeAutonomyPolicy, DEFAULT_AUTO_MAINTAIN_POLICY } from "../settings/autonomy";
 import { DEFAULT_TYPE_LABELS } from "../settings/pr-type-label";
 import { DEFAULT_LINKED_ISSUE_LABEL_PROPAGATION } from "../review/linked-issue-label-propagation";
 import { DEFAULT_LINKED_ISSUE_HARD_RULES } from "../review/linked-issue-hard-rules-config";
@@ -666,8 +663,9 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     checkRunDetailLevel: "minimal",
     regateSweepOrderMode: "staleness",
     reviewCheckMode: parseReviewCheckMode(row.reviewCheckMode),
-    autoProjectMilestoneMatch: parseProjectMilestoneMatchMode(row.projectMilestoneMatchMode),
-    autoProjectMilestoneMatchBackend: parseProjectMilestoneMatchBackend(row.autoProjectMilestoneMatchBackend),
+    // Config-as-code only (loopover#6445): see the comment on the autoMaintain block below.
+    autoProjectMilestoneMatch: "off",
+    autoProjectMilestoneMatchBackend: "github",
     gatePack: parseGatePack(row.gatePack),
     linkedIssueGateMode: parseGateRuleMode(row.linkedIssueGateMode),
     duplicatePrGateMode: parseGateRuleMode(row.duplicatePrGateMode),
@@ -713,24 +711,28 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     commandAuthorization: parseCommandAuthorizationPolicy(row.commandAuthorizationJson),
     contributorBlacklist: [],
     autonomy: parseAutonomyPolicy(row.autonomyJson),
-    autoMaintain: parseAutoMaintainPolicy(row.autoMaintainJson),
-    contributorOpenPrCap: normalizeOpenItemCap(row.contributorOpenPrCap),
-    contributorOpenIssueCap: normalizeOpenItemCap(row.contributorOpenIssueCap),
-    contributorCapLabel: row.contributorCapLabel,
-    contributorCapCancelCi: row.contributorCapCancelCi,
-    reviewNagPolicy: normalizeReviewNagPolicy(row.reviewNagPolicy),
-    reviewNagMaxPings: normalizePositiveIntWithDefault(row.reviewNagMaxPings, 3),
-    reviewNagCooldownDays: normalizeReviewNagCooldownDays(row.reviewNagCooldownDays, 5),
-    reviewNagLabel: row.reviewNagLabel,
-    reviewNagMonitoredMentions: parseAutoCloseExemptLogins(row.reviewNagMonitoredMentionsJson),
-    autoCloseExemptLogins: parseAutoCloseExemptLogins(row.autoCloseExemptLoginsJson),
+    // Config-as-code only (loopover#6445): no DB column backs these 19 fields anymore -- unconditional
+    // built-in defaults, matching the !row branch above. resolveEffectiveSettings still overlays a repo's
+    // .loopover.yml settings.* value over these (none are sparse-merge composites, so the generic
+    // {...dbSettings, ...restManifestSettings} spread already handles the overlay correctly).
+    autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
+    contributorOpenPrCap: null,
+    contributorOpenIssueCap: null,
+    contributorCapLabel: "over-contributor-limit",
+    contributorCapCancelCi: null,
+    reviewNagPolicy: "off",
+    reviewNagMaxPings: 3,
+    reviewNagCooldownDays: 5,
+    reviewNagLabel: "review-nag-cooldown",
+    reviewNagMonitoredMentions: [],
+    autoCloseExemptLogins: [],
     requireFreshRebaseWindowMinutes: normalizePositiveIntOrNull(row.requireFreshRebaseWindowMinutes),
-    accountAgeThresholdDays: normalizePositiveIntOrNull(row.accountAgeThresholdDays),
-    newAccountLabel: row.newAccountLabel,
-    commandRateLimitPolicy: normalizeCommandRateLimitPolicy(row.commandRateLimitPolicy),
-    commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitMaxPerWindow, 20),
-    commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitAiMaxPerWindow, 5),
-    commandRateLimitWindowHours: normalizePositiveIntWithDefault(row.commandRateLimitWindowHours, 24),
+    accountAgeThresholdDays: null,
+    newAccountLabel: "new-account",
+    commandRateLimitPolicy: "off",
+    commandRateLimitMaxPerWindow: 20,
+    commandRateLimitAiMaxPerWindow: 5,
+    commandRateLimitWindowHours: 24,
     // Config-as-code only (Batch B, loopover#6443): see the comment on the typeLabelsEnabled block above.
     moderationGateMode: "inherit",
     moderationRules: undefined,
@@ -794,8 +796,9 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     checkRunDetailLevel: "minimal",
     regateSweepOrderMode: "staleness",
     reviewCheckMode: settings.reviewCheckMode ?? "disabled",
-    autoProjectMilestoneMatch: settings.autoProjectMilestoneMatch ?? "off",
-    autoProjectMilestoneMatchBackend: settings.autoProjectMilestoneMatchBackend ?? "github",
+    // Config-as-code only (loopover#6445): see the comment on the autoMaintain block below.
+    autoProjectMilestoneMatch: "off",
+    autoProjectMilestoneMatchBackend: "github",
     gatePack: parseGatePack(settings.gatePack),
     linkedIssueGateMode: settings.linkedIssueGateMode ?? "advisory",
     duplicatePrGateMode: settings.duplicatePrGateMode ?? "block",
@@ -840,24 +843,27 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     commandAuthorization: normalizeCommandAuthorizationPolicy(settings.commandAuthorization).policy,
     contributorBlacklist: [] as RepositorySettings["contributorBlacklist"],
     autonomy: normalizeAutonomyPolicy(settings.autonomy),
-    autoMaintain: normalizeAutoMaintainPolicy(settings.autoMaintain),
-    contributorOpenPrCap: normalizeOpenItemCap(settings.contributorOpenPrCap),
-    contributorOpenIssueCap: normalizeOpenItemCap(settings.contributorOpenIssueCap),
-    contributorCapLabel: settings.contributorCapLabel ?? "over-contributor-limit",
-    contributorCapCancelCi: typeof settings.contributorCapCancelCi === "boolean" ? settings.contributorCapCancelCi : null,
-    reviewNagPolicy: normalizeReviewNagPolicy(settings.reviewNagPolicy),
-    reviewNagMaxPings: normalizePositiveIntWithDefault(settings.reviewNagMaxPings, 3),
-    reviewNagCooldownDays: normalizeReviewNagCooldownDays(settings.reviewNagCooldownDays, 5),
-    reviewNagLabel: settings.reviewNagLabel ?? "review-nag-cooldown",
-    reviewNagMonitoredMentions: normalizeAutoCloseExemptLogins(settings.reviewNagMonitoredMentions).logins,
-    autoCloseExemptLogins: normalizeAutoCloseExemptLogins(settings.autoCloseExemptLogins).logins,
+    // Config-as-code only (loopover#6445): hardcoded, not `settings.xxx ?? default`, so a caller passing
+    // one of these through this API is silently ignored rather than appearing to persist when there's no
+    // column to write it to. Configure these via a repo's .loopover.yml settings.* block instead.
+    autoMaintain: { ...DEFAULT_AUTO_MAINTAIN_POLICY },
+    contributorOpenPrCap: null,
+    contributorOpenIssueCap: null,
+    contributorCapLabel: "over-contributor-limit",
+    contributorCapCancelCi: null,
+    reviewNagPolicy: "off" as const,
+    reviewNagMaxPings: 3,
+    reviewNagCooldownDays: 5,
+    reviewNagLabel: "review-nag-cooldown",
+    reviewNagMonitoredMentions: [] as string[],
+    autoCloseExemptLogins: [] as string[],
     requireFreshRebaseWindowMinutes: normalizePositiveIntOrNull(settings.requireFreshRebaseWindowMinutes),
-    accountAgeThresholdDays: normalizePositiveIntOrNull(settings.accountAgeThresholdDays),
-    newAccountLabel: settings.newAccountLabel ?? "new-account",
-    commandRateLimitPolicy: normalizeCommandRateLimitPolicy(settings.commandRateLimitPolicy),
-    commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitMaxPerWindow, 20),
-    commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitAiMaxPerWindow, 5),
-    commandRateLimitWindowHours: normalizePositiveIntWithDefault(settings.commandRateLimitWindowHours, 24),
+    accountAgeThresholdDays: null,
+    newAccountLabel: "new-account",
+    commandRateLimitPolicy: "off" as const,
+    commandRateLimitMaxPerWindow: 20,
+    commandRateLimitAiMaxPerWindow: 5,
+    commandRateLimitWindowHours: 24,
     // Config-as-code only (Batch B, loopover#6443): see the comment on the typeLabelsEnabled block above.
     moderationGateMode: "inherit" as const,
     moderationRules: undefined,
@@ -877,8 +883,6 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     .values({
       repoFullName: resolved.repoFullName,
       reviewCheckMode: resolved.reviewCheckMode,
-      projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
-      autoProjectMilestoneMatchBackend: resolved.autoProjectMilestoneMatchBackend,
       gatePack: resolved.gatePack,
       linkedIssueGateMode: resolved.linkedIssueGateMode,
       duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -905,24 +909,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       agentDryRun: resolved.agentDryRun,
       commandAuthorizationJson: jsonString(resolved.commandAuthorization),
       autonomyJson: jsonString(resolved.autonomy),
-      autoMaintainJson: jsonString(resolved.autoMaintain),
-      contributorOpenPrCap: resolved.contributorOpenPrCap,
-      contributorOpenIssueCap: resolved.contributorOpenIssueCap,
-      contributorCapLabel: resolved.contributorCapLabel,
-      contributorCapCancelCi: resolved.contributorCapCancelCi,
-      reviewNagPolicy: resolved.reviewNagPolicy,
-      reviewNagMaxPings: resolved.reviewNagMaxPings,
-      reviewNagCooldownDays: resolved.reviewNagCooldownDays,
-      reviewNagLabel: resolved.reviewNagLabel,
-      reviewNagMonitoredMentionsJson: jsonString(resolved.reviewNagMonitoredMentions),
-      autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
       requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
-      accountAgeThresholdDays: resolved.accountAgeThresholdDays,
-      newAccountLabel: resolved.newAccountLabel,
-      commandRateLimitPolicy: resolved.commandRateLimitPolicy,
-      commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
-      commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
-      commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
       skipAutomationBotAuthors: resolved.skipAutomationBotAuthors,
       draftPrClosePolicy: resolved.draftPrClosePolicy,
       screenshotTableGateEnabled: resolved.screenshotTableGate.enabled,
@@ -939,8 +926,6 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       target: repositorySettings.repoFullName,
       set: {
         reviewCheckMode: resolved.reviewCheckMode,
-      projectMilestoneMatchMode: resolved.autoProjectMilestoneMatch,
-      autoProjectMilestoneMatchBackend: resolved.autoProjectMilestoneMatchBackend,
         gatePack: resolved.gatePack,
         linkedIssueGateMode: resolved.linkedIssueGateMode,
         duplicatePrGateMode: resolved.duplicatePrGateMode,
@@ -969,24 +954,7 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         agentDryRun: resolved.agentDryRun,
         commandAuthorizationJson: jsonString(resolved.commandAuthorization),
         autonomyJson: jsonString(resolved.autonomy),
-        autoMaintainJson: jsonString(resolved.autoMaintain),
-        contributorOpenPrCap: resolved.contributorOpenPrCap,
-        contributorOpenIssueCap: resolved.contributorOpenIssueCap,
-        contributorCapLabel: resolved.contributorCapLabel,
-        contributorCapCancelCi: resolved.contributorCapCancelCi,
-        reviewNagPolicy: resolved.reviewNagPolicy,
-        reviewNagMaxPings: resolved.reviewNagMaxPings,
-        reviewNagCooldownDays: resolved.reviewNagCooldownDays,
-        reviewNagLabel: resolved.reviewNagLabel,
-        reviewNagMonitoredMentionsJson: jsonString(resolved.reviewNagMonitoredMentions),
-        autoCloseExemptLoginsJson: jsonString(resolved.autoCloseExemptLogins),
         requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
-        accountAgeThresholdDays: resolved.accountAgeThresholdDays,
-        newAccountLabel: resolved.newAccountLabel,
-        commandRateLimitPolicy: resolved.commandRateLimitPolicy,
-        commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
-        commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
-        commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
         skipAutomationBotAuthors: resolved.skipAutomationBotAuthors,
         draftPrClosePolicy: resolved.draftPrClosePolicy,
         screenshotTableGateEnabled: resolved.screenshotTableGate.enabled,
@@ -7735,14 +7703,6 @@ function parseReviewCheckMode(value: string): RepositorySettings["reviewCheckMod
   return value === "required" || value === "visible" ? value : "disabled";
 }
 
-function parseProjectMilestoneMatchMode(value: string): RepositorySettings["autoProjectMilestoneMatch"] {
-  return value === "suggest" || value === "auto" ? value : "off";
-}
-
-function parseProjectMilestoneMatchBackend(value: string): RepositorySettings["autoProjectMilestoneMatchBackend"] {
-  return value === "linear" ? "linear" : "github";
-}
-
 function parseGatePack(value: string | null | undefined): RepositorySettings["gatePack"] {
   return value === "oss-anti-slop" ? "oss-anti-slop" : "gittensor";
 }
@@ -7772,22 +7732,10 @@ function normalizeQualityGateMinScore(value: number | null | undefined): number 
 // A discrete positive count (not a 0-100 score), so unlike normalizeQualityGateMinScore it is not rounded —
 // a fractional or non-positive value is malformed (there's no such thing as "allow 2.5 open PRs") and is
 // dropped to null. Shared by callers with entirely different upper bounds (or none at all) — see
-// normalizeOpenItemCap for the one that clamps to the live-verification sample budget, and
 // normalizeModerationDecayDays for one with its own, unrelated ceiling.
 function normalizePositiveIntOrNull(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return null;
   return value;
-}
-
-// A per-contributor open-item cap (#2270): valid counts are clamped to the fixed live-verification sample
-// budget so the cap cannot exceed the rows enforcement sees. Only for caps that are actually enforced against
-// that sample (contributorOpenPrCap/contributorOpenIssueCap) — an unrelated positive-int setting that happens
-// to reuse the same validation shape must call normalizePositiveIntOrNull directly, not this function, or it
-// silently inherits a 100-row ceiling that has nothing to do with its own semantics (gate-flagged: this is
-// exactly how normalizeModerationDecayDays's unrelated 3650-day ceiling got clamped down to 100 by mistake).
-function normalizeOpenItemCap(value: number | null | undefined): number | null {
-  const parsed = normalizePositiveIntOrNull(value);
-  return parsed === null ? null : Math.min(parsed, MAX_CONTRIBUTOR_OPEN_ITEM_CAP);
 }
 
 function parseCommandAuthorizationPolicy(value: string): RepositorySettings["commandAuthorization"] {
@@ -7796,14 +7744,6 @@ function parseCommandAuthorizationPolicy(value: string): RepositorySettings["com
 
 function parseContributorBlacklist(value: string): RepositorySettings["contributorBlacklist"] {
   return normalizeContributorBlacklist(parseJson<unknown>(value, null)).entries;
-}
-
-function parseAutoCloseExemptLogins(value: string): string[] {
-  return normalizeAutoCloseExemptLogins(parseJson<unknown>(value, null)).logins;
-}
-
-function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "hold" | "close" {
-  return value === "hold" || value === "close" ? value : "off";
 }
 
 function normalizeDraftPrClosePolicy(value: string | null | undefined): "off" | "close" {
@@ -7836,33 +7776,19 @@ function parseJsonStringArray(value: string): string[] {
   return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
-function normalizeCommandRateLimitPolicy(value: string | null | undefined): "off" | "hold" {
-  return value === "hold" ? value : "off";
-}
-
 function normalizeSkipAutomationBotAuthors(value: string | null | undefined): "inherit" | "off" | "enabled" {
   return value === "off" || value === "enabled" ? value : "inherit";
 }
 
-// A review-nag threshold/window is a discrete positive count, not a score — reuses the same non-clamping,
-// non-rounding shape as contributorOpenPrCap's normalizeOpenItemCap (#2270): an invalid value (fractional,
-// non-positive, non-finite) falls back to the given default rather than being silently coerced.
+// Still used by the global moderation config's banThreshold (#selfhost-mod-engine): an invalid value
+// (fractional, non-positive, non-finite) falls back to the given default rather than being silently coerced.
 function normalizePositiveIntWithDefault(value: number | null | undefined, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return fallback;
   return value;
 }
 
-function normalizeReviewNagCooldownDays(value: number | null | undefined, fallback: number): number {
-  const normalized = normalizePositiveIntWithDefault(value, fallback);
-  return Math.min(normalized, MAX_REVIEW_NAG_COOLDOWN_DAYS);
-}
-
 function parseAutonomyPolicy(value: string): AutonomyPolicy {
   return normalizeAutonomyPolicy(parseJson<unknown>(value, null));
-}
-
-function parseAutoMaintainPolicy(value: string): AutoMaintainPolicy {
-  return normalizeAutoMaintainPolicy(parseJson<unknown>(value, null));
 }
 
 function parseSyncStatus(value: string): RepoSyncStateRecord["status"] {

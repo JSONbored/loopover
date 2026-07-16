@@ -727,10 +727,11 @@ const maintainerSettingsSchema = z
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
     }),
-    // Agent-layer config (#773/#774). The DB layer normalizes both (autonomy: deny-by-default; autoMaintain:
-    // defaults filled), so a loose record/object here is safe — invalid entries are dropped on persist.
+    // Agent-layer config (#773/#774). The DB layer normalizes autonomy (deny-by-default), so a loose
+    // record here is safe — invalid entries are dropped on persist.
+    // #6445: autoMaintain removed -- no longer DB-backed, config-as-code only via .loopover.yml's
+    // settings: block now.
     autonomy: z.record(z.string().trim().min(1).max(32), z.enum(["observe", "auto_with_approval", "auto"])),
-    autoMaintain: z.object({ requireApprovals: z.number().int().min(0).max(10).optional(), mergeMethod: z.enum(["merge", "squash", "rebase"]).optional() }),
   })
   .partial();
 

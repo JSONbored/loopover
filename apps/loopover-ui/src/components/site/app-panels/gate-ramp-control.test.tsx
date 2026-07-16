@@ -37,7 +37,6 @@ const ADVISORY_SETTINGS = {
   requireLinkedIssue: false,
   commandAuthorization: {},
   autonomy: {},
-  autoMaintain: { requireApprovals: 1, mergeMethod: "squash" as const },
   agentPaused: false,
   agentDryRun: false,
 };

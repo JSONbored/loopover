@@ -640,7 +640,9 @@ describe("agent approval queue (#779)", () => {
   it("accept re-syncs the merge method to the CURRENT repo config, not the staging-time snapshot (#2131)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: "x" });
     // Staged while the default was "squash"; the maintainer has since changed the repo's default to "merge".
-    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" }, autoMaintain: { mergeMethod: "merge", requireApprovals: 0 } });
+    // autoMaintain moved off the DB entirely (config-as-code, loopover#6445) -- set via manifest injection.
+    await upsertRepositorySettings(env, { repoFullName: "owner/repo", autonomy: { merge: "auto_with_approval" } });
+    await upsertRepoFocusManifest(env, "owner/repo", { settings: { autoMaintain: { mergeMethod: "merge", requireApprovals: 0 } } });
     await seedInstallation(env);
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: "h7" }, labels: [], body: "x" });
     const { action } = await createPendingAgentActionIfAbsent(env, { repoFullName: "owner/repo", pullNumber: 7, installationId: 5, actionClass: "merge", autonomyLevel: "auto_with_approval", params: { mergeMethod: "squash", expectedHeadSha: "h7" }, reason: "clean" });

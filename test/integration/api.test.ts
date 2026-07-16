@@ -2635,8 +2635,8 @@ describe("api routes", () => {
         // #4618/#5373: gateCheckMode is an unknown key with no effect here (removed from RepositorySettings
         // entirely) -- included to confirm it is silently ignored, not to drive reviewCheckMode.
         // mergeTrainMode moved off the DB entirely (Batch B, loopover#6443) -- no longer a writable key on this
-        // route, config-as-code only via .loopover.yml now.
-        body: JSON.stringify({ gateCheckMode: "enabled", reviewCheckMode: "required", slopGateMode: "block", slopGateMinScore: 55, qualityGateMode: "block", autonomy: { merge: "auto_with_approval", deploy: "auto" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" }, agentPaused: true, agentDryRun: true }),
+        // route, config-as-code only via .loopover.yml now. Same for autoMaintain (loopover#6445).
+        body: JSON.stringify({ gateCheckMode: "enabled", reviewCheckMode: "required", slopGateMode: "block", slopGateMinScore: 55, qualityGateMode: "block", autonomy: { merge: "auto_with_approval", deploy: "auto" }, agentPaused: true, agentDryRun: true }),
       },
       ownerEnv,
     );
@@ -2647,7 +2647,6 @@ describe("api routes", () => {
       slopGateMinScore: 55,
       qualityGateMode: "advisory", // #2267: downgraded, not persisted as "block"
       autonomy: { merge: "auto_with_approval" }, // unknown action class dropped by the DB normalizer
-      autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" },
       agentPaused: true, // #776 kill-switch
       agentDryRun: true,
     });
@@ -2660,13 +2659,8 @@ describe("api routes", () => {
     );
     expect(settingsUpdateOff.status).toBe(200);
     await expect(settingsUpdateOff.json()).resolves.toMatchObject({ reviewCheckMode: "required" });
-    // requireApprovals is bounded at the API boundary — an out-of-range value is rejected, not silently clamped.
-    const settingsBadApprovals = await app.request(
-      "/v1/repos/repo-owner/owned-repo/settings",
-      { method: "PUT", headers: ownerHeaders, body: JSON.stringify({ autoMaintain: { requireApprovals: 99 } }) },
-      ownerEnv,
-    );
-    expect(settingsBadApprovals.status).toBe(400);
+    // autoMaintain moved off the DB entirely (config-as-code, loopover#6445) -- no longer a writable key on
+    // this route, so it's no longer validated at this API boundary either.
     const settingsInvalid = await app.request(
       "/v1/repos/repo-owner/owned-repo/settings",
       { method: "PUT", headers: ownerHeaders, body: JSON.stringify({ reviewCheckMode: "nonsense" }) },

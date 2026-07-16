@@ -7,6 +7,7 @@ import {
   parseLinkedIssues,
   parsePreviewLabels,
   splitRepoFullName,
+  splitReviewabilityPr,
 } from "../../apps/loopover-ui/src/lib/maintainer-settings-preview";
 
 describe("maintainer settings preview UI helpers", () => {
@@ -30,6 +31,19 @@ describe("maintainer settings preview UI helpers", () => {
     expect(splitRepoFullName("/missing-owner")).toBeNull();
     expect(splitRepoFullName("missing-repo/")).toBeNull();
     expect(splitRepoFullName("too/many/parts")).toBeNull();
+  });
+
+  it("parses a reviewability row's pr field into owner/repo/number for the chat Q&A route (#6489)", () => {
+    expect(splitReviewabilityPr("entrius/allways-ui#12")).toEqual({
+      owner: "entrius",
+      repo: "allways-ui",
+      number: 12,
+    });
+    expect(splitReviewabilityPr("not-a-pr")).toBeNull();
+    expect(splitReviewabilityPr("too/many/parts#12")).toBeNull();
+    expect(splitReviewabilityPr("entrius/allways-ui#not-a-number")).toBeNull();
+    expect(splitReviewabilityPr("entrius/allways-ui#0")).toBeNull();
+    expect(splitReviewabilityPr("entrius/allways-ui")).toBeNull();
   });
 
   it("normalizes labels and linked issue fields into the API request shape", () => {

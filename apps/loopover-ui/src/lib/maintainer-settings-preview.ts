@@ -121,6 +121,17 @@ export function splitRepoFullName(repoFullName: string): { owner: string; repo: 
   return { owner, repo };
 }
 
+/** Parses a `reviewability` row's `pr` field (`owner/repo#123`, #6489) into its owner/repo/number parts. */
+export function splitReviewabilityPr(
+  pr: string,
+): { owner: string; repo: string; number: number } | null {
+  const [repoFullName, numberPart] = pr.split("#");
+  const repoParts = repoFullName ? splitRepoFullName(repoFullName) : null;
+  const number = Number(numberPart);
+  if (!repoParts || !Number.isInteger(number) || number <= 0) return null;
+  return { ...repoParts, number };
+}
+
 export function parsePreviewLabels(value: string): string[] {
   return uniqueStrings(
     value

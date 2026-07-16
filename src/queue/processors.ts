@@ -12447,8 +12447,11 @@ async function maybeThrottleMonitoredMentions(
 }
 
 // Audit eventType for one recorded @loopover command invocation (#2560). Shared between the recorder below
-// and the cooldown-window count query so a naming drift can't silently under/over-count.
-const COMMAND_RATE_LIMIT_EVENT_TYPE = "github_app.command_invocation";
+// and the cooldown-window count query so a naming drift can't silently under/over-count. Exported so the
+// maintainer-dashboard chat Q&A route (#6489) counts against this SAME per-(actor, targetKey) budget rather
+// than inventing a second counter -- a maintainer's dashboard questions and their own `@loopover chat`
+// PR-comment usage on the same PR share one limit.
+export const COMMAND_RATE_LIMIT_EVENT_TYPE = "github_app.command_invocation";
 // How far back to look for a redelivered webhook's OWN prior invocation record. Deliberately much shorter
 // than the rate-limit window itself (hours) -- a genuine GitHub redelivery lands within seconds/minutes.
 const COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS = 10 * 60_000;

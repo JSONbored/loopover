@@ -3051,9 +3051,11 @@ describe("api routes", () => {
     await expect(maintainer.json()).resolves.toMatchObject({
       installations: expect.any(Array),
       health: expect.arrayContaining([expect.objectContaining({ status: "healthy" })]),
+      // chatQaEnabled defaults false: advisoryAiRouting is config-as-code only (a repo's published
+      // .loopover.yml), never DB-writable, and neither repo here published one (#6489).
       reviewability: expect.arrayContaining([
-        expect.objectContaining({ pr: "entrius/allways-ui#12", slop: null }),
-        expect.objectContaining({ pr: "entrius/allways-ui#14", author: "unknown", reason: "cached open PR without linked issue", slop: { risk: 80, band: "high" } }),
+        expect.objectContaining({ pr: "entrius/allways-ui#12", slop: null, chatQaEnabled: false }),
+        expect.objectContaining({ pr: "entrius/allways-ui#14", author: "unknown", reason: "cached open PR without linked issue", slop: { risk: 80, band: "high" }, chatQaEnabled: false }),
       ]),
       settingsPreview: { added: expect.any(Array), removed: expect.any(Array) },
     });

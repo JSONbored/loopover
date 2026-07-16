@@ -38,6 +38,7 @@ import {
   countOpenPullRequests,
   countActiveAuthSessions,
   countActiveDigestSubscriptions,
+  countRecentAuditEventsForActorAndTarget,
   getBounty,
   getAgentCommandAnswer,
   getCommandUsefulnessSummary,
@@ -154,7 +155,8 @@ import {
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { buildOpenApiSpec } from "../openapi/spec";
-import { generateSignalSnapshots } from "../queue/processors";
+import { COMMAND_RATE_LIMIT_EVENT_TYPE, generateSignalSnapshots } from "../queue/processors";
+import { generateChatQaAnswer } from "../services/ai-chat-qa";
 import { getLatestRegistrySnapshot, listLatestRegistrySnapshots, refreshRegistry } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled, refreshScoringModelSnapshot } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
@@ -841,6 +843,12 @@ const settingsPreviewSchema = z.object({
     .optional(),
 });
 
+const chatQaRequestSchema = z
+  .object({
+    question: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
 const commandPreviewSchema = z
   .object({
     command: z.string().min(1).max(80),
@@ -1447,11 +1455,16 @@ export function createApp() {
     // 12 only to bound the `reviewability` preview list, not the metric.
     const { totalOpenPullRequestsCached, reposWithOpenPullRequests } = await summarizeRepoSyncOpenPullRequests(c.env, repositories.map((repo) => repo.fullName));
     const previewRepositories = repositories.slice(0, 12);
-    const [openPullRequests, previewRepositorySettings] = await Promise.all([
+    const [openPullRequests, previewRepositorySettings, previewChatQaEnabled] = await Promise.all([
       Promise.all(previewRepositories.map((repo) => listOpenPullRequests(c.env, repo.fullName).then((rows) => rows.map((pull) => ({ repoFullName: repo.fullName, pull }))))).then((rows) => rows.flat()),
       Promise.all(previewRepositories.map((repo) => getRepositorySettings(c.env, repo.fullName).then((settings) => [repo.fullName, settings] as const))),
+      // advisoryAiRouting is config-as-code only (never DB-writable, resolved from the repo's .loopover.yml
+      // manifest, #6489) -- unlike every other field on previewSettingsByRepo above, so it needs the FULL
+      // resolveRepositorySettings merge, not the raw getRepositorySettings row.
+      Promise.all(previewRepositories.map((repo) => resolveRepositorySettings(c.env, repo.fullName).then((settings) => [repo.fullName, settings.advisoryAiRouting?.chatQa === true] as const))),
     ]);
     const previewSettingsByRepo = new Map(previewRepositorySettings);
+    const previewChatQaEnabledByRepo = new Map(previewChatQaEnabled);
     // Quality dashboard (#557): shape cached repo data into queue-health bands, duplicate trends, and
     // top contributors by quality band — scoped to this maintainer's repos. Reads CACHED issue/PR data
     // (no GitHub fetch), but does derive the collision/queue signals per load; the build is capped to
@@ -1530,6 +1543,10 @@ export function createApp() {
         // Latest deterministic slop assessment for this PR (null unless the repo opted into slop). Lets the
         // maintainer panel render a per-PR slop band; never a private/scoreability signal.
         slop: previewSettingsByRepo.get(repoFullName)?.slopGateMode !== "off" && typeof pull.slopRisk === "number" && pull.slopBand ? { risk: pull.slopRisk, band: pull.slopBand } : null,
+        // Whether this PR's repo has opted into the grounded @loopover chat Q&A surface (#6489) --
+        // gates the maintainer panel's Chat Q&A section per PR so an instance that hasn't enabled it
+        // sees no new UI for that PR, rather than a disabled-looking version of it.
+        chatQaEnabled: previewChatQaEnabledByRepo.get(repoFullName) === true,
       })),
       settingsPreview: buildMaintainerSettingsPreview(),
       qualityDashboard: { ...qualityDashboard, gateOutcomeBreakdown },
@@ -2905,6 +2922,79 @@ export function createApp() {
         env: c.env,
       }),
     );
+  });
+
+  // Maintainer dashboard chat Q&A (#6489, per #6230's scope decision): exposes the EXISTING
+  // `@loopover chat <question>` service (generateChatQaAnswer, #4595) to apps/loopover-ui's maintainer
+  // panel -- read-only, no new LLM-routing path, no write/action capability. Builds the SAME grounding
+  // bundle the PR-comment command builds (planNextWork, already exposed via /v1/agent/plan-next-work),
+  // then hands it to the unmodified chat service unchanged.
+  //
+  // Per-command rate limiting reuses the EXACT SAME counter the PR-comment `@loopover chat` command uses
+  // (COMMAND_RATE_LIMIT_EVENT_TYPE, keyed by actor+targetKey) rather than a second budget, so a
+  // maintainer's dashboard questions and their own PR-comment usage on the same PR share one limit.
+  app.post("/v1/repos/:owner/:repo/pulls/:number/chat-qa", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoMaintainer(c, fullName);
+    if (gate instanceof Response) return gate;
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0) return c.json({ error: "invalid_pull_number" }, 400);
+    const body = await c.req.json().catch(() => null);
+    const parsed = chatQaRequestSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_chat_qa_request", issues: parsed.error.issues }, 400);
+
+    const [settings, pullRequest] = await Promise.all([resolveRepositorySettings(c.env, fullName), getPullRequest(c.env, fullName, number)]);
+    if (!pullRequest) return c.json({ error: "pull_request_not_found" }, 404);
+
+    const actor = gate.identity?.actor ?? "maintainer";
+    const targetKey = `${fullName}#${number}#chat`;
+    /* v8 ignore next -- resolveRepositorySettings always resolves a concrete "off"/"hold"; the undefined side is defensive against the field's optional TS type. */
+    const policy = settings.commandRateLimitPolicy ?? "off";
+    if (policy !== "off") {
+      /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+      const maxPerWindow = settings.commandRateLimitAiMaxPerWindow ?? 5;
+      /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+      const windowHours = settings.commandRateLimitWindowHours ?? 24;
+      const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+      const priorInvocations = await countRecentAuditEventsForActorAndTarget(c.env, actor, COMMAND_RATE_LIMIT_EVENT_TYPE, targetKey, sinceIso);
+      const invocationCount = priorInvocations + 1;
+      // Always record the invocation first so the running count reflects reality even on the throttled
+      // path below, mirroring maybeThrottleLoopOverCommand's own ordering (queue/processors.ts).
+      await recordAuditEvent(c.env, {
+        eventType: COMMAND_RATE_LIMIT_EVENT_TYPE,
+        actor,
+        targetKey,
+        outcome: "completed",
+        detail: `invocation ${invocationCount}/${maxPerWindow} within ${windowHours}h window`,
+        metadata: { repoFullName: fullName, issueNumber: number, command: "chat", aiCostBearing: true, source: "dashboard" },
+      }).catch(
+        /* v8 ignore next -- fail-safe: an audit write failure never blocks the request */
+        () => undefined,
+      );
+      if (invocationCount > maxPerWindow) {
+        return c.json({
+          status: "rate_limited",
+          reason: `The chat command has reached its rate limit (${maxPerWindow} within ${windowHours}h), shared with the @loopover chat PR-comment command. Please wait for the window to pass before trying again.`,
+        });
+      }
+    }
+
+    const bundle = await planNextWork(c.env, {
+      login: pullRequest.authorLogin ?? actor,
+      repoFullName: fullName,
+      surface: "api",
+      objective: `Respond to @loopover chat for ${fullName}#${number}. Question: ${parsed.data.question.slice(0, 280)}`,
+    });
+    const result = await generateChatQaAnswer(c.env, {
+      bundle,
+      question: parsed.data.question,
+      advisoryAiRouting: settings.advisoryAiRouting,
+      repoFullName: fullName,
+      issueNumber: number,
+      actor,
+      route: "app.maintainer_dashboard.chat_qa",
+    });
+    return c.json(result);
   });
 
   app.get("/v1/repos/:owner/:repo/pulls/:number/maintainer-packet", async (c) => {

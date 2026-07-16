@@ -19,6 +19,7 @@ import {
 } from "@/components/site/control-primitives";
 import { ActivationPreview } from "@/components/site/app-panels/activation-preview";
 import { AiReviewSettings } from "@/components/site/app-panels/ai-review-settings";
+import { ChatQaPanel } from "@/components/site/app-panels/chat-qa-panel";
 import { ContributorQualityTable } from "@/components/site/app-panels/contributor-quality-table";
 import type { MaintainerTopContributor } from "@/components/site/app-panels/contributor-quality-table-model";
 import { GateOutcomeCard } from "@/components/site/app-panels/gate-outcome-card";
@@ -90,6 +91,8 @@ type MaintainerDashboard = {
     bucket: string;
     reason: string;
     slop?: { risk: number; band: string } | null;
+    /** Whether this PR's repo has opted into the grounded @loopover chat Q&A surface (#6489). */
+    chatQaEnabled: boolean;
   }>;
   settingsPreview: { removed: string[]; added: string[] };
   qualityDashboard: {
@@ -421,6 +424,8 @@ function MaintainerDashboardView({
           <ActivationPreview reviewability={data.reviewability} />
 
           <GateRampControl reviewability={data.reviewability} />
+
+          <ChatQaPanel reviewability={data.reviewability} />
 
           <SurfacePreview
             reviewability={data.reviewability}

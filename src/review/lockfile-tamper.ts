@@ -224,7 +224,7 @@ export function lockfileTamperRiskFinding(files: PullRequestFileRecord[]): Advis
   const hasUnbumped = flagged.some((f) => f.reason === "unbumped_resolved");
   const detailParts: string[] = [];
   if (hasOffRegistry) detailParts.push("a resolved URL points outside registry.npmjs.org");
-  if (hasUnbumped) detailParts.push("a resolved/integrity value changed without a matching package.json version bump");
+  if (hasUnbumped) detailParts.push("a resolved/integrity value changed without a matching version bump in the lockfile entry itself");
 
   return {
     code: "lockfile_tamper_risk",

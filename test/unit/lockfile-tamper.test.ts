@@ -56,7 +56,7 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding).toBeNull();
   });
 
-  it("triggers on a hand-edited resolved/integrity with NO corresponding package.json version bump", () => {
+  it("triggers on a hand-edited resolved/integrity with NO corresponding lockfile-entry version bump", () => {
     const lockPatch = [
       '@@ -100,8 +100,8 @@',
       '     "node_modules/lodash": {',

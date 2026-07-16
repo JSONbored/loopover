@@ -7,7 +7,13 @@ import type { GitHubWebhookPayload } from "../types";
  *  the issue-only planner, configuration is repo-level and answers on either a PR or an issue thread. (#2168) */
 export type ConfigurationCommandRequest =
   | { ok: true; repoFullName: string; installationId: number; actor: string; issueNumber: number }
-  | { ok: false; reason: string; repoFullName: string | null; actor: string | null; targetKey: string | null };
+  | {
+      ok: false;
+      reason: "unsupported_comment_action_or_bot" | "missing_repo_issue_installation_or_actor";
+      repoFullName: string | null;
+      actor: string | null;
+      targetKey: string | null;
+    };
 
 export function classifyConfigurationCommandRequest(
   payload: GitHubWebhookPayload,

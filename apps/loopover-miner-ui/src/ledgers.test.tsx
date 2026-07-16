@@ -112,9 +112,10 @@ describe("LedgersView (#4855)", () => {
     expect(screen.getByRole("alert").textContent).toContain("connection refused");
   });
 
-  it("renders the loading state before the first result arrives", () => {
+  it("renders a content-shaped loading skeleton (role=status), not the old flat loading text (#6512)", () => {
     render(<LedgersView result={null} />);
-    expect(screen.getByText(/Loading local ledgers/i)).toBeTruthy();
+    expect(screen.getByRole("status", { name: /loading local ledgers/i })).toBeTruthy();
+    expect(screen.queryByText("Loading local ledgers…")).toBeNull(); // the pre-#6512 sentence is gone
   });
 });
 

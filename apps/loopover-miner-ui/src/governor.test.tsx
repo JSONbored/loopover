@@ -35,11 +35,12 @@ describe("defaultGovernorPauseState (#4857)", () => {
 });
 
 describe("GovernorControlSection (#4857)", () => {
-  it("renders the loading state before the first result arrives", () => {
+  it("renders a content-shaped loading skeleton (role=status), not the old flat loading text (#6512)", () => {
     render(
       <GovernorControlSection result={null} pending={false} onPause={() => undefined} onResume={() => undefined} />,
     );
-    expect(screen.getByText(/Loading governor state/i)).toBeTruthy();
+    expect(screen.getByRole("status", { name: /loading governor state/i })).toBeTruthy();
+    expect(screen.queryByText("Loading governor state…")).toBeNull(); // the pre-#6512 sentence is gone
   });
 
   it("renders an error message when the local API is unreachable", () => {

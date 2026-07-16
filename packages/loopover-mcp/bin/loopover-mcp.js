@@ -324,6 +324,13 @@ const ownerRepoPullShape = {
   number: z.number().int().positive(),
 };
 
+// #6619: same PR coordinates plus the OPTIONAL author login. Omitted, it resolves from the local session /
+// LOOPOVER_LOGIN / GITHUB_LOGIN, so an already-logged-in contributor never has to retype their own login.
+const prAiReviewFindingsShape = {
+  ...ownerRepoPullShape,
+  login: z.string().min(1).optional(),
+};
+
 // #6149 write-tool input shapes -- mirror src/mcp/server.ts's remote shapes (same bounds) so the local
 // server validates identically. The builders (buildOpenPrSpec, ...) are the same @loopover/engine functions.
 const WRITE_TOOL_REPO_FULL_NAME_MAX = 200;
@@ -775,6 +782,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, no GitHub writes.",
   },
   {
+    name: "loopover_get_pr_ai_review_findings",
+    category: "review",
+    description:
+      "Return a submitted pull request's real AI-review inline findings as structured JSON (category, path, severity, line, body) — the same categorization the PR comment uses. Post-submission only; self-scoped to your own PRs. Metadata-only, no GitHub writes.",
+  },
+  {
     name: "loopover_get_maintainer_noise",
     category: "maintainer",
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
@@ -1166,6 +1179,26 @@ registerStdioTool(
   async ({ owner, repo, number }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
+  },
+);
+
+// #6619: CLI mirror of the remote server's loopover_get_pr_ai_review_findings. The route is the single source
+// of truth (it delegates to the same loadPrAiReviewFindings the MCP server uses); this tool only resolves the
+// author login and proxies. Self-scoped: the route's requireContributorAccess rejects another login's PR.
+registerStdioTool(
+  "loopover_get_pr_ai_review_findings",
+  {
+    description: stdioToolDescription("loopover_get_pr_ai_review_findings"),
+    inputSchema: prAiReviewFindingsShape,
+  },
+  async ({ owner, repo, number, login }) => {
+    const authorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!authorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult(
+      "LoopOver PR AI-review findings.",
+      await apiGet(`${prefix}/pulls/${number}/ai-review-findings?login=${encodeURIComponent(authorLogin)}`),
+    );
   },
 );
 

@@ -527,6 +527,21 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #6619: the route carries the author login as a query param, so match on the path prefix.
+    if (request.url?.startsWith("/v1/repos/owner/repo/pulls/7/ai-review-findings") && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          status: "ready",
+          repoFullName: "owner/repo",
+          pullNumber: 7,
+          login: "octocat",
+          headSha: "abc123",
+          findings: [{ category: "correctness", path: "src/index.ts", severity: "blocker", line: 12, body: "Null deref." }],
+          categoryCounts: { correctness: 1 },
+        }),
+      );
+      return;
+    }
     response.statusCode = 404;
     response.end(JSON.stringify({ error: "not_found" }));
   });

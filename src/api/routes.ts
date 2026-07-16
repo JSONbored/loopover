@@ -191,6 +191,7 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
   LATEST_RECOMMENDED_MCP_VERSION,
@@ -2970,6 +2971,23 @@ export function createApp() {
     });
     await persistSignal(c.env, "pr-reviewability", `${fullName}#${number}`, fullName, reviewability as unknown as Record<string, JsonValue>, reviewability.generatedAt);
     return c.json(reviewability);
+  });
+
+  // A PR author's own structured, published AI-review findings (#6619). REST mirror of the
+  // `loopover_get_pr_ai_review_findings` MCP tool so the local `@loopover/mcp` CLI can reach the same data the
+  // remote MCP server already serves — the established pattern every comparable per-contributor, DB-backed tool
+  // follows (decision-pack, repo-decision, reviewability). `loadPrAiReviewFindings` stays the single source of
+  // truth for both surfaces; this route only validates, gates, and delegates. Contributor-owned data, so it is
+  // gated by `requireContributorAccess` (the same guard the decision-pack route uses) BEFORE any data is read.
+  app.get("/v1/repos/:owner/:repo/pulls/:number/ai-review-findings", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const number = Number(c.req.param("number"));
+    if (!Number.isInteger(number) || number <= 0) return c.json({ error: "invalid_pull_number" }, 400);
+    const login = c.req.query("login") ?? "";
+    if (!login) return c.json({ error: "login_required" }, 400);
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    return c.json(await loadPrAiReviewFindings(c.env, { repoFullName: fullName, pullNumber: number, login }));
   });
 
   // Read-only view of a repo's CURRENT effective self-tuned gate thresholds (#6247, groundwork for #6209).

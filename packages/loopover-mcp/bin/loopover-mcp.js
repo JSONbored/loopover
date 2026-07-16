@@ -55,7 +55,7 @@ const CLI_COMMAND_SPEC = {
   "slop-risk": [],
   "issue-slop": [],
   profile: ["list", "create", "switch", "remove"],
-  cache: ["status", "clear"],
+  cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
   maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision"],
 };

@@ -22,9 +22,11 @@ const source: StreamingTextSource = async function* () {
   yield "healthy.";
 };
 
-const failing: StreamingTextSource = async function* () {
-  throw new Error("stream died");
-};
+/** Fails on the first pull. A plain AsyncIterable rather than an `async function*`, because a generator that
+ *  only throws has no `yield` and trips require-yield. */
+const failing: StreamingTextSource = () => ({
+  [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error("stream died")) }),
+});
 
 afterEach(() => vi.unstubAllGlobals());
 

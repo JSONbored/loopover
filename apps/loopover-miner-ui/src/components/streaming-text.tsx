@@ -8,13 +8,17 @@ import { useStreamingText, type StreamingTextSource } from "../lib/use-streaming
  * one, so the escape hatch is read straight from the media query.
  */
 function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+  // Read the initial value in the lazy initializer rather than setting it from the effect: seeding state from
+  // an effect is a cascading render (react-hooks/set-state-in-effect), and it would also paint one frame of
+  // motion before the preference applied. The effect below only subscribes; it never seeds.
+  const [reduced, setReduced] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
 
   useEffect(() => {
     const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
     const onChange = () => setReduced(mql.matches);
     mql.addEventListener("change", onChange);
-    setReduced(mql.matches);
     return () => mql.removeEventListener("change", onChange);
   }, []);
 

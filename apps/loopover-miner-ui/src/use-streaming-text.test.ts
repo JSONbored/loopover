@@ -166,7 +166,10 @@ describe("useStreamingText (#6516)", () => {
   });
 
   it("handles an empty source: it completes with no text rather than hanging in streaming", async () => {
-    const empty: StreamingTextSource = async function* () {};
+    // A plain AsyncIterable that ends immediately -- an `async function*` with no `yield` trips require-yield.
+    const empty: StreamingTextSource = () => ({
+      [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true as const, value: undefined }) }),
+    });
     const { result } = renderHook(() => useStreamingText(empty));
     await waitFor(() => expect(result.current.status).toBe("done"));
     expect(result.current.text).toBe("");

@@ -30,8 +30,24 @@ export type StreamingTextState = {
  */
 export function useStreamingText(source: StreamingTextSource | null): StreamingTextState {
   const [text, setText] = useState("");
-  const [status, setStatus] = useState<StreamingTextStatus>("idle");
+  const [status, setStatus] = useState<StreamingTextStatus>(source ? "streaming" : "idle");
   const [error, setError] = useState<string | null>(null);
+
+  // Reset when the caller swaps sources, during render rather than from the effect. React's documented
+  // adjust-state-on-prop-change pattern: seeding from an effect is a cascading render
+  // (react-hooks/set-state-in-effect), and it would also leave the previous reply's text on screen for a frame
+  // after a new stream started.
+  //
+  // Both useState and the setter take the `() => source` form on purpose: the source IS a function, and React
+  // would otherwise read a bare `source` as a lazy initializer / updater and store its RETURN value -- so the
+  // stored value could never equal the prop, and the reset below would re-fire on every render forever.
+  const [activeSource, setActiveSource] = useState<StreamingTextSource | null>(() => source);
+  if (source !== activeSource) {
+    setActiveSource(() => source);
+    setText("");
+    setError(null);
+    setStatus(source ? "streaming" : "idle");
+  }
 
   // Identifies the current run. Every state write checks it first, so exactly one run can own state at a time
   // and a superseded run goes quiet without needing to interrupt the iterator it's parked on.
@@ -61,10 +77,8 @@ export function useStreamingText(source: StreamingTextSource | null): StreamingT
     // condition, and splitting them invites fixing one and forgetting the other.
     const owns = () => mountedRef.current && runIdRef.current === runId;
 
-    setText("");
-    setError(null);
-    setStatus("streaming");
-
+    // No state seeding here: the render-phase reset above already put text/error/status in their start state,
+    // and every write below happens after an await, i.e. asynchronously rather than in the effect body.
     void (async () => {
       try {
         for await (const chunk of source()) {

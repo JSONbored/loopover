@@ -29,6 +29,7 @@ import type { AnalysisContext } from "../analysis-context.js";
 import { boundedFetchJson, boundedFetchText } from "../external-fetch.js";
 import { githubHeaders } from "../github-headers.js";
 import { exportedNames, isPublicEntrypoint } from "./api-break.js";
+import { isDiffFileHeaderLine } from "./diff-lines.js";
 import { isTestPath } from "./test-ratio.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";
 
@@ -180,7 +181,7 @@ export function collectRemovedExports(
   for (const file of files) {
     if (!file.patch) continue;
     for (const raw of file.patch.split("\n")) {
-      if (raw.startsWith("+") && !raw.startsWith("+++")) {
+      if (raw.startsWith("+") && !isDiffFileHeaderLine(raw)) {
         for (const name of exportedNames(raw.slice(1))) added.add(name);
       }
     }
@@ -202,7 +203,9 @@ export function collectRemovedExports(
       if (!inHunk) continue;
       if (raw.startsWith("+")) continue; // added line: does not advance the old-file counter
       if (raw.startsWith("-")) {
-        if (raw.startsWith("---")) continue;
+        // Shared header predicate, not startsWith("---"): a removed line whose content starts with `-` (e.g.
+        // `--counter;` → `---counter;`) is NOT a file header and must still be scanned + advance oldLine (#6255).
+        if (isDiffFileHeaderLine(raw)) continue;
         for (const name of exportedNames(raw.slice(1))) {
           if (name === "default" || name.length < MIN_SYMBOL_LEN || seen.has(name)) continue;
           seen.add(name);

@@ -74,6 +74,14 @@ test("removedExports: flags a rename (old name dropped, new name added)", () => 
   assert.deepEqual(out, [{ symbol: "oldName", line: 1 }]);
 });
 
+test("removedExports: a removed line whose CONTENT starts with `--` still advances oldLine, so a later removed export keeps its correct line (#6255)", () => {
+  // `--counter;` renders in the diff as `---counter;`; the bespoke startsWith("---") guard mis-read it as a diff
+  // file header, skipping it WITHOUT advancing oldLine, so `gone` was reported one line too low. The shared
+  // isDiffFileHeaderLine predicate (which keys on the header's `a/`/`b/`/`dev/null` path form) scans it correctly.
+  const out = removedExports(hunk([["-", "--counter;"], ["-", "export function gone() {}"]], 10));
+  assert.deepEqual(out, [{ symbol: "gone", line: 11 }]);
+});
+
 test("removedExports: flags a name dropped from a re-export list", () => {
   const out = removedExports(
     hunk([["-", 'export { a, b } from "./x";'], ["+", 'export { a } from "./x";']]),

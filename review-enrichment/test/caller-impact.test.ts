@@ -111,6 +111,16 @@ test("collectRemovedExports: removed export keyed to old-file line", () => {
   assert.deepEqual(removed, [{ file: "src/utils.ts", symbol: "removedHelper", line: 2 }]);
 });
 
+test("collectRemovedExports: a removed line whose CONTENT starts with `--` advances oldLine, so a later removed export keeps its correct line (#6255)", () => {
+  // Same bug as api-break's removedExports (whose doc collectRemovedExports mirrors): `--counter;` renders as
+  // `---counter;`, which the bespoke startsWith("---") guard skipped WITHOUT advancing oldLine, mis-locating
+  // `removedHelper`. The shared isDiffFileHeaderLine predicate scans the content line and reports the right line.
+  const removed = collectRemovedExports([
+    { path: "src/utils.ts", patch: ["@@ -1,2 +1,0 @@", "---counter;", "-export function removedHelper() {}"].join("\n") },
+  ]);
+  assert.deepEqual(removed, [{ file: "src/utils.ts", symbol: "removedHelper", line: 2 }]);
+});
+
 test("collectRemovedExports: a symbol re-added anywhere in the PR (move/edit) is not removed", () => {
   const removed = collectRemovedExports([
     { path: "src/utils.ts", patch: REMOVED_PATCH.replace("removedHelper", "movedHelper") },

@@ -8,6 +8,7 @@
 // exact whole-name loss is; a non-entrypoint file is out of scope (that is the caller-impact analyzer's job).
 // Deterministic, no network, no token. Reports file, old-file line, and symbol only — never surrounding code.
 import type { ApiBreakFinding, EnrichRequest } from "../types.js";
+import { isDiffFileHeaderLine } from "./diff-lines.js";
 import { DEFAULT_MAX_FINDINGS } from "./limits.js";
 
 const MAX_ENTRYPOINTS = 25; // cap changed entrypoint files scanned per PR
@@ -87,10 +88,14 @@ export function removedExports(patch: string): RemovedExport[] {
     }
     if (!inHunk) continue;
     if (raw.startsWith("+")) {
-      if (raw.startsWith("+++")) continue;
+      // Skip only a real unified-diff file header (`+++ b/path`), not added/removed CONTENT that merely starts
+      // with `++`/`--` (git renders `--x;` as `---x;`) — the bespoke startsWith("+++")/("---") guards mis-flagged
+      // such content as a header, dropping it and mis-numbering every later export (#6255, the fix 7 sibling
+      // analyzers already made via this shared predicate).
+      if (isDiffFileHeaderLine(raw)) continue;
       for (const name of exportedNames(raw.slice(1))) added.add(name);
     } else if (raw.startsWith("-")) {
-      if (raw.startsWith("---")) continue;
+      if (isDiffFileHeaderLine(raw)) continue;
       for (const name of exportedNames(raw.slice(1))) {
         if (!removed.has(name)) removed.set(name, oldLine);
       }

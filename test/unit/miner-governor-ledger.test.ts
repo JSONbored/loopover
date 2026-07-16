@@ -15,6 +15,7 @@ import {
   readGovernorEvents,
   resolveGovernorLedgerDbPath,
 } from "../../packages/loopover-miner/lib/governor-ledger.js";
+import { readSchemaVersion } from "../../packages/loopover-miner/lib/schema-version.js";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
@@ -213,5 +214,77 @@ describe("loopover-miner governor ledger (#2328)", () => {
       if (previousConfigDir === undefined) delete process.env.LOOPOVER_MINER_CONFIG_DIR;
       else process.env.LOOPOVER_MINER_CONFIG_DIR = previousConfigDir;
     }
+  });
+
+  describe("schema migrations (#6597)", () => {
+    it("v1 -> v2 (#4939/#6597): adds an additive tenant_id column, NULL for every pre-existing row -- self-host behavior byte-identical", () => {
+      const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-legacy-v1-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy-v1.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE governor_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          repo_full_name TEXT,
+          action_class TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        )
+      `);
+      legacy.exec("CREATE INDEX idx_governor_events_repo ON governor_events (repo_full_name, id)");
+      legacy.exec("PRAGMA user_version = 1");
+      legacy.exec(
+        "INSERT INTO governor_events (ts, event_type, repo_full_name, action_class, decision, reason, payload_json) VALUES ('2026-01-01T00:00:00.000Z', 'allowed', 'acme/widgets', 'analyze', 'allow', 'within budget', '{}')",
+      );
+      legacy.close();
+
+      const ledger = initGovernorLedger(dbPath);
+      ledgers.push(ledger);
+      expect(ledger.readGovernorEvents().map((event) => event.eventType)).toEqual(["allowed"]);
+      const readonly = new DatabaseSync(dbPath, { readOnly: true });
+      const columns = readonly.prepare("PRAGMA table_info(governor_events)").all() as Array<{ name: string }>;
+      expect(columns.map((column) => column.name)).toContain("tenant_id");
+      expect(readSchemaVersion(readonly)).toBe(2);
+      const row = readonly.prepare("SELECT tenant_id FROM governor_events WHERE id = 1").get() as { tenant_id: string | null };
+      expect(row.tenant_id).toBeNull();
+      readonly.close();
+    });
+
+    it("REGRESSION: a v1 file that (unusually) already carries tenant_id is not re-altered into a duplicate-column error", () => {
+      const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-legacy-partial-v2-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy-partial-v2.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      legacy.exec(`
+        CREATE TABLE governor_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          repo_full_name TEXT,
+          action_class TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          tenant_id TEXT
+        )
+      `);
+      legacy.exec("PRAGMA user_version = 1");
+      legacy.close();
+
+      expect(() => {
+        const ledger = initGovernorLedger(dbPath);
+        ledgers.push(ledger);
+      }).not.toThrow();
+    });
+
+    it("opening a fresh store reports user_version = 2 via readSchemaVersion", () => {
+      const ledger = tempLedger();
+      const readonly = new DatabaseSync(ledger.dbPath, { readOnly: true });
+      expect(readSchemaVersion(readonly)).toBe(2);
+      readonly.close();
+    });
   });
 });

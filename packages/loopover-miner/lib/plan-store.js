@@ -142,6 +142,18 @@ function rowToRecord(row) {
   return { planId: row.plan_id, plan, status: row.status, updatedAt: row.updated_at };
 }
 
+// v1 -> v2 (#4939/#6597): additive tenant-scoping column, a prerequisite for any hosted, multi-tenant use of
+// this same store's logic. NULL for every row today -- self-host behavior is byte-identical, since nothing
+// reads or writes it yet. Same defensive column-presence guard as this file's sibling stores' own additive
+// migrations (e.g. event-ledger.js's addTenantIdColumn).
+function addTenantIdColumn(db) {
+  const hasTenantIdColumn = db
+    .prepare("PRAGMA table_info(miner_plans)")
+    .all()
+    .some((column) => column.name === "tenant_id");
+  if (!hasTenantIdColumn) db.exec("ALTER TABLE miner_plans ADD COLUMN tenant_id TEXT");
+}
+
 /**
  * Opens the local plan store, creating the table on first use. `savePlan` is a single atomic INSERT…ON CONFLICT
  * upsert keyed by `plan_id`; the plan JSON is validated on save AND re-validated on load, so a corrupted row is
@@ -160,8 +172,8 @@ export function openPlanStore(dbPath = resolvePlanStoreDbPath()) {
       updated_at TEXT NOT NULL
     )
   `);
-  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations (none yet).
-  applySchemaMigrations(db, []);
+  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations.
+  applySchemaMigrations(db, [addTenantIdColumn]);
 
   const saveStatement = db.prepare(`
     INSERT INTO miner_plans (plan_id, plan_json, status, updated_at)

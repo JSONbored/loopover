@@ -89,6 +89,18 @@ function rowToDecision(row) {
   };
 }
 
+// v1 -> v2 (#4939/#6597): additive tenant-scoping column, a prerequisite for any hosted, multi-tenant use of
+// this same store's logic. NULL for every row today -- self-host behavior is byte-identical, since nothing
+// reads or writes it yet. Same defensive column-presence guard as this file's sibling stores' own additive
+// migrations (e.g. event-ledger.js's addTenantIdColumn).
+function addTenantIdColumn(db) {
+  const hasTenantIdColumn = db
+    .prepare("PRAGMA table_info(governor_events)")
+    .all()
+    .some((column) => column.name === "tenant_id");
+  if (!hasTenantIdColumn) db.exec("ALTER TABLE governor_events ADD COLUMN tenant_id TEXT");
+}
+
 /**
  * Opens the append-only governor ledger, creating the table on first use. Rows are returned in ascending `id`
  * order (insertion order). (#2328)
@@ -109,8 +121,8 @@ export function initGovernorLedger(dbPath = resolveGovernorLedgerDbPath()) {
     )
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_governor_events_repo ON governor_events (repo_full_name, id)");
-  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations (none yet).
-  applySchemaMigrations(db, []);
+  // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations.
+  applySchemaMigrations(db, [addTenantIdColumn]);
   // Opt-in retention (#4834): prune aged/excess rows when an operator has enabled it; a no-op by default.
   pruneLedgerByRetention(db, GOVERNOR_LEDGER_RETENTION_SPEC, resolveLedgerRetentionPolicy(), Date.now());
 

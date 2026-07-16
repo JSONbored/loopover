@@ -1,8 +1,21 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { AUTONOMY_LEVELS } from "../../src/settings/autonomy";
 import { closeFixtureServer, runAsync, startFixtureServer } from "./support/mcp-cli-harness";
+
+// #6153: MAINTAIN_AUTONOMY_LEVELS is a hand-synced copy of the live enum (the CLI reaches @loopover/engine only
+// through its published export map, which doesn't surface AUTONOMY_LEVELS), so nothing but a test can catch the
+// two drifting apart. The source is parsed rather than imported because bin/loopover-mcp.js is an executable
+// entrypoint that starts a server on import.
+const CLI_SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js"), "utf8");
+
+/** The `maintain set-level` levels the committed CLI source really accepts. */
+function declaredLevels(): string[] {
+  const raw = /const MAINTAIN_AUTONOMY_LEVELS = \[([^\]]*)\];/.exec(CLI_SOURCE)?.[1] ?? "";
+  return [...raw.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+}
 
 describe("loopover-mcp CLI — maintain (#784)", () => {
   let tempDir: string | null = null;
@@ -90,6 +103,31 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     await expect(runAsync(["maintain", "set-level", "merge", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: loopover-mcp maintain set-level/);
     await expect(runAsync(["maintain", "set-level", "bogus", "auto", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown action/);
     await expect(runAsync(["maintain", "set-level", "merge", "bogus", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown level/);
+  }, 45_000);
+
+  // Pins the INVARIANT (the two lists agree), not today's three values -- restating the literal here would just
+  // create a third hand-synced copy that rots alongside the one this guards.
+  it("set-level's levels stay in sync with the live autonomy enum (#6153)", () => {
+    expect(declaredLevels()).toEqual([...AUTONOMY_LEVELS]);
+  });
+
+  // #6153 regression: the CLI accepted "suggest"/"propose" for the whole life of #4620, which dropped them
+  // server-side. The fixture's PUT /settings echoes any autonomy body back as a success, exactly like a server
+  // with no enum -- so a rejection here can only have come from the CLI's own check, before any round-trip.
+  it("rejects levels #4620 removed server-side, client-side rather than via a 400 (#6153)", async () => {
+    const e = await env();
+    for (const removed of ["suggest", "propose"]) {
+      // Derived from the live enum for the same reason as above: the point is that the error names exactly the
+      // levels the server accepts, not that it names three particular strings.
+      await expect(runAsync(["maintain", "set-level", "review", removed, "--repo", "owner/repo"], e)).rejects.toThrow(
+        new RegExp(`Unknown level: ${removed}\\. Use ${AUTONOMY_LEVELS.join(", ")}\\.`),
+      );
+    }
+    // The dial still accepts every level the server does -- the fix narrowed the list, it didn't break it.
+    const json = JSON.parse(await runAsync(["maintain", "set-level", "review", "observe", "--repo", "owner/repo", "--json"], e)) as {
+      autonomy: Record<string, string>;
+    };
+    expect(json.autonomy).toMatchObject({ review: "observe" });
   }, 45_000);
 
   it("prints help when invoked with no subcommand", async () => {

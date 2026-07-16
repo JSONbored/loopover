@@ -64,9 +64,24 @@ const CLI_COMMAND_SPEC = {
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
-// #784 maintain set-level — the autonomy dial's action classes + levels (must mirror src/settings/autonomy.ts).
+// #784 maintain set-level — the autonomy dial's action classes + levels.
+//
+// Both are hand-synced literals, not imports: this file resolves @loopover/engine through the PUBLISHED package
+// (`^3.0.0`), whose export map exposes only `.` + a few `./scoring/*`/`./signals/*` subpaths — neither surfaces
+// AUTONOMY_LEVELS, so importing the canonical list would mean widening the engine's public API (#6153). The
+// drift this invites is real and has bitten once already, so test/unit/mcp-cli-maintain.test.ts pins LEVELS
+// against the live enum and fails the moment the two disagree.
+//
+// LEVELS mirrors AUTONOMY_LEVELS (src/settings/autonomy.ts -> packages/loopover-engine/src/settings/autonomy.ts)
+// exactly. #6153: it carried "suggest"/"propose" for the whole life of #4620, which dropped them server-side --
+// PUT /settings validates against the live enum (src/api/routes.ts), so every value this list accepted but the
+// server didn't turned an immediate, clear client-side error into a confusing 400 from the API.
+//
+// ACTION_CLASSES is deliberately NOT the engine's full AGENT_ACTION_CLASSES: it is the operator-settable subset
+// the maintain surface exposes, and src/mcp/server.ts's MAINTAIN_AUTONOMY_ACTION_CLASSES mirrors these six on
+// purpose. Do not "sync" it to the engine list.
 const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
-const MAINTAIN_AUTONOMY_LEVELS = ["observe", "suggest", "propose", "auto_with_approval", "auto"];
+const MAINTAIN_AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"];
 const AGENT_PROFILES = {
   "miner-planner": {
     id: "miner-planner",

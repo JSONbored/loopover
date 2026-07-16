@@ -551,11 +551,11 @@ const setAgentPausedOutputSchema = {
   agentPaused: z.boolean().optional(),
 };
 
-// `action` mirrors the CLI's MAINTAIN_ACTION_CLASSES exactly (loopover-mcp.js:65). `level` intentionally
-// validates against the LIVE AUTONOMY_LEVELS (src/settings/autonomy.ts), not the CLI's own stale
-// MAINTAIN_AUTONOMY_LEVELS -- that list still carries "suggest"/"propose", both removed server-side by #4620
-// and silently dropped by normalizeAutonomyPolicy on persist, so accepting them here would report success on a
-// write that never actually took effect.
+// `action` mirrors the CLI's MAINTAIN_ACTION_CLASSES exactly (loopover-mcp.js). `level` validates against the
+// LIVE AUTONOMY_LEVELS (src/settings/autonomy.ts) rather than restating one: "suggest"/"propose" were removed
+// server-side by #4620 and are silently dropped by normalizeAutonomyPolicy on persist, so accepting either here
+// would report success on a write that never actually took effect. (#6153: the CLI's own MAINTAIN_AUTONOMY_LEVELS
+// carried both until then -- binding to the live enum is what kept this surface correct while that one drifted.)
 const MAINTAIN_AUTONOMY_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"] as const;
 
 const setActionAutonomyShape = {

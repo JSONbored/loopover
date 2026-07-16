@@ -1,3 +1,4 @@
+import { AnalyticsCardShell } from "@/components/site/app-panels/analytics-card-shell";
 import { BoundaryBadge, Stat } from "@/components/site/control-primitives";
 import { EmptyState } from "@/components/site/state-views";
 import {
@@ -9,30 +10,28 @@ import {
 import { formatGeneratedAt } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 
 /** Gate-outcome breakdown card (#2203, part of #539): auto-merged / auto-closed / held counts and rates
- *  from repo-scoped gate-outcome audit events. Read-only; public-safe aggregate counts only. */
+ *  from repo-scoped gate-outcome audit events. Read-only; public-safe aggregate counts only. The count Stats
+ *  always render regardless of the outcome mix, so this card stays in AnalyticsCardShell's "ready" state and
+ *  keeps its own inner outcome-mix-vs-EmptyState toggle (#6175), matching ReversalHealthCard's shape. */
 export function GateOutcomeCard({ breakdown }: { breakdown: GateOutcomeCardData }) {
   const segments = gateOutcomeSegments(breakdown);
   const hasSamples = gateOutcomeHasSamples(breakdown);
 
   return (
-    <section className="rounded-token border-hairline bg-card p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-token-lg font-semibold">Gate outcomes</h2>
-          <p className="mt-1 text-token-xs text-muted-foreground">
-            Terminal gate dispositions from audit events over the last {breakdown.windowDays}{" "}
-            day(s).
-          </p>
-        </div>
+    <AnalyticsCardShell
+      title="Gate outcomes"
+      description={`Terminal gate dispositions from audit events over the last ${breakdown.windowDays} day(s).`}
+      state="ready"
+      action={
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-token-2xs text-muted-foreground">
             generated {formatGeneratedAt(breakdown.generatedAt)}
           </span>
           <BoundaryBadge boundary="public" />
         </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-3">
         <Stat
           label="Auto-merged"
           value={String(breakdown.counts.autoMerged)}
@@ -100,6 +99,6 @@ export function GateOutcomeCard({ breakdown }: { breakdown: GateOutcomeCardData 
           description="Auto-merge, auto-close, and hold audit rows appear here once the agent processes PRs in your scoped repos."
         />
       )}
-    </section>
+    </AnalyticsCardShell>
   );
 }

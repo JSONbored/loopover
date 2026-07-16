@@ -15,6 +15,7 @@ export function AnalyticsCardShell({
   state,
   emptyTitle = "No data yet",
   emptyHint,
+  action,
   children,
 }: {
   title: string;
@@ -22,6 +23,9 @@ export function AnalyticsCardShell({
   state: AnalyticsCardState;
   emptyTitle?: string;
   emptyHint?: ReactNode;
+  /** Header-right slot (e.g. a status pill, boundary badge, or freshness stamp) shown across every
+   *  state, matching the header's existing `justify-between` layout. */
+  action?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -33,6 +37,7 @@ export function AnalyticsCardShell({
             <p className="mt-1 text-token-xs text-muted-foreground">{description}</p>
           ) : null}
         </div>
+        {action}
       </div>
 
       {state === "loading" ? (

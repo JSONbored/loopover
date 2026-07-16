@@ -1,7 +1,7 @@
 # LoopOver Miner Extension
 
 Contributor-facing browser extension for GitHub **issue** pages. It is intentionally separate from
-[`apps/loopover-extension/`](../gittensory-extension/) (the **Maintainer Overlay**), which injects private PR/issue
+[`apps/loopover-extension/`](../loopover-extension/) (the **Maintainer Overlay**), which injects private PR/issue
 context for maintainers.
 
 ## What it does

@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { AnalyticsCardShell } from "@/components/site/app-panels/analytics-card-shell";
 import { Stat, StatusPill } from "@/components/site/control-primitives";
 import { aggregateGateEval, type GateEvalReport } from "./gate-precision-card-model";
 
@@ -8,27 +9,25 @@ const MIN_DECIDED_FLOOR = 10;
 
 /** Self-host maintainer analytics card (#2191): gate merge-precision + the TP/FP/FN/TN confusion matrix from
  *  computeGateEval, read-only over the operator-dashboard payload. Renders nothing when there are no evaluated
- *  projects at all (keeps the analytics page clean until the gate has produced eval rows). */
+ *  projects at all (keeps the analytics page clean until the gate has produced eval rows) -- this early return,
+ *  not AnalyticsCardShell's own "empty" state, is this card's documented no-data behavior (#6175). */
 export function GatePrecisionCard({ report }: { report: GateEvalReport }) {
   if (report.rows.length === 0) return null;
   const matrix = aggregateGateEval(report);
   return (
-    <section className="rounded-token border border-border bg-transparent p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-token-lg font-semibold">Gate precision</h2>
-          <p className="mt-1 text-token-xs text-muted-foreground">
-            The gate's merge/close predictions scored against realized PR outcomes. Public-safe
-            counts only.
-          </p>
-        </div>
+    <AnalyticsCardShell
+      title="Gate precision"
+      description="The gate's merge/close predictions scored against realized PR outcomes. Public-safe counts only."
+      state="ready"
+      action={
         <StatusPill status={report.hasSignal ? "ready" : "warn"}>
           {report.hasSignal
             ? `${matrix.decided} decided`
             : `below ${MIN_DECIDED_FLOOR}-sample floor`}
         </StatusPill>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      }
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
         <Stat
           label="Merge precision"
           value={
@@ -68,7 +67,7 @@ export function GatePrecisionCard({ report }: { report: GateEvalReport }) {
           tone="text-success"
         />
       </div>
-    </section>
+    </AnalyticsCardShell>
   );
 }
 

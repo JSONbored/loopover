@@ -36,10 +36,10 @@ Two products, self-host-first:
   `src/signals`, etc). The maintainer side: automates PR review, merge/close disposition, summaries.
   Self-hosted only today (see `.claude/skills/contributing-to-loopover` / `gittensory-deployment-models`
   equivalent context) — no hosted Orb yet, deliberately, ~1-2 months out at the time of writing.
-- Directory names under `packages/` still say `gittensory-*`; only the npm package **names** have
-  moved to `@loopover/*` so far (as of 2026-07-14). Check both independently, don't assume one implies
-  the other — the repo itself renames `gittensory` → `loopover` on ~2026-07-15; re-verify current
-  naming before hardcoding either name into a new issue body.
+- Directory names under `packages/` and npm package names both moved to `loopover-*` / `@loopover/*`
+  (the repo itself renamed `gittensory` → `loopover` on 2026-07-15). Some tables/audit-log values and
+  historical GitHub content still legitimately reference the old name — re-verify current naming before
+  hardcoding either name into a new issue body rather than assuming either direction.
 
 **Standing priorities named by the maintainer (2026-07-14), not yet issue-backed:**
 - **AMS selfhost hardening, round 2.** Miner Wave 4 ("AMS Hardening & Packaging") fully closed
@@ -65,7 +65,7 @@ Two products, self-host-first:
 | `Miner Wave N — <theme> (maintainer)` | Business/legal/architecture track (currently Wave 5, Rent-a-Loop) | Mostly no — but check individual issues, some concrete implementation sub-tasks are deliberately carved out and unlocked even inside a `(maintainer)`-titled milestone |
 | `Miner Wave 4.5 — AMS Hardening Round 2` | **New, created 2026-07-15.** The home for recurring post-Wave-4 gap-audit findings in `packages/loopover-miner`/`packages/loopover-engine` — correctness bugs, unenforced documented contracts, stale comments, small hardening gaps. Every future "AMS selfhost hardening round N" audit files here, not a fresh milestone each time. | Yes — same shape as Wave 4's own contributor-open issues |
 | `AMS Cloud Readiness (maintainer)` | Hosted **multi-tenant SaaS** AMS — NOT the same thing as "AMS selfhost hardening" despite the name similarity | Mostly no (architecture/billing/SLA decisions) — a handful of pure research-spike/audit/load-test issues are deliberately contributor-eligible; check labels per-issue |
-| `ORB Cloud Readiness (maintainer)` | Same shape, for ORB's hosted SaaS story | Mostly no, same caveat — the first several issues in this milestone (#4878-4884-style, "extract X into gittensory-engine") are often pure refactors miscategorized here, not actually tenant/business-specific — read the body, not just the milestone |
+| `ORB Cloud Readiness (maintainer)` | Same shape, for ORB's hosted SaaS story | Mostly no, same caveat — the first several issues in this milestone (#4878-4884-style, "extract X into loopover-engine") are often pure refactors miscategorized here, not actually tenant/business-specific — read the body, not just the milestone |
 | `ORB - Long Term Features & Improvements` | Grab-bag: some genuine self-host feature/bug work, some product-design epics awaiting maintainer subjective calls | Mixed — read each body |
 | `LoopOver Rebrand Migration (maintainer)` | Brand/infra cutover | No |
 | Unmilestoned | Should be rare — every gardening-generated issue gets a real milestone (see below) | If you find one, fold it into the closest-fitting existing milestone rather than leave it adrift |
@@ -205,7 +205,7 @@ mutation { addSubIssue(input: { issueId: "<parent node id>", subIssueId: "<child
 mutation { addBlockedBy(input: { issueId: "<blocked node id>", blockingIssueId: "<blocker node id>" }) { issue { number } } }
 ```
 
-Get an issue's GraphQL node ID via `gh api graphql -f query='query { repository(owner:"JSONbored", name:"gittensory") { issue(number: N) { id } } }'` (note: literal query strings without file interpolation are fine with `-f`; only the `@file` file-read syntax requires `-F`).
+Get an issue's GraphQL node ID via `gh api graphql -f query='query { repository(owner:"JSONbored", name:"loopover") { issue(number: N) { id } } }'` (note: literal query strings without file interpolation are fine with `-f`; only the `@file` file-read syntax requires `-F`).
 
 ## gh CLI gotchas already hit doing this work
 

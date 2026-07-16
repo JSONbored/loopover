@@ -71,12 +71,15 @@ describe("SlopDuplicateTrendCard", () => {
         })}
       />,
     );
+    expect(screen.getByText("No snapshot history yet")).toBeTruthy();
     expect(
       screen.getByText(
         /Queue-health snapshot history will appear here after signal snapshot jobs run/i,
       ),
     ).toBeTruthy();
     expect(screen.queryByLabelText("Trend chart")).toBeNull();
+    // The header action slot (freshness pill + generated-at stamp) renders in every state (#6175).
+    expect(screen.getByText("fresh snapshot")).toBeTruthy();
   });
 
   it("surfaces the stale snapshot pill when data is old", () => {

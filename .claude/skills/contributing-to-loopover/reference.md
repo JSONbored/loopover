@@ -3,9 +3,9 @@
 Exhaustive tables and patterns behind the `SKILL.md` playbook. Read the section you need; you don't
 need all of it for every change. All commands run from the repo root unless noted.
 
-**Bootstrap (fresh clone):** external contributors **fork** `JSONbored/gittensory`, then
+**Bootstrap (fresh clone):** external contributors **fork** `JSONbored/loopover`, then
 `git clone` their fork, `nvm use` (Node 22 via `.nvmrc`), and **`npm ci`** (required before any check
-runs). Add the upstream remote — `git remote add upstream https://github.com/JSONbored/gittensory` —
+runs). Add the upstream remote — `git remote add upstream https://github.com/JSONbored/loopover` —
 and `git fetch upstream && git rebase upstream/main` before pushing if `main` moved (a base conflict
 auto-closes a contributor PR). Push to your fork; open the PR from it. A first fork PR's Actions wait
 for maintainer approval (CI shows unverified → the engine **holds**, never closes — this is expected).
@@ -153,7 +153,7 @@ Install + configure (let the CLI print the right config for your tool — **Code
 ```sh
 npm install -g @loopover/mcp@latest
 loopover-mcp login                        # GitHub device flow
-loopover-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_servers.gittensory])
+loopover-mcp init-client --print codex    # → ~/.codex/config.toml  ([mcp_servers.loopover])
 loopover-mcp init-client --print claude   # or --print cursor  (→ mcpServers JSON)
 ```
 
@@ -196,11 +196,11 @@ own PR.)
 
 ```ts
 import { createTestEnv } from "../helpers/d1";
-const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "JSONbored/gittensory" });
+const env = createTestEnv({ LOOPOVER_REVIEW_REPOS: "JSONbored/loopover" });
 await env.DB.prepare(`INSERT INTO repositories (full_name, owner, name) VALUES (?,?,?)`)
-  .bind("JSONbored/gittensory", "JSONbored", "gittensory").run();
+  .bind("JSONbored/loopover", "JSONbored", "loopover").run();
 const row = await env.DB.prepare(`SELECT * FROM repositories WHERE full_name = ?`)
-  .bind("JSONbored/gittensory").first<RepoRow>();
+  .bind("JSONbored/loopover").first<RepoRow>();
 ```
 
 **Route tests:** `createApp()` from `src/api/routes` + `app.request(path, init, env)`. **Fetch stub:**

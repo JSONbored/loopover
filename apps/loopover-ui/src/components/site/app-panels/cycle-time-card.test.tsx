@@ -51,7 +51,7 @@ describe("CycleTimeCard", () => {
     expect(screen.getByText("2 paired PR(s)")).toBeTruthy();
   });
 
-  it("shows inline empty copy when there are no samples", () => {
+  it("shows the shared EmptyState (not a bare paragraph) when there are no samples (#6175)", () => {
     const cycleTime: CycleTimeAggregate = {
       p50Ms: null,
       p90Ms: null,
@@ -61,7 +61,14 @@ describe("CycleTimeCard", () => {
     };
     render(<CycleTimeCard cycleTime={cycleTime} />);
     expect(screen.getByText("no samples yet")).toBeTruthy();
+    expect(screen.getByText("No paired samples yet")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Paired gate decisions and PR outcomes will appear here once the gate has resolved pull requests in the analytics window.",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByText("Cycle-time distribution")).toBeNull();
+    expect(screen.queryByText("p50")).toBeNull();
   });
 
   it("omits the sparkbar when the distribution is empty", () => {

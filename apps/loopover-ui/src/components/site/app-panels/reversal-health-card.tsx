@@ -1,3 +1,4 @@
+import { AnalyticsCardShell } from "@/components/site/app-panels/analytics-card-shell";
 import { Stat, StatusPill } from "@/components/site/control-primitives";
 import { EmptyState } from "@/components/site/state-views";
 import {
@@ -8,25 +9,22 @@ import {
 } from "@/components/site/app-panels/reversal-health-card-model";
 
 /** Analytics card (#2193): reversal rate and recent auto-action health from computeAgentHealth — read-only
- *  over the operator-dashboard payload. Lists reversed targets when present; EmptyState when none. */
+ *  over the operator-dashboard payload. Lists reversed targets when present; EmptyState when none. The rate
+ *  Stats always render regardless of the list, so this card stays in AnalyticsCardShell's "ready" state and
+ *  keeps its own inner list-vs-EmptyState toggle (#6175) rather than using the shell's own "empty" state,
+ *  which would also hide the Stats. */
 export function ReversalHealthCard({ health }: { health: ReversalHealth }) {
   const status = reversalHealthStatus(health);
   const reversedTargets = health.reversedTargets ?? [];
 
   return (
-    <section className="rounded-token border border-border bg-transparent p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-display text-token-lg font-semibold">Reversal health</h2>
-          <p className="mt-1 text-token-xs text-muted-foreground">
-            How often humans reopened or reverted a bot auto-action in the last 7 days. Public-safe
-            counts only.
-          </p>
-        </div>
-        <StatusPill status={status.tone}>{status.label}</StatusPill>
-      </div>
-
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <AnalyticsCardShell
+      title="Reversal health"
+      description="How often humans reopened or reverted a bot auto-action in the last 7 days. Public-safe counts only."
+      state="ready"
+      action={<StatusPill status={status.tone}>{status.label}</StatusPill>}
+    >
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label="Reversal rate"
           value={formatRatePct(health.reversalRate)}
@@ -81,6 +79,6 @@ export function ReversalHealthCard({ health }: { health: ReversalHealth }) {
           description="When a contributor reopens a bot-close or reverts a bot-merge, the pull request will appear here."
         />
       )}
-    </section>
+    </AnalyticsCardShell>
   );
 }

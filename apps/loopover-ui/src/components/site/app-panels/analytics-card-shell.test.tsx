@@ -50,4 +50,25 @@ describe("AnalyticsCardShell", () => {
     expect(screen.getByRole("heading", { name: "Queue health" })).toBeTruthy();
     expect(container.querySelectorAll("p").length).toBe(0);
   });
+
+  it("renders the action header slot across every state (loading, empty, ready)", () => {
+    for (const state of ["loading", "empty", "ready"] as const) {
+      const { unmount } = render(
+        <AnalyticsCardShell title="Queue health" state={state} action={<span>action slot</span>}>
+          <div>ready content</div>
+        </AnalyticsCardShell>,
+      );
+      expect(screen.getByText("action slot")).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("omits the action slot entirely when none is provided", () => {
+    render(
+      <AnalyticsCardShell title="Queue health" state="ready">
+        <div>ready content</div>
+      </AnalyticsCardShell>,
+    );
+    expect(screen.queryByText("action slot")).toBeNull();
+  });
 });

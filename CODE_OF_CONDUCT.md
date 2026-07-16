@@ -57,7 +57,7 @@ Enforcement is proportional and escalates with intent and repetition:
   farming, results in submissions being closed and labeled on sight and a block from contributing.
 - Plagiarism and ban-evasion — copying another contributor's work, or returning under a new account
   after a block — result in an immediate **permanent block from contributing across all of our
-  repositories** (`JSONbored/gittensory`, `JSONbored/metagraphed`, `JSONbored/awesome-claude`).
+  repositories** (`JSONbored/loopover`, `JSONbored/metagraphed`, `JSONbored/awesome-claude`).
 
 ## Contribution Terms
 
@@ -70,6 +70,6 @@ good-faith research is welcome through that channel.
 
 For security issues, use GitHub private vulnerability reporting:
 
-https://github.com/JSONbored/gittensory/security/advisories/new
+https://github.com/JSONbored/loopover/security/advisories/new
 
 For non-sensitive support, use GitHub issues and follow `SUPPORT.md`.

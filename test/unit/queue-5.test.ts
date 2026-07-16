@@ -2634,8 +2634,10 @@ describe("queue processors", () => {
     // other slop detector. Asserted via the persisted `pull_requests` slopRisk/slopBand columns
     // (updatePullRequestSlopAssessment runs unconditionally inside shouldCollectSlopEvidence, independent of
     // the publish/comment pipeline), mirroring how "clears the persisted dashboard slop score when the slop
-    // gate is off (#911)" above verifies the same live score.
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    // gate is off (#911)" above verifies the same live score. LOOPOVER_DRIFT_ISSUE_REPO is overridden so this
+    // test's 404'd manifest fetch doesn't fall back to the bundled self-repo manifest, which carries its own
+    // settings.autonomy block (#773) unrelated to (and irrelevant for) the slop assessment under test here.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     await persistRegistrySnapshot(
       env,
       normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),

@@ -2146,8 +2146,16 @@ describe("api routes", () => {
   });
 
   it("serves installation repair diagnostics and refreshes installation health", async () => {
+    // No repo file mocked (this test only cares about DB-configured settings): stub fetch to a plain 404 so
+    // resolveRepositorySettings's manifest lookup never makes a REAL network call to raw.githubusercontent.com,
+    // which -- being a live, mutable URL that transparently follows the gittensory->loopover rename -- would
+    // silently pick up whatever real .loopover.yml content the actual repo carries today instead of the
+    // deterministic DB-only settings this test asserts against. LOOPOVER_DRIFT_ISSUE_REPO is also overridden
+    // so a 404'd fetch doesn't fall back to the bundled self-repo manifest (LOOPOVER_REPO_FOCUS_MANIFEST_YAML),
+    // which carries its own settings.autonomy block (#773) that would equally clobber this test's DB-only setup.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
     const app = createApp();
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     const repoPayload = { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } };
     await upsertInstallation(env, {
       installation: {

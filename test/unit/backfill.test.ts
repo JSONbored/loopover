@@ -1173,7 +1173,15 @@ describe("GitHub backfill", () => {
   });
 
   it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
-    const env = createTestEnv();
+    // No repo file mocked (this test only cares about DB-configured settings): stub fetch to a plain 404 so
+    // resolveRepositorySettings's manifest lookup never makes a REAL network call to raw.githubusercontent.com,
+    // which -- being a live, mutable URL that transparently follows the gittensory->loopover rename -- would
+    // silently pick up whatever real .loopover.yml content the actual repo carries today instead of the
+    // deterministic DB-only settings this test asserts against. LOOPOVER_DRIFT_ISSUE_REPO is also overridden
+    // so a 404'd fetch doesn't fall back to the bundled self-repo manifest (LOOPOVER_REPO_FOCUS_MANIFEST_YAML),
+    // which carries its own settings.autonomy block (#773) that would equally clobber this test's DB-only setup.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/gittensory",
@@ -1245,7 +1253,11 @@ describe("GitHub backfill", () => {
   });
 
   it("repair diagnostics require contents:write for merge autonomy (#audit-install-health display)", async () => {
-    const env = createTestEnv();
+    // See the sibling "marks comment, label, and check repair impacts disabled by repo settings" test above --
+    // stub fetch AND override the self-repo identity so this test's DB-only autonomy override is never
+    // silently overlaid by a real, live fetch or the bundled self-repo manifest's own autonomy block.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
 

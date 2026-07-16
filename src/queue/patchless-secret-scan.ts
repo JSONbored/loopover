@@ -1,4 +1,5 @@
 import type { FileFetcher } from "../review/review-grounding";
+import { mapWithConcurrency } from "./map-with-concurrency";
 import type { AdvisoryFinding, PullRequestFileRecord } from "../types";
 
 /** Per-file cap when synthesizing a patch for GitHub's patch-less (binary/large) PR files. */
@@ -154,22 +155,14 @@ export function incompletePatchLessSecretScanFinding(
   };
 }
 
+// Bounded-concurrency fan-out over the patch-less files. Delegates to the canonical `mapWithConcurrency`
+// (#6602) — the worker-pool loop lives in exactly one place under src/queue and src/signals.
 async function mapPatchLessSecretScanFilesWithConcurrency<T, R>(
   items: T[],
   limit: number,
   mapper: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+  return mapWithConcurrency(items, limit, mapper);
 }
 
 /** When GitHub omits inline `patch` (binary/large files), fetch post-change content and synthesize `+` lines so

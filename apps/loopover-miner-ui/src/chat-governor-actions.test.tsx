@@ -8,10 +8,7 @@ vi.mock("@loopover/engine", async () => {
 
 import { createChatActionRegistry } from "../../../packages/loopover-miner/lib/chat-action-registry.js";
 import { GovernorChatActionResult } from "./components/chat/governor-action-result";
-import {
-  formatGovernorPauseChatMessage,
-  GOVERNOR_CHAT_ACTION_PENDING_MESSAGE,
-} from "./lib/chat-governor-action-copy";
+import { formatGovernorPauseChatMessage, GOVERNOR_CHAT_ACTION_PENDING_MESSAGE } from "./lib/chat-governor-action-copy";
 import {
   enabledChatActionsEnv,
   GOVERNOR_PAUSE_CHAT_ACTION,
@@ -68,13 +65,9 @@ describe("GovernorChatActionResult (#6521)", () => {
     expect(screen.getByRole("alert").textContent).toContain("connection refused");
 
     rerender(<GovernorChatActionResult pending={false} result={{ ok: true, pauseState: pausedWithReason }} />);
-    expect(
-      screen.getByText("Paused since 2026-07-13T12:00:00.000Z (investigating a bad PR)"),
-    ).toBeTruthy();
+    expect(screen.getByText("Paused since 2026-07-13T12:00:00.000Z (investigating a bad PR)")).toBeTruthy();
 
-    rerender(
-      <GovernorChatActionResult pending={false} result={{ ok: true, pauseState: pausedWithoutReason }} />,
-    );
+    rerender(<GovernorChatActionResult pending={false} result={{ ok: true, pauseState: pausedWithoutReason }} />);
     expect(screen.getByText("Paused since 2026-07-13T12:00:00.000Z")).toBeTruthy();
 
     rerender(<GovernorChatActionResult pending={false} result={{ ok: true, pauseState: notPaused }} />);
@@ -132,10 +125,7 @@ describe("runGovernorChatAction pending + wire (#6521)", () => {
     expect(paused).toEqual({ ok: true, pauseState: pausedWithReason });
 
     const resumed = unwrapGovernorPauseChatResult(
-      await runGovernorChatAction(
-        { action: GOVERNOR_RESUME_CHAT_ACTION },
-        { env: enabledChatActionsEnv(), registry },
-      ),
+      await runGovernorChatAction({ action: GOVERNOR_RESUME_CHAT_ACTION }, { env: enabledChatActionsEnv(), registry }),
     );
     expect(resumed).toEqual({ ok: false, error: "resume failed" });
   });
@@ -160,10 +150,7 @@ describe("runGovernorChatAction pending + wire (#6521)", () => {
     );
     expect(pauseSpy).toHaveBeenCalledWith("hold");
 
-    await runGovernorChatAction(
-      { action: GOVERNOR_RESUME_CHAT_ACTION },
-      { env: enabledChatActionsEnv(), registry },
-    );
+    await runGovernorChatAction({ action: GOVERNOR_RESUME_CHAT_ACTION }, { env: enabledChatActionsEnv(), registry });
     expect(resumeSpy).toHaveBeenCalledTimes(1);
 
     pauseSpy.mockRestore();
@@ -177,7 +164,9 @@ describe("runGovernorChatAction pending + wire (#6521)", () => {
   });
 
   it("unwrapGovernorPauseChatResult returns null for non-executed dispatch envelopes", () => {
-    expect(unwrapGovernorPauseChatResult({ ok: false, status: "disabled", action: GOVERNOR_PAUSE_CHAT_ACTION })).toBeNull();
+    expect(
+      unwrapGovernorPauseChatResult({ ok: false, status: "disabled", action: GOVERNOR_PAUSE_CHAT_ACTION }),
+    ).toBeNull();
     expect(
       unwrapGovernorPauseChatResult({
         ok: true,

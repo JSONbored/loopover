@@ -10,9 +10,7 @@ import {
   dispatchChatAction,
   type ChatActionDispatchResult,
 } from "../../../../packages/loopover-miner/lib/chat-action-dispatch.js";
-import {
-  type ChatActionRegistry,
-} from "../../../../packages/loopover-miner/lib/chat-action-registry.js";
+import { type ChatActionRegistry } from "../../../../packages/loopover-miner/lib/chat-action-registry.js";
 import {
   GOVERNOR_PAUSE_CHAT_ACTION,
   GOVERNOR_RESUME_CHAT_ACTION,
@@ -82,9 +80,7 @@ export function unwrapGovernorPauseChatResult(
   dispatchResult: ChatActionDispatchResult,
 ): GovernorPauseStateResult | null {
   if (dispatchResult.status !== "dispatched") return null;
-  const gated = dispatchResult.result as
-    | { status?: string; result?: GovernorPauseStateResult }
-    | undefined;
+  const gated = dispatchResult.result as { status?: string; result?: GovernorPauseStateResult } | undefined;
   if (gated?.status !== "executed") return null;
   const inner = gated.result;
   if (inner == null || typeof inner !== "object" || !("ok" in inner)) return null;

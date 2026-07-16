@@ -442,8 +442,14 @@ async function main(): Promise<void> {
     backupAcknowledged: process.env.BACKUP_ACKNOWLEDGED === "true",
   };
   const backupAdvisory = sqliteBackupAdvisory(sqliteBackupOpts);
+  // #6325: console.error, not console.warn -- installStructuredLogForwarding (initSentry, above) only
+  // intercepts console.log (level:error/fatal only) and console.error (always forwarded); console.warn is
+  // NEVER wrapped at all, so this "warn LOUDLY" advisory was silently unreachable by Sentry regardless of
+  // whether Sentry was configured. `level: "warn"` in the payload still maps this to Sentry's own "warning"
+  // severity (see forwardStructuredLogToSentry), not an "error" -- only the CONSOLE METHOD used to reach the
+  // forwarder changes here, not the reported severity.
   if (backupAdvisory)
-    console.warn(
+    console.error(
       JSON.stringify({
         level: "warn",
         event: "selfhost_backup_advisory",
@@ -460,8 +466,12 @@ async function main(): Promise<void> {
     acknowledged: process.env.PUBLIC_ORIGIN_ACKNOWLEDGED === "true",
   };
   const publicOriginAdvisory = publicOriginReachabilityAdvisory(publicOriginOpts);
+  // #6325: console.error, not console.warn -- see the backupAdvisory case just above for why. This is the
+  // advisory that motivated the fix: JSONbored/metagraphed#6036 observed a genuinely broken "after" screenshot
+  // in production, and this advisory existed specifically to catch that -- but had been silently unreachable
+  // by Sentry the whole time, so nobody was ever actually alerted.
   if (publicOriginAdvisory)
-    console.warn(
+    console.error(
       JSON.stringify({
         level: "warn",
         event: "selfhost_public_origin_advisory",

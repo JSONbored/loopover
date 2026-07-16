@@ -6,6 +6,7 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint } from "@loopover/engine";
+import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "@loopover/engine/signals/slop";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -484,7 +485,7 @@ const STDIO_TOOL_DESCRIPTORS = [
   },
   {
     name: "loopover_check_slop_risk",
-    description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
+    description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
   },
   {
     name: "loopover_check_issue_slop",
@@ -830,7 +831,10 @@ registerStdioTool(
     description: stdioToolDescription("loopover_check_slop_risk"),
     inputSchema: checkSlopRiskShape,
   },
-  async (input) => toolResult("LoopOver slop-risk self-check.", await apiPost("/v1/lint/slop-risk", input)),
+  // Computed in-process from @loopover/engine (#6267) — matches the remote server's own buildSlopAssessment
+  // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
+  // round-trip, so slop-risk self-checks work fully offline.
+  (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
 );
 
 registerStdioTool(

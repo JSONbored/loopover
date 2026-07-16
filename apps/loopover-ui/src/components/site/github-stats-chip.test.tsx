@@ -64,7 +64,7 @@ describe("GithubStatsChip", () => {
 
     // The fallback should have been called with the direct GitHub repos endpoint
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      "https://api.github.com/repos/jsonbored/gittensory",
+      "https://api.github.com/repos/jsonbored/loopover",
       expect.objectContaining({ headers: { accept: "application/vnd.github+json" } }),
     );
   });

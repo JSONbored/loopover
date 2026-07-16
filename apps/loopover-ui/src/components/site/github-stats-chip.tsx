@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch, notifyApiFailure, notifyApiRecovered } from "@/lib/api/request";
 
-const REPO = "jsonbored/gittensory";
-const CACHE_KEY = "gh-stats-jsonbored-gittensory";
+const REPO = "jsonbored/loopover";
+const CACHE_KEY = "gh-stats-jsonbored-loopover";
 const CACHE_TTL = 1000 * 60 * 10; // 10 min
 
 type RepoStats = { stargazers_count: number; forks_count: number };
@@ -42,7 +42,7 @@ function writeCache(stats: RepoStats) {
 
 async function fetchRepo(): Promise<RepoStats> {
   const result = await apiFetch<{ stargazers_count?: number; forks_count?: number }>(
-    `${getApiOrigin()}/v1/public/github/repos/jsonbored/gittensory/stats`,
+    `${getApiOrigin()}/v1/public/github/repos/jsonbored/loopover/stats`,
     {
       label: "GitHub stats",
       timeoutMs: 6000,

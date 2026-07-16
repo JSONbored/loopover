@@ -379,6 +379,14 @@ describe("GitHub PR intelligence comments", () => {
   it("rejects invalid repository names before calling GitHub", async () => {
     await expect(createOrUpdatePrIntelligenceComment(createTestEnv(), 123, "invalid", 12, "body")).rejects.toThrow(/Invalid repository full name/);
   });
+
+  it("rejects a malformed three-segment repository name instead of silently truncating it", async () => {
+    // "owner/repo/extra" splits into three segments; the extra one must be rejected, not dropped, so no
+    // GitHub call is ever made against the truncated "owner/repo".
+    await expect(createOrUpdatePrIntelligenceComment(createTestEnv(), 123, "owner/repo/extra", 12, "body")).rejects.toThrow(
+      /Invalid repository full name/,
+    );
+  });
 });
 
 async function generatePrivateKeyPem(): Promise<string> {

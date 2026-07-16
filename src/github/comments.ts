@@ -50,8 +50,13 @@ async function createOrUpdateIssueCommentWithMarker(
   marker: string,
   options: { createIfMissing?: boolean | undefined; mode?: AgentActionMode } = {},
 ): Promise<{ id: number; html_url?: string } | null> {
-  const [owner, repo] = repoFullName.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
+  const parts = repoFullName.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  // Reject anything that is not exactly two non-empty segments -- "owner/repo/extra" would otherwise pass
+  // (the destructure silently drops the extra segment), issuing a call against a repo the caller never
+  // specified. Matches the segment-count guard in parseRepoFullName (assignees.ts / labels.ts).
+  if (parts.length !== 2 || !owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   return await withInstallationTokenRetry(env, installationId, async (token) => {
     // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.

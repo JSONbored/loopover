@@ -51,6 +51,14 @@
       "types": "./dist/signals/check-summary.d.ts",
       "default": "./dist/signals/check-summary.js"
     },
+    "./config-lint": {
+      "types": "./dist/config-lint.d.ts",
+      "default": "./dist/config-lint.js"
+    },
+    "./focus-manifest-validation": {
+      "types": "./dist/focus-manifest-validation.d.ts",
+      "default": "./dist/focus-manifest-validation.js"
+    },
     "./signals/path-matchers": {
       "types": "./dist/signals/path-matchers.d.ts",
       "default": "./dist/signals/path-matchers.js"

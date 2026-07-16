@@ -1,7 +1,6 @@
-import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { openLocalStoreDb } from "./local-store.js";
 import {
   PREDICTION_LEDGER_PURGE_SPEC,
   PREDICTION_LEDGER_RETENTION_SPEC,
@@ -135,10 +134,7 @@ function rowToEntry(row) {
  */
 export function initPredictionLedger(dbPath = resolvePredictionLedgerDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS predictions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

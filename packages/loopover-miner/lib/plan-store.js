@@ -1,7 +1,6 @@
-import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { openLocalStoreDb } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 
 // Local SQLite persistence for the stateless MCP plan DAG (#2318). `loopover_build_plan`/`plan_status`/
@@ -150,13 +149,9 @@ function rowToRecord(row) {
  */
 export function openPlanStore(dbPath = resolvePlanStoreDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  // The store is a persistent local file; the special in-memory path (':memory:') has no file to create or chmod.
-  if (resolvedPath !== ":memory:") {
-    mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  }
-  const db = new DatabaseSync(resolvedPath);
-  if (resolvedPath !== ":memory:") chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  // openLocalStoreDb centralizes the mkdir(0o700)/chmod(0o600)/busy_timeout + crash-safe cleanup registration and
+  // treats ':memory:' as a no-file special case, so this store no longer hand-rolls that boilerplate (#4826).
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS miner_plans (
       plan_id TEXT PRIMARY KEY,

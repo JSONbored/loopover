@@ -1,0 +1,1 @@
+export const MCP_PACKAGE_ALLOWED_FILE_PATTERNS: RegExp[];

@@ -8,6 +8,7 @@ import {
   checkTokenlessPublish,
   expectedReleaseTag,
   fileLooksLikeSecret,
+  MCP_PACKAGE_ALLOWED_FILE_PATTERNS,
   parseReleaseTag,
   redactSensitive,
   unexpectedTarballFiles,
@@ -15,8 +16,19 @@ import {
 
 const FORBIDDEN_PUBLIC_LANGUAGE = /\b(wallet|hotkey|coldkey|raw trust|trust score|payout|reward estimate|farming|private reviewability|public score estimate)\b/i;
 
-// Mirrors the allowlisted shape of the published tarball.
-const ALLOWED_FILES = ["bin/loopover-mcp.js", "lib/local-branch.js", "scripts/gittensor-score-preview.mjs", "package.json", "README.md", "CHANGELOG.md", "LICENSE"];
+// Mirrors the allowlisted shape of the published tarball (must stay aligned with MCP_PACKAGE_ALLOWED_FILE_PATTERNS).
+const ALLOWED_FILES = [
+  "bin/loopover-mcp.js",
+  "lib/cli-error.js",
+  "lib/local-branch.js",
+  "lib/format-table.js",
+  "lib/redact-local-path.js",
+  "scripts/gittensor-score-preview.mjs",
+  "package.json",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+];
 const CHANGELOG = "# Changelog\n\n## mcp-v0.4.0 - 2026-06-02\n\n### Features\n- Add a thing\n";
 
 // A tokenless trusted-publishing workflow fixture (same shape as publish-mcp.yml).
@@ -76,6 +88,14 @@ describe("checkChangelog", () => {
 });
 
 describe("checkTarball", () => {
+  it("accepts every shipped MCP lib file previously missing from the RC allowlist (#6291)", () => {
+    for (const file of ["lib/cli-error.js", "lib/format-table.js", "lib/redact-local-path.js"]) {
+      expect(unexpectedTarballFiles([file])).toEqual([]);
+      expect(MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((pattern) => pattern.test(file))).toBe(true);
+    }
+    expect(unexpectedTarballFiles(ALLOWED_FILES)).toEqual([]);
+  });
+
   it("passes for an allowlisted file set with no secret-like content (success fixture)", () => {
     const result = checkTarball({ files: ALLOWED_FILES, contentsByFile: { "README.md": "# gittensory-mcp", "package.json": "{}" } });
     expect(result).toMatchObject({ ok: true, code: "tarball_ok" });

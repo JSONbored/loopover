@@ -1,4 +1,5 @@
 export const RELEASE_TAG_PATTERN: RegExp;
+export const MCP_PACKAGE_ALLOWED_FILE_PATTERNS: RegExp[];
 
 export type CheckResult = {
   ok: boolean;

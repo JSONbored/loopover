@@ -1,4 +1,5 @@
 import { normalizeNewlines } from "./mcp-release-core.mjs";
+import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist.mjs";
 import YAML from "yaml";
 
 /**
@@ -15,16 +16,9 @@ import YAML from "yaml";
 
 export const RELEASE_TAG_PATTERN = /^mcp-v(\d+)\.(\d+)\.(\d+)$/;
 
-// Kept in sync with scripts/check-mcp-package.mjs and the publish workflow tarball gate.
-const ALLOWED_FILE_PATTERNS = [
-  /^bin\/loopover-mcp\.js$/,
-  /^lib\/local-branch\.js$/,
-  /^scripts\/gittensor-score-preview\.(mjs|py)$/,
-  /^package\.json$/,
-  /^README\.md$/,
-  /^CHANGELOG\.md$/,
-  /^LICENSE$/,
-];
+// Canonical allowlist lives in mcp-package-allowlist.mjs (shared with check-mcp-package.mjs).
+export { MCP_PACKAGE_ALLOWED_FILE_PATTERNS };
+const ALLOWED_FILE_PATTERNS = MCP_PACKAGE_ALLOWED_FILE_PATTERNS;
 const FORBIDDEN_PATH_PATTERN = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const SECRET_CONTENT_PATTERN = /(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)/;
 const NPM_TOKEN_PATTERN = /(NODE_AUTH_TOKEN|NPM_TOKEN|secrets\.NPM[A-Z_]*|_authToken|npm_[A-Za-z0-9]{20,})/;

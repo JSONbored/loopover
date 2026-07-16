@@ -1328,3 +1328,12 @@ settings:
 #   # uses, so an http:// or localhost/private-range endpoint is dropped with a warning.
 #   collectorUrl: https://collector.example.org/v1/federated
 #   collectorMode: both   # push | pull | both. Default: both.
+#   # WHICH PEERS YOU TRUST (#6480). A pulled bundle is only ever folded into your calibration if its signature
+#   # verifies against one of these keys -- trust is explicit and operator-configured, exactly like
+#   # MCP_READ_REPO_ALLOWLIST: there is no auto-discovery, no PKI, and no default peer. Unset or empty means you
+#   # trust no peer, so EVERY inbound bundle is rejected; `enabled: true` on its own never starts importing.
+#   # Each entry is a peer's 64-char hex verification key, which that operator gives you out of band. This is
+#   # shared verification material, not a password: treat it the way you treat the rest of this file.
+#   # To stop trusting a peer, remove its key -- that is the whole revocation story, by design.
+#   peerKeys:
+#     - 0000000000000000000000000000000000000000000000000000000000000000

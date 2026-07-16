@@ -947,7 +947,7 @@ describe("compileFocusManifestPolicy", () => {
       upstreamDriftIssues: { present: false, enabled: false },
       sweepWatchdog: { present: false, enabled: false },
       prReconciliation: { present: false, enabled: false },
-      federatedIntelligence: { present: false, enabled: false, collectorUrl: null, collectorMode: null },
+      federatedIntelligence: { present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] },
       warnings: [],
     });
     expect(policy.publicSafe.entryGuidance).toContain("Keep PRs focused.");
@@ -2242,12 +2242,12 @@ describe("parseFocusManifest gate config", () => {
   describe("federatedIntelligence: (#1970, opt-in federated fleet intelligence export config-as-code toggle)", () => {
     it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
       const m = parseFocusManifest({});
-      expect(m.federatedIntelligence).toEqual({ present: false, enabled: false, collectorUrl: null, collectorMode: null });
+      expect(m.federatedIntelligence).toEqual({ present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] });
       expect(m.present).toBe(false);
     });
 
     it("treats an explicit null the same as an omitted key", () => {
-      expect(parseFocusManifest({ federatedIntelligence: null }).federatedIntelligence).toEqual({ present: false, enabled: false, collectorUrl: null, collectorMode: null });
+      expect(parseFocusManifest({ federatedIntelligence: null }).federatedIntelligence).toEqual({ present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] });
     });
 
     it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
@@ -2261,13 +2261,13 @@ describe("parseFocusManifest gate config", () => {
 
     it("parses enabled: true, making the manifest present", () => {
       const m = parseFocusManifest({ federatedIntelligence: { enabled: true } });
-      expect(m.federatedIntelligence).toEqual({ present: true, enabled: true, collectorUrl: null, collectorMode: null });
+      expect(m.federatedIntelligence).toEqual({ present: true, enabled: true, collectorUrl: null, collectorMode: null, peerKeys: [] });
       expect(m.present).toBe(true);
     });
 
     it("parses enabled: false explicitly, still making the manifest present", () => {
       const m = parseFocusManifest({ federatedIntelligence: { enabled: false } });
-      expect(m.federatedIntelligence).toEqual({ present: true, enabled: false, collectorUrl: null, collectorMode: null });
+      expect(m.federatedIntelligence).toEqual({ present: true, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] });
       expect(m.present).toBe(true);
     });
 
@@ -2295,6 +2295,7 @@ describe("parseFocusManifest gate config", () => {
         enabled: true,
         collectorUrl: "https://collector.example.org/v1/federated",
         collectorMode: "push",
+        peerKeys: [],
       });
     });
 
@@ -2329,6 +2330,57 @@ describe("parseFocusManifest gate config", () => {
       const m = parseFocusManifest({
         federatedIntelligence: { enabled: true, collectorUrl: "https://collector.example.org/v1", collectorMode: "both" },
       });
+      expect(
+        parseFocusManifest({ federatedIntelligence: federatedIntelligenceConfigToJson(m.federatedIntelligence) })
+          .federatedIntelligence,
+      ).toEqual(m.federatedIntelligence);
+    });
+
+    // peerKeys (#6480) — #6477's explicit peer-trust allowlist. A key is only useful if it could actually
+    // verify a bundle, so the parser validates the 64-hex shape signFederatedBundle's HMAC key has.
+    it("parses a valid peerKeys allowlist and lowercases it", () => {
+      const m = parseFocusManifest({
+        federatedIntelligence: { enabled: true, peerKeys: ["a".repeat(64), "B".repeat(64)] },
+      });
+      expect(m.federatedIntelligence.peerKeys).toEqual(["a".repeat(64), "b".repeat(64)]);
+      expect(m.warnings.some((w) => /peerKeys/.test(w))).toBe(false);
+    });
+
+    it("defaults peerKeys to an empty allowlist when the key is omitted, so the export alone never imports", () => {
+      expect(parseFocusManifest({ federatedIntelligence: { enabled: true } }).federatedIntelligence.peerKeys).toEqual([]);
+    });
+
+    it("warns and drops a peerKeys entry that is not a 64-char hex key, keeping the valid ones", () => {
+      const m = parseFocusManifest({
+        federatedIntelligence: { enabled: true, peerKeys: ["nope", "a".repeat(63), "z".repeat(64), "a".repeat(64)] },
+      });
+      expect(m.federatedIntelligence.peerKeys).toEqual(["a".repeat(64)]);
+      expect(m.warnings.some((w) => /federatedIntelligence\.peerKeys/.test(w))).toBe(true);
+    });
+
+    it("never echoes a dropped peerKeys entry into a warning", () => {
+      // A peer key is verification material; a warning that quoted it would put it in logs and PR surfaces.
+      const m = parseFocusManifest({ federatedIntelligence: { enabled: true, peerKeys: ["deadbeef"] } });
+      expect(m.warnings.some((w) => w.includes("deadbeef"))).toBe(false);
+    });
+
+    it("de-duplicates peerKeys case-insensitively, first occurrence winning", () => {
+      const m = parseFocusManifest({
+        federatedIntelligence: { enabled: true, peerKeys: ["a".repeat(64), "A".repeat(64)] },
+      });
+      expect(m.federatedIntelligence.peerKeys).toEqual(["a".repeat(64)]);
+    });
+
+    it("warns and drops a non-list peerKeys value", () => {
+      const m = parseFocusManifest({
+        federatedIntelligence: { enabled: true, peerKeys: "a".repeat(64) as unknown as string[] },
+      });
+      expect(m.federatedIntelligence.peerKeys).toEqual([]);
+      expect(m.warnings.some((w) => /federatedIntelligence\.peerKeys/.test(w))).toBe(true);
+    });
+
+    it("round-trips peerKeys through federatedIntelligenceConfigToJson unchanged", () => {
+      const m = parseFocusManifest({ federatedIntelligence: { enabled: true, peerKeys: ["a".repeat(64)] } });
       expect(
         parseFocusManifest({ federatedIntelligence: federatedIntelligenceConfigToJson(m.federatedIntelligence) })
           .federatedIntelligence,

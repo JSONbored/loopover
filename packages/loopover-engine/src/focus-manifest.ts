@@ -476,6 +476,10 @@ export type FocusManifestPrReconciliationConfig = {
 export const FEDERATED_COLLECTOR_MODES = ["push", "pull", "both"] as const;
 export type FederatedCollectorMode = (typeof FEDERATED_COLLECTOR_MODES)[number];
 
+/** A peer verification key: 64 hex chars — the exact shape generateAnonSecret produces and signFederatedBundle
+ *  consumes as its HMAC key, so an operator can only allowlist something that could actually verify a bundle. */
+const FEDERATED_PEER_KEY = /^[0-9a-f]{64}$/;
+
 export type FocusManifestFederatedIntelligenceConfig = {
   present: boolean;
   enabled: boolean;
@@ -490,6 +494,14 @@ export type FocusManifestFederatedIntelligenceConfig = {
   collectorUrl: string | null;
   /** Which directions the client may use against `collectorUrl`. Null ⇒ `both`. */
   collectorMode: FederatedCollectorMode | null;
+  /**
+   * The operator's explicit allowlist of peer verification keys (#6477's key-trust decision, consumed by
+   * #6480's import path). A pulled bundle is only ever considered if its signature verifies against one of
+   * these keys — trust is operator-configured, exactly like `MCP_READ_REPO_ALLOWLIST`, never auto-discovered
+   * and never a PKI. Empty ⇒ no peer is trusted ⇒ every inbound bundle is rejected (fail closed), which is
+   * also the default, so an operator who opts into the export alone never silently starts importing.
+   */
+  peerKeys: string[];
 };
 
 /**
@@ -1257,6 +1269,7 @@ const EMPTY_FEDERATED_INTELLIGENCE_CONFIG: FocusManifestFederatedIntelligenceCon
   enabled: false,
   collectorUrl: null,
   collectorMode: null,
+  peerKeys: [],
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -2194,7 +2207,30 @@ function parseFederatedIntelligenceConfig(value: JsonValue | undefined, warnings
   const enabled = normalizeOptionalBoolean(record.enabled, "federatedIntelligence.enabled", warnings) ?? false;
   const collectorUrl = parseFederatedCollectorUrl(record.collectorUrl, warnings);
   const collectorMode = normalizeOptionalEnum(record.collectorMode, "federatedIntelligence.collectorMode", FEDERATED_COLLECTOR_MODES, warnings);
-  return { present: true, enabled, collectorUrl, collectorMode };
+  const peerKeys = parseFederatedPeerKeys(record.peerKeys, warnings);
+  return { present: true, enabled, collectorUrl, collectorMode, peerKeys };
+}
+
+/** Parse `federatedIntelligence.peerKeys` (#6480) — the operator's explicit peer-trust allowlist from #6477's
+ *  design. Each entry must be a 64-char hex key, the shape signFederatedBundle's HMAC key already has; a
+ *  malformed entry is dropped with a warning rather than throwing, matching every sibling list field. Dropping
+ *  rather than failing closed on the whole list is deliberate and safe in this direction: a dropped key can only
+ *  ever REMOVE a peer's bundles from consideration, never admit an untrusted one. */
+function parseFederatedPeerKeys(value: JsonValue | undefined, warnings: string[]): string[] {
+  const raw = normalizeStringList(value, "federatedIntelligence.peerKeys", warnings);
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const key = entry.toLowerCase();
+    if (!FEDERATED_PEER_KEY.test(key)) {
+      warnings.push(`Manifest "federatedIntelligence.peerKeys" entry is not a 64-character hex key; ignoring it.`);
+      continue;
+    }
+    if (seen.has(key)) continue; // first occurrence wins, like normalizeAutoCloseExemptLogins
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
 }
 
 /** Parse `federatedIntelligence.collectorUrl` (#6479) — validated at CONFIG-READ time against the same
@@ -2216,7 +2252,12 @@ function parseFederatedCollectorUrl(value: JsonValue | undefined, warnings: stri
  *  configured. */
 export function federatedIntelligenceConfigToJson(config: FocusManifestFederatedIntelligenceConfig): JsonValue {
   if (!config.present) return null;
-  return { enabled: config.enabled, collectorUrl: config.collectorUrl, collectorMode: config.collectorMode };
+  return {
+    enabled: config.enabled,
+    collectorUrl: config.collectorUrl,
+    collectorMode: config.collectorMode,
+    peerKeys: [...config.peerKeys],
+  };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {

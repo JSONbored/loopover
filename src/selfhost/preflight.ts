@@ -77,15 +77,30 @@ function addProblem(
   problems.push({ var: name, message });
 }
 
-// Codex security finding: `.env.selfhost.example` / `.env.example` ship these EXACT literal placeholder
-// values for high-privilege secrets (the webhook HMAC secret, plus the static API/MCP/internal bearer
-// tokens). An operator who copies the starter to `.env` and misses "fill in the placeholders" runs an
-// instance with a PUBLICLY KNOWN webhook secret (forgeable signatures) and PUBLICLY KNOWN bearer tokens
-// (LOOPOVER_API_TOKEN bypasses app-role + per-repo write checks; INTERNAL_JOB_TOKEN gates internal
-// routes) -- silently, with no error. Reject these exact strings at boot rather than trusting every
-// operator to have actually edited the file.
+// Codex security finding: reject the starter files' literal placeholder values at boot, rather than trusting
+// every operator to have actually edited the file. An operator who copies a starter to `.env` and misses "fill
+// in the placeholders" would otherwise run with a PUBLICLY KNOWN secret -- a forgeable webhook HMAC, or bearer
+// tokens that bypass real checks (LOOPOVER_API_TOKEN bypasses app-role + per-repo write checks;
+// INTERNAL_JOB_TOKEN gates internal routes) -- silently, with no error.
+//
+// What the starters ACTUALLY ship today (#6285 -- this comment used to claim both files ship literal values for
+// the webhook secret and all three bearer tokens, which was never true of either). Every var below ships
+// COMMENTED OUT in both files, so the hazard is what an operator finds when they uncomment one:
+//   - `.env.selfhost.example`: all five are commented AND valueless (`# GITHUB_WEBHOOK_SECRET=`) -- uncommenting
+//     yields a blank, which checkCriticalSecrets skips outright and which cannot be a publicly known value.
+//   - `.env.example`: same, except SELFHOST_SETUP_TOKEN's commented line carries a literal
+//     (`# SELFHOST_SETUP_TOKEN=change-this-long-random-value`). Uncommenting THAT -- the obvious way to turn the
+//     first-run wizard on -- hands the operator a published token unless this set stops them.
+// That literal is also the string most likely to reach a var that ships valueless: `.env.example` repeats it on
+// POSTGRES_PASSWORD's commented line, so it reads like the house placeholder rather than one var's.
+//
+// Load-bearing for every var here, not just the one that ships it: this set is matched against whatever the
+// operator SET, not against what the files ship. And at 29 chars the literal sails past MIN_SECRET_LENGTH below,
+// so this exact-match set is the ONLY check that catches it.
 const KNOWN_PLACEHOLDER_SECRETS = new Set([
   "change-this-long-random-value",
+  // Ships in neither starter today. Kept as defence-in-depth: this set is matched against whatever an operator
+  // actually set, not against what the files ship, so retiring a once-published placeholder buys nothing.
   "change-this-32-byte-random-token",
 ]);
 

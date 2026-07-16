@@ -811,6 +811,14 @@ export {
   type VisualRoutesConfig,
   type VisualTheme,
 } from "./focus-manifest.js";
+// Focus-manifest linting + validation (#6269), extracted so the local (`@loopover/mcp`) MCP server can lint
+// and validate a `.loopover.yml` offline/in-process instead of round-tripping to the remote API.
+export { lintManifestText, unknownTopLevelWarnings, type SelfHostConfigLintResult } from "./config-lint.js";
+export {
+  buildFocusManifestValidation,
+  type FocusManifestValidationResult,
+  type FocusManifestValidationStatus,
+} from "./focus-manifest-validation.js";
 // Reward/risk reasoning signals (#2281). The four builders depend on the still-in-`src` maintainer signal
 // stack, so they take an injected `RewardRiskEngineDeps` (the `src/signals/reward-risk.ts` shim binds it).
 export {

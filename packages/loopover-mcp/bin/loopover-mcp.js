@@ -17,6 +17,9 @@ import {
   buildOpenPrSpec,
   buildPostEligibilityCommentSpec,
   buildTestGenSpec,
+  // #6269: the same manifest-validation builder the remote server uses, so `loopover_validate_config`
+  // can validate a `.loopover.yml` in-process instead of round-tripping to the API.
+  buildFocusManifestValidation,
 } from "@loopover/engine";
 import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "@loopover/engine/signals/slop";
 import { z } from "zod";
@@ -628,7 +631,7 @@ const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_validate_config",
     category: "utility",
-    description: "Parse and validate a .loopover.yml manifest string using the same focus-manifest parser as the server. Returns normalized config fields, parse warnings, and an ok/warn/error status. Metadata-only, no GitHub writes.",
+    description: "Parse and validate a .loopover.yml manifest string using the same focus-manifest parser as the server. Returns normalized config fields, parse warnings, and an ok/warn/error status. Computed in-process; no source upload and no API round-trip. Metadata-only, no GitHub writes.",
   },
   {
     name: "loopover_check_slop_risk",
@@ -1086,7 +1089,8 @@ registerStdioTool(
     description: stdioToolDescription("loopover_validate_config"),
     inputSchema: validateConfigShape,
   },
-  async (input) => toolResult("LoopOver manifest validation.", await apiPost("/v1/validate/focus-manifest", input)),
+  // #6269: computed in-process via the extracted engine builder -- no API round-trip, works fully offline.
+  (input) => toolResult("LoopOver manifest validation.", buildFocusManifestValidation(input)),
 );
 
 registerStdioTool(

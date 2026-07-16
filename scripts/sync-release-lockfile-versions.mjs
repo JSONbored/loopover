@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // release-please's `extra-files` JSON-path updater doesn't reliably reach package-lock.json's
 // per-workspace version fields, whose keys contain slashes (e.g. "packages/loopover-engine")
 // nested under a manifest-mode component's own release-please-config.json block -- confirmed
@@ -9,35 +8,90 @@
 // multi-thousand-line lockfile, which would risk reordering/reformatting far beyond the one line
 // that actually changed.
 import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const targets = process.argv.slice(2);
-if (targets.length === 0) {
-  console.error("Usage: node sync-release-lockfile-versions.mjs <workspace-path> [<workspace-path> ...]");
-  process.exit(1);
+/**
+ * Sync each workspace's lockfile block version. Continues past match failures so one broken
+ * workspace doesn't hide others; callers must exit non-zero when `failures` is non-empty (#6296).
+ *
+ * @param {string} content
+ * @param {Array<{ workspacePath: string, version: string }>} workspaces
+ * @param {{
+ *   onFailure?: (workspacePath: string) => void,
+ *   onAlready?: (workspacePath: string, version: string) => void,
+ *   onSynced?: (workspacePath: string, version: string) => void,
+ * }} [hooks]
+ * @returns {{ content: string, changed: boolean, failures: string[] }}
+ */
+export function syncLockfileVersions(content, workspaces, hooks = {}) {
+  let next = content;
+  let changed = false;
+  /** @type {string[]} */
+  const failures = [];
+
+  for (const { workspacePath, version } of workspaces) {
+    const escapedKey = workspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Anchors on the workspace's own block header + its "name" line (both stable, unique) so this
+    // can't accidentally match a different package's "version" line elsewhere in the file.
+    const pattern = new RegExp(`("${escapedKey}":\\s*\\{\\s*\\n\\s*"name":[^\\n]*\\n\\s*"version":\\s*")[^"]*(")`);
+    if (!pattern.test(next)) {
+      failures.push(workspacePath);
+      hooks.onFailure?.(workspacePath);
+      continue;
+    }
+    const updated = next.replace(pattern, `$1${version}$2`);
+    if (updated === next) {
+      hooks.onAlready?.(workspacePath, version);
+    } else {
+      next = updated;
+      changed = true;
+      hooks.onSynced?.(workspacePath, version);
+    }
+  }
+
+  return { content: next, changed, failures };
 }
 
-const lockPath = "package-lock.json";
-let content = readFileSync(lockPath, "utf8");
-let changed = false;
+export function main(argv = process.argv.slice(2), io = {
+  readFileSync,
+  writeFileSync,
+  log: console.log.bind(console),
+  error: console.error.bind(console),
+  exit: (code) => process.exit(code),
+}) {
+  const targets = argv;
+  if (targets.length === 0) {
+    io.error("Usage: node sync-release-lockfile-versions.mjs <workspace-path> [<workspace-path> ...]");
+    io.exit(1);
+    return 1;
+  }
 
-for (const workspacePath of targets) {
-  const version = JSON.parse(readFileSync(`${workspacePath}/package.json`, "utf8")).version;
-  const escapedKey = workspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Anchors on the workspace's own block header + its "name" line (both stable, unique) so this
-  // can't accidentally match a different package's "version" line elsewhere in the file.
-  const pattern = new RegExp(`("${escapedKey}":\\s*\\{\\s*\\n\\s*"name":[^\\n]*\\n\\s*"version":\\s*")[^"]*(")`);
-  if (!pattern.test(content)) {
-    console.error(`${workspacePath}: pattern not found in ${lockPath} -- nothing changed.`);
-    continue;
+  const lockPath = "package-lock.json";
+  const content = io.readFileSync(lockPath, "utf8");
+  const workspaces = targets.map((workspacePath) => ({
+    workspacePath,
+    version: JSON.parse(io.readFileSync(`${workspacePath}/package.json`, "utf8")).version,
+  }));
+
+  const result = syncLockfileVersions(content, workspaces, {
+    onFailure: (workspacePath) => {
+      io.error(`${workspacePath}: pattern not found in ${lockPath} -- nothing changed.`);
+    },
+    onAlready: (workspacePath, version) => {
+      io.log(`${workspacePath}: already at ${version}.`);
+    },
+    onSynced: (workspacePath, version) => {
+      io.log(`${workspacePath}: synced to ${version}.`);
+    },
+  });
+
+  if (result.changed) io.writeFileSync(lockPath, result.content);
+  if (result.failures.length > 0) {
+    io.exit(1);
+    return 1;
   }
-  const updated = content.replace(pattern, `$1${version}$2`);
-  if (updated === content) {
-    console.log(`${workspacePath}: already at ${version}.`);
-  } else {
-    content = updated;
-    changed = true;
-    console.log(`${workspacePath}: synced to ${version}.`);
-  }
+  return 0;
 }
 
-if (changed) writeFileSync(lockPath, content);
+const invokedDirectly = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) main();

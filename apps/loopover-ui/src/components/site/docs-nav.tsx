@@ -80,6 +80,7 @@ export const docsNav: DocsGroup[] = [
           { to: "/docs/ams-observability", label: "Observing your miner" },
           { to: "/docs/ams-unattended-scheduling", label: "Unattended scheduling" },
           { to: "/docs/ams-sizing", label: "Resource sizing" },
+          { to: "/docs/ams-config-precedence", label: "Config precedence" },
         ],
       },
     ],

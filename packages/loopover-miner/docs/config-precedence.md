@@ -1,5 +1,9 @@
 # Miner config precedence
 
+> Also published on the docs website: [Miner config precedence](https://loopover.ai/docs/ams-config-precedence)
+> (same content, rendered with search and the rest of the maintainer docs nav). This file remains
+> the canonical source and ships inside the published `@loopover/miner` package.
+
 AMS does **not** have a single `config.js` resolver. Configuration is layered by concern across several modules under `packages/loopover-miner/lib/` and `@loopover/engine`. This document states the order each layer **actually implements today** — not an idealized or corrected order.
 
 ## Configuration layers

@@ -11,6 +11,7 @@ import { delimiter, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { serve } from "@hono/node-server";
+import type { HttpBindings } from "@hono/node-server";
 import packageJson from "../package.json";
 import worker from "./index";
 import { githubRestRateLimitRemainingSamples } from "./github/client";
@@ -891,11 +892,11 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 8787);
   const server = serve(
     {
-      fetch: async (request: Request, nodeEnv?: { incoming?: { socket?: { remoteAddress?: string } } }) => {
+      fetch: async (request: Request, nodeEnv: HttpBindings) => {
         // Self-host rate limiting keys off cf-connecting-ip (auth/rate-limit.ts). On Workers that header is
         // edge-set; on Node it is attacker-controlled unless we overwrite it from the TCP peer / Caddy hop
         // here (see trusted-client-ip.ts). Health/ready/metrics below still see the rewritten request.
-        request = withTrustedClientIp(request, nodeEnv?.incoming?.socket?.remoteAddress);
+        request = withTrustedClientIp(request, nodeEnv.incoming.socket?.remoteAddress);
         const path = new URL(request.url).pathname;
         if (path === "/health")
           return new Response(

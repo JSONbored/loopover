@@ -15,6 +15,7 @@ const FLAG: Record<ConvergedFeatureKey, string> = {
   e2eTests: "LOOPOVER_REVIEW_E2E_TESTS",
   screenshots: "LOOPOVER_REVIEW_SCREENSHOTS",
   improvementSignal: "LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL",
+  amsReputationBridge: "LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE",
 };
 
 function env(overrides: Record<string, string | undefined>): Env {

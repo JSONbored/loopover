@@ -32,6 +32,7 @@ import { isConvergenceRepoAllowed } from "./cutover-gate";
 import { isE2eTestGenerationEnabled } from "./e2e-test-gen-wire";
 import { isGroundingEnabled } from "./grounding-wire";
 import { isImprovementSignalEnabled } from "./improvement-signal-wire";
+import { isAmsReputationBridgeEnabled } from "./ams-reputation-bridge-wire";
 import { isRagEnabled } from "./rag-wire";
 import { isReputationEnabled } from "./reputation-wire";
 import { isSafetyEnabled } from "./safety";
@@ -84,6 +85,7 @@ const FEATURE_GLOBAL_FLAG: Record<ConvergedFeatureKey, (env: Env) => boolean> = 
   e2eTests: isE2eTestGenerationEnabled,
   screenshots: isScreenshotsEnabled,
   improvementSignal: isImprovementSignalEnabled,
+  amsReputationBridge: isAmsReputationBridgeEnabled,
 };
 
 /** The named per-feature exceptions to `resolveConvergedFeature`'s default `"standard"` precedence — every

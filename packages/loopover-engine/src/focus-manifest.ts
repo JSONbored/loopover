@@ -265,7 +265,16 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // level `false` behaves like any other plain override with no floor/ceiling. This is activation wiring only
 // -- no tier reads the resolved value yet (sibling sub-issues #4739-#4746 build the deterministic/LLM/panel
 // behavior that will gate on it).
-export const CONVERGED_FEATURE_KEYS = ["rag", "reputation", "safety", "grounding", "e2eTests", "screenshots", "improvementSignal"] as const;
+export const CONVERGED_FEATURE_KEYS = [
+  "rag",
+  "reputation",
+  "safety",
+  "grounding",
+  "e2eTests",
+  "screenshots",
+  "improvementSignal",
+  "amsReputationBridge",
+] as const;
 export type ConvergedFeatureKey = (typeof CONVERGED_FEATURE_KEYS)[number];
 
 /** Per-repo activation overrides for the converged review features (`features:` block). `true`/`false` force the
@@ -1141,6 +1150,7 @@ const EMPTY_FEATURES_CONFIG: FocusManifestFeaturesConfig = {
   e2eTests: null,
   screenshots: null,
   improvementSignal: null,
+  amsReputationBridge: null,
 };
 
 const EMPTY_EXPERIMENTAL_CONFIG: FocusManifestExperimentalConfig = {

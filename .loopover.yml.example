@@ -1154,7 +1154,7 @@ settings:
 
 # Per-repo activation overrides for the converged review features that ship behind a deployment-wide
 # LOOPOVER_REVIEW_* env kill-switch (rag/reputation/safety/grounding/e2eTests/screenshots/
-# improvementSignal). Each key is `true` (force on for this repo, subject to the env flag still being
+# improvementSignal/amsReputationBridge). Each key is `true` (force on for this repo, subject to the env flag still being
 # enabled), `false` (force off), or omitted (falls back to the LOOPOVER_REVIEW_REPOS allowlist default --
 # an operator who sets nothing keeps today's behavior). Exception: `safety` is force-on-only -- an untrusted
 # repo-controlled `false` is treated as "no opinion" rather than an active force-off (#2269), since a
@@ -1171,6 +1171,14 @@ settings:
 # security-hardening or full-file-fetch rationale that would justify a force-on/force-off asymmetry.
 # `improvementSignal` is activation wiring only for now -- no tier reads the resolved
 # value yet.
+# `amsReputationBridge` (#6485, per #6208's decided design) is a plain symmetric override too. It lets a
+# submitter's genuine track record on a LOCAL AMS instance UPGRADE their reputation standing here -- toward
+# `trusted` only, never toward `low`, so an AMS record can never be used punitively against a contributor.
+# ORB pulls from AMS (never AMS pushing in), so an arbitrary AMS instance cannot write trust signals into
+# this one. Needs BOTH the LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE env kill-switch AND
+# LOOPOVER_AMS_TRACK_RECORD_URL (the AMS base URL to pull from) -- with either unset the bridge applies no
+# bonus signal and the reputation path is byte-identical to today. An unreachable/slow/absent AMS degrades
+# the same way: no bonus, never a throw into the gate.
 # features:
 #   rag: true
 #   reputation: false
@@ -1179,6 +1187,7 @@ settings:
 #   e2eTests: false
 #   screenshots: false
 #   improvementSignal: false
+#   amsReputationBridge: false
 
 # Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles loopover's own
 # converged review capabilities. Each key here couples this instance to an external system and is OFF unless

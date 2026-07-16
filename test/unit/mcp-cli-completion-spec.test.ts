@@ -19,8 +19,10 @@ const SOURCE = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopo
 function declaredSpec(): Record<string, string[]> {
   const block = /const CLI_COMMAND_SPEC = \{([\s\S]*?)\n\};/.exec(SOURCE)?.[1] ?? "";
   const spec: Record<string, string[]> = {};
-  for (const [, rawName, rawSubs] of block.matchAll(/^\s*"?([a-z-]+)"?:\s*\[([^\]]*)\],/gm)) {
-    spec[rawName] = [...rawSubs.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  for (const match of block.matchAll(/^\s*"?([a-z-]+)"?:\s*\[([^\]]*)\],/gm)) {
+    const name = match[1]!;
+    const rawSubs = match[2]!;
+    spec[name] = [...rawSubs.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
   }
   return spec;
 }

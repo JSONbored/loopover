@@ -226,7 +226,10 @@ function formatTenure(days: number | null): string {
   if (days === 1) return "1 day";
   if (days < 30) return `${days} days`;
   const months = Math.floor(days / 30);
-  if (months < 12) return months === 1 ? "1 month" : `${months} months`;
+  // Cut over to the year format at the same 365-day boundary the year branch below uses. Gating on
+  // `months < 12` treats a year as 360 days (12×30), so 360–364 days failed this check yet still yielded
+  // `years = floor(days/365) === 0`, rendering the nonsensical "0y 12m" instead of "12 months".
+  if (days < 365) return months === 1 ? "1 month" : `${months} months`;
   const years = Math.floor(days / 365);
   const remainderMonths = Math.floor((days % 365) / 30);
   if (remainderMonths === 0) return years === 1 ? "1 year" : `${years} years`;

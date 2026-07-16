@@ -377,6 +377,7 @@ test("computeTrackRecordSummary renders month and year tenure labels determinist
     ["2026-07-03T18:00:00Z", "1 day"],
     ["2026-06-25T18:00:00Z", "9 days"],
     ["2026-03-01T18:00:00Z", "4 months"],
+    ["2025-07-09T18:00:00Z", "12 months"], // 360 days: a sub-365-day full year renders as months, not "0y 12m"
     ["2024-12-01T18:00:00Z", "1y 7m"],
   ].map(([createdAt, expected]) => {
     const summary = computeTrackRecordSummary({
@@ -401,6 +402,7 @@ test("computeTrackRecordSummary renders month and year tenure labels determinist
     ["2026-07-03T18:00:00Z", "1 day", "1 day"],
     ["2026-06-25T18:00:00Z", "9 days", "9 days"],
     ["2026-03-01T18:00:00Z", "4 months", "4 months"],
+    ["2025-07-09T18:00:00Z", "12 months", "12 months"],
     ["2024-12-01T18:00:00Z", "1y 7m", "1y 7m"],
   ]);
 });

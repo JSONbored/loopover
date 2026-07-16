@@ -1,5 +1,10 @@
 # loopover-miner — unattended scheduling & failure alerting
 
+> Also published on the docs website: [Unattended scheduling & failure
+> alerting](https://loopover.ai/docs/ams-unattended-scheduling) (same content, rendered with
+> search and the rest of the maintainer docs nav). This file remains the canonical source and
+> ships inside the published `@loopover/miner` package.
+
 Operational guidance for running the miner's scheduled commands — `manage poll` and `discover` —
 unattended on a timer (cron or systemd), and for alerting when a run fails. These are the two commands
 most likely to run on a schedule; everything they need is local and they make no interactive prompts.

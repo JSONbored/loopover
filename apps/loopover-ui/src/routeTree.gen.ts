@@ -57,6 +57,7 @@ import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsFumadocsSpikeApiReferenceRouteImport } from './routes/docs.fumadocs-spike-api-reference'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
+import { Route as DocsAmsUnattendedSchedulingRouteImport } from './routes/docs.ams-unattended-scheduling'
 import { Route as DocsAmsOperationsRunbookRouteImport } from './routes/docs.ams-operations-runbook'
 import { Route as DocsAmsObservabilityRouteImport } from './routes/docs.ams-observability'
 import { Route as DocsAmsDeploymentRouteImport } from './routes/docs.ams-deployment'
@@ -331,6 +332,12 @@ const DocsBetaOnboardingRoute = DocsBetaOnboardingRouteImport.update({
   path: '/beta-onboarding',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsAmsUnattendedSchedulingRoute =
+  DocsAmsUnattendedSchedulingRouteImport.update({
+    id: '/ams-unattended-scheduling',
+    path: '/ams-unattended-scheduling',
+    getParentRoute: () => DocsRoute,
+  } as any)
 const DocsAmsOperationsRunbookRoute =
   DocsAmsOperationsRunbookRouteImport.update({
     id: '/ams-operations-runbook',
@@ -457,6 +464,7 @@ export interface FileRoutesByFullPath {
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
+  '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -523,6 +531,7 @@ export interface FileRoutesByTo {
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
+  '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -593,6 +602,7 @@ export interface FileRoutesById {
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
+  '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -664,6 +674,7 @@ export interface FileRouteTypes {
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
+    | '/docs/ams-unattended-scheduling'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -730,6 +741,7 @@ export interface FileRouteTypes {
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
+    | '/docs/ams-unattended-scheduling'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -799,6 +811,7 @@ export interface FileRouteTypes {
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
+    | '/docs/ams-unattended-scheduling'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -1192,6 +1205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsBetaOnboardingRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/ams-unattended-scheduling': {
+      id: '/docs/ams-unattended-scheduling'
+      path: '/ams-unattended-scheduling'
+      fullPath: '/docs/ams-unattended-scheduling'
+      preLoaderRoute: typeof DocsAmsUnattendedSchedulingRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/ams-operations-runbook': {
       id: '/docs/ams-operations-runbook'
       path: '/ams-operations-runbook'
@@ -1381,6 +1401,7 @@ interface DocsRouteChildren {
   DocsAmsDeploymentRoute: typeof DocsAmsDeploymentRoute
   DocsAmsObservabilityRoute: typeof DocsAmsObservabilityRoute
   DocsAmsOperationsRunbookRoute: typeof DocsAmsOperationsRunbookRoute
+  DocsAmsUnattendedSchedulingRoute: typeof DocsAmsUnattendedSchedulingRoute
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsFumadocsSpikeApiReferenceRoute: typeof DocsFumadocsSpikeApiReferenceRoute
@@ -1424,6 +1445,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsAmsDeploymentRoute: DocsAmsDeploymentRoute,
   DocsAmsObservabilityRoute: DocsAmsObservabilityRoute,
   DocsAmsOperationsRunbookRoute: DocsAmsOperationsRunbookRoute,
+  DocsAmsUnattendedSchedulingRoute: DocsAmsUnattendedSchedulingRoute,
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsFumadocsSpikeApiReferenceRoute: DocsFumadocsSpikeApiReferenceRoute,

@@ -74,9 +74,11 @@ type CloseEnforcementGateResult =
  *  the caller, since those differ too much between guards to unify (self-close's reopen-then-close with
  *  asymmetric error handling vs. the other 4's single close call).
  *
- *  `permissionReadiness: null` skips the write-permission-readiness step entirely -- the reopen-reclose
- *  guard has never had this check (a pre-existing gap distinct from #4602/#4637's close-autonomy gap; not
- *  introduced or fixed by this extraction, since a refactor must not change behavior).
+ *  `permissionReadiness: null` would skip the write-permission-readiness step entirely. All 5 callers now
+ *  pass a real object, so every close-enforcement guard denies-with-audit on a missing `pull_requests: write`
+ *  grant rather than attempting a doomed mutation -- the reopen-reclose guard was the last holdout (#6603).
+ *  The parameter stays nullable rather than required: it is the shape a future non-mutating caller would
+ *  need, and narrowing it is a signature change #6603 deliberately left out of scope.
  *  `paused: null` records NO audit event on a paused/frozen repo -- draft-dodge's existing, preserved gap
  *  (every other guard here DOES audit a paused stand-down; draft-dodge simply never has). */
 async function evaluateCloseEnforcementGate(args: {
@@ -409,9 +411,9 @@ async function recloseDisallowedReopenIfNeeded(
   // autonomy class while deliberately leaving close unconfigured (deny-by-default) could still have a
   // disallowed reopen re-closed here. Mirrors the review-evasion siblings' identical gate; the shared gate
   // below checks the close action class directly rather than isAgentConfigured, so a repo that never
-  // authorized close specifically can't have its disallowed reopen re-closed here (#review-audit). Unlike the
-  // other 4 close-enforcement guards, this one has never had a write-permission-readiness check
-  // (`permissionReadiness: null` below preserves that pre-existing gap, distinct from #4602's autonomy gap).
+  // authorized close specifically can't have its disallowed reopen re-closed here (#review-audit). The
+  // write-permission-readiness check below is a SECOND, distinct gate from that autonomy one: autonomy is what
+  // the operator authorized, readiness is what the App was actually granted (#6603).
   const gate = await evaluateCloseEnforcementGate({
     env,
     installationId,
@@ -431,7 +433,10 @@ async function recloseDisallowedReopenIfNeeded(
       detail: `skipped (agent paused): would re-close a disallowed reopen by ${reopener}`,
       metadata: { ...gateMetadata, mode: "paused" },
     },
-    permissionReadiness: null,
+    permissionReadiness: {
+      detail: `denied reopen re-close for ${reopener} — pull_requests: write not granted`,
+      metadata: gateMetadata,
+    },
     freshness: {
       detailSuffix: " — reopen re-close not executed",
       metadata: gateMetadata,

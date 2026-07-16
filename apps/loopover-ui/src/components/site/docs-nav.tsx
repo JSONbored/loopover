@@ -72,6 +72,10 @@ export const docsNav: DocsGroup[] = [
           { to: "/docs/maintainer-install-trust", label: "Maintainer install & trust" },
         ],
       },
+      {
+        title: "AMS: deployment",
+        items: [{ to: "/docs/ams-deployment", label: "Deployment guide" }],
+      },
     ],
   },
   {

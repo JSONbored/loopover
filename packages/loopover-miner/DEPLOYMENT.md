@@ -1,5 +1,9 @@
 # LoopOver miner deployment
 
+> Also published on the docs website: [AMS deployment guide](https://loopover.ai/docs/ams-deployment)
+> (same content, rendered with search and the rest of the maintainer docs nav). This file remains
+> the canonical source and ships inside the published `@loopover/miner` package.
+
 Two form factors for running `@loopover/miner`: **laptop mode** (single machine, zero Docker) and **fleet mode** (containerized workers with a shared data volume). Both are 100% client-side for core operation — the miner never uploads source and never requires a hosted LoopOver callback to boot. Credentials (GitHub tokens, etc.) stay on the operator's machine or in their own secret store; nothing is baked into images.
 
 |                  | Laptop mode                                                                                    | Fleet mode                                                                        |

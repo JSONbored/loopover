@@ -231,6 +231,8 @@ export const LOOSE_DOCS_ROWS: readonly LooseDocsRow[] = [
     path: "packages/loopover-miner/DEPLOYMENT.md",
     role: "Miner CLI deployment — explicitly not the self-host review stack.",
     action: "keep",
+    notes:
+      "Also published at /docs/ams-deployment (#6022) for website discoverability; this file stays the canonical source since it ships inside the published @loopover/miner package.",
   },
 ] as const;
 

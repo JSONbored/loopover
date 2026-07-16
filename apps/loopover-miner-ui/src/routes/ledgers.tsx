@@ -162,6 +162,15 @@ export function LedgersView({ result }: { result: LedgersResult | null }) {
       </section>
 
       <section className="grid gap-3">
+        <h3 className="font-display text-token-base font-semibold">Events by type ({events.total})</h3>
+        {events.total === 0 ? (
+          <p className="text-token-sm text-muted-foreground">No events recorded.</p>
+        ) : (
+          <CountTable counts={events.byType} keyLabel="Event type" />
+        )}
+      </section>
+
+      <section className="grid gap-3">
         <h3 className="font-display text-token-base font-semibold">Recent events ({events.total})</h3>
         {events.recent.length === 0 ? (
           <p className="text-token-sm text-muted-foreground">No event-ledger entries recorded.</p>

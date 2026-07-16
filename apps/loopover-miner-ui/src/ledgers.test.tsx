@@ -88,12 +88,16 @@ describe("emptyLedgersSummary (#4855)", () => {
 });
 
 describe("LedgersView (#4855)", () => {
-  it("renders claim status counts, the governor type table, and the recent-events feed", () => {
+  it("renders claim status counts, the governor type table, the events-by-type table, and the recent-events feed", () => {
     render(<LedgersView result={{ ok: true, summary: fixtureSummary }} />);
     expect(screen.getByText("Active", { selector: "dt" }).nextSibling?.textContent).toBe("2");
     expect(screen.getByText("Released", { selector: "dt" }).nextSibling?.textContent).toBe("1");
     expect(screen.getByText("rate_limit_deferred")).toBeTruthy();
-    expect(screen.getByText("attempt_succeeded")).toBeTruthy();
+    // #6184: byType now renders its own aggregate table, so each event type appears twice -- once in that table
+    // and once in the recent-events feed. getAllByText, not getByText, which would throw on the duplicate.
+    expect(screen.getByText("Events by type (2)")).toBeTruthy();
+    expect(screen.getAllByText("attempt_succeeded").length).toBe(2);
+    expect(screen.getAllByText("attempt_started").length).toBe(2);
     expect(screen.getAllByText("acme/widgets").length).toBeGreaterThan(0);
   });
 

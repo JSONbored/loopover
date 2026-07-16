@@ -3,6 +3,7 @@ import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
 import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, opsConfigToJson, publicStatsConfigToJson, draftFlowConfigToJson, upstreamDriftIssuesConfigToJson, sweepWatchdogConfigToJson, prReconciliationConfigToJson, federatedIntelligenceConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
 import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML, resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
+import { mapWithConcurrency } from "../queue/map-with-concurrency";
 import type { LocalManifestLoadResult } from "../selfhost/private-config";
 
 export const REPO_FOCUS_MANIFEST_SIGNAL = "repo-focus-manifest";
@@ -235,19 +236,11 @@ async function readBoundedResponseText(response: Response): Promise<string | nul
   }
 }
 
-/** Bounded-concurrency fan-out: runs `mapper` over `items` with at most `limit` in flight at once (#3899). */
+/** Bounded-concurrency fan-out: runs `mapper` over `items` with at most `limit` in flight at once (#3899).
+ *  Thin delegation to the canonical `mapWithConcurrency` (#6602) — kept as a named wrapper so every existing
+ *  `(items, limit, mapper)` call site keeps compiling and behaving unchanged, without a second copy of the loop. */
 export async function mapWithConcurrencyLimit<T, U>(items: T[], limit: number, mapper: (item: T) => Promise<U>): Promise<U[]> {
-  const results: U[] = new Array(items.length);
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
+  return mapWithConcurrency(items, limit, mapper);
 }
 
 /**

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// #6149: the 8 miner write-tools are PURE local-execution spec builders (loopover never performs the write);
+// #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // each returns a { action, command, boundary } spec the caller runs with its OWN gh/git creds. These tests
 // drive the real local stdio server and assert the composed spec, plus a zod-rejection failure path per tool.
 const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
@@ -35,6 +35,7 @@ const WRITE_TOOLS = [
   "loopover_open_pr",
   "loopover_file_issue",
   "loopover_apply_labels",
+  "loopover_close_pr",
   "loopover_post_eligibility_comment",
   "loopover_create_branch",
   "loopover_delete_branch",
@@ -47,7 +48,7 @@ function spec(result: unknown): { action: string; command: string; boundary: str
 }
 
 describe("loopover-mcp write-tools (#6149)", () => {
-  it("registers all 8 write-tools on the local stdio server", async () => {
+  it("registers all 9 write-tools on the local stdio server", async () => {
     const names = new Set((await client.listTools()).tools.map((t) => t.name));
     for (const name of WRITE_TOOLS) expect(names, `missing ${name}`).toContain(name);
   });
@@ -84,6 +85,27 @@ describe("loopover-mcp write-tools (#6149)", () => {
     expect(spec(result).action).toBe("apply_labels");
     expect(spec(result).command).toContain("gh issue edit 7 --repo 'acme/widgets'");
     expect(spec(result).command).toContain("--add-label");
+  });
+
+  it("loopover_close_pr composes a gh pr close spec with and without a comment", async () => {
+    const withComment = await client.callTool({
+      name: "loopover_close_pr",
+      arguments: { repoFullName: "acme/widgets", number: 7, comment: "Closing duplicate" },
+    });
+    expect(withComment.isError).toBeFalsy();
+    expect(spec(withComment).action).toBe("close_pr");
+    expect(spec(withComment).command).toBe(
+      "gh pr close 7 --repo 'acme/widgets' && gh pr comment 7 --repo 'acme/widgets' --body 'Closing duplicate'",
+    );
+    expect(spec(withComment).boundary).toMatch(/your OWN GitHub credentials/i);
+    expect(spec(withComment).boundary).toMatch(/never performs the write/i);
+
+    const withoutComment = await client.callTool({
+      name: "loopover_close_pr",
+      arguments: { repoFullName: "acme/widgets", number: 7 },
+    });
+    expect(withoutComment.isError).toBeFalsy();
+    expect(spec(withoutComment).command).toBe("gh pr close 7 --repo 'acme/widgets'");
   });
 
   it("loopover_post_eligibility_comment composes a gh issue comment spec", async () => {
@@ -137,6 +159,7 @@ describe("loopover-mcp write-tools (#6149)", () => {
       loopover_open_pr: { repoFullName: "acme/widgets", base: "main", head: "feat-x", title: "", body: "b" }, // title min(1)
       loopover_file_issue: { repoFullName: "ab", title: "T", body: "b" }, // repoFullName min(3)
       loopover_apply_labels: { repoFullName: "acme/widgets", number: 7, labels: [] }, // labels min(1)
+      loopover_close_pr: { repoFullName: "acme/widgets", number: 0 }, // number positive
       loopover_post_eligibility_comment: { repoFullName: "acme/widgets", number: 0, body: "b" }, // number positive
       loopover_create_branch: { base: "main" }, // branch required
       loopover_delete_branch: { branch: "" }, // branch min(1)

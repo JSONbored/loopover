@@ -146,6 +146,7 @@ import { computeLocalScorerTokens } from "../signals/local-scorer";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import {
   buildApplyLabelsSpec,
+  buildClosePrSpec,
   buildCreateBranchSpec,
   buildDeleteBranchSpec,
   buildFileIssueSpec,
@@ -421,6 +422,11 @@ const applyLabelsShape = {
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
   number: z.number().int().positive(),
   labels: z.array(z.string().min(1).max(100)).min(1).max(20),
+};
+const closePrShape = {
+  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
+  number: z.number().int().positive(),
+  comment: z.string().max(WRITE_TOOL_BODY_MAX).optional(),
 };
 const postEligibilityCommentShape = {
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
@@ -1767,6 +1773,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_open_pr: "agent",
   loopover_file_issue: "agent",
   loopover_apply_labels: "agent",
+  loopover_close_pr: "agent",
   loopover_post_eligibility_comment: "agent",
   loopover_create_branch: "agent",
   loopover_delete_branch: "agent",
@@ -2393,6 +2400,11 @@ export class LoopoverMcp {
       "loopover_apply_labels",
       { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: applyLabelsShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildApplyLabelsSpec(input))),
+    );
+    register(
+      "loopover_close_pr",
+      { description: "Build a LOCAL-execution spec to close a pull request (run it with your own gh creds; loopover never performs the write).", inputSchema: closePrShape, outputSchema: localWriteActionOutputSchema },
+      async (input) => this.toolResult(this.localWriteSpec(buildClosePrSpec(input))),
     );
     register(
       "loopover_post_eligibility_comment",

@@ -46,6 +46,29 @@ describe("MCP miner write-tools (#780)", () => {
     }
   });
 
+  it("close_pr returns the existing local-execution spec with and without a comment", async () => {
+    const client = await connect();
+    const withComment = await client.callTool({
+      name: "loopover_close_pr",
+      arguments: { repoFullName: "o/r", number: 7, comment: "Closing: lost the claim to #5" },
+    });
+    expect(withComment.isError).toBeFalsy();
+    const withCommentSpec = withComment.structuredContent as Spec;
+    expect(withCommentSpec.action).toBe("close_pr");
+    expect(withCommentSpec.command).toBe(
+      "gh pr close 7 --repo 'o/r' && gh pr comment 7 --repo 'o/r' --body 'Closing: lost the claim to #5'",
+    );
+    expect(withCommentSpec.boundary).toMatch(/your OWN GitHub credentials/i);
+    expect(withCommentSpec.boundary).toMatch(/never performs the write/i);
+
+    const withoutComment = await client.callTool({
+      name: "loopover_close_pr",
+      arguments: { repoFullName: "o/r", number: 7 },
+    });
+    expect(withoutComment.isError).toBeFalsy();
+    expect((withoutComment.structuredContent as Spec).command).toBe("gh pr close 7 --repo 'o/r'");
+  });
+
   // #2188 (boundary-safe test-generation slice of #1972).
   it("generate_tests returns a local-execution spec naming the framework and target files; gittensory performs no write", async () => {
     const client = await connect();

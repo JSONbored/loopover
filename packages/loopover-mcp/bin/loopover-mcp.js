@@ -444,174 +444,228 @@ const agentRunIdShape = {
 const STDIO_TOOL_DESCRIPTORS = [
   {
     name: "loopover_get_repo_context",
+    category: "maintainer",
     description: "Return the LoopOver repo-context bundle for a repo — registration state, recommended contribution lane, queue health, duplicate-PR collisions, and config quality — from the private LoopOver API. Takes owner and repo.",
   },
   {
     name: "loopover_get_pr_reviewability",
+    category: "review",
     description: "Return the reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, no GitHub writes.",
   },
   {
     name: "loopover_get_maintainer_noise",
+    category: "maintainer",
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
   },
   {
     name: "loopover_preflight_pr",
+    category: "discovery",
     description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
   },
   {
     name: "loopover_validate_linked_issue",
+    category: "discovery",
     description: "Report whether linking an issue will actually earn the standard linked-issue scoring multiplier for a planned PR — open, valid, single-owner, solvable by this PR — with the blocking reason if not. The raw multiplier value stays private.",
   },
   {
     name: "loopover_check_before_start",
+    category: "discovery",
     description: "Before writing any code, check whether an issue is already claimed or solved, whether a duplicate cluster is forming, and whether it is a valid target. Returns a go/raise/avoid recommendation with public-safe reasons from cached metadata.",
   },
   {
     name: "loopover_find_opportunities",
+    category: "discovery",
     description: "Cross-repo discovery: find high-fit contribution opportunities across registered Gittensor repos. Returns a ranked, public-safe list filtered by your MinerGoalSpec (lane, min rank score, languages). Metadata-only, no GitHub writes.",
   },
   {
     name: "loopover_retrieve_issue_context",
+    category: "discovery",
     description: "Repo-scoped issue-centric RAG retrieval for the miner analyze phase. Returns related file paths and retrieval scores from issue title/body/labels — metadata only, never source text.",
   },
   {
     name: "loopover_lint_pr_text",
+    category: "review",
     description: "Lint a commit message + PR body against the gittensor traceability/no-issue-rationale and Conventional Commit rubric before submitting. Returns a deterministic verdict (strong/adequate/weak) plus specific public-safe fixes. Computed in-process; no source upload and no API round-trip.",
   },
   {
     name: "loopover_validate_config",
+    category: "utility",
     description: "Parse and validate a .loopover.yml manifest string using the same focus-manifest parser as the server. Returns normalized config fields, parse warnings, and an ok/warn/error status. Metadata-only, no GitHub writes.",
   },
   {
     name: "loopover_check_slop_risk",
+    category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. No repo data needed.",
   },
   {
     name: "loopover_check_issue_slop",
+    category: "review",
     description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
   },
   {
     name: "loopover_preflight_local_diff",
+    category: "branch",
     description: "Inspect local git diff metadata and run LoopOver preflight without uploading source contents.",
   },
   {
     name: "loopover_get_registry_changes",
+    category: "utility",
     description: "Return the latest cached report of changes to the Gittensor repo registry — repositories added, removed, or re-registered upstream. Read-only; takes no parameters.",
   },
   {
     name: "loopover_get_upstream_drift",
+    category: "utility",
     description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
   },
   {
     name: "loopover_get_label_audit",
+    category: "maintainer",
     description:
       "Return the repo's label-policy audit (configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness) from the private LoopOver API.",
   },
   {
     name: "loopover_get_burden_forecast",
+    category: "maintainer",
     description:
       "Return the repo's cached maintainer burden forecast (projected review load, queue-growth risk, and stale-PR signals) with a freshness marker, from the private LoopOver API.",
   },
   {
     name: "loopover_preview_local_pr_score",
+    category: "branch",
     description: "Inspect local diff metadata and request a private LoopOver scoring preview. No source contents are uploaded.",
   },
   {
     name: "loopover_explain_score_breakdown",
+    category: "review",
     description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
   },
   {
     name: "loopover_get_decision_pack",
+    category: "discovery",
     description: "Return the private decision pack for a contributor: the ranked repos and issues to work on next, with per-repo go/raise/avoid guidance. Takes login (the contributor's GitHub username).",
   },
   {
     name: "loopover_explain_repo_decision",
+    category: "discovery",
     description: "Return the go/raise/avoid decision for one specific contributor-and-repo pair, drawn from that contributor's decision pack — narrower than loopover_get_decision_pack, which returns the whole pack. Takes login (GitHub username), owner, and repo.",
   },
   {
     name: "loopover_compare_pr_variants",
+    category: "branch",
     description: "Compare private LoopOver scoring previews across local/metadata variants.",
   },
   {
     name: "loopover_local_status",
+    category: "utility",
     description: "Return local LoopOver MCP status, inferred git repo metadata, and privacy defaults.",
   },
   {
     name: "loopover_preflight_current_branch",
+    category: "branch",
     description: "Analyze the current git branch and return PR readiness. Sends metadata only.",
   },
   {
     name: "loopover_review_pr_before_push",
+    category: "branch",
     description: "Run a single composed pre-PR review of the current branch: preflight (lane/duplicate/linked-issue/test/queue fit), slop-risk, and PR-text lint, merged into one report with an overall pass/warn/fail status. Thin composition of the existing checks — does not reimplement any of them. Sends metadata only, no source upload.",
   },
   {
     name: "loopover_preview_current_branch_score",
+    category: "branch",
     description: "Analyze the current git branch and return private scoreability context. Sends metadata only.",
   },
   {
     name: "loopover_rank_local_next_actions",
+    category: "branch",
     description: "Analyze the current git branch and rank local next actions by private reward/risk and review friction.",
   },
   {
     name: "loopover_explain_local_blockers",
+    category: "branch",
     description: "Analyze the current git branch and explain private scoreability, lane, and review blockers.",
   },
   {
     name: "loopover_remediation_plan",
+    category: "branch",
     description: "Analyze the current git branch and return an ordered public-safe remediation checklist with rerun conditions.",
   },
   {
     name: "loopover_prepare_pr_packet",
+    category: "branch",
     description: "Analyze the current git branch and return a public-safe PR packet. Sends metadata only.",
   },
   {
     name: "loopover_compare_local_variants",
+    category: "branch",
     description: "Compare current-branch metadata variants without uploading source contents.",
   },
   {
     name: "loopover_agent_plan_next_work",
+    category: "agent",
     description: "Run the deterministic LoopOver planner for a contributor and return the single recommended next unit of work (repo, issue, and action). Planning only — does not queue or start a run. Takes login (GitHub username); optional objective and repoFullName narrow the result.",
   },
   {
     name: "loopover_agent_start_run",
+    category: "agent",
     description: "Queue a new LoopOver automated-agent run for a contributor. Copilot mode only: it proposes and records work but takes no GitHub actions on its own. Takes objective (what to accomplish) and actorLogin (the contributor's GitHub username); returns the new run's id and status.",
   },
   {
     name: "loopover_agent_get_run",
+    category: "agent",
     description: "Fetch a previously queued LoopOver agent run by its id, including current status and planned actions. Takes runId (the id returned by loopover_agent_start_run).",
   },
   {
     name: "loopover_agent_explain_next_action",
+    category: "agent",
     description: "Explain the next deterministic action and blocker context for a GitHub login.",
   },
   {
     name: "loopover_agent_prepare_pr_packet",
+    category: "branch",
     description: "Prepare a public-safe PR packet from current branch metadata. Sends metadata only.",
   },
   {
     name: "loopover_local_status_structured",
+    category: "utility",
     description: "Return local LoopOver MCP status with a validated structured output schema.",
   },
   {
     name: "loopover_feasibility_gate",
+    category: "discovery",
     description: "Pure local go/raise/avoid feasibility verdict from claim status, duplicate-cluster risk, and issue quality/lifecycle status — the same discriminants the analyze-phase feasibility gate branches on. When repoFullName/issueNumber are supplied and a local loopover-miner install's claim ledger is present, claimStatus is read from that ledger instead of the caller-supplied value; otherwise falls back to the caller-supplied claimStatus unchanged. Advisory-only — never blocks, cancels, or overrides a claim or attempt; real claim-conflict resolution authority stays with the maintainer-only path. No API round-trip.",
   },
   {
     name: "loopover_get_issue_quality",
+    category: "maintainer",
     description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
   },
   {
     name: "loopover_get_registration_readiness",
+    category: "maintainer",
     description: "Preview-only registration-readiness report for a repository: what's missing/present before/after registering with LoopOver (direct-PR and issue-discovery lane readiness, label policy, maintainer-cut readiness, queue health, docs, and the GitHub App install state). Advisory only, not a registration action.",
   },
   {
     name: "loopover_get_config_recommendation",
+    category: "maintainer",
     description: "Return recommended .loopover.yml additions for a repository, derived from the repo's live, currently-active configured behavior (the raw dashboard/API-configured settings, not a yml-merged view — so the recommendation never compares itself against an override that already exists). Advisory only, not a write action.",
   },
   {
     name: "loopover_get_skipped_pr_audit",
+    category: "maintainer",
     description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
   },
+];
+
+// #6301 — coarse tool categories for grouping `loopover-mcp tools` output. Ordered
+// contributor-facing surfaces first, operator ones last; the `label` is the human-readable header.
+// Every STDIO_TOOL_DESCRIPTORS entry carries a `category` id drawn from this list (asserted in tests).
+const STDIO_TOOL_CATEGORIES = [
+  { id: "discovery", label: "Discovery & planning" },
+  { id: "branch", label: "Local branch & PR prep" },
+  { id: "review", label: "Review & gate prediction" },
+  { id: "agent", label: "Agent automation" },
+  { id: "maintainer", label: "Maintainer & repo owner" },
+  { id: "utility", label: "Registry, config & status" },
 ];
 
 function stdioToolDescription(name) {
@@ -2523,13 +2577,31 @@ function toolsCommand(args) {
   const subcommand = args[0];
   if (subcommand === "search") return toolsSearchCommand(args.slice(1));
   const options = parseOptions(args);
-  const tools = STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
-  const payload = { count: tools.length, tools };
+  const tools = STDIO_TOOL_DESCRIPTORS.map(({ name, category, description }) => ({ name, category, description }));
+  // Group tools by category in the canonical order; any category with no tools is omitted, and a tool
+  // whose category is unknown falls into a trailing "Other" bucket so nothing is silently dropped.
+  const knownIds = new Set(STDIO_TOOL_CATEGORIES.map((entry) => entry.id));
+  const groups = [
+    ...STDIO_TOOL_CATEGORIES.map((entry) => ({ ...entry, tools: tools.filter((tool) => tool.category === entry.id) })),
+    { id: "other", label: "Other", tools: tools.filter((tool) => !knownIds.has(tool.category)) },
+  ].filter((group) => group.tools.length > 0);
   if (options.json) {
+    const payload = {
+      count: tools.length,
+      categories: groups.map((group) => ({ id: group.id, label: group.label, count: group.tools.length })),
+      tools,
+    };
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
-  printToolRows(tools);
+  const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 0);
+  groups.forEach((group, index) => {
+    if (index > 0) process.stdout.write("\n");
+    process.stdout.write(`${group.label} (${group.tools.length})\n`);
+    for (const tool of group.tools) {
+      process.stdout.write(`  ${tool.name.padEnd(nameWidth)}  ${tool.description}\n`);
+    }
+  });
 }
 
 // `tools search <query>` — fuzzy discovery across the ~150-tool combined surface (#6300). Matches the

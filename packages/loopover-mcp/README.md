@@ -88,7 +88,7 @@ Add `--json` for machine-readable output:
 }
 ```
 
-`loopover-mcp tools` lists every stdio MCP tool the local wrapper registers, with its one-line description. Add `--json` for `{ "count": N, "tools": [{ "name", "description" }, ...] }`.
+`loopover-mcp tools` lists every stdio MCP tool the local wrapper registers, grouped under category headers (Discovery & planning, Local branch & PR prep, Review & gate prediction, Agent automation, Maintainer & repo owner, Registry, config & status), each tool with its one-line description. Add `--json` for `{ "count": N, "categories": [{ "id", "label", "count" }, ...], "tools": [{ "name", "category", "description" }, ...] }`.
 
 ### Shell completion
 

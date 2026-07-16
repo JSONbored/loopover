@@ -1677,6 +1677,111 @@ async function describeMcpUsageRequest(request: Request, telemetryMetadata: Reco
   };
 }
 
+// #6301 — coarse tool categories so tools/list clients and the `loopover-mcp tools` CLI can group
+// this server's tool surface by the repo's own conceptual groupings instead of reading one flat
+// list. The ids mirror the issue's suggested surfaces: contributor discovery/planning, local-branch
+// & PR prep, review/gate prediction, agent automation, maintainer/repo-owner, and registry/config
+// utility. Attached to each tool as MCP `_meta.category` at registration (see createServer).
+export type McpToolCategory = "discovery" | "branch" | "review" | "agent" | "maintainer" | "utility";
+
+// Canonical category order for grouped rendering (contributor-facing surfaces first, operator ones
+// last). Kept as a single source of truth so a display/grouping consumer never invents its own order.
+export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "branch", "review", "agent", "maintainer", "utility"];
+
+// Every registered tool maps to exactly one category. Listed in registration order (matching
+// createServer) so a new tool without a category entry is easy to spot in review; the
+// every-tool-has-a-category test fails loudly if one is ever missed.
+export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
+  loopover_get_repo_context: "maintainer",
+  loopover_get_maintainer_noise: "maintainer",
+  loopover_get_label_audit: "maintainer",
+  loopover_get_maintainer_lane: "maintainer",
+  loopover_get_repo_onboarding_pack: "maintainer",
+  loopover_get_registration_readiness: "maintainer",
+  loopover_get_config_recommendation: "maintainer",
+  loopover_get_burden_forecast: "maintainer",
+  loopover_get_repo_outcome_patterns: "maintainer",
+  loopover_get_outcome_calibration: "maintainer",
+  loopover_get_gate_precision: "maintainer",
+  loopover_get_skipped_pr_audit: "maintainer",
+  loopover_get_fleet_analytics: "maintainer",
+  loopover_get_recommendation_quality: "maintainer",
+  loopover_simulate_open_pr_pressure: "discovery",
+  loopover_get_contributor_profile: "discovery",
+  loopover_get_decision_pack: "discovery",
+  loopover_monitor_open_prs: "discovery",
+  loopover_predict_gate: "review",
+  loopover_explain_gate_disposition: "review",
+  loopover_intake_idea: "agent",
+  loopover_plan_idea_claims: "agent",
+  loopover_build_results_payload: "agent",
+  loopover_build_progress_snapshot: "agent",
+  loopover_evaluate_escalation: "agent",
+  loopover_check_slop_risk: "review",
+  loopover_check_improvement_potential: "review",
+  loopover_check_test_evidence: "review",
+  loopover_check_issue_slop: "review",
+  loopover_suggest_boundary_tests: "review",
+  loopover_pr_outcome: "review",
+  loopover_get_pr_ai_review_findings: "review",
+  loopover_list_notifications: "utility",
+  loopover_mark_notifications_read: "utility",
+  loopover_watch_issues: "utility",
+  loopover_explain_repo_decision: "discovery",
+  loopover_preflight_pr: "discovery",
+  loopover_get_bounty_advisory: "discovery",
+  loopover_get_registry_changes: "utility",
+  loopover_get_upstream_drift: "utility",
+  loopover_get_issue_quality: "maintainer",
+  loopover_get_pr_reviewability: "review",
+  loopover_validate_linked_issue: "discovery",
+  loopover_check_before_start: "discovery",
+  loopover_find_opportunities: "discovery",
+  loopover_retrieve_issue_context: "discovery",
+  loopover_lint_pr_text: "review",
+  loopover_validate_config: "utility",
+  loopover_preflight_local_diff: "branch",
+  loopover_preview_local_pr_score: "branch",
+  loopover_get_eligibility_plan: "discovery",
+  loopover_run_local_scorer: "branch",
+  loopover_open_pr: "agent",
+  loopover_file_issue: "agent",
+  loopover_apply_labels: "agent",
+  loopover_post_eligibility_comment: "agent",
+  loopover_create_branch: "agent",
+  loopover_delete_branch: "agent",
+  loopover_generate_tests: "agent",
+  loopover_file_follow_up_issue: "agent",
+  loopover_build_plan: "agent",
+  loopover_plan_status: "agent",
+  loopover_record_step_result: "agent",
+  loopover_get_automation_state: "agent",
+  loopover_set_agent_paused: "agent",
+  loopover_set_action_autonomy: "agent",
+  loopover_propose_action: "agent",
+  loopover_list_pending_actions: "agent",
+  loopover_decide_pending_action: "agent",
+  loopover_refresh_repo_docs: "maintainer",
+  loopover_get_agent_audit_feed: "agent",
+  loopover_explain_score_breakdown: "review",
+  loopover_explain_review_risk: "review",
+  loopover_compare_pr_variants: "branch",
+  loopover_local_status: "utility",
+  loopover_preflight_current_branch: "branch",
+  loopover_preview_current_branch_score: "branch",
+  loopover_rank_local_next_actions: "branch",
+  loopover_explain_local_blockers: "branch",
+  loopover_remediation_plan: "branch",
+  loopover_prepare_pr_packet: "branch",
+  loopover_draft_pr_body: "branch",
+  loopover_compare_local_variants: "branch",
+  loopover_agent_plan_next_work: "agent",
+  loopover_agent_start_run: "agent",
+  loopover_agent_get_run: "agent",
+  loopover_agent_explain_next_action: "agent",
+  loopover_agent_prepare_pr_packet: "branch",
+};
+
 export class LoopoverMcp {
   private accessScopePromise: Promise<ControlPanelAccessScope> | null = null;
 
@@ -1691,7 +1796,13 @@ export class LoopoverMcp {
       version: "0.1.0",
     });
 
-    server.registerTool(
+    // #6301 — register every tool through this thin wrapper so its category rides along as MCP
+    // `_meta.category`, exposed in tools/list for clients (and mirrored by the CLI `tools` command).
+    const baseRegister = server.registerTool.bind(server);
+    const register: McpServer["registerTool"] = (name, config, cb) =>
+      baseRegister(name, { ...config, _meta: { category: MCP_TOOL_CATEGORIES[name] } }, cb);
+
+    register(
       "loopover_get_repo_context",
       {
         description: "Return LoopOver repo context: registration, lane, queue health, collisions, and config quality.",
@@ -1701,7 +1812,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getRepoContext(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_maintainer_noise",
       {
         description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
@@ -1711,7 +1822,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getMaintainerNoise(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_label_audit",
       {
         description: "Return the repo's label-policy audit: configured-vs-live labels, missing configured labels, suspicious status/source-style labels, and trusted-label-pipeline readiness for label-multiplier scoring. Maintainer-authenticated; advisory only.",
@@ -1721,7 +1832,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getLabelAudit(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_maintainer_lane",
       {
         description: "Return the maintainer-lane triage report for a repo: the lane recommendation alongside the configured maintainer cut, queue health, config quality, and contributor-intake health. Maintainer-authenticated; advisory only.",
@@ -1731,7 +1842,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getMaintainerLane(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_repo_onboarding_pack",
       {
         description:
@@ -1742,7 +1853,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getRepoOnboardingPack(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_registration_readiness",
       {
         description:
@@ -1753,7 +1864,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getRegistrationReadiness(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_config_recommendation",
       {
         description:
@@ -1764,7 +1875,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getConfigRecommendation(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_burden_forecast",
       {
         description: "Return the cached maintainer burden forecast for a repo, including projected review load, queue growth risk, stale PR signals, and a freshness marker.",
@@ -1774,7 +1885,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getBurdenForecast(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_repo_outcome_patterns",
       {
         description: "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
@@ -1784,7 +1895,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getRepoOutcomePatterns(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_outcome_calibration",
       {
         description:
@@ -1795,7 +1906,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getOutcomeCalibration(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_gate_precision",
       {
         description:
@@ -1806,7 +1917,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getGatePrecision(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_skipped_pr_audit",
       {
         description:
@@ -1817,7 +1928,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getSkippedPrAudit(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_fleet_analytics",
       {
         description:
@@ -1828,7 +1939,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getFleetAnalytics(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_recommendation_quality",
       {
         description:
@@ -1839,7 +1950,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getRecommendationQuality(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_simulate_open_pr_pressure",
       {
         description:
@@ -1850,7 +1961,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(this.simulateOpenPrPressureTool(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_contributor_profile",
       {
         description: "Return an evidence-backed LoopOver contributor profile for a GitHub login.",
@@ -1860,7 +1971,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getContributorProfile(input.login)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_decision_pack",
       {
         description: "Return the canonical private contributor decision pack for a GitHub login.",
@@ -1870,7 +1981,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getDecisionPack(input.login)),
     );
 
-    server.registerTool(
+    register(
       "loopover_monitor_open_prs",
       {
         description:
@@ -1881,7 +1992,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.monitorOpenPullRequests(input.login)),
     );
 
-    server.registerTool(
+    register(
       "loopover_predict_gate",
       {
         description:
@@ -1892,7 +2003,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.predictGate(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_explain_gate_disposition",
       {
         description:
@@ -1903,7 +2014,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.explainGateDisposition(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_intake_idea",
       {
         description:
@@ -1914,7 +2025,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.intakeIdea(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_plan_idea_claims",
       {
         description:
@@ -1925,7 +2036,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.planIdeaClaims(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_build_results_payload",
       {
         description:
@@ -1936,7 +2047,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.buildLoopResults(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_build_progress_snapshot",
       {
         description:
@@ -1947,7 +2058,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.buildLoopProgress(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_evaluate_escalation",
       {
         description:
@@ -1958,7 +2069,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.evalEscalation(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_check_slop_risk",
       {
         description:
@@ -1969,7 +2080,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.checkSlopRisk(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_check_improvement_potential",
       {
         description:
@@ -1980,7 +2091,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.checkImprovementPotential(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_check_test_evidence",
       {
         description:
@@ -1991,7 +2102,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.checkTestEvidence(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_check_issue_slop",
       {
         description:
@@ -2002,7 +2113,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.checkIssueSlop(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_suggest_boundary_tests",
       {
         description:
@@ -2013,7 +2124,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(this.suggestBoundaryTests(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_pr_outcome",
       {
         description:
@@ -2024,7 +2135,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.prOutcomes(input.login, input.limit)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_pr_ai_review_findings",
       {
         description:
@@ -2035,7 +2146,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getPrAiReviewFindings(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_list_notifications",
       {
         description:
@@ -2046,7 +2157,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.listNotifications(input.login)),
     );
 
-    server.registerTool(
+    register(
       "loopover_mark_notifications_read",
       {
         description:
@@ -2057,7 +2168,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
     );
 
-    server.registerTool(
+    register(
       "loopover_watch_issues",
       {
         description:
@@ -2068,7 +2179,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.watchIssues(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_explain_repo_decision",
       {
         description: "Return the contributor/repo decision from the canonical decision pack.",
@@ -2078,7 +2189,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.explainRepoDecision(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_preflight_pr",
       {
         description: "Preflight a planned PR for lane correctness, duplicate risk, linked issues, and review burden.",
@@ -2088,7 +2199,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.preflightPr(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_bounty_advisory",
       {
         description: "Return lifecycle, funding, and consensus-risk context for a cached Gittensor bounty.",
@@ -2098,7 +2209,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getBountyAdvisory(input.id)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_registry_changes",
       {
         description: "Return the diff between the latest cached Gittensor registry snapshots.",
@@ -2108,7 +2219,7 @@ export class LoopoverMcp {
       async () => this.toolResult(await this.getRegistryChanges()),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_upstream_drift",
       {
         description: "Return private upstream Gittensor ruleset drift status, including stale/drift warnings for MCP planning.",
@@ -2118,7 +2229,7 @@ export class LoopoverMcp {
       async () => this.toolResult(await this.getUpstreamDrift()),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_issue_quality",
       {
         description: "Return the cached or freshly-computed issue-quality report for a repo, ranking which open issues are actionable, need proof, are stale/duplicate-prone, or already solved.",
@@ -2128,7 +2239,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getIssueQuality(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_pr_reviewability",
       {
         description:
@@ -2139,7 +2250,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getPrReviewability(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_validate_linked_issue",
       {
         description:
@@ -2150,7 +2261,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.validateLinkedIssue(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_check_before_start",
       {
         description:
@@ -2161,7 +2272,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.checkBeforeStart(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_find_opportunities",
       {
         description:
@@ -2172,7 +2283,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.findOpportunities(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_retrieve_issue_context",
       {
         description:
@@ -2183,7 +2294,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.retrieveIssueContext(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_lint_pr_text",
       {
         description:
@@ -2194,7 +2305,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(this.lintPrText(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_validate_config",
       {
         description:
@@ -2205,7 +2316,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(this.validateConfig(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_preflight_local_diff",
       {
         description: "Preflight local git-diff metadata without uploading code content.",
@@ -2215,7 +2326,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.preflightLocalDiff(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_preview_local_pr_score",
       {
         description: "Return a private scoring preview from local diff metrics or supplied metadata. Source contents are not required.",
@@ -2225,7 +2336,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.previewScore(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_eligibility_plan",
       {
         description:
@@ -2236,7 +2347,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getEligibilityPlan(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_run_local_scorer",
       {
         description:
@@ -2248,37 +2359,37 @@ export class LoopoverMcp {
     );
 
     // #780 miner write-tools — each returns a LOCAL-execution action spec; loopover never performs the write.
-    server.registerTool(
+    register(
       "loopover_open_pr",
       { description: "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).", inputSchema: openPrShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildOpenPrSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_file_issue",
       { description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).", inputSchema: fileIssueShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildFileIssueSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_apply_labels",
       { description: "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: applyLabelsShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildApplyLabelsSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_post_eligibility_comment",
       { description: "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).", inputSchema: postEligibilityCommentShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildPostEligibilityCommentSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_create_branch",
       { description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).", inputSchema: createBranchShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildCreateBranchSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_delete_branch",
       { description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).", inputSchema: deleteBranchShape, outputSchema: localWriteActionOutputSchema },
       async (input) => this.toolResult(this.localWriteSpec(buildDeleteBranchSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_generate_tests",
       {
         description:
@@ -2288,7 +2399,7 @@ export class LoopoverMcp {
       },
       async (input) => this.toolResult(this.localWriteSpec(buildTestGenSpec(input))),
     );
-    server.registerTool(
+    register(
       "loopover_file_follow_up_issue",
       {
         description:
@@ -2300,17 +2411,17 @@ export class LoopoverMcp {
     );
 
     // #783 multi-step plan DAG — stateless: pass the plan back each call.
-    server.registerTool(
+    register(
       "loopover_build_plan",
       { description: "Normalize raw steps into a validated multi-step plan DAG (per-step state + retries). Returns the plan to hold and pass back to the other plan tools.", inputSchema: buildPlanShape, outputSchema: planViewOutputSchema },
       async (input) => this.toolResult(this.buildPlan(input)),
     );
-    server.registerTool(
+    register(
       "loopover_plan_status",
       { description: "Return a plan's progress, validation, and the steps ready to run now (all dependencies met).", inputSchema: planStatusShape, outputSchema: planViewOutputSchema },
       async (input) => this.toolResult(this.planStatusTool(input)),
     );
-    server.registerTool(
+    register(
       "loopover_record_step_result",
       { description: "Record a step's outcome (completed / failed / skipped). A failure retries until maxAttempts is exhausted. Returns the advanced plan + the next ready steps.", inputSchema: recordStepResultShape, outputSchema: planViewOutputSchema },
       async (input) => this.toolResult(this.recordStepResult(input)),
@@ -2318,7 +2429,7 @@ export class LoopoverMcp {
 
     // #784 (MCP control surface, read side): a repo's agent automation posture — autonomy dial, kill-switch /
     // dry-run mode, write-permission readiness, and the pending-approval count. Repo-access scoped.
-    server.registerTool(
+    register(
       "loopover_get_automation_state",
       {
         description:
@@ -2331,7 +2442,7 @@ export class LoopoverMcp {
 
     // #6087 (MCP control surface, write side): the missing MCP counterpart to `maintain pause`/`resume`
     // (loopover-mcp.js:1783). Maintainer-manage access required, same as loopover_propose_action.
-    server.registerTool(
+    register(
       "loopover_set_agent_paused",
       {
         description:
@@ -2344,7 +2455,7 @@ export class LoopoverMcp {
 
     // #6087 (MCP control surface, write side): the missing MCP counterpart to `maintain set-level`
     // (loopover-mcp.js:1789). Maintainer-manage access required, same as loopover_propose_action.
-    server.registerTool(
+    register(
       "loopover_set_action_autonomy",
       {
         description:
@@ -2355,7 +2466,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.setActionAutonomy(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_propose_action",
       {
         description:
@@ -2366,7 +2477,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.proposeAction(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_list_pending_actions",
       {
         description:
@@ -2377,7 +2488,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.listPendingActions(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_decide_pending_action",
       {
         description:
@@ -2388,7 +2499,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.decidePendingAction(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_refresh_repo_docs",
       {
         description:
@@ -2399,7 +2510,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.refreshRepoDocs(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_get_agent_audit_feed",
       {
         description:
@@ -2410,7 +2521,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.getAgentAuditFeed(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_explain_score_breakdown",
       {
         description:
@@ -2421,7 +2532,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.explainScoreBreakdown(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_explain_review_risk",
       {
         description: "Explain review risk for a planned PR using preflight, lane, duplicate, and role context.",
@@ -2431,7 +2542,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.explainReviewRisk(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_compare_pr_variants",
       {
         description: "Compare private scoring previews for multiple PR variants.",
@@ -2441,7 +2552,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.comparePrVariants(input.variants)),
     );
 
-    server.registerTool(
+    register(
       "loopover_local_status",
       {
         description: "Return LoopOver local-MCP contract status and privacy defaults.",
@@ -2470,7 +2581,7 @@ export class LoopoverMcp {
         }),
     );
 
-    server.registerTool(
+    register(
       "loopover_preflight_current_branch",
       {
         description: "Analyze current-branch metadata supplied by a local MCP wrapper and return PR readiness.",
@@ -2480,7 +2591,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.localBranchSlice(input, "preflight")),
     );
 
-    server.registerTool(
+    register(
       "loopover_preview_current_branch_score",
       {
         description: "Analyze current-branch metadata and return private scoreability context.",
@@ -2490,7 +2601,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.localBranchSlice(input, "scorePreview")),
     );
 
-    server.registerTool(
+    register(
       "loopover_rank_local_next_actions",
       {
         description: "Analyze current-branch metadata and rank local next actions by private reward/risk signals.",
@@ -2500,7 +2611,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.localBranchSlice(input, "nextActions")),
     );
 
-    server.registerTool(
+    register(
       "loopover_explain_local_blockers",
       {
         description: "Analyze current-branch metadata and explain private scoreability and review blockers.",
@@ -2510,7 +2621,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
     );
 
-    server.registerTool(
+    register(
       "loopover_remediation_plan",
       {
         description:
@@ -2521,7 +2632,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.remediationPlan(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_prepare_pr_packet",
       {
         description: "Analyze current-branch metadata and return a public-safe PR packet for coding agents.",
@@ -2531,7 +2642,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.localBranchSlice(input, "prPacket")),
     );
 
-    server.registerTool(
+    register(
       "loopover_draft_pr_body",
       {
         description: "Draft a public-safe, copy/paste PR body from local branch metadata (changed files, tests run, linked issue, duplicate/WIP caution, branch freshness, next steps). Private scoreability/reward/trust context is excluded; source contents are not uploaded.",
@@ -2541,7 +2652,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.draftPrBody(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_compare_local_variants",
       {
         description: "Compare private local-branch analysis variants without source uploads.",
@@ -2551,7 +2662,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.compareLocalVariants(input.variants)),
     );
 
-    server.registerTool(
+    register(
       "loopover_agent_plan_next_work",
       {
         description: "Run the deterministic LoopOver base-agent planner and rank the next Gittensor OSS contribution actions.",
@@ -2561,7 +2672,7 @@ export class LoopoverMcp {
       async (input, extra) => this.toolResult(await this.agentPlanNextWork(input, extra, server)),
     );
 
-    server.registerTool(
+    register(
       "loopover_agent_start_run",
       {
         description: "Create a queued copilot-only LoopOver agent run. The agent plans and explains; it does not edit code or open PRs.",
@@ -2571,7 +2682,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.agentStartRun(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_agent_get_run",
       {
         description: "Fetch a persisted LoopOver agent run with ranked actions and context snapshots.",
@@ -2581,7 +2692,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.agentGetRun(input.runId)),
     );
 
-    server.registerTool(
+    register(
       "loopover_agent_explain_next_action",
       {
         description: "Explain the top deterministic next action and its scoreability/risk/maintainer impact.",
@@ -2591,7 +2702,7 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.agentExplainNextAction(input)),
     );
 
-    server.registerTool(
+    register(
       "loopover_agent_prepare_pr_packet",
       {
         description: "Prepare a public-safe PR packet from local branch metadata. Source contents are not uploaded.",

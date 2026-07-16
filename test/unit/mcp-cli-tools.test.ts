@@ -75,6 +75,51 @@ describe("loopover-mcp CLI — tools", () => {
     }
   });
 
+  it("annotates every tool with exactly one known category and groups the output by it (#6301)", () => {
+    const categories = [
+      { id: "discovery", label: "Discovery & planning" },
+      { id: "branch", label: "Local branch & PR prep" },
+      { id: "review", label: "Review & gate prediction" },
+      { id: "agent", label: "Agent automation" },
+      { id: "maintainer", label: "Maintainer & repo owner" },
+      { id: "utility", label: "Registry, config & status" },
+    ];
+    const validIds = new Set(categories.map((category) => category.id));
+
+    const payload = JSON.parse(run(["tools", "--json"])) as {
+      count: number;
+      categories: Array<{ id: string; label: string; count: number }>;
+      tools: Array<{ name: string; category: string; description: string }>;
+    };
+
+    // Every tool has exactly one category, and it is one of the known ids.
+    for (const tool of payload.tools) {
+      expect(typeof tool.category, `missing category for ${tool.name}`).toBe("string");
+      expect(validIds.has(tool.category), `unknown category ${tool.category} for ${tool.name}`).toBe(true);
+    }
+
+    // The category summary partitions the tools exactly: counts sum to the total, and each label
+    // matches the canonical one for its id.
+    const summedCount = payload.categories.reduce((total, category) => total + category.count, 0);
+    expect(summedCount).toBe(payload.count);
+    const labelById = new Map(categories.map((category) => [category.id, category.label]));
+    for (const category of payload.categories) {
+      expect(category.label).toBe(labelById.get(category.id));
+      expect(category.count).toBe(payload.tools.filter((tool) => tool.category === category.id).length);
+    }
+
+    // Human output groups tools under their category headers, in the canonical order, with every
+    // tool listed exactly once under a header that matches its own category.
+    const plain = run(["tools"]);
+    const emittedLabels = payload.categories.map((category) => category.label);
+    const headerOrder = emittedLabels.map((label) => plain.indexOf(`${label} (`));
+    expect(headerOrder.every((index) => index >= 0)).toBe(true);
+    expect([...headerOrder]).toEqual([...headerOrder].sort((a, b) => a - b));
+    for (const category of payload.categories) {
+      expect(plain).toContain(`${category.label} (${category.count})`);
+    }
+  });
+
   it("documents LOOPOVER_LOGIN / GITHUB_LOGIN in the --help Environment block (#5930)", () => {
     const help = run(["--help"]);
     expect(help).toContain("Environment:");

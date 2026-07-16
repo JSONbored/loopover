@@ -59,6 +59,38 @@ suite("Postgres backend (#977) — real Postgres", () => {
     expect(still?.n).toBe(1); // the DELETE rolled back
   });
 
+  it("regression: a rollback failure never masks the original batch error (#6282)", async () => {
+    // Force the ROLLBACK itself to throw, simulating the exact scenario (a connection failure) where the
+    // original error and a subsequent rollback failure would otherwise race to be the thrown error. Only
+    // ROLLBACK is intercepted -- every other query still runs for real against the live Postgres instance.
+    const realClient = await pool.connect();
+    const originalQuery = realClient.query.bind(realClient);
+    let rollbackAttempted = false;
+    try {
+      // @ts-expect-error -- intentionally narrowing pg's overloaded query() signature for this simulation
+      realClient.query = async (...args: Parameters<typeof originalQuery>) => {
+        if (args[0] === "ROLLBACK") {
+          rollbackAttempted = true;
+          throw new Error("simulated rollback failure");
+        }
+        return originalQuery(...args);
+      };
+      const fakePool = { connect: async () => realClient } as unknown as pg.Pool;
+      const db = createPgAdapter(fakePool);
+
+      await expect(
+        db.batch([
+          db.prepare("INSERT INTO system_flags (key, value) VALUES (?, ?) , bad-sql").bind("z", "1"), // syntax error
+        ]),
+      ).rejects.toThrow(/bad-sql|syntax/i); // the ORIGINAL error surfaces, not "simulated rollback failure"
+      expect(rollbackAttempted).toBe(true);
+    } finally {
+      // batch()'s own `finally` already released this client back to the pool -- just restore the
+      // query override so the shared pool's client isn't left poisoned for later tests.
+      realClient.query = originalQuery;
+    }
+  });
+
   it("prunes rows past the retention window and processJob('prune-retention') does not dead-letter (regression for the live self-host incident: job _selfhost_jobs.id=61132 failed with 'column \"rowid\" does not exist')", async () => {
     const db = createPgAdapter(pool);
     const env = { DB: db } as unknown as Env;

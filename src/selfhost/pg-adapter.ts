@@ -71,7 +71,11 @@ export function createPgAdapter(pool: Pool): D1Database {
         await client.query("COMMIT");
         return out;
       } catch (error) {
-        await client.query("ROLLBACK");
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          /* ignore */
+        }
         throw error;
       } finally {
         client.release();

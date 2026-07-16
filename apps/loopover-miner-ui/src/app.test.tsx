@@ -53,14 +53,17 @@ describe("OverviewView (#4853)", () => {
     expect(statValue("Oldest queued")).toBe("90m");
   });
 
-  it("shows an independent loading message per card before data arrives", () => {
+  it("shows an independent content-shaped loading skeleton per card before data arrives (#6509)", () => {
     render(<OverviewView runs={null} portfolio={null} claims={null} />);
-    expect(screen.getByText(/Loading run state/i)).toBeTruthy();
-    expect(screen.getByText(/Loading the portfolio queue/i)).toBeTruthy();
-    expect(screen.getByText(/Loading the claim ledger/i)).toBeTruthy();
+    // Each card's loading surface is now a role="status" Skeleton placeholder, not a flat gray sentence.
+    expect(screen.getByRole("status", { name: /loading run activity/i })).toBeTruthy();
+    expect(screen.getByRole("status", { name: /loading the portfolio queue/i })).toBeTruthy();
+    expect(screen.getByRole("status", { name: /loading the claim ledger/i })).toBeTruthy();
+    // The pre-#6509 hand-rolled "Loading …" text is gone.
+    expect(screen.queryByText(/Loading run state/i)).toBeNull();
   });
 
-  it("degrades each card independently: an errored source shows an alert while the others still render", () => {
+  it("degrades each card independently: an errored source shows a StateBoundary alert while the others still render", () => {
     render(
       <OverviewView
         runs={{ ok: false, error: "down" }}
@@ -69,6 +72,9 @@ describe("OverviewView (#4853)", () => {
       />,
     );
     expect(screen.getAllByRole("alert")).toHaveLength(2); // runs + claims errored
+    // The shared StateBoundary error surface, with this route's per-card copy (#6509).
+    expect(screen.getByText(/Couldn't read run state/i)).toBeTruthy();
+    expect(screen.getByText(/Couldn't read the claim ledger/i)).toBeTruthy();
     expect(statValue("Total items")).toBe("5"); // portfolio still renders
   });
 });

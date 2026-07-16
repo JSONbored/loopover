@@ -73,6 +73,7 @@ const AUDIENCES: Audience[] = [
     links: [
       { to: "/docs/maintainer-self-hosting", label: "Self-host reviews" },
       { to: "/docs/self-hosting-unified-ams-orb", label: "Unified ORB + AMS" },
+      { to: "/docs/federated-fleet-intelligence", label: "Federated fleet intelligence" },
       { to: "/docs/ams-deployment", label: "AMS deployment guide" },
       { to: "/docs/ams-operations-runbook", label: "AMS operations runbook" },
       { to: "/docs/ams-observability", label: "Observing your miner" },

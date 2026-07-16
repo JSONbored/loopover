@@ -1,0 +1,90 @@
+---
+title: Federated fleet intelligence
+description: Opt-in sharing of anonymized gate-calibration aggregates between self-hosted LoopOver instances — what is shared, how consent works, and how trust is gated.
+---
+
+Federated fleet intelligence is an **opt-in** path for self-hosted LoopOver (ORB) operators who want to compare their own gate calibration against peer medians. Nothing is shared unless you turn it on in config-as-code. There is no default collector and no automatic peer discovery.
+
+This page describes the **shipped** export and transport behavior, plus the trust-gating design operators should verify for themselves. Receiving-side signature verification and allowlist import (#6480) continue to land separately; until that lands, treat inbound peer bundles as untrusted input you do not fold into local calibration automatically.
+
+## What is shared (and what is not)
+
+When enabled, this instance can build a **signed, anonymized calibration bundle** from its own local review outcomes. The bundle is an aggregate snapshot over a calibration window — not a stream of per-PR events.
+
+Every field in the bundle body is aggregate-only. The export query never selects repo names, PR numbers, GitHub logins, commit SHAs, diffs, source code, or raw gate-reason text. The opaque `instanceId` is the same HMAC-derived handle the existing orb pipeline already uses — not a human identity.
+
+Fields currently enumerated on the signed body (`FederatedSignalBundleBody`):
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | Bundle contract version (receivers can reject unknown versions) |
+| `instanceId` | Opaque per-instance handle (no PII) |
+| `generatedAt` | ISO timestamp the bundle was built |
+| `windowDays` | Calibration window length (so peers only median equal-length windows) |
+| `decided` | Resolved PRs in-window that the gate decided |
+| `mergePrecision` | P(merged & not reverted \| gate said merge), or null until enough samples |
+| `closePrecision` | P(closed & not reopened \| gate said close), or null until enough samples |
+| `fpRate` / `fnRate` | False-positive / false-negative rates, or null until eligible |
+| `reversalRate` | Share of decided PRs a human reversed |
+| `cycleP50Ms` / `cycleP95Ms` | Gate-decision → resolution latency percentiles |
+| `slopRate` | Share of decided PRs whose reason bucketed to `slop_advisory` |
+| `copycatRate` | Share whose reason bucketed to `duplicate_risk` (aggregate rate only) |
+
+A detached `signature` accompanies the body. Export today signs with a local HMAC key; the trust design (#6477) calls for **operator-allowlisted peer public keys** on the receive path so verification does not require sharing an anonymization secret.
+
+This path is deliberately **not** the always-on orb telemetry export (`ORB_AIR_GAP` / central ingest). Federated export is config-as-code, peer- or operator-collector oriented, aggregate-only, and default OFF.
+
+## How opt-in works
+
+Consent is procedural and explicit: edit the loopover self-repo's `.loopover.yml` (config-as-code). There is no federated environment-variable kill-switch separate from this block — **absent or `enabled: false` means nothing is bundled and no federated network call is made**.
+
+Minimal enable (export capability only — still no network push/pull without a collector):
+
+<CodeBlock
+  lang="yaml"
+  code={`federatedIntelligence:
+  enabled: true`}
+/>
+
+To also arm the **transport client** (push this instance's bundle and/or pull peer bundles), set an operator-owned collector URL. There is deliberately **no default collector**:
+
+<CodeBlock
+  lang="yaml"
+  code={`federatedIntelligence:
+  enabled: true
+  collectorUrl: "https://collector.example.com/v1/federated"
+  # optional: push | pull | both (default both when collectorUrl is set)
+  collectorMode: both`}
+/>
+
+`collectorUrl` must be a public HTTPS URL (the same SSRF-safe URL rules as other manifest URL fields). `enabled: true` alone still sends nothing over the wire if `collectorUrl` is unset.
+
+## Trust-gating and poisoning resistance
+
+The trust model (#6477) is intentional and checkable — not a reputation system:
+
+1. **Explicit allowlist, not discovery.** Peer trust is operator-configured: you only consider bundles from sources you deliberately configured (a peer public key on your allowlist, or a collector URL you chose). There is no automatic peer discovery and no central PKI.
+2. **Collector mode is the same rule.** Pointing at a collector *is* the trust decision. The client does not add a second peer-vetting layer on top of that choice.
+3. **Median, not mean.** Peer comparisons use a **median** of peer calibration metrics. A median resists a bounded number of outlier/poisoned bundles; a mean does not.
+4. **Sybil cost is on the receiver.** Flooding fake peers only matters if *you* added many fake keys to your own allowlist — that is self-limiting by construction.
+5. **Abuse recovery.** If a peer looks wrong, remove that key (or stop pointing at that collector). v1 does not ship a separate retroactive-detection subsystem.
+
+Until #6480's import/validation surface is live in your deployment, do not treat pulled files as automatically trusted calibration input.
+
+## How to opt back out
+
+Remove the block, or set `enabled: false`, on the loopover self-repo `.loopover.yml`, then redeploy/reload so the running instance rereads the manifest:
+
+<CodeBlock
+  lang="yaml"
+  code={`federatedIntelligence:
+  enabled: false`}
+/>
+
+Clearing `collectorUrl` (or the whole block) also stops push/pull even if you leave other keys around. With federated intelligence off, behavior matches a deployment that never opted in: no federated bundle build for peers, no federated collector traffic.
+
+## Related
+
+- [Privacy & security](/docs/privacy-security) — hard public-surface rules
+- [Self-host security](/docs/self-hosting-security) — securing a self-hosted review instance
+- [Unified ORB + AMS](/docs/self-hosting-unified-ams-orb) — running review and miner together

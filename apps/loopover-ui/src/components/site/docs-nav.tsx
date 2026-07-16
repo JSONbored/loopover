@@ -62,6 +62,7 @@ export const docsNav: DocsGroup[] = [
           { to: "/docs/self-hosting-releases", label: "Releases & images" },
           { to: "/docs/self-hosting-release-checklist", label: "Release checklist" },
           { to: "/docs/self-hosting-security", label: "Security" },
+          { to: "/docs/federated-fleet-intelligence", label: "Federated fleet intelligence" },
         ],
       },
       {

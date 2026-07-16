@@ -25,7 +25,10 @@ export type ListClaimsFilter = {
 export type ClaimLedger = {
   dbPath: string;
   recordClaim(claim: RecordClaimInput): ClaimEntry;
+  /** Claims the issue, expiring any claim orphaned by a dead process first (#6156). */
   claimIssue(repoFullName: string, issueNumber: number, note?: string, apiBaseUrl?: string): ClaimEntry;
+  /** Expire claims orphaned by a crashed/killed process, returning the transitioned rows (#6156). */
+  reclaimExpiredClaims(maxAgeMs?: number): ClaimEntry[];
   releaseClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
   expireClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;
   listClaims(filter?: ListClaimsFilter): ClaimEntry[];

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { DEFAULT_MAX_CLAIM_AGE_MS, sweepExpiredClaims } from "./claim-ledger-expiry.js";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { isValidRepoSegment } from "./repo-clone.js";
@@ -220,7 +221,18 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       }
       return rows.map(rowToClaim);
     },
+    /** Expire claims orphaned by a crashed/killed process, returning the transitioned rows (#6156). The explicit
+     *  counterpart to the sweep claimIssue runs on its own, mirroring reclaimStuckItems (portfolio-queue-manager.js). */
+    reclaimExpiredClaims(maxAgeMs = DEFAULT_MAX_CLAIM_AGE_MS) {
+      return sweepExpiredClaims(ledger, Date.now(), maxAgeMs);
+    },
     claimIssue(repoFullName, issueNumber, note, apiBaseUrl) {
+      // Expire orphaned claims first, so an issue stranded 'active' by a dead process becomes claimable again
+      // instead of blocking indefinitely (#6156). Without this, recordClaim's `WHERE status <> 'active'` guard
+      // makes re-claiming an active row a no-op, so a claim whose owning process died keeps winning forever --
+      // there is no other path to expireClaim. Mirrors claimNextBatch's sweep-then-claim
+      // (portfolio-queue-manager.js), where a lease stranded by a dead process would otherwise starve the queue.
+      sweepExpiredClaims(ledger, Date.now(), DEFAULT_MAX_CLAIM_AGE_MS);
       return ledger.recordClaim({ repoFullName, issueNumber, note, apiBaseUrl });
     },
     listActiveClaims(repoFullName) {

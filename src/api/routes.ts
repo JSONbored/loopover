@@ -264,7 +264,7 @@ import { buildMaintainerActivationPreview, recommendedAdvisoryActivationSettings
 import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadGatePrecisionReport } from "../services/gate-precision";
 import { computeOpsStats, isOpsEnabled, resolveOpsManifestOverride } from "../review/ops-wire";
-import { deleteLiveOverride, listOverrideAudit, loadOverride, loadShadowOverride, sanitizeOverridePayload, type StorageEnv } from "../review/auto-apply";
+  import { deleteLiveOverride, listOverrideAudit, loadOverride, loadShadowOverride, sanitizeOverridePayload, authoritativeGateOverride, toLiveGateThresholdFields, type StorageEnv } from "../review/auto-apply";
 import { handleInternalCalibration, handleInternalDecision, type OpsAgentConfig } from "../review/ops";
 import { computeParityReadiness, isParityAuditEnabled } from "../review/parity-wire";
 import { computePredictedGateAgreement } from "../review/predicted-gate-agreement";
@@ -3016,6 +3016,24 @@ export function createApp() {
       },
       shadowPending: shadow !== null,
     });
+  });
+
+  // AMS probe surface for live gate thresholds (#6486 / #6209). Field-limited snake_case payload (no audit /
+  // applied_at / clear_at). Live row wins; soaking shadow fills in only when live is absent. 404 when neither
+  // is active — same not-found convention as issue-quality. Auth matches gate-config/effective above.
+  app.get("/v1/repos/:owner/:repo/live-gate-thresholds", async (c) => {
+    const unauthorized = await requireStaticProtectedApiToken(c);
+    if (unauthorized) return unauthorized;
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- requireStaticProtectedApiToken above already rejected null and session identities, so only static tokens reach here. */
+    if (!identity || identity.kind !== "static") return c.json({ error: "unauthorized" }, 401);
+    if (identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    const storageEnv = c.env as unknown as StorageEnv;
+    const [live, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
+    const fields = toLiveGateThresholdFields(authoritativeGateOverride(live, shadow));
+    if (!fields) return c.json({ error: "live_gate_thresholds_not_found", repoFullName: fullName }, 404);
+    return c.json({ repoFullName: fullName, ...fields });
   });
 
   app.get("/v1/repos/:owner/:repo/outcome-patterns", async (c) => {

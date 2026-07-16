@@ -33,6 +33,7 @@ import {
   IssueQualityResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
+  LiveGateThresholdsResponseSchema,
   LocalBranchAnalysisSchema,
   LocalDiffPreflightResultSchema,
   MaintainerPacketSchema,
@@ -148,6 +149,7 @@ export function buildOpenApiSpec() {
   registry.register("ScorePreview", ScorePreviewSchema);
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
+  registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
   registry.register("ContributorStrategy", ContributorStrategySchema);
@@ -417,6 +419,20 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
       404: { description: "Repo is unknown or has no issue-quality coverage yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/live-gate-thresholds",
+    summary: "Live self-tuned gate thresholds for AMS probe (#6486)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "Field-limited live (or soaking-shadow) TunableOverride values — confidence_floor / scope_cap_files / scope_cap_lines only",
+        content: { "application/json": { schema: LiveGateThresholdsResponseSchema } },
+      },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
+      404: { description: "No live or shadow gate override is active for this repo" },
     },
   });
   registry.registerPath({

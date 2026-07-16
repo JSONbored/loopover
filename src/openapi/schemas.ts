@@ -1739,6 +1739,16 @@ export const IssueQualityResponseSchema = z
   })
   .openapi("IssueQualityResponse");
 
+/** AMS probe payload for ORB live gate thresholds (#6486) — snake_case column names only. */
+export const LiveGateThresholdsResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    confidence_floor: z.number().nullable(),
+    scope_cap_files: z.number().int().nullable(),
+    scope_cap_lines: z.number().int().nullable(),
+  })
+  .openapi("LiveGateThresholdsResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

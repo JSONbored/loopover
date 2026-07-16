@@ -6787,6 +6787,53 @@ describe("api routes", () => {
     const unauth = await app.request("/v1/repos/entrius/allways-ui/gate-config/effective", {}, env);
     expect(unauth.status).toBe(401);
   });
+
+  it("exposes field-limited snake_case live gate thresholds for AMS probe (#6486)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const missing = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", { headers: apiHeaders(env) }, env);
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toEqual({ error: "live_gate_thresholds_not_found", repoFullName: "entrius/allways-ui" });
+
+    const storageEnv = env as unknown as StorageEnv;
+    await writeLiveOverride(storageEnv, "entrius/allways-ui", { confidenceFloor: 0.91, scopeCap: { files: 8, lines: 250 } });
+    await writeShadowOverride(storageEnv, "entrius/allways-ui", { confidenceFloor: 0.4 }, "2099-01-01T00:00:00.000Z");
+    await recordOverrideAudit(storageEnv, "entrius/allways-ui", "apply", { note: "must-never-surface-on-6486" });
+    const live = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", { headers: apiHeaders(env) }, env);
+    expect(live.status).toBe(200);
+    const liveBody = (await live.json()) as Record<string, unknown>;
+    expect(liveBody).toEqual({
+      repoFullName: "entrius/allways-ui",
+      confidence_floor: 0.91,
+      scope_cap_files: 8,
+      scope_cap_lines: 250,
+    });
+    expect(JSON.stringify(liveBody)).not.toMatch(/override_audit|applied_at|clear_at|must-never-surface|shadowPending/i);
+
+    // Shadow-only fills in when live is absent.
+    const shadowOnlyEnv = createTestEnv();
+    await writeShadowOverride(shadowOnlyEnv as unknown as StorageEnv, "entrius/allways-ui", { confidenceFloor: 0.66, scopeCap: { files: 3, lines: 90 } }, "2099-01-01T00:00:00.000Z");
+    const shadowed = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", { headers: apiHeaders(shadowOnlyEnv) }, shadowOnlyEnv);
+    expect(shadowed.status).toBe(200);
+    await expect(shadowed.json()).resolves.toEqual({
+      repoFullName: "entrius/allways-ui",
+      confidence_floor: 0.66,
+      scope_cap_files: 3,
+      scope_cap_lines: 90,
+    });
+
+    const mcpAllowed = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", { headers: mcpHeaders(env) }, env);
+    expect(mcpAllowed.status).toBe(200);
+
+    const forbiddenEnv = createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" });
+    await writeLiveOverride(forbiddenEnv as unknown as StorageEnv, "entrius/allways-ui", { confidenceFloor: 0.9 });
+    const forbidden = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", { headers: mcpHeaders(forbiddenEnv) }, forbiddenEnv);
+    expect(forbidden.status).toBe(403);
+    await expect(forbidden.json()).resolves.toMatchObject({ error: "forbidden_repo" });
+
+    const unauth = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", {}, env);
+    expect(unauth.status).toBe(401);
+  });
 });
 
 async function signWebhook(body: string, secret: string | undefined): Promise<string> {

@@ -47,6 +47,11 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Self-host backup and scaling", to: "/docs/self-hosting-backup-scaling", group: "Docs" },
   { label: "Self-host releases", to: "/docs/self-hosting-releases", group: "Docs" },
   { label: "Self-host security", to: "/docs/self-hosting-security", group: "Docs" },
+  {
+    label: "Federated fleet intelligence",
+    to: "/docs/federated-fleet-intelligence",
+    group: "Docs",
+  },
   { label: "Self-host troubleshooting", to: "/docs/self-hosting-troubleshooting", group: "Docs" },
   { label: "Branch analysis", to: "/docs/branch-analysis", group: "Docs" },
   { label: "Scoreability", to: "/docs/scoreability", group: "Docs" },

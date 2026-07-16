@@ -35,11 +35,12 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "node --check bin/loopover-mcp.js && node --check lib/cli-error.js && node --check lib/local-branch.js && node --check lib/format-table.js && node --check lib/redact-local-path.js && node --check scripts/gittensor-score-preview.mjs"
+    "build": "node --check bin/loopover-mcp.js && node --check lib/cli-error.js && node --check lib/local-branch.js && node --check lib/format-table.js && node --check lib/redact-local-path.js && node --check lib/telemetry.js && node --check scripts/gittensor-score-preview.mjs"
   },
   "dependencies": {
     "@loopover/engine": "^3.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
+    "posthog-node": "^5.44.0",
     "zod": "^4.4.3"
   },
   "engines": {

@@ -23,6 +23,7 @@ const ALLOWED_FILES = [
   "lib/local-branch.js",
   "lib/format-table.js",
   "lib/redact-local-path.js",
+  "lib/telemetry.js",
   "scripts/gittensor-score-preview.mjs",
   "package.json",
   "README.md",

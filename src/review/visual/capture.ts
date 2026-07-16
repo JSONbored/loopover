@@ -20,6 +20,7 @@ import { isSafeHttpUrl } from "../content-lane/safe-url";
 import { downscaleForVision } from "./image-downscale";
 import type { GitHubRateLimitAdmissionKey } from "../../github/client";
 import { dispatchVisualCaptureFallback, fallbackShotR2Key, isFallbackDispatchInFlight, markFallbackDispatched } from "./actions-fallback";
+import { MAX_PREVIEW_POLL_ATTEMPTS, previewPollAttemptCount, recordPreviewPollAttempt } from "./preview-poll-budget";
 import {
   findPreviewUrlFromChecks,
   findPreviewUrlFromPrComments,
@@ -522,8 +523,21 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
         }
         if (!previewBase && target.headSha) {
           const buildState = await getPreviewBuildState({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey });
-          if (buildState === "failed") previewFailed = true;
-          else if (buildState === "building" || buildState === "succeeded") previewPending = true;
+          if (buildState === "failed") {
+            previewFailed = true;
+          } else if (buildState === "building" || buildState === "succeeded") {
+            // #6323: bound how many times ANY trigger treats this head as worth another attempt, not just
+            // the dedicated self-poll job chain -- see preview-poll-budget.ts's own doc comment for the bug
+            // this fixes. Past the budget, give up honestly (the FAILED placeholder card, "review manually")
+            // rather than an eternally-spinning "loading" placeholder that never resolves.
+            const attempts = await previewPollAttemptCount(env, target.headSha);
+            if (attempts >= MAX_PREVIEW_POLL_ATTEMPTS) {
+              previewFailed = true;
+            } else {
+              await recordPreviewPollAttempt(env, target.headSha);
+              previewPending = true;
+            }
+          }
         }
       }
     }

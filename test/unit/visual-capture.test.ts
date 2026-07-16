@@ -8,6 +8,7 @@ import { fallbackShotR2Key, markFallbackDispatched } from "../../src/review/visu
 import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, mapFilesToRoutes, resolvePreviewUrlTemplate, resolveVisualRoutes } from "../../src/review/visual/capture";
 import type { CaptureRoute } from "../../src/review/visual/capture";
 import * as pixelDiffModule from "../../src/review/visual/pixel-diff";
+import { MAX_PREVIEW_POLL_ATTEMPTS, previewPollAttemptCount, recordPreviewPollAttempt } from "../../src/review/visual/preview-poll-budget";
 import * as previewUrlModule from "../../src/review/visual/preview-url";
 import * as scrollGifModule from "../../src/review/visual/scroll-gif";
 import * as shotModule from "../../src/review/visual/shot";
@@ -267,6 +268,62 @@ describe("visual capture preview discovery", () => {
     );
 
     expect(result.previewPending).toBe(true);
+  });
+
+  it("#6323: a 'building' buildState records ONE preview-poll attempt for this head SHA", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) {
+        return Response.json({ check_runs: [{ name: "Cloudflare Workers Builds", status: "in_progress" }] });
+      }
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 14, headSha: "budget-head-1", previewFromChecks: true },
+      ["apps/loopover-ui/src/routes/app.index.tsx"],
+    );
+
+    expect(result.previewPending).toBe(true);
+    await expect(previewPollAttemptCount(env, "budget-head-1")).resolves.toBe(1);
+  });
+
+  it("#6323: past MAX_PREVIEW_POLL_ATTEMPTS for this head SHA, gives up honestly instead of polling forever -- REGARDLESS of which trigger called buildCapture", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) {
+        return Response.json({ check_runs: [{ name: "Cloudflare Workers Builds", status: "in_progress" }] });
+      }
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    // Pre-exhaust the durable budget for this head -- simulates several PRIOR buildCapture calls, regardless
+    // of whether they came from the dedicated self-poll job chain, a CI-completion webhook, a
+    // deployment_status webhook, or a sweep pass (this module doesn't know or care which).
+    for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS; i += 1) {
+      await recordPreviewPollAttempt(env, "budget-head-2");
+    }
+
+    const result = await buildCapture(
+      env,
+      "installation-token",
+      { repoFullName: "owner/repo", prNumber: 15, headSha: "budget-head-2", previewFromChecks: true },
+      ["apps/loopover-ui/src/routes/app.index.tsx"],
+    );
+
+    expect(result.previewPending).toBe(false);
+    expect(result.routes[0]?.afterUrl).toContain("placeholder=failed");
+    // The exhausted attempt itself is NOT recorded again -- the count stays capped, not incremented forever.
+    await expect(previewPollAttemptCount(env, "budget-head-2")).resolves.toBe(MAX_PREVIEW_POLL_ATTEMPTS);
   });
 
   it("leaves the capture non-pending when no matching preview check run exists at all (buildState 'absent')", async () => {

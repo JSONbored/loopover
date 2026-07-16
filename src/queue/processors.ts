@@ -446,6 +446,7 @@ export {
 export { processJob } from "./job-dispatch";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureRoute } from "../review/visual/capture";
+import { MAX_PREVIEW_POLL_ATTEMPTS } from "../review/visual/preview-poll-budget";
 import {
   clearFallbackDispatchMarker,
   fallbackShotFileName,
@@ -3826,10 +3827,12 @@ async function maybeForceFreshRebase(
 const CI_COALESCE_WINDOW_SECONDS = 60;
 
 // Visual preview self-poll (reviewbot PREVIEW_POLL_SECONDS parity): when a PR's preview deploy isn't live at
-// review time, re-review after this delay to re-capture the AFTER shot, up to MAX_PREVIEW_POLLS times (so a
-// never-resolving preview can't poll forever ~ 5×90s = 7.5min).
+// review time, re-review after this delay to re-capture the AFTER shot. The actual attempt CAP
+// (MAX_PREVIEW_POLL_ATTEMPTS) now lives in preview-poll-budget.ts and is enforced INSIDE buildCapture itself,
+// durably per head SHA across every trigger (#6323) -- this local scheduling check below is a harmless,
+// now-redundant secondary bound for the dedicated self-poll job chain specifically; it stays for defense in
+// depth but is no longer the thing that actually stops a never-resolving preview from polling forever.
 const PREVIEW_POLL_SECONDS = 90;
-const MAX_PREVIEW_POLLS = 5;
 
 /**
  * Coalesce CI-completion re-reviews: claims a per-PR window and returns true if this PR was already re-reviewed
@@ -10097,7 +10100,7 @@ async function maybePublishPrPublicSurface(
           const previewPollAttempt = webhook.previewPollAttempt ?? 0;
           if (
             capture.previewPending &&
-            previewPollAttempt < MAX_PREVIEW_POLLS
+            previewPollAttempt < MAX_PREVIEW_POLL_ATTEMPTS
           ) {
             await env.JOBS.send(
               {

@@ -1185,14 +1185,14 @@ describe("api route guards and error branches", () => {
         headers: internalHeaders(env),
         body: JSON.stringify({
           gatePack: "oss-anti-slop",
-          createMissingLabel: false,
           badgeEnabled: true,
         }),
       },
       env,
     );
     expect(updated.status).toBe(200);
-    await expect(updated.json()).resolves.toMatchObject({ gatePack: "oss-anti-slop", createMissingLabel: false, badgeEnabled: true });
+    // createMissingLabel is config-as-code only (Batch B, loopover#6443) -- internal writes no longer persist it.
+    await expect(updated.json()).resolves.toMatchObject({ gatePack: "oss-anti-slop", createMissingLabel: true, badgeEnabled: true });
   });
 
   it("exposes and clears self-tune overrides for operators, rejecting unauthorized callers (#6168)", async () => {

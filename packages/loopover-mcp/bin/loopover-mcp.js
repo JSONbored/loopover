@@ -46,6 +46,7 @@ const CLI_COMMAND_SPEC = {
   version: [],
   tools: ["search"],
   doctor: [],
+  telemetry: ["enable", "disable", "status"],
   "init-client": [],
   "decision-pack": [],
   "repo-decision": [],
@@ -1995,6 +1996,7 @@ async function runCli(args) {
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   if (command === "maintain") return maintainCli(args.slice(1));
+  if (command === "telemetry") return telemetryCommand(args.slice(1));
   const options = parseOptions(args.slice(1));
   if (command === "login") return login(options);
   if (command === "logout") return logout(options);
@@ -2819,6 +2821,7 @@ function printHelp() {
   loopover-mcp whoami [--profile name] [--json]
   loopover-mcp config [--profile name] [--json]
   loopover-mcp status [--profile name] [--json]
+  loopover-mcp telemetry enable|disable|status [--json]
   loopover-mcp profile list|create|switch|remove [name] [--json]
   loopover-mcp changelog [--json]
   loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
@@ -2993,6 +2996,47 @@ async function logout(options) {
   else process.stdout.write(all ? "Logged out all profiles.\n" : `Logged out profile ${profileName}.\n`);
 }
 
+// Local MCP usage telemetry is opt-in and defaults OFF (#6239, per #6228's privacy decision): a
+// self-hoster must explicitly enable it before anything is measured. The opt-in is a single top-level
+// `telemetryEnabled` flag persisted in the same config file `login` uses, so the choice survives across
+// CLI invocations; `status`, `doctor`, and `config` all report the current state.
+function telemetryCommand(args) {
+  const subcommand = args[0] ?? "status";
+  const options = parseOptions(args.slice(1));
+  if (subcommand === "--help" || subcommand === "help") return printTelemetryHelp();
+  if (subcommand === "enable" || subcommand === "disable") {
+    const enabled = subcommand === "enable";
+    const nextConfig = setTelemetryEnabled(config, enabled);
+    // Mirror login/logout persistence: keep the file when any durable state remains, otherwise remove it
+    // so disabling telemetry on an otherwise-empty config leaves no stray file behind.
+    if (hasPersistedConfigState(nextConfig)) saveConfig(nextConfig);
+    else if (existsSync(configPath)) rmSync(configPath, { force: true });
+    const payload = { status: enabled ? "telemetry_enabled" : "telemetry_disabled", telemetry: telemetryState(nextConfig) };
+    if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    else process.stdout.write(enabled ? "Local MCP usage telemetry enabled.\n" : "Local MCP usage telemetry disabled.\n");
+    return;
+  }
+  if (subcommand === "status") {
+    const telemetry = telemetryState(config);
+    if (options.json) process.stdout.write(`${JSON.stringify({ telemetry }, null, 2)}\n`);
+    else process.stdout.write(`Telemetry: ${telemetry.enabled ? "enabled (opt-in)" : "disabled (default)"}\n`);
+    return;
+  }
+  throw new Error(`Unknown telemetry command: ${subcommand}. Use enable | disable | status.`);
+}
+
+function printTelemetryHelp() {
+  process.stdout.write(`Usage:
+  loopover-mcp telemetry status [--json]
+  loopover-mcp telemetry enable [--json]
+  loopover-mcp telemetry disable [--json]
+
+Local MCP usage telemetry is opt-in and defaults OFF. Enabling it persists a top-level telemetryEnabled
+flag in the same config file \`loopover-mcp login\` uses, so the choice survives across CLI invocations.
+\`status\`, \`doctor\`, and \`config\` report the current opt-in state.
+`);
+}
+
 function profileCommand(args) {
   const subcommand = args[0] ?? "list";
   const options = parseOptions(args.slice(1));
@@ -3081,6 +3125,7 @@ async function status(options) {
     decisionPackCache,
     sourceUploadDefault: false,
     sourceUploadSupported: false,
+    telemetry: telemetryState(),
   };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else {
@@ -3091,6 +3136,7 @@ async function status(options) {
     process.stdout.write(`Auth: ${auth.status}${auth.login ? ` (${auth.login})` : ""}\n`);
     process.stdout.write(`Decision-pack cache: ${decisionPackCache.entries} entr${decisionPackCache.entries === 1 ? "y" : "ies"}\n`);
     process.stdout.write("Source upload: disabled\n");
+    process.stdout.write(`Telemetry: ${payload.telemetry.enabled ? "enabled (opt-in)" : "disabled (default)"}\n`);
     if (pkg.state === "stale") {
       process.stdout.write(`Update available: ${packageVersion} -> ${pkg.latestVersion}. Upgrade with:\n  ${pkg.upgradeCommand}\n`);
       process.stdout.write(`Or run without installing:\n  ${pkg.npxFallback}\n`);
@@ -3193,6 +3239,16 @@ async function doctor(options) {
     add("source_upload", "pass", "Source upload is disabled and unsupported in v1.");
   }
 
+  // Either telemetry stance is a valid, deliberate choice, so this is always a pass — it just makes the
+  // current opt-in visible (and points at the toggle) rather than gating the checklist.
+  const telemetry = telemetryState();
+  add(
+    "telemetry",
+    "pass",
+    telemetry.enabled ? "Local MCP usage telemetry is enabled (opt-in)." : "Local MCP usage telemetry is disabled (default).",
+    telemetry.enabled ? "Run `loopover-mcp telemetry disable` to opt back out." : "Run `loopover-mcp telemetry enable` to opt in.",
+  );
+
   const decisionPackCache = inspectDecisionPackCache();
   add(
     "decision_pack_cache",
@@ -3257,6 +3313,7 @@ async function doctor(options) {
     config: { configured: existsSync(configPath), activeProfile: activeProfileName, profileCount: profileList(config).length },
     decisionPackCache,
     sourceUploadSupported: false,
+    telemetry,
     checklist,
     nextCommand,
     checks,
@@ -3319,7 +3376,7 @@ function doctorChecklistGroups() {
     { id: "api_compatibility", title: "API compatibility", checks: ["api_health", "version", "api_compatibility"] },
     { id: "local_repo_readiness", title: "Local repo readiness", checks: ["git_metadata", "client_path"] },
     { id: "scorer_availability", title: "Scorer availability", checks: ["local_scorer", "gittensor_root"] },
-    { id: "output_safety", title: "Output safety", checks: ["source_upload", "decision_pack_cache"] },
+    { id: "output_safety", title: "Output safety", checks: ["source_upload", "decision_pack_cache", "telemetry"] },
   ];
 }
 
@@ -3532,6 +3589,15 @@ function sourceUploadState() {
   };
 }
 
+// Resolve the current local telemetry opt-in from persisted config. The flag is top-level (not
+// per-profile) and defaults to disabled when absent, so an unconfigured install reports opt-out.
+function telemetryState(currentConfig = config) {
+  return {
+    enabled: currentConfig.telemetryEnabled === true,
+    default: false,
+  };
+}
+
 // Report the resolved effective configuration and where each value came from, without leaking
 // local absolute paths or token values. Distinct from `status` (health/version), `doctor`
 // (diagnostic checks), and `whoami` (session identity): this answers "what config is in effect
@@ -3548,6 +3614,7 @@ function configCommand(options) {
     tokenConfigured: Boolean(getApiToken()),
     tokenSource: resolvedTokenSource(),
     sourceUpload: sourceUploadState(),
+    telemetry: telemetryState(),
     profile: profilePublicState(activeProfileName),
   };
   if (options.json) {
@@ -3564,6 +3631,7 @@ function configCommand(options) {
       ? `Source upload: enabled via ${payload.sourceUpload.source} (unsupported; unset LOOPOVER_UPLOAD_SOURCE)\n`
       : "Source upload: disabled (unsupported)\n",
   );
+  process.stdout.write(`Telemetry: ${payload.telemetry.enabled ? "enabled (opt-in)" : "disabled (default)"}\n`);
 }
 
 function normalizeProfileName(value) {
@@ -3637,8 +3705,14 @@ function removeProfile(currentConfig, profileName) {
   return normalizeConfig({ ...currentConfig, activeProfile, profiles, session });
 }
 
+function setTelemetryEnabled(currentConfig, enabled) {
+  // normalizeConfig coerces this to a strict boolean and strips it when not exactly `true`, so disabling
+  // removes the key entirely (default = absent) rather than persisting `telemetryEnabled: false`.
+  return normalizeConfig({ ...currentConfig, telemetryEnabled: enabled === true ? true : undefined });
+}
+
 function hasPersistedConfigState(currentConfig) {
-  return Boolean(currentConfig.apiUrl || Object.keys(currentConfig.profiles ?? {}).length > 0);
+  return Boolean(currentConfig.apiUrl || currentConfig.telemetryEnabled === true || Object.keys(currentConfig.profiles ?? {}).length > 0);
 }
 
 function validationFromOptions(options) {
@@ -4157,6 +4231,9 @@ function normalizeConfig(rawConfig) {
     activeProfile,
     profiles,
     session: profiles[defaultProfileName]?.session,
+    // Opt-in telemetry flag (#6239): only a literal `true` counts as enabled, so a malformed or legacy
+    // value in the config file falls back to the privacy-preserving default (absent = disabled).
+    telemetryEnabled: raw.telemetryEnabled === true ? true : undefined,
   });
 }
 
@@ -4189,6 +4266,7 @@ function configForPersistence(nextConfig) {
     activeProfile: normalized.activeProfile,
     profiles: normalized.profiles,
     session: normalized.profiles?.[defaultProfileName]?.session,
+    telemetryEnabled: normalized.telemetryEnabled,
   });
 }
 

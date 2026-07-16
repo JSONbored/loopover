@@ -40,6 +40,10 @@ loopover-mcp status
 loopover-mcp changelog
 loopover-mcp doctor
 loopover-mcp doctor --exit-code
+loopover-mcp telemetry status
+loopover-mcp telemetry enable
+loopover-mcp telemetry disable
+loopover-mcp telemetry enable --json
 loopover-mcp profile list
 loopover-mcp profile create work
 loopover-mcp profile switch work
@@ -267,7 +271,19 @@ The package ships with `CHANGELOG.md`. Run:
 loopover-mcp changelog
 ```
 
-`loopover-mcp status` also reports the local package version, latest npm version when reachable, API health, auth state, and source-upload posture.
+`loopover-mcp status` also reports the local package version, latest npm version when reachable, API health, auth state, source-upload posture, and the local telemetry opt-in state.
+
+## Telemetry opt-in
+
+Local MCP usage telemetry is **opt-in and defaults to OFF** — nothing is measured until you explicitly enable it. Toggle it with:
+
+```sh
+loopover-mcp telemetry enable
+loopover-mcp telemetry disable
+loopover-mcp telemetry status
+```
+
+Enabling persists a top-level `telemetryEnabled` flag in the same config file `loopover-mcp login` uses, so the choice survives across CLI invocations. `status`, `doctor`, and `config` all report the current opt-in state. Add `--json` to any of these for machine-readable output.
 
 ## Offline decision-pack fallback
 

@@ -56,6 +56,7 @@ const HANDLERS: Array<{ command: string; fn: RegExp }> = [
   { command: "agent", fn: /(?:async )?function runAgentCli\([^)]*\)\s*\{/ },
   { command: "profile", fn: /(?:async )?function profileCommand\([^)]*\)\s*\{/ },
   { command: "maintain", fn: /(?:async )?function maintainCli\([^)]*\)\s*\{/ },
+  { command: "telemetry", fn: /(?:async )?function telemetryCommand\([^)]*\)\s*\{/ },
 ];
 
 describe("loopover-mcp CLI_COMMAND_SPEC ↔ implementation parity (#6260)", () => {

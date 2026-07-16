@@ -374,6 +374,18 @@ jobs:
       - name: Build UI-kit package
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
         run: npm run ui:kit:build
+      # apps/loopover-ui/.source (the fumadocs-mdx doc collection imported via the "collections/*"
+      # tsconfig path alias) is gitignored, generated-on-install output -- normally produced by
+      # loopover-ui's own `postinstall: fumadocs-mdx` lifecycle script. On a node_modules cache HIT,
+      # "Install dependencies" above is skipped entirely, so that lifecycle script never runs and
+      # .source/ never exists, failing ui:typecheck/ui:build with a `collections/browser` resolution
+      # error -- same class of gap as UI-kit's dist/ above, just sourced from a skipped npm-lifecycle
+      # step instead of a skipped explicit build. Unconditional (not gated on cache-hit) because it's
+      # a fast local codegen pass, not a real install; running it again after a real npm ci is a cheap,
+      # idempotent no-op.
+      - name: Generate fumadocs-mdx doc collections
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        run: npm run postinstall --workspace @loopover/ui
       - name: UI lint
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
         run: npm run ui:lint

@@ -192,6 +192,8 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
+import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
@@ -2056,6 +2058,15 @@ export function createApp() {
   app.get("/v1/registry/changes", async (c) => c.json(buildRegistryChangeReport(await listLatestRegistrySnapshots(c.env, 2))));
 
   app.get("/v1/scoring/model", async (c) => c.json(await getOrCreateScoringModelSnapshot(c.env)));
+
+  // #6593: REST mirrors of the `loopover://finding-taxonomy` / `gittensory://enrichment-analyzers` MCP
+  // resources, so a plain HTTP client (a dashboard, a non-MCP integration) can discover the same static
+  // documents. Both builders are pure, argument-free, and return no PR/user/private data — the same class of
+  // public static discovery data as /v1/scoring/model and /v1/upstream/ruleset alongside them, so they carry no
+  // extra auth. The MCP resource registrations stay exactly as they are; this is additive, not a replacement.
+  app.get("/v1/finding-taxonomy", (c) => c.json(buildFindingTaxonomyDocument()));
+
+  app.get("/v1/enrichment-analyzers", (c) => c.json(buildEnrichmentAnalyzersTaxonomyDocument()));
 
   app.get("/v1/upstream/status", async (c) => c.json(await loadUpstreamStatus(c.env)));
 

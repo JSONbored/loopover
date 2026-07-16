@@ -14102,6 +14102,68 @@
           "effective",
           "shadowPending"
         ]
+      },
+      "FindingTaxonomyDocument": {
+        "type": "object",
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "severities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "categories",
+          "severities"
+        ]
+      },
+      "EnrichmentAnalyzersTaxonomyDocument": {
+        "type": "object",
+        "properties": {
+          "defaultProfile": {
+            "type": "string"
+          },
+          "analyzers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "costClass": {
+                  "type": "string"
+                },
+                "profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "category",
+                "costClass",
+                "profiles"
+              ]
+            }
+          }
+        },
+        "required": [
+          "defaultProfile",
+          "analyzers"
+        ]
       }
     },
     "parameters": {},
@@ -18198,6 +18260,56 @@
           },
           "403": {
             "description": "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/finding-taxonomy": {
+      "get": {
+        "summary": "Canonical AI-review finding taxonomy",
+        "responses": {
+          "200": {
+            "description": "Finding categories and the severity ladder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingTaxonomyDocument"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/enrichment-analyzers": {
+      "get": {
+        "summary": "REES enrichment analyzer taxonomy",
+        "responses": {
+          "200": {
+            "description": "Default profile and the registered enrichment analyzers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichmentAnalyzersTaxonomyDocument"
+                }
+              }
+            }
           }
         },
         "security": [

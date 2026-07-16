@@ -2,6 +2,8 @@ import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-open
 import { z } from "zod";
 import {
   AdvisorySchema,
+  EnrichmentAnalyzersTaxonomyDocumentSchema,
+  FindingTaxonomyDocumentSchema,
   ActionPortfolioSchema,
   AgentActionSchema,
   AgentContextSnapshotSchema,
@@ -237,6 +239,22 @@ export function buildOpenApiSpec() {
     summary: "Latest scoring model snapshot",
     responses: {
       200: { description: "Latest private scoring model snapshot", content: { "application/json": { schema: ScoringModelSnapshotSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/finding-taxonomy",
+    summary: "Canonical AI-review finding taxonomy",
+    responses: {
+      200: { description: "Finding categories and the severity ladder", content: { "application/json": { schema: FindingTaxonomyDocumentSchema } } },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/enrichment-analyzers",
+    summary: "REES enrichment analyzer taxonomy",
+    responses: {
+      200: { description: "Default profile and the registered enrichment analyzers", content: { "application/json": { schema: EnrichmentAnalyzersTaxonomyDocumentSchema } } },
     },
   });
   registry.registerPath({

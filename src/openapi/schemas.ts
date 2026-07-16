@@ -1532,6 +1532,31 @@ export const ReadinessSchema = z
   })
   .openapi("Readiness");
 
+// #6593: the two static discovery documents the finding-taxonomy / enrichment-analyzers REST mirrors return.
+// Deliberately permissive on the member strings (they are open-ended taxonomies sourced from
+// FINDING_CATEGORIES / the committed analyzer-metadata.json) so adding a category or analyzer never breaks the
+// spec — the SHAPE is the contract here, not the enum membership.
+export const FindingTaxonomyDocumentSchema = z
+  .object({
+    categories: z.array(z.string()),
+    severities: z.array(z.string()),
+  })
+  .openapi("FindingTaxonomyDocument");
+
+export const EnrichmentAnalyzersTaxonomyDocumentSchema = z
+  .object({
+    defaultProfile: z.string(),
+    analyzers: z.array(
+      z.object({
+        name: z.string(),
+        category: z.string(),
+        costClass: z.string(),
+        profiles: z.array(z.string()),
+      }),
+    ),
+  })
+  .openapi("EnrichmentAnalyzersTaxonomyDocument");
+
 export const ScoringModelSnapshotSchema = z
   .object({
     id: z.string(),

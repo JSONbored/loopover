@@ -8,6 +8,8 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/mcp/compatibility"]).toBeDefined();
     expect(spec.paths["/v1/public/github/repos/{owner}/{repo}/stats"]).toBeDefined();
     expect(spec.paths["/v1/registry/snapshot"]).toBeDefined();
+    expect(spec.paths["/v1/finding-taxonomy"]).toBeDefined();
+    expect(spec.paths["/v1/enrichment-analyzers"]).toBeDefined();
     expect(spec.paths["/v1/registry/changes"]).toBeDefined();
     expect(spec.paths["/v1/readiness"]).toBeDefined();
     expect(spec.paths["/v1/sync/status"]).toBeDefined();

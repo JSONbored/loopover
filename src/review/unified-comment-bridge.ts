@@ -458,8 +458,13 @@ export function buildBeforeAfterCollapsible(routes: CaptureRoute[]): UnifiedColl
       .replace(/`/g, "\\`")
       .replace(/\|/g, "\\|")
       .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
+  // #6324: the same one-line caption UNDER the thumbnail that the screenshot-table contract itself requires
+  // of contributors (see e.g. .claude/skills/metagraphed/SKILL.md's Phase B2 in JSONbored/metagraphed) --
+  // previously only present as the invisible `alt` attribute, never rendered as visible text. <br> (not a
+  // literal newline, which would break the GFM table row) keeps the caption inside the same cell; <sub> is
+  // the same de-emphasized styling this table already uses for its own footer legend line below.
   const cell = (url: string | undefined, label: string): string =>
-    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a>` : "—";
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a><br><sub>${attr(label)}</sub>` : "—";
   const rows: string[] = [];
   let hasAnyDiff = false;
   for (const route of routes) {
@@ -506,8 +511,9 @@ export function buildScrollPreviewCollapsible(routes: CaptureRoute[]): UnifiedCo
       .replace(/`/g, "\\`")
       .replace(/\|/g, "\\|")
       .replace(/[<>]/g, (char) => (char === "<" ? "&lt;" : "&gt;"))}\``;
+  // #6324: same visible one-line caption as buildBeforeAfterCollapsible's own cell() -- see its doc comment.
   const cell = (url: string | undefined, label: string): string =>
-    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a>` : "—";
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="360" alt="${attr(label)}" src="${attr(url)}"></a><br><sub>${attr(label)}</sub>` : "—";
   const rows: string[] = [];
   for (const route of routes) {
     if (!route.beforeGifUrl && !route.afterGifUrl) continue;

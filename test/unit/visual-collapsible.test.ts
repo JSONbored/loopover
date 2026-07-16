@@ -50,6 +50,19 @@ describe("buildBeforeAfterCollapsible", () => {
     expect(c?.body).toContain("| `/` | desktop | — | <a href=");
   });
 
+  it("#6324: renders a VISIBLE one-line caption under each thumbnail, matching the contributor screenshot contract's own shape", () => {
+    const c = buildBeforeAfterCollapsible(routes);
+    // The caption text is the SAME string already used as the (invisible) alt attribute -- now also visible.
+    expect(c?.body).toContain('<img width="360" alt="before /app/analytics" src="https://api.example.dev/gittensory/shot?key=gittensory/shots/abc.png"></a><br><sub>before /app/analytics</sub>');
+    expect(c?.body).toContain('<img width="360" alt="after /app/analytics" src="https://api.example.dev/gittensory/shot?key=gittensory/shots/def.png"></a><br><sub>after /app/analytics</sub>');
+  });
+
+  it("#6324: a dash cell has no caption to escape (no <br><sub> emitted for a missing slot)", () => {
+    const c = buildBeforeAfterCollapsible([{ path: "/", afterUrl: "https://api.example.dev/gittensory/shot?key=gittensory/shots/x.png" }]);
+    expect(c?.body).toContain("| `/` | desktop | — | <a href=");
+    expect(c?.body).not.toContain("—<br>");
+  });
+
   it("returns null when no route has any shot URL (no empty table)", () => {
     expect(buildBeforeAfterCollapsible([])).toBeNull();
     expect(buildBeforeAfterCollapsible([{ path: "/" }])).toBeNull();
@@ -169,6 +182,9 @@ describe("buildScrollPreviewCollapsible (#3612)", () => {
     expect(c?.body).toContain('<a href="https://api.example.dev/gittensory/shot?key=gittensory/shots/before.gif"');
     expect(c?.body).toContain('alt="before /app/analytics (scroll)"');
     expect(c?.body).toContain('alt="after /app/analytics (scroll)"');
+    // #6324: same visible caption as buildBeforeAfterCollapsible's own cell().
+    expect(c?.body).toContain("<br><sub>before /app/analytics (scroll)</sub>");
+    expect(c?.body).toContain("<br><sub>after /app/analytics (scroll)</sub>");
   });
 
   it("returns null when no route has a scroll GIF — byte-identical to pre-#3612 for every non-opted-in repo", () => {

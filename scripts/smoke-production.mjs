@@ -1,5 +1,11 @@
+import { expectedMcpVersions, loadMcpPackageJson } from "./smoke-production-versions.mjs";
+
 const siteOrigin = normalizeOrigin(process.env.LOOPOVER_SITE_ORIGIN ?? "https://loopover.ai");
 const apiOrigin = normalizeOrigin(process.env.LOOPOVER_API_ORIGIN ?? "https://api.loopover.ai");
+// Latest tracks packages/loopover-mcp/package.json (same source as /health + /v1/mcp/compatibility).
+// This script is maintainer-manual (`npm run test:smoke:production`) — not wired into PR CI — which
+// is why a hardcoded 0.5.0 literal could drift for many releases before anyone noticed (#6293).
+const { minimumSupportedVersion, latestRecommendedVersion } = expectedMcpVersions(loadMcpPackageJson());
 
 const siteRoutes = [
   "/",
@@ -31,12 +37,24 @@ async function main() {
   checks.push(checkStatus(`${siteOrigin}/sitemap.xml`, 200, "sitemap", { contentType: /application\/xml/i }));
   checks.push(checkStatus(`${siteOrigin}/CNAME`, 404, "retired GitHub Pages CNAME"));
 
-  checks.push(checkJson(`${apiOrigin}/health`, "API health", (json) => json.status === "ok" && json.minMcpVersion === "0.5.0" && json.latestRecommendedMcpVersion === "0.5.0"));
+  checks.push(
+    checkJson(
+      `${apiOrigin}/health`,
+      "API health",
+      (json) =>
+        json.status === "ok" &&
+        json.minMcpVersion === minimumSupportedVersion &&
+        json.latestRecommendedMcpVersion === latestRecommendedVersion,
+    ),
+  );
   checks.push(
     checkJson(
       `${apiOrigin}/v1/mcp/compatibility`,
       "MCP compatibility",
-      (json) => json.status === "ok" && json.mcp?.minimumSupportedVersion === "0.5.0" && json.mcp?.latestPackageVersion === "0.5.0",
+      (json) =>
+        json.status === "ok" &&
+        json.mcp?.minimumSupportedVersion === minimumSupportedVersion &&
+        json.mcp?.latestPackageVersion === latestRecommendedVersion,
     ),
   );
   checks.push(checkJson(`${apiOrigin}/v1/auth/session`, "signed-out session", (json) => json.status === "signed_out"));

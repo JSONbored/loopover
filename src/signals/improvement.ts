@@ -26,7 +26,7 @@
 // live source for complexityDeltas, duplicationDeltas, or patchCoverageDeltaPercent — all three are honest
 // gaps, not yet wired by design (a later sub-issue's job), and this module must degrade cleanly when they're
 // absent (see "insufficient signal" below) rather than fabricate a neutral score.
-import { buildMissingTestEvidenceFinding, type SlopChangedFile } from "./slop";
+import { buildMissingTestEvidenceFinding, clamp, type SlopChangedFile } from "./slop";
 import { isCodeFile } from "./path-matchers";
 import type { SignalFinding } from "./engine";
 
@@ -252,8 +252,4 @@ function improvementBandFor(improvementScore: number, hasSignal: boolean): Impro
   if (improvementScore < 31) return "minor";
   if (improvementScore < 60) return "moderate";
   return "significant";
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }

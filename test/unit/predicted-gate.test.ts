@@ -623,6 +623,18 @@ describe("applyContributorCalibration (#2349)", () => {
     const perfect: ContributorCalibrationSignal = { sampleSize: 500, agreementRate: 1 };
     expect(applyContributorCalibration(null, perfect)).toBeNull();
   });
+
+  it("REGRESSION (#6627): a non-finite sampleSize is cold-start — baseline unchanged, never a silent adjustment", () => {
+    const nanSample: ContributorCalibrationSignal = { sampleSize: Number.NaN, agreementRate: 0.9 };
+    expect(applyContributorCalibration(70, nanSample)).toBe(70);
+  });
+
+  it("REGRESSION (#6627): a non-finite agreementRate fails toward 0 (clamp min) — returns a finite [0, 100] score, never NaN", () => {
+    const nanRate: ContributorCalibrationSignal = { sampleSize: 20, agreementRate: Number.NaN };
+    const result = applyContributorCalibration(70, nanRate);
+    expect(result).toBe(70 - MAX_READINESS_ADJUSTMENT);
+    expect(Number.isFinite(result)).toBe(true);
+  });
 });
 
 describe("buildPredictedGateVerdict — personalized calibration wiring (#2349)", () => {

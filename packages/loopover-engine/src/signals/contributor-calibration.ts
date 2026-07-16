@@ -16,6 +16,9 @@
 // ever public" boundary is preserved because the raw numbers never reach the output at all.
 
 function clamp(value: number, min: number, max: number): number {
+  // Non-finite input fails toward `min` (safe end of the range) — mirrors governor clampFraction /
+  // finiteNonNegativeInt so a NaN agreementRate can never propagate a NaN readinessScore (#6627).
+  if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, value));
 }
 
@@ -53,7 +56,11 @@ export function applyContributorCalibration(
   calibration: ContributorCalibrationSignal | null | undefined,
 ): number | null {
   if (baselineReadinessScore === null) return null;
-  if (!calibration || calibration.sampleSize < MIN_CALIBRATION_SAMPLES) return baselineReadinessScore;
+  // Non-finite sampleSize is "insufficient history" — NaN < N is always false in JS, so without this
+  // guard a malformed sample count would silently bypass cold-start and apply a full adjustment (#6627).
+  if (!calibration || !Number.isFinite(calibration.sampleSize) || calibration.sampleSize < MIN_CALIBRATION_SAMPLES) {
+    return baselineReadinessScore;
+  }
   const agreementRate = clamp(calibration.agreementRate, 0, 1);
   const rawAdjustment = (agreementRate - NEUTRAL_AGREEMENT_RATE) * 2 * MAX_READINESS_ADJUSTMENT;
   const adjustment = clamp(rawAdjustment, -MAX_READINESS_ADJUSTMENT, MAX_READINESS_ADJUSTMENT);

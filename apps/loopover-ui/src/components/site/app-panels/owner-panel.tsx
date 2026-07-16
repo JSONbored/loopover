@@ -99,11 +99,15 @@ export function OwnerPanel() {
         </div>
       </section>
 
+      {/* errorKind (#6176): isError requires BOTH resources to have failed, so readiness is always in its error
+          state here. Its kind is the one to report -- readiness is this panel's primary resource (see the
+          RefreshMeta below), and a connectivity failure that took out both would carry the same kind on either. */}
       <StateBoundary
         isLoading={
           Boolean(repoPath) && (readiness.status === "loading" || config.status === "loading")
         }
         isError={Boolean(repoPath) && readiness.status === "error" && config.status === "error"}
+        errorKind={readiness.status === "error" ? readiness.errorKind : undefined}
         isEmpty={Boolean(repoPath) && readiness.status === "ready" && !workspace}
         onRetry={refresh}
         onRefresh={refresh}

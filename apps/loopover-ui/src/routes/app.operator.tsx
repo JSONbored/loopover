@@ -134,6 +134,7 @@ function OperatorDashboard() {
     <StateBoundary
       isLoading={dashboard.status === "loading"}
       isError={dashboard.status === "error"}
+      errorKind={dashboard.status === "error" ? dashboard.errorKind : undefined}
       isEmpty={dashboard.status === "ready" && dashboard.data.metrics.length === 0}
       onRetry={dashboard.reload}
       onRefresh={dashboard.reload}

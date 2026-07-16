@@ -128,6 +128,12 @@ any per-PR feature to run on a given repo. So a per-PR feature activates only wh
   burst, or low-reputation submitter is downgraded to a deterministic-only review; good
   reputation proceeds normally. Never surfaced publicly — no comment, label, or check shows
   reputation. Per-PR.
+- `LOOPOVER_REVIEW_AMS_BRIDGE` — opt-in AMS→ORB reputation bridge (#6485). When
+  on (and an operator points `LOOPOVER_AMS_ENDPOINT` at a LOCAL AMS instance), ORB PULLS the
+  submitter's privacy-safe AMS track-record summary and lets a strong record lift their
+  reputation signal toward `trusted` — UPGRADE-only, so it can rescue a good-standing submitter
+  from the deterministic-only downgrade but can never worsen their standing. Default off; a no-op
+  (byte-identical) with no endpoint or no AMS data. Fail-safe and never surfaced publicly. Per-PR.
 - `LOOPOVER_REVIEW_ENRICHMENT` — runs the review-enrichment analyzer registry
   (duplication, churn hotspots, blame links, approval integrity, undocumented exports, and
   more) and folds their findings into the review context. Per-PR.

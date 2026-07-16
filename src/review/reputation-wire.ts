@@ -15,6 +15,7 @@
 
 import { getRepository } from "../db/repositories";
 import { isConfirmedOfficialMiner } from "../gittensor/miner-detection-cache";
+import { bridgeAmsReputation } from "./ams-reputation-bridge";
 import {
   getSubmitterCadence,
   getSubmitterReputation,
@@ -113,7 +114,13 @@ export async function shouldSkipAiForReputation(
   // (#4513, getEffectiveSubmitterReputation) first, then the cadence check (#4514) as an independent
   // second signal -- neither subsumes the other, so both must run, not just whichever merged more recently.
   const stats = await getEffectiveSubmitterReputation(env, { repoFullName: args.project, submitter: args.submitter });
-  if (shouldDowngradeToDeterministic(stats)) return true;
+  // AMS → ORB reputation bridge (#6485): fold in the submitter's genuine external AMS track record, which can
+  // only ever LIFT the computed signal toward "trusted" (never worsen it), rescuing a good-standing submitter
+  // from the deterministic-only downgrade. Independently flag-gated (LOOPOVER_REVIEW_AMS_BRIDGE + endpoint,
+  // default off) and fail-safe → returns stats.signal unchanged when off, unconfigured, or the AMS read yields
+  // nothing, so this stays byte-identical unless an operator has opted in.
+  const signal = await bridgeAmsReputation(env, { submitter: args.submitter, current: stats.signal });
+  if (shouldDowngradeToDeterministic({ ...stats, signal })) return true;
   const cadence = await getSubmitterCadence(env, args.project, args.submitter ?? undefined);
   return isMachinePacedCadence(cadence);
 }

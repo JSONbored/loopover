@@ -362,6 +362,20 @@ declare global {
      *  unset/false reads NO reputation, records NOTHING, and leaves the AI-spend gate byte-identical (the new
      *  branch is unreachable when off). */
     LOOPOVER_REVIEW_REPUTATION?: string;
+    /** Convergence (AMS→ORB reputation bridge, #6485): when truthy, an opt-in, PULL-only, UPGRADE-only read
+     *  path lets a submitter's genuine AMS track record IMPROVE — never worsen — the INTERNAL reputation signal.
+     *  ORB pulls the versioned track-record summary (no score/wallet/hotkey fields) from the operator-set
+     *  {@link Env.LOOPOVER_AMS_ENDPOINT} and a strong record can lift a `low`/`neutral` signal toward `trusted`,
+     *  rescuing a good-standing submitter from the deterministic-only downgrade — it can NEVER downgrade. Default
+     *  OFF — unset/false (or no endpoint) is an immediate no-op that pulls nothing and leaves the signal
+     *  byte-identical. STRICTLY INTERNAL and fail-safe (any read error/timeout/malformed response → no bonus,
+     *  never throws), inheriting the reputation module's contract as-is. */
+    LOOPOVER_REVIEW_AMS_BRIDGE?: string;
+    /** The operator-configured LOCAL AMS endpoint the {@link Env.LOOPOVER_REVIEW_AMS_BRIDGE} bridge PULLS a
+     *  submitter's track-record summary from (GitHub login passed as a `login` query parameter). Self-host /
+     *  operator-only; unset ⇒ the bridge is a no-op even when the flag is on. Timeout-bounded so a slow or
+     *  unreachable instance never slows gate evaluation. */
+    LOOPOVER_AMS_ENDPOINT?: string;
     /** Convergence (ops / observability): when truthy, loopover's OWN review-outcome data drives two
      *  operator surfaces — (1) on the cron tick, an anomaly scan over the gate-block ledger + recommendation /
      *  slop calibration emits a structured `ops_anomaly` log when something drifts (gate false-positive spike,

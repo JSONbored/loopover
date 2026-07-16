@@ -8,6 +8,7 @@ import {
   shouldSkipAiForReputation,
 } from "../../src/review/reputation-wire";
 import { getSubmitterReputation, recordSubmissionOutcome } from "../../src/review/submitter-reputation";
+import { TRACK_RECORD_SUMMARY_READ_VERSION } from "../../packages/loopover-engine/src/track-record-summary";
 import { isConvergenceRepoAllowed } from "../../src/review/cutover-gate";
 import { evaluateGateCheck } from "../../src/rules/advisory";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
@@ -665,5 +666,61 @@ describe("reputationOutcomeFromTerminalState (pure)", () => {
     // still open, gate did not flag → nothing to record yet.
     const passingGate = evaluateGateCheck(advisory(), { confirmedContributor: true });
     expect(reputationOutcomeFromTerminalState({ state: "open", mergedAt: null }, { merged_at: null }, passingGate)).toBeUndefined();
+  });
+});
+
+describe("AMS -> ORB reputation bridge wiring (#6485)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // A privacy-safe AMS track-record read envelope (#6246 contract) with a strong, incident-free record.
+  function strongAmsEnvelope(login: string) {
+    return {
+      version: TRACK_RECORD_SUMMARY_READ_VERSION,
+      summary: {
+        enabled: true,
+        login,
+        mergeRate: { numerator: 11, denominator: 12, ratio: 11 / 12, percent: 92, label: "92%" },
+        tenure: { firstObservedAt: null, days: null, label: "" },
+        incidents: { hasPublicIncident: false, checkedPublicRecords: 0, activePublicRecords: 0, label: "", evidenceUrls: [] },
+        outcomes: { merged: 11, closedWithoutMerge: 1, resolved: 12, openIgnored: 0, ignored: 0 },
+        audit: { normalizedLogin: login, consideredOutcomeIds: [], ignoredOutcomeIds: [], firstObservedCandidates: [] },
+      },
+    };
+  }
+
+  // Seeds a serial-quality-failure history (recent reviewer rejects, no successes) -- the natural, non-abuse
+  // path to a "low" windowed signal that the AMS bridge is meant to be able to rescue. Submissions are spaced
+  // hours apart (human pace) so ONLY the quality signal reads "low"; the independent cadence signal (#4514),
+  // which the bridge deliberately does NOT rescue, stays clear.
+  async function seedSerialQualityFailures(env: Env, submitter: string, base: number) {
+    const t0 = Date.now() - 20 * 60 * 60_000;
+    for (let i = 0; i < 5; i++) {
+      const createdAt = new Date(t0 + i * 3 * 60 * 60_000).toISOString();
+      await env.DB.prepare(
+        `INSERT INTO review_targets (id, project, kind, repo, number, installation_id, submitter, status, decision_json, terminal_at, created_at)
+         VALUES (?, 'acme/widgets', 'pull_request', 'acme/widgets', ?, 1, ?, 'closed', ?, CURRENT_TIMESTAMP, ?)`,
+      )
+        .bind(`acme/widgets:pull_request:acme/widgets#${base + i}`, base + i, submitter, JSON.stringify({ reasonCode: "dual_review_declined" }), createdAt)
+        .run();
+    }
+  }
+
+  it("rescues a low-signal submitter to no-downgrade when a strong AMS record is pulled", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true", LOOPOVER_REVIEW_AMS_BRIDGE: "true", LOOPOVER_AMS_ENDPOINT: "https://ams.local/track-record" });
+    await seedSerialQualityFailures(env, "reformed", 1);
+    // Without the bridge this reads "low" -> downgrade. With it, the strong AMS record lifts the signal to trusted.
+    vi.stubGlobal("fetch", async () => Response.json(strongAmsEnvelope("reformed")));
+    expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "reformed" })).toBe(false);
+  });
+
+  it("leaves the downgrade in place when the bridge is off (byte-identical, no external read)", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
+    await seedSerialQualityFailures(env, "reformed", 100);
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("bridge is off — must not read AMS");
+    });
+    expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "reformed" })).toBe(true);
   });
 });

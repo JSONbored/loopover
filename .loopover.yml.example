@@ -1180,6 +1180,16 @@ settings:
 #   screenshots: false
 #   improvementSignal: false
 
+# AMS -> ORB reputation bridge (#6485) -- DEPLOYMENT env, not a per-repo manifest field (a repo must never be
+# able to point ORB at an arbitrary AMS instance; that is the push/gaming vector #6208's design deliberately
+# rejected). Opt-in, PULL-only, UPGRADE-only: when the operator sets LOOPOVER_REVIEW_AMS_BRIDGE=true AND
+# LOOPOVER_AMS_ENDPOINT to a LOCAL AMS endpoint, ORB pulls a submitter's privacy-safe track-record summary
+# (no score/wallet/hotkey fields) and a strong record can lift their INTERNAL reputation signal toward
+# `trusted` -- never toward `low`. Default OFF (either unset -> a no-op, byte-identical). Fail-safe
+# (unreachable/timeout/malformed -> no bonus, never throws) and STRICTLY INTERNAL (never shown publicly).
+# These are set in the deployment environment, not here -- this note documents them alongside the reputation
+# feature they extend.
+
 # Optional ecosystem/network PLUGINS -- distinct from `features:` above, which only toggles loopover's own
 # converged review capabilities. Each key here couples this instance to an external system and is OFF unless
 # BOTH a deployment-wide LOOPOVER_EXPERIMENTAL_* env kill-switch AND an explicit per-repo `true` are set (no

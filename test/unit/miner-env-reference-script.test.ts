@@ -132,6 +132,22 @@ describe("generate-env-reference (#5179)", () => {
     expect(output).toContain("# loopover-miner environment variable reference");
   });
 
+  it("REGRESSION: quotes a generated markdown line with single quotes when it contains embedded double quotes, matching Prettier's own singleQuote:false-but-fewer-escapes preference (#6028)", () => {
+    // The rendered markdown table cell for a quoted string default (`""`, `"production"`, ...)
+    // embeds literal " characters in the line -- JSON.stringify would always double-quote the JS
+    // string literal and escape those, which Prettier then reformats to single quotes to avoid the
+    // escaping. Generating single-quoted output directly keeps the generator's own output already
+    // Prettier-clean instead of depending on a separate --fix pass that a fresh `npm run
+    // miner:env-reference` would immediately undo.
+    const output = renderMinerEnvReferenceModule([
+      { name: "LOOPOVER_MINER_SENTRY_ENVIRONMENT", firstReference: "lib/sentry.js", defaultValue: "production" },
+    ]);
+    expect(output).toContain(
+      "  '| `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `lib/sentry.js` | `\"production\"` |',",
+    );
+    expect(output).not.toMatch(/"\| `LOOPOVER_MINER_SENTRY_ENVIRONMENT`/);
+  });
+
   it("writes the generated TS module and reports stale output in check mode (#6028)", () => {
     const root = fixtureRoot();
     const outputPath = "apps/loopover-ui/src/lib/ams-env-reference.ts";

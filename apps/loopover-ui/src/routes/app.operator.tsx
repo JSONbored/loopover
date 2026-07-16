@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { BarChart3, Check, Copy, FileJson } from "lucide-react";
+import { BarChart3, Check, Copy, Download, FileJson } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -11,10 +11,11 @@ import {
 } from "@/components/site/control-primitives";
 import { DeadLetterQueuePanel } from "@/components/site/dead-letter-queue-panel";
 import { NotificationReadinessCard } from "@/components/site/notification-readiness-card";
-import { StateBoundary } from "@/components/site/state-views";
+import { StateActionButton, StateBoundary } from "@/components/site/state-views";
 import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch } from "@/lib/api/request";
 import { useApiResource } from "@/lib/api/use-api-resource";
+import { exportOperatorDashboardCsv } from "@/lib/csv-export";
 
 export const Route = createFileRoute("/app/operator")({
   component: OperatorDashboard,
@@ -155,7 +156,16 @@ function OperatorDashboard() {
                 High-level deployment health and noise-reduction impact across all installations.
               </p>
             </div>
-            <BoundaryBadge boundary="private-api" />
+            <div className="flex items-center gap-2">
+              <BoundaryBadge boundary="private-api" />
+              <StateActionButton
+                onClick={() => exportOperatorDashboardCsv(data)}
+                disabled={data.metrics.length === 0}
+                icon={<Download className="size-3 shrink-0" aria-hidden />}
+              >
+                Export CSV
+              </StateActionButton>
+            </div>
           </header>
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

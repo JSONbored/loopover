@@ -5866,15 +5866,15 @@ async function handlePullRequestWebhookEvent(
     // Draft-dodge guard (#converted-to-draft): a contributor converting an OPEN PR to draft cannot use
     // draft state to keep a gate-rejected PR alive. When a prior gate failure exists for the PR's current
     // headSha (and the block has not been maintainer-overridden), close the PR immediately — the gate
-    // verdict stands and does not reset on draft conversion. Skipped when the agent is unconfigured or
-    // paused (the gate doesn't act on paused repos) and for owner / automation PRs.
+    // verdict stands and does not reset on draft conversion. Skipped when the agent is unconfigured and for
+    // owner / automation PRs. Pause/freeze/dry-run are enforced inside evaluateCloseEnforcementGate (same as
+    // the other 4 close-enforcement guards) so a paused stand-down is audited (#6604), not silently skipped.
     if (
       payload.action === "converted_to_draft" &&
       installationId &&
       pr.headSha &&
       pr.state === "open" &&
       isAgentConfigured(settings.autonomy) &&
-      !settings.agentPaused &&
       !isProtectedAutomationAuthor(pr.authorLogin)
     ) {
       // Deliberately UNCAUGHT here: closeDraftDodgeAttemptIfBlocked catches every operation that should

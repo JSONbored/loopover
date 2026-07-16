@@ -6,6 +6,18 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint } from "@loopover/engine";
+// #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
+// registering them locally is just importing the same engine builders the remote server uses.
+import {
+  buildApplyLabelsSpec,
+  buildCreateBranchSpec,
+  buildDeleteBranchSpec,
+  buildFileIssueSpec,
+  buildFollowUpIssueSpec,
+  buildOpenPrSpec,
+  buildPostEligibilityCommentSpec,
+  buildTestGenSpec,
+} from "@loopover/engine";
 import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "@loopover/engine/signals/slop";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
@@ -180,6 +192,65 @@ const ownerRepoPullShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   number: z.number().int().positive(),
+};
+
+// #6149 write-tool input shapes -- mirror src/mcp/server.ts's remote shapes (same bounds) so the local
+// server validates identically. The builders (buildOpenPrSpec, ...) are the same @loopover/engine functions.
+const WRITE_TOOL_REPO_FULL_NAME_MAX = 200;
+const WRITE_TOOL_BRANCH_REF_MAX = 200;
+const WRITE_TOOL_TITLE_MAX = 400;
+const WRITE_TOOL_BODY_MAX = 60000;
+const WRITE_TOOL_BRANCH_MAX = 255;
+// Mirrors @loopover/engine/signals/test-evidence's TEST_FRAMEWORKS (the detectTestConvention framework set),
+// so a caller cannot request a test-gen spec for a framework the detector could never produce -- same guard the
+// remote server's testGenShape uses.
+const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"];
+const writeToolRepoFullName = z.string().min(3).max(WRITE_TOOL_REPO_FULL_NAME_MAX);
+const openPrShape = {
+  repoFullName: writeToolRepoFullName,
+  base: z.string().min(1).max(WRITE_TOOL_BRANCH_REF_MAX),
+  head: z.string().min(1).max(WRITE_TOOL_BRANCH_REF_MAX),
+  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
+  body: z.string().max(WRITE_TOOL_BODY_MAX),
+  draft: z.boolean().optional(),
+};
+const fileIssueShape = {
+  repoFullName: writeToolRepoFullName,
+  title: z.string().min(1).max(WRITE_TOOL_TITLE_MAX),
+  body: z.string().max(WRITE_TOOL_BODY_MAX),
+  labels: z.array(z.string().min(1).max(100)).max(20).optional(),
+};
+const applyLabelsShape = {
+  repoFullName: writeToolRepoFullName,
+  number: z.number().int().positive(),
+  labels: z.array(z.string().min(1).max(100)).min(1).max(20),
+};
+const postEligibilityCommentShape = {
+  repoFullName: writeToolRepoFullName,
+  number: z.number().int().positive(),
+  body: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
+};
+const createBranchShape = {
+  branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX),
+  base: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX).optional(),
+};
+const deleteBranchShape = {
+  branch: z.string().min(1).max(WRITE_TOOL_BRANCH_MAX),
+  remote: z.boolean().optional(),
+};
+const testGenShape = {
+  repoFullName: writeToolRepoFullName,
+  targetFiles: z.array(z.string().min(1).max(500)).min(1).max(50),
+  framework: z.enum(TEST_FRAMEWORKS),
+  testDir: z.string().min(1).max(255).optional(),
+  criteria: z.array(z.string().min(1).max(300)).max(20).optional(),
+};
+const followUpIssueShape = {
+  repoFullName: writeToolRepoFullName,
+  path: z.string().min(1).max(500),
+  line: z.number().int().positive().optional(),
+  finding: z.string().min(1).max(WRITE_TOOL_BODY_MAX),
+  label: z.string().min(1).max(100).optional(),
 };
 
 const loginShape = {
@@ -656,6 +727,51 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_get_skipped_pr_audit",
     category: "maintainer",
     description: "Return the skipped-PR audit trail: pull requests LoopOver's automated reviewer intentionally stayed quiet on, each with a reason code and a remediation hint. Optionally filter by repoFullName, reason, or since. Maintainer-authenticated; read-only measurement, not a moderation or override action.",
+  },
+  {
+    name: "loopover_open_pr",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).",
+  },
+  {
+    name: "loopover_file_issue",
+    category: "agent",
+    description: "Build a LOCAL-execution spec to file an issue (run it with your own gh creds; loopover never performs the write).",
+  },
+  {
+    name: "loopover_apply_labels",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec to add labels to an issue or PR (run it with your own gh creds; loopover never performs the write).",
+  },
+  {
+    name: "loopover_post_eligibility_comment",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec to post an eligibility/context comment on an issue or PR (run it with your own gh creds; loopover never performs the write).",
+  },
+  {
+    name: "loopover_create_branch",
+    category: "agent",
+    description: "Build a LOCAL-execution spec to create a branch (run it locally; loopover never performs the write).",
+  },
+  {
+    name: "loopover_delete_branch",
+    category: "agent",
+    description: "Build a LOCAL-execution spec to delete a branch (run it locally; loopover never performs the write).",
+  },
+  {
+    name: "loopover_generate_tests",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec describing WHAT boundary-safe test cases should exist for the given target files, using the repo's detected framework/convention. LoopOver supplies the criteria; your OWN agent scaffolds and runs the actual test files locally -- no source code is uploaded and loopover never performs the write.",
+  },
+  {
+    name: "loopover_file_follow_up_issue",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec to file a follow-up issue for a review finding a maintainer wants TRACKED rather than blocked on this PR. Composes a bounded, public-safe title/body from the finding (run it with your own gh creds; loopover never performs the write).",
   },
 ];
 
@@ -1427,6 +1543,85 @@ registerStdioTool(
       buildFeasibilityVerdict({ claimStatus: ledgerClaimStatus ?? claimStatus, duplicateClusterRisk, issueStatus, found }),
     );
   },
+);
+
+// ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
+// returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
+// miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.
+function localWriteSpecResult(spec) {
+  return toolResult(`${spec.action}: ${spec.description} ${spec.boundary}`, spec);
+}
+
+registerStdioTool(
+  "loopover_open_pr",
+  {
+    description: stdioToolDescription("loopover_open_pr"),
+    inputSchema: openPrShape,
+  },
+  (input) => localWriteSpecResult(buildOpenPrSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_file_issue",
+  {
+    description: stdioToolDescription("loopover_file_issue"),
+    inputSchema: fileIssueShape,
+  },
+  (input) => localWriteSpecResult(buildFileIssueSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_apply_labels",
+  {
+    description: stdioToolDescription("loopover_apply_labels"),
+    inputSchema: applyLabelsShape,
+  },
+  (input) => localWriteSpecResult(buildApplyLabelsSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_post_eligibility_comment",
+  {
+    description: stdioToolDescription("loopover_post_eligibility_comment"),
+    inputSchema: postEligibilityCommentShape,
+  },
+  (input) => localWriteSpecResult(buildPostEligibilityCommentSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_create_branch",
+  {
+    description: stdioToolDescription("loopover_create_branch"),
+    inputSchema: createBranchShape,
+  },
+  (input) => localWriteSpecResult(buildCreateBranchSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_delete_branch",
+  {
+    description: stdioToolDescription("loopover_delete_branch"),
+    inputSchema: deleteBranchShape,
+  },
+  (input) => localWriteSpecResult(buildDeleteBranchSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_generate_tests",
+  {
+    description: stdioToolDescription("loopover_generate_tests"),
+    inputSchema: testGenShape,
+  },
+  (input) => localWriteSpecResult(buildTestGenSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_file_follow_up_issue",
+  {
+    description: stdioToolDescription("loopover_file_follow_up_issue"),
+    inputSchema: followUpIssueShape,
+  },
+  (input) => localWriteSpecResult(buildFollowUpIssueSpec(input)),
 );
 
 // ── Resources: decision-pack, doctor, compatibility, changelog (#292) ─────────

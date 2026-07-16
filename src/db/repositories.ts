@@ -301,6 +301,12 @@ export async function updateInstallationPermissions(env: Env, installationId: nu
   await db.update(installations).set({ permissionsJson: jsonString(permissions), updatedAt: nowIso() }).where(eq(installations.id, installationId));
 }
 
+/** #4797: NOT tenant-scoped at the query layer -- returns every installation with no filter. Every current
+ *  caller is either internal cross-repo maintenance (backfill/sweep machinery, which legitimately needs the
+ *  fleet-wide view) or an admin/maintainer/owner-role-gated dashboard route (verified via `canSessionAccessPath`
+ *  / `requireAppRole` at each call site, src/api/routes.ts). Do NOT call this from any customer/tenant-facing
+ *  path -- use {@link getInstallation} (single, id-scoped) instead. A future Rent-a-Loop customer endpoint that
+ *  reaches for this function by habit would leak every other tenant's installations. */
 export async function listInstallations(env: Env): Promise<InstallationRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(installations).orderBy(desc(installations.updatedAt)).limit(100);
@@ -537,6 +543,12 @@ export async function getRepository(env: Env, fullName: string): Promise<Reposit
   return caseInsensitiveRow ? toRepositoryRecord(caseInsensitiveRow) : null;
 }
 
+/** #4797: NOT tenant-scoped at the query layer -- returns every repository (including private ones) with no
+ *  filter. Every current caller is either internal cross-repo maintenance/sweep machinery or an
+ *  admin/maintainer/owner-role-gated dashboard route (verified via `canSessionAccessPath` / `requireAppRole`
+ *  at each call site, src/api/routes.ts) -- e.g. `/v1/repos` requires an authorized admin session. Do NOT call
+ *  this from any customer/tenant-facing path -- use {@link getRepository} (single, fullName-scoped) or
+ *  {@link listInstalledRepoFullNamesForInstallation} (installation-scoped) instead. */
 export async function listRepositories(env: Env): Promise<RepositoryRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(repositories).orderBy(desc(repositories.isRegistered), repositories.fullName);

@@ -67,6 +67,7 @@ describe("parseActiveLoopFacts / loadActiveLoopsFromEnv (#6349)", () => {
     expect(loadActiveLoopsFromEnv(env)).toEqual([{ loopId: "good", tenantId: "t", runStatus: "abandoned" }]);
     expect(loadActiveLoopsFromEnv(createTestEnv({ LOOPOVER_ACTIVE_LOOPS_JSON: "{not-json" }))).toEqual([]);
     expect(loadActiveLoopsFromEnv(createTestEnv({ LOOPOVER_ACTIVE_LOOPS_JSON: '{"no":"array"}' }))).toEqual([]);
+    expect(loadActiveLoopsFromEnv(createTestEnv({ LOOPOVER_ACTIVE_LOOPS_JSON: "   " }))).toEqual([]);
     expect(loadActiveLoopsFromEnv(createTestEnv())).toEqual([]);
   });
 });
@@ -215,6 +216,18 @@ describe("runLoopEscalationSweep (#6349)", () => {
     await expect(
       runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/elsewhere" }), { loadActiveLoops: load }),
     ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "not-a-url" }), { loadActiveLoops: load }),
+    ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
+  });
+
+  it("accepts alternate Discord hosts on the allowlist", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://discordapp.com/api/webhooks/123/abc" }), {
+      loadActiveLoops: () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }],
+      fetchImpl: (async () => new Response(null, { status: 204 })) as typeof fetch,
+    });
+    expect(result.notified).toBe(true);
   });
 
   it("continues when recording the Discord-error audit throws", async () => {

@@ -43,7 +43,6 @@ function isValidDiscordWebhook(url: string): boolean {
     if (!ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase())) return false;
     return parsed.pathname.startsWith("/api/webhooks/");
   } catch {
-    /* v8 ignore next -- URL constructor threw; treat as invalid webhook. */
     return false;
   }
 }

@@ -39,6 +39,14 @@ describe("buildFixHandoffBlock (#2175)", () => {
     expect(block.body).not.toContain("Suggested change:");
   });
 
+  it("skips the fenced block when the suggestion itself contains a ``` sequence (#6632)", () => {
+    const block = buildFixHandoffBlock(finding({ suggestion: "Replace with:\n```\nconst x = 1;\n```" }));
+    // The embedded fence would close the outer block early, so the fenced rendering is skipped entirely
+    // (matching safeSuggestionBlock); no stray ``` leaks into the rendered markdown.
+    expect(block.body).not.toContain("Suggested change:");
+    expect(block.body).not.toContain("```");
+  });
+
   it("yields a path-only block (line 0) when the finding has no commentable line (line <= 0)", () => {
     const block = buildFixHandoffBlock(finding({ line: 0 }));
     expect(block.line).toBe(0);
@@ -121,6 +129,11 @@ describe("buildFixHandoffAggregateBlock (#5102)", () => {
   it("omits the suggestion block entirely when absent or whitespace-only", () => {
     expect(buildFixHandoffAggregateBlock([finding()])?.body).not.toContain("```");
     expect(buildFixHandoffAggregateBlock([finding({ suggestion: "   " })])?.body).not.toContain("```");
+  });
+
+  it("skips the fenced suggestion block when the suggestion contains a ``` sequence (#6632)", () => {
+    const block = buildFixHandoffAggregateBlock([finding({ suggestion: "```\nconst x = 1;\n```" })]);
+    expect(block?.body).not.toContain("```"); // embedded fence would break the item's block; skipped entirely
   });
 
   it("always includes the exact LOCAL_WRITE_BOUNDARY text (boundary-safe)", () => {

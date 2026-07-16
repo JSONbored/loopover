@@ -58,7 +58,10 @@ export function buildFixHandoffBlock(finding: InlineFinding): FixHandoffBlock {
   const location = hasLine ? `${safePath}:${line}` : `${safePath} (no specific line)`;
   const label = finding.severity === "blocker" ? "Blocker" : "Nit";
   const suggestedChange = finding.suggestion?.trim() || undefined;
-  const suggestionBlock = suggestedChange ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";
+  // Skip the fenced block when the suggestion itself contains a ``` sequence, which would close the outer fence
+  // early and break the rendered markdown -- matching inline-suggestion-anchor.ts's safeSuggestionBlock guard.
+  const suggestionBlock =
+    suggestedChange && !suggestedChange.includes("```") ? `\n\nSuggested change:\n\`\`\`\n${suggestedChange}\n\`\`\`` : "";
   const body = [
     FIX_HANDOFF_MARKER,
     `**Fix handoff — ${label} at \`${location}\`**`,
@@ -106,7 +109,9 @@ function fixHandoffAggregateItem(finding: InlineFinding, index: number): string 
   const location = hasLine ? `${safePath}:${finding.line}` : `${safePath} (no specific line)`;
   const label = finding.severity === "blocker" ? "Blocker" : "Nit";
   const suggestion = finding.suggestion?.trim();
-  const suggestionBlock = suggestion ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";
+  // Same fence-safety guard as buildFixHandoffBlock / safeSuggestionBlock: an embedded ``` would break the block.
+  const suggestionBlock =
+    suggestion && !suggestion.includes("```") ? `\n   \`\`\`\n   ${suggestion.replace(/\n/g, "\n   ")}\n   \`\`\`` : "";
   return `${index + 1}. **${label} at \`${location}\`** — ${finding.body}${suggestionBlock}`;
 }
 

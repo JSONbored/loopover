@@ -160,6 +160,13 @@ describe("ActivationPreview", () => {
     expect(screen.getByText(/Enter an installed repository to preview activation\./i)).toBeTruthy();
   });
 
+  it("renders its generatedAt timestamp once the preview loads (#6174)", async () => {
+    apiFetch.mockResolvedValue({ ok: true, data: BASE_PREVIEW });
+    render(<ActivationPreview reviewability={REVIEWABILITY} />);
+    await waitFor(() => expect(screen.getByText(BASE_PREVIEW.summary)).toBeTruthy());
+    expect(screen.getByText("generated 05 Jul 2026 00:00")).toBeTruthy();
+  });
+
   it("shows the 'settings unavailable' copy for a typed repo string that doesn't parse as owner\\/repo", async () => {
     apiFetch.mockResolvedValue({ ok: true, data: BASE_PREVIEW });
     render(<ActivationPreview reviewability={REVIEWABILITY} />);

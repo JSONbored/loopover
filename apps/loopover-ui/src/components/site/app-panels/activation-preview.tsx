@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { StatusPill, type Status } from "@/components/site/control-primitives";
 import { TableScroll } from "@/components/site/data-table";
 import { StateBoundary } from "@/components/site/state-views";
+import { formatGeneratedAt } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
 import { extractPreviewRepoOptions, splitRepoFullName } from "@/lib/maintainer-settings-preview";
@@ -140,9 +141,14 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
           </p>
         </div>
         {preview ? (
-          <StatusPill status={preview.recommendedAction === null ? "ready" : "info"}>
-            gate {preview.currentReviewCheckMode}
-          </StatusPill>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-token-2xs text-muted-foreground">
+              generated {formatGeneratedAt(preview.generatedAt)}
+            </span>
+            <StatusPill status={preview.recommendedAction === null ? "ready" : "info"}>
+              gate {preview.currentReviewCheckMode}
+            </StatusPill>
+          </div>
         ) : null}
       </div>
 

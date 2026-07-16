@@ -6,6 +6,7 @@ import {
   gateOutcomeSegments,
   type GateOutcomeCardData,
 } from "@/components/site/app-panels/gate-outcome-card-model";
+import { formatGeneratedAt } from "@/components/site/app-panels/slop-duplicate-trend-card-model";
 
 /** Gate-outcome breakdown card (#2203, part of #539): auto-merged / auto-closed / held counts and rates
  *  from repo-scoped gate-outcome audit events. Read-only; public-safe aggregate counts only. */
@@ -23,7 +24,12 @@ export function GateOutcomeCard({ breakdown }: { breakdown: GateOutcomeCardData 
             day(s).
           </p>
         </div>
-        <BoundaryBadge boundary="public" />
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-token-2xs text-muted-foreground">
+            generated {formatGeneratedAt(breakdown.generatedAt)}
+          </span>
+          <BoundaryBadge boundary="public" />
+        </div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">

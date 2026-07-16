@@ -113,4 +113,9 @@ describe("GateOutcomeCard (#2203)", () => {
     const { container } = render(<GateOutcomeCard breakdown={breakdown()} />);
     expect(container.textContent ?? "").not.toMatch(FORBIDDEN_PUBLIC_TERMS);
   });
+
+  it("renders its generatedAt timestamp (#6174)", () => {
+    render(<GateOutcomeCard breakdown={breakdown({ generatedAt: "2026-07-11T00:00:00.000Z" })} />);
+    expect(screen.getByText("generated 11 Jul 2026 00:00")).toBeTruthy();
+  });
 });

@@ -728,6 +728,23 @@ describe("planAgentMaintenanceActions (#778)", () => {
       expect(plan.find((a) => a.actionClass === "close")?.expectedHeadSha).toBe("abc123");
     });
 
+    it("never ALSO approves the repeat offender's PR it is closing — no incoherent approve+close pair", () => {
+      // A green, clean, not-yet-approved PR from a confirmed repeat unlinked-issue offender, with BOTH approve
+      // and close autonomy acting. The dedicated close branch fires on unlinkedIssueMatchViolated; the approve
+      // guard must suppress here too (like every sibling close path) — approving a PR we're about to close is
+      // incoherent (function contract: "never both merge and close"; the approve guard's own comment).
+      const plan = planAgentMaintenanceActions(
+        input({
+          conclusion: "success",
+          autonomy: { approve: "auto", close: "auto" },
+          ...repeated,
+          pr: { labels: [], mergeableState: "clean" }, // reviewDecision unset: the APPROVED short-circuit is absent
+        }),
+      );
+      expect(classes(plan)).toContain("close");
+      expect(classes(plan)).not.toContain("approve");
+    });
+
     it("cites the repeat-specific reason and the standard close message template, tagged closeKind: heuristic (subject to the precision breaker)", () => {
       const action = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { close: "auto" }, ...repeated, pr: { labels: [] } })).find((a) => a.actionClass === "close");
       expect(action?.reason).toContain("#42");

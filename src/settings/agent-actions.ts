@@ -1206,8 +1206,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // Never APPROVE a base-conflicting PR: it is closed below (willClose on isConflict), so a "LoopOver approves —
   // safe to merge" review on a PR we're about to close is incoherent (and a stale approval strands the PR if it
   // later goes green). A `behind`/`blocked` PR is fine to approve (it is rebased pre-review or the approval clears
-  // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report) */
-  if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && !isConflict && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
+  // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report)
+  // The same coherence rule applies to a confirmed repeat unlinked-issue offender (`unlinkedIssueMatchViolated`),
+  // whose own CLOSE branch fires below — approving a PR being closed as a repeat violation is equally incoherent.
+  // The sibling close paths already exclude it (lines 1092, 1128-1134); this guard omitted it, so a green,
+  // not-yet-approved repeat offender's PR was planned as an incoherent approve+close pair. */
+  if (reviewGood && !heldForManualReview && !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && !isConflict && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {
     actions.push({
       actionClass: "approve",
       requiresApproval: approval("approve"),

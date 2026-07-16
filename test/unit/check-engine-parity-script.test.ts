@@ -92,14 +92,16 @@ describe("check-engine-parity script", () => {
 
   it("discovers real in-scope pairs in the repository (regression guard)", () => {
     const pairs = discoverEngineParityPairs({ root: process.cwd() });
-    // Floor tracks the count of still-hand-duplicated in-scope twins, minus a small margin so unrelated
-    // additions don't trip it while a broken scanner returning ~0 still does. #6194 converged the last four
-    // settings twins (autonomy/command-authorization/contributor-blacklist/pr-type-label) onto their engine
-    // shims, dropping the floor from 14 to 10. #6204 converged two more (change-guardrail.ts and
-    // preflight-limits.ts, both in src/signals/) onto their shims, dropping the real count to 9 — the
-    // `.some()` structural checks below are the real guard.
-    expect(pairs.length).toBeGreaterThanOrEqual(9);
-    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "guardrail-config.ts")).toBe(true);
+    // Tracked the count of still-hand-duplicated in-scope twins as a floor (with margin) through #6194 (14→10),
+    // #6204 (change-guardrail.ts/preflight-limits.ts in src/signals/), and #6203 (the 9 remaining src/review/
+    // twins: advisory-ai-routing-config/cla-check/enrichment-analyzer-names/guardrail-config/
+    // linked-issue-hard-rules-config/linked-issue-label-propagation/pre-merge-checks/screenshot-table-gate/
+    // unlinked-issue-guardrail-config) — the in-scope hand-duplicated set is now genuinely empty, so `toBe(0)`
+    // is the precise (not vacuous, unlike a ">= 0" floor) regression guard: any real duplicate reappearing
+    // fails this immediately. The `.some()` checks below name specific already-converged files individually,
+    // so a regression on any ONE of them is diagnosable without re-running discovery by hand.
+    expect(pairs.length).toBe(0);
+    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "guardrail-config.ts")).toBe(false);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "change-guardrail.ts")).toBe(false);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "duplicate-winner.ts")).toBe(false);
     expect(pairs.some((pair: EngineParityPair) => pair.fileName === "check-names.ts")).toBe(false);

@@ -57,6 +57,7 @@ import { Route as DocsGithubAppRouteImport } from './routes/docs.github-app'
 import { Route as DocsFumadocsSpikeApiReferenceRouteImport } from './routes/docs.fumadocs-spike-api-reference'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
+import { Route as DocsAmsOperationsRunbookRouteImport } from './routes/docs.ams-operations-runbook'
 import { Route as DocsAmsObservabilityRouteImport } from './routes/docs.ams-observability'
 import { Route as DocsAmsDeploymentRouteImport } from './routes/docs.ams-deployment'
 import { Route as DocsAiSummariesRouteImport } from './routes/docs.ai-summaries'
@@ -330,6 +331,12 @@ const DocsBetaOnboardingRoute = DocsBetaOnboardingRouteImport.update({
   path: '/beta-onboarding',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsAmsOperationsRunbookRoute =
+  DocsAmsOperationsRunbookRouteImport.update({
+    id: '/ams-operations-runbook',
+    path: '/ams-operations-runbook',
+    getParentRoute: () => DocsRoute,
+  } as any)
 const DocsAmsObservabilityRoute = DocsAmsObservabilityRouteImport.update({
   id: '/ams-observability',
   path: '/ams-observability',
@@ -449,6 +456,7 @@ export interface FileRoutesByFullPath {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
+  '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -514,6 +522,7 @@ export interface FileRoutesByTo {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
+  '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -583,6 +592,7 @@ export interface FileRoutesById {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
+  '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/fumadocs-spike-api-reference': typeof DocsFumadocsSpikeApiReferenceRoute
@@ -653,6 +663,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
+    | '/docs/ams-operations-runbook'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -718,6 +729,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
+    | '/docs/ams-operations-runbook'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -786,6 +798,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-deployment'
     | '/docs/ams-observability'
+    | '/docs/ams-operations-runbook'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/fumadocs-spike-api-reference'
@@ -1179,6 +1192,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsBetaOnboardingRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/ams-operations-runbook': {
+      id: '/docs/ams-operations-runbook'
+      path: '/ams-operations-runbook'
+      fullPath: '/docs/ams-operations-runbook'
+      preLoaderRoute: typeof DocsAmsOperationsRunbookRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/ams-observability': {
       id: '/docs/ams-observability'
       path: '/ams-observability'
@@ -1360,6 +1380,7 @@ interface DocsRouteChildren {
   DocsAiSummariesRoute: typeof DocsAiSummariesRoute
   DocsAmsDeploymentRoute: typeof DocsAmsDeploymentRoute
   DocsAmsObservabilityRoute: typeof DocsAmsObservabilityRoute
+  DocsAmsOperationsRunbookRoute: typeof DocsAmsOperationsRunbookRoute
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsFumadocsSpikeApiReferenceRoute: typeof DocsFumadocsSpikeApiReferenceRoute
@@ -1402,6 +1423,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsAiSummariesRoute: DocsAiSummariesRoute,
   DocsAmsDeploymentRoute: DocsAmsDeploymentRoute,
   DocsAmsObservabilityRoute: DocsAmsObservabilityRoute,
+  DocsAmsOperationsRunbookRoute: DocsAmsOperationsRunbookRoute,
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsFumadocsSpikeApiReferenceRoute: DocsFumadocsSpikeApiReferenceRoute,

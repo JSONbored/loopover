@@ -42,7 +42,7 @@ const CLI_COMMAND_SPEC = {
   changelog: [],
   completion: [],
   version: [],
-  tools: [],
+  tools: ["search"],
   doctor: [],
   "init-client": [],
   "decision-pack": [],
@@ -1932,7 +1932,7 @@ async function runCli(args) {
   if (command === "--help" || command === "help") return printHelp();
   if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
   if (command === "completion") return completionCommand(args.slice(1));
-  if (command === "tools") return toolsCommand(parseOptions(args.slice(1)));
+  if (command === "tools") return toolsCommand(args.slice(1));
   if (command === "agent") return runAgentCli(args.slice(1));
   if (command === "cache") return runCacheCli(args.slice(1));
   if (command === "maintain") return maintainCli(args.slice(1));
@@ -2519,17 +2519,74 @@ function printVersion(options) {
   process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
 }
 
-function toolsCommand(options) {
+function toolsCommand(args) {
+  const subcommand = args[0];
+  if (subcommand === "search") return toolsSearchCommand(args.slice(1));
+  const options = parseOptions(args);
   const tools = STDIO_TOOL_DESCRIPTORS.map(({ name, description }) => ({ name, description }));
   const payload = { count: tools.length, tools };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
+  printToolRows(tools);
+}
+
+// `tools search <query>` — fuzzy discovery across the ~150-tool combined surface (#6300). Matches the
+// query against each registered tool's name AND description (not name-only), so "stake" surfaces
+// get_subnet_stake_quote even though "stake" is only in its description. Reuses this CLI's existing
+// levenshteinDistance for typo tolerance rather than pulling in a fuzzy-match dependency.
+function toolsSearchCommand(args) {
+  const options = parseOptions(args);
+  const query = args.find((arg) => !arg.startsWith("--"));
+  if (!query) throw new Error("Usage: loopover-mcp tools search <query> [--json]");
+  const tools = searchTools(query);
+  const payload = { query, count: tools.length, tools };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  if (tools.length === 0) {
+    process.stdout.write(`No tools match "${query}".\n`);
+    return;
+  }
+  printToolRows(tools);
+}
+
+function printToolRows(tools) {
   const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 0);
   for (const tool of tools) {
     process.stdout.write(`${tool.name.padEnd(nameWidth)}  ${tool.description}\n`);
   }
+}
+
+// Rank registered tools by how well they match the query, best first. A substring hit on the name beats
+// a substring hit on the description, which beats a typo-tolerant (Levenshtein) hit on any name/description
+// token; tools that match none of these are dropped. Ties break alphabetically for a stable listing.
+function searchTools(query) {
+  const needle = query.toLowerCase();
+  const scored = [];
+  for (const { name, description } of STDIO_TOOL_DESCRIPTORS) {
+    const score = scoreToolMatch(needle, name.toLowerCase(), description.toLowerCase());
+    if (score !== null) scored.push({ name, description, score });
+  }
+  scored.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
+  return scored.map(({ name, description }) => ({ name, description }));
+}
+
+function scoreToolMatch(needle, name, description) {
+  if (name.includes(needle)) return 0;
+  if (description.includes(needle)) return 1;
+  // Typo tolerance: compare the query to each name/description token, allowing a small edit distance that
+  // scales with the query length (a longer query tolerates more typos, a very short one stays exact-ish).
+  const budget = Math.max(1, Math.floor(needle.length / 4));
+  let best = Infinity;
+  for (const token of `${name} ${description}`.split(/[^a-z0-9]+/)) {
+    if (!token) continue;
+    const distance = levenshteinDistance(needle, token);
+    if (distance < best) best = distance;
+  }
+  return best <= budget ? 2 + best : null;
 }
 
 function completionCommand(args) {
@@ -2678,6 +2735,7 @@ function printHelp() {
   loopover-mcp --stdio
   loopover-mcp version [--json]
   loopover-mcp tools [--json]
+  loopover-mcp tools search <query> [--json]
   loopover-mcp completion bash|zsh|fish|powershell [--json]
   loopover-mcp login [--profile name] [--github-token <token>] [--json]
   loopover-mcp logout [--profile name] [--all] [--json]

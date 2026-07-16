@@ -1,0 +1,195 @@
+---
+title: Hosted discovery plane — operator guide (opt-in)
+description: How a loopover-miner instance opts into the optional hosted discovery-index plane, what it may send, and what never leaves the operator's machine.
+---
+
+Operator-facing guide for the **optional** hosted discovery-index plane. This is the client/miner
+half of that roadmap item: how a `loopover-miner` instance opts in, what it may send, and what
+never leaves the operator's machine.
+
+<Callout variant="warn" title="Provisional: opt-in wiring env vars are still TBD">
+  The request/response **contract shape**, the telemetry event schema, and the client soft-claim
+  request builder have now **shipped** as real, tested modules (see below). What remains
+  **provisional** is only the operator-facing **opt-in wiring** — the env var names further below
+  are still TBD pending the hosted server and the miner-side opt-in. Do not treat those env var
+  names as stable API yet.
+</Callout>
+
+<FeatureRow
+  items={[
+    {
+      title: "Discovery-index API contract",
+      description:
+        "DiscoveryIndexQuery / DiscoveryIndexResponse / DiscoveryIndexCandidate request/response shapes. Shipped, stable at DISCOVERY_INDEX_CONTRACT_VERSION 1 (packages/loopover-engine/src/discovery-index-contract.ts).",
+    },
+    {
+      title: "Telemetry event schema",
+      description:
+        "Anonymized telemetry event schema for the optional hosted plane. Shipped (packages/loopover-engine/src/miner-telemetry.ts).",
+    },
+    {
+      title: "Soft-claim request builder",
+      description:
+        "Client-side soft-claim coordination request builder. Shipped (packages/loopover-engine/src/discovery-soft-claim.ts).",
+    },
+    {
+      title: "Hosted server + opt-in wiring",
+      description:
+        "Still open -- the actual blocker for the opt-in mechanism below; the env var names remain TBD until it lands.",
+    },
+  ]}
+/>
+
+Part of the Miner Wave 2 discovery plane (Phase 6). Distinct from Phase 1's **local-only**
+metadata fan-out — that path never phones home today.
+
+## Default posture: opt-in (not like Orb)
+
+Two telemetry/export surfaces exist in LoopOver, and they intentionally use **opposite
+defaults**:
+
+<FeatureRow
+  items={[
+    {
+      title: "Orb fleet calibration",
+      description:
+        "src/selfhost/orb-collector.ts. Default ON once a GitHub App is configured. Opt out only via ORB_AIR_GAP=true (air-gapped / send-nothing). Precedent: review-stack self-host contract -- export is always on unless air-gapped.",
+    },
+    {
+      title: "Hosted discovery plane (this guide)",
+      description:
+        "Default OFF. Opt in explicitly before any hosted index query or plane telemetry. Precedent: hybrid, self-host-first miner deployment -- participation in a shared hosted plane is never assumed.",
+    },
+  ]}
+/>
+
+<Callout variant="warn">
+  Do **not** copy Orb's wording for this plane. Orb's header comment is explicit: "Export is
+  ALWAYS ON… there is no opt-out flag" aside from `ORB_AIR_GAP`. The discovery plane is the
+  opposite: **no hosted traffic unless the operator turns it on.**
+</Callout>
+
+## What the plane is for
+
+When enabled, a miner may query a **shared, metadata-only** discovery index instead of every
+fleet member independently fanning out GitHub search/listing calls against the same repos —
+mitigating cross-fleet rate-limit pressure.
+
+The plane:
+
+- Serves **public GitHub metadata only** (issue titles, labels, counts, timestamps, URLs — the
+  same class of fields Phase 1 already uses locally).
+- May coordinate **soft claims** across the fleet (server-side dedup is still open; the client
+  request shape has shipped).
+- Never receives source trees, diffs, tokens, or write credentials.
+
+Local discovery (`opportunity-fanout` + `opportunity-ranker`) continues to work with **zero**
+hosted configuration.
+
+## Opt-in mechanism (env var names still TBD)
+
+The request/response contract has now shipped (see the scope table above), but the
+operator-facing opt-in env vars below are **not implemented yet** — treat them as
+**documentation placeholders** for the shape operators should expect once the opt-in wiring
+lands:
+
+<FeatureRow
+  items={[
+    {
+      title: "LOOPOVER_MINER_DISCOVERY_PLANE (provisional)",
+      description:
+        "Default unset / false. Master opt-in. When not truthy (1, true, yes, on), the miner must not call the hosted index or emit discovery-plane telemetry.",
+    },
+    {
+      title: "LOOPOVER_MINER_DISCOVERY_INDEX_URL (provisional)",
+      description:
+        "Default unset. Hosted index base URL. Required when the plane is enabled; ignored when opt-in is off.",
+    },
+    {
+      title: "LOOPOVER_MINER_DISCOVERY_TELEMETRY (provisional)",
+      description:
+        "Default unset / false. Separate opt-in for anonymized operational telemetry. Plane queries can stay on while telemetry stays off.",
+    },
+  ]}
+/>
+
+**Truthy-string convention** (when implemented): `/^(1|true|yes|on)$/i`, matching other
+`LOOPOVER_*` flags in this repo.
+
+**Operator checklist (enabled plane):**
+
+**1.** Set `LOOPOVER_MINER_DISCOVERY_PLANE=true` (exact name may change).
+
+**2.** Set `LOOPOVER_MINER_DISCOVERY_INDEX_URL` to the operator-trusted index endpoint.
+
+**3.** Optionally set `LOOPOVER_MINER_DISCOVERY_TELEMETRY=true` if you want anonymized
+operational events for the hosted service — not required for index queries.
+
+**4.** Keep `GITHUB_TOKEN` (or equivalent) on the instance only; never configure tokens intended
+for the hosted plane to receive.
+
+With opt-in off (default), behavior is byte-identical to today: local SQLite ledgers, local
+fan-out, no hosted calls.
+
+## Contrast with local soft-claims today
+
+`packages/loopover-miner/lib/claim-ledger.js` records soft claims **locally only** ("never
+uploads, syncs, or phones home"). Fleet-wide coordination before work starts is what the hosted
+index adds **on top of** that ledger — only after explicit opt-in.
+
+After-the-fact duplicate adjudication (`isDuplicateClusterWinnerByClaim` in `@loopover/engine`)
+remains separate; it resolves collisions by observing what publicly landed first, not by
+preventing overlap up front.
+
+## Invariants
+
+Mirrors the [AMS deployment guide](/docs/ams-deployment)'s tone — concrete guarantees for
+operators:
+
+- **Default OFF** — no hosted discovery-index traffic and no discovery-plane telemetry unless the
+  operator opts in.
+- **Metadata-only index queries** — responses are issue/listing metadata compatible with local
+  `normalizeCandidate` shape; no source upload, no clone, no repo archive.
+- **Read-only client posture** — the miner uses GET/list/search semantics toward GitHub directly
+  (Phase 1) and toward the hosted index when enabled; the plane does not grant the miner new
+  GitHub write capability.
+- **Credentials stay local** — GitHub tokens, PATs, and actor-capable secrets are injected at
+  runtime on the operator's machine or secret store; they are **never** included in index or
+  telemetry payloads.
+- **No compensation signals in the plane** — raw reward values, wallet addresses, hotkeys, trust
+  scores, or private rankings never cross this boundary.
+- **Telemetry is a second opt-in** — even with the plane enabled, anonymized telemetry remains
+  separately gated.
+- **Anonymized identifiers only** — when telemetry ships, repo/issue correlation uses HMAC-hashed
+  identifiers keyed by a **per-instance dedicated secret** the collector never holds (same
+  posture as `getOrCreateAnonSecret` / `hmacField` in `src/selfhost/orb-collector.ts` — key
+  separation from GitHub App / webhook secrets).
+- **Low-cardinality reason buckets** — any free-text-adjacent telemetry fields use bucketed
+  categories (Orb's `bucketReasonCode` pattern), not raw maintainer or model prose.
+- **Core miner still works offline** — claims, plans, queues, and local ledgers do not require
+  the hosted plane; `loopover-miner doctor` / `status` remain no-network commands.
+
+### Never included (client → hosted plane)
+
+Inventory style matches `src/selfhost/orb-collector.ts` ("No diffs, no code…") adapted for
+discovery-plane domain:
+
+- Source file contents, patches, or diffs
+- Full issue/PR bodies or review comments
+- GitHub tokens, PATs, App private keys, or any actor-capable credential
+- Commit SHAs, branch names tied to unpublished work, or CI log excerpts
+- Operator login identities, emails, or hostnames usable as PII
+- Raw gate reasons, model transcripts, or free-text maintainer notes
+- Reward amounts, wallet addresses, hotkeys, trust scores, or private rankings
+
+### Never retained by the hosted service (server-side)
+
+The server operating doc (maintainer-only) will restate the same boundary: **never holds source
+or actor-capable credentials.** This client guide does not define server retention policy.
+
+## Related docs
+
+- [`packages/loopover-miner/docs/cross-repo-discovery-phase1.md`](https://github.com/JSONbored/loopover/blob/main/packages/loopover-miner/docs/cross-repo-discovery-phase1.md) — local, metadata-only Phase 1 discovery (no hosted plane)
+- [AMS operations runbook](/docs/ams-operations-runbook) — SQLite concurrency, corruption recovery, multi-process collisions, post-upgrade migration
+- [`packages/loopover-miner/docs/miner-goal-spec.md`](https://github.com/JSONbored/loopover/blob/main/packages/loopover-miner/docs/miner-goal-spec.md) — per-repo `.loopover-miner.yml` targeting policy
+- [AMS deployment guide](/docs/ams-deployment) — laptop vs fleet deployment and core miner invariants

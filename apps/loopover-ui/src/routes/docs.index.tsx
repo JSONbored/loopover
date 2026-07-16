@@ -80,6 +80,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/ams-sizing", label: "Resource sizing" },
       { to: "/docs/ams-config-precedence", label: "Config precedence" },
       { to: "/docs/ams-env-reference", label: "Env var reference" },
+      { to: "/docs/ams-discovery-plane", label: "Discovery plane (opt-in)" },
       { to: "/docs/self-hosting-docs-audit", label: "Self-host docs audit" },
       { to: "/docs/maintainer-install-trust", label: "Install & trust guide" },
       { to: "/docs/github-app", label: "GitHub App configuration" },

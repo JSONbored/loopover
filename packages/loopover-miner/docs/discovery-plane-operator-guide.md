@@ -1,5 +1,9 @@
 # Hosted discovery plane — operator guide (opt-in)
 
+> Also published on the docs website: [Hosted discovery plane](https://loopover.ai/docs/ams-discovery-plane)
+> (same content, rendered with search and the rest of the maintainer docs nav). This file remains
+> the canonical source and ships inside the published `@loopover/miner` package.
+
 Operator-facing guide for the **optional** Phase 6 hosted discovery-index plane ([#4250](https://github.com/JSONbored/gittensory/issues/4250)). This is the client/miner half of that roadmap item: how a `loopover-miner` instance opts in, what it may send, and what never leaves the operator's machine.
 
 > **Scope:** the request/response **contract shape**, the telemetry event schema, and the client soft-claim

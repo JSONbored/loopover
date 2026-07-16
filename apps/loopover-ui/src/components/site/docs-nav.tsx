@@ -82,6 +82,7 @@ export const docsNav: DocsGroup[] = [
           { to: "/docs/ams-sizing", label: "Resource sizing" },
           { to: "/docs/ams-config-precedence", label: "Config precedence" },
           { to: "/docs/ams-env-reference", label: "Env var reference" },
+          { to: "/docs/ams-discovery-plane", label: "Discovery plane (opt-in)" },
         ],
       },
     ],

@@ -1,5 +1,7 @@
 export type MinerDeploymentReality = {
   hasEnvRead: (name: string) => boolean;
+  /** Enumerable set of every real env-var read, for the reverse audit direction (#6601). */
+  envReads: Iterable<string>;
   pathExists: (relativePath: string) => boolean;
   isRegisteredCommand: (name: string) => boolean;
 };

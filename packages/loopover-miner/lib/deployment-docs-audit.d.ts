@@ -8,6 +8,9 @@ export type DeploymentDocsClaims = {
 /** Filesystem-independent view of the live source tree the parsed claims are checked against. */
 export type DeploymentDocsReality = {
   hasEnvRead: (name: string) => boolean;
+  /** The enumerable set of every real env-var read, so the reverse audit direction (#6601) can diff a real
+   *  `LOOPOVER_MINER_*` read that DEPLOYMENT.md never documents, not just probe one documented name at a time. */
+  envReads: Iterable<string>;
   pathExists: (relativePath: string) => boolean;
   isRegisteredCommand: (name: string) => boolean;
 };

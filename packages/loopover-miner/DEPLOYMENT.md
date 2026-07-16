@@ -186,6 +186,24 @@ See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational s
 See [`docs/sizing.md`](docs/sizing.md) for measured CPU/RAM/disk numbers for laptop mode vs. fleet mode at
 different worker counts, with the exact commands used to reproduce them.
 
+## Environment variable reference
+
+All optional. The per-store `LOOPOVER_MINER_<NAME>_DB` path overrides (e.g. `LOOPOVER_MINER_PORTFOLIO_QUEUE_DB`)
+and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; the rest are:
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `LOOPOVER_MINER_AMS_POLICY_PATH` | `lib/ams-policy.js` | Path to the operator's `.loopover-ams.yml` policy spec. |
+| `LOOPOVER_MINER_AMS_COLLECTOR_URL`, `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `lib/orb-export.js` | Endpoint + bearer for pushing fleet state to an AMS/Orb collector. |
+| `LOOPOVER_MINER_CHAT_ACTIONS` | `lib/chat-action-dispatch.js` | Truthy string enables the chat-action-dispatch flag (off by default). |
+| `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` | `lib/store-maintenance.js` | Opt-in ledger retention window / row cap. |
+| `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.js` | Log verbosity override. |
+| `LOOPOVER_MINER_NO_UPDATE_CHECK` | `lib/update-check.js` | Truthy string disables the background update check. |
+| `LOOPOVER_MINER_REPO_CLONE_DIR` | `lib/repo-clone.js` | Base directory for cloned target repos. |
+| `LOOPOVER_MINER_WORKTREE_DIR` | `lib/worktree-allocator.js` | Base directory for per-attempt git worktrees. |
+| `LOOPOVER_MINER_SENTRY_DSN`, `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `lib/sentry.js` | Optional Sentry error reporting (DSN + environment tag). |
+| `LOOPOVER_MINER_VERSION` | `lib/version.js` | Overrides the reported release id (e.g. for a custom build). |
+
 ## Optional hosted discovery plane (opt-in)
 
 The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/gittensory/issues/4309), placeholder until [#4300](https://github.com/JSONbored/gittensory/issues/4300) / [#4301](https://github.com/JSONbored/gittensory/issues/4301) / [#4302](https://github.com/JSONbored/gittensory/issues/4302) ship).

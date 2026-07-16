@@ -43,6 +43,7 @@ function buildLiveReality(): DeploymentDocsReality {
   const registered = scanRegisteredCommands(readFileSync(BIN_ENTRY, "utf8"));
   return {
     hasEnvRead: (name) => envReads.has(name),
+    envReads,
     pathExists: (relativePath) => existsSync(resolve(MINER_DIR, relativePath)),
     isRegisteredCommand: (name) => registered.has(name),
   };
@@ -50,6 +51,7 @@ function buildLiveReality(): DeploymentDocsReality {
 
 const ALWAYS_IN_SYNC: DeploymentDocsReality = {
   hasEnvRead: () => true,
+  envReads: [],
   pathExists: () => true,
   isRegisteredCommand: () => true,
 };
@@ -184,11 +186,46 @@ describe("loopover-miner DEPLOYMENT.md docs-accuracy audit (#5180)", () => {
     expect(result.failures[0]).toContain("not registered");
   });
 
+  it("reverse (#6601): flags a real LOOPOVER_MINER_* read that DEPLOYMENT.md never documents", () => {
+    const result = auditDeploymentDocs(
+      { envVars: [], filePaths: [], subcommands: [] },
+      { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_LOG_LEVEL"] },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toContain("LOOPOVER_MINER_LOG_LEVEL");
+    expect(result.failures[0]).toContain("is not documented");
+  });
+
+  it("reverse (#6601): does NOT flag a real read that IS documented", () => {
+    const result = auditDeploymentDocs(
+      { envVars: ["LOOPOVER_MINER_LOG_LEVEL"], filePaths: [], subcommands: [] },
+      { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_LOG_LEVEL"] },
+    );
+    expect(result).toEqual({ ok: true, failures: [] });
+  });
+
+  it("reverse (#6601): does NOT flag an undocumented LOOPOVER_MINER_*_DB read (generic-pattern exemption)", () => {
+    const result = auditDeploymentDocs(
+      { envVars: [], filePaths: [], subcommands: [] },
+      { ...ALWAYS_IN_SYNC, envReads: ["LOOPOVER_MINER_PORTFOLIO_QUEUE_DB"] },
+    );
+    expect(result).toEqual({ ok: true, failures: [] });
+  });
+
+  it("reverse (#6601): does NOT flag an undocumented bare MINER_* read (no LOOPOVER_MINER_ prefix)", () => {
+    const result = auditDeploymentDocs(
+      { envVars: [], filePaths: [], subcommands: [] },
+      { ...ALWAYS_IN_SYNC, envReads: ["MINER_PR_OUTCOME_EVENT"] },
+    );
+    expect(result).toEqual({ ok: true, failures: [] });
+  });
+
   it("assertDeploymentDocsInSync throws and names every stale claim at once", () => {
     expect(() =>
       assertDeploymentDocsInSync(
         { envVars: ["LOOPOVER_MINER_GONE"], filePaths: ["gone.yml"], subcommands: ["gone"] },
-        { hasEnvRead: () => false, pathExists: () => false, isRegisteredCommand: () => false },
+        { hasEnvRead: () => false, envReads: [], pathExists: () => false, isRegisteredCommand: () => false },
       ),
     ).toThrow(/LOOPOVER_MINER_GONE[\s\S]*gone\.yml[\s\S]*loopover-miner gone/);
   });

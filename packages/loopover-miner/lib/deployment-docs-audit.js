@@ -102,6 +102,18 @@ export function auditDeploymentDocs(claims, reality) {
       );
     }
   }
+  // Reverse direction (#6601): a real `LOOPOVER_MINER_*` env-var read that DEPLOYMENT.md never documents. Scoped
+  // to the `LOOPOVER_MINER_` prefix and excluding the `*_DB` family (documented generically via one pattern
+  // sentence, not enumerated) and the bare `MINER_*` alias namespace (which also matches non-env event/metric/
+  // filename constants). `reality.envReads` is the enumerable set of real reads the forward `hasEnvRead` probes.
+  const documented = new Set(claims.envVars);
+  for (const name of reality.envReads) {
+    if (name.startsWith("LOOPOVER_MINER_") && !name.endsWith("_DB") && !documented.has(name)) {
+      failures.push(
+        `env var "${name}" is read under packages/loopover-miner/** but is not documented in DEPLOYMENT.md`,
+      );
+    }
+  }
   return { ok: failures.length === 0, failures };
 }
 

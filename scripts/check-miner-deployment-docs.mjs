@@ -39,6 +39,9 @@ export function buildLiveMinerDeploymentReality() {
   const registered = scanRegisteredCommands(readFileSync(BIN_ENTRY, "utf8"));
   return {
     hasEnvRead: (name) => envReads.has(name),
+    // The full enumerable read-set (#6601), so auditDeploymentDocs can diff the reverse direction — a real
+    // `LOOPOVER_MINER_*` read missing from DEPLOYMENT.md — not just probe one documented name at a time.
+    envReads,
     pathExists: (relativePath) => existsSync(resolve(MINER_DIR, relativePath)),
     isRegisteredCommand: (name) => registered.has(name),
   };

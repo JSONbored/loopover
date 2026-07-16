@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildLiveMinerDeploymentReality,
   main,
   runMinerDeploymentDocsAudit,
 } from "../../scripts/check-miner-deployment-docs.mjs";
@@ -12,6 +13,16 @@ describe("check-miner-deployment-docs (#6158)", () => {
     expect(result.claimCounts.envVars).toBeGreaterThan(0);
     expect(result.claimCounts.filePaths).toBeGreaterThan(0);
     expect(result.claimCounts.subcommands).toBeGreaterThan(0);
+  });
+
+  it("exposes the live env-var read set as an enumerable field for the reverse audit (#6601)", () => {
+    const reality = buildLiveMinerDeploymentReality();
+    const reads = [...reality.envReads];
+    // Populated, and includes a var the reverse check now requires DEPLOYMENT.md to document.
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads).toContain("LOOPOVER_MINER_LOG_LEVEL");
+    // The enumerable set and the boolean probe agree.
+    expect(reads.every((name) => reality.hasEnvRead(name))).toBe(true);
   });
 
   it("fails when env-var backing reads are forced missing (drift fixture)", () => {

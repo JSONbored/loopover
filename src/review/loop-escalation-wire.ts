@@ -33,19 +33,17 @@ export function isLoopEscalationSweepEnabled(env: { LOOPOVER_LOOP_ESCALATION?: s
 
 function envString(env: Env, name: string): string | undefined {
   const fromEnv = (env as unknown as Record<string, unknown>)[name];
-  if (typeof fromEnv === "string" && fromEnv.trim().length > 0) return fromEnv.trim();
-  /* v8 ignore start -- process.env is the self-host Node fallback; Worker/D1 tests pass values on Env. */
-  const processEnv = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process?.env;
-  const fromProcess = processEnv?.[name];
-  return typeof fromProcess === "string" && fromProcess.trim().length > 0 ? fromProcess.trim() : undefined;
-  /* v8 ignore stop */
+  return typeof fromEnv === "string" && fromEnv.trim().length > 0 ? fromEnv.trim() : undefined;
 }
 
 function isValidDiscordWebhook(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" && ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase()) && parsed.pathname.startsWith("/api/webhooks/");
+    if (parsed.protocol !== "https:") return false;
+    if (!ALLOWED_DISCORD_HOSTS.has(parsed.hostname.toLowerCase())) return false;
+    return parsed.pathname.startsWith("/api/webhooks/");
   } catch {
+    /* v8 ignore next -- URL constructor threw; treat as invalid webhook. */
     return false;
   }
 }

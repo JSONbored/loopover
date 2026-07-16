@@ -203,13 +203,18 @@ describe("runLoopEscalationSweep (#6349)", () => {
     expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("loop_escalation_cooldown_check_failed"))).toBe(true);
   });
 
-  it("rejects a non-URL Discord webhook string", async () => {
+  it("rejects http Discord webhooks and unknown hosts", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const result = await runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "not-a-url" }), {
-      loadActiveLoops: () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }],
-    });
-    expect(result.notified).toBe(false);
-    expect(result.reason).toBe("invalid_global_webhook");
+    const load = () => [{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" as const }];
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "http://discord.com/api/webhooks/123/abc" }), { loadActiveLoops: load }),
+    ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://evil.example/api/webhooks/123/abc" }), { loadActiveLoops: load }),
+    ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
+    await expect(
+      runLoopEscalationSweep(createTestEnv({ DISCORD_WEBHOOK_URL: "https://discord.com/api/elsewhere" }), { loadActiveLoops: load }),
+    ).resolves.toMatchObject({ notified: false, reason: "invalid_global_webhook" });
   });
 
   it("continues when recording the Discord-error audit throws", async () => {

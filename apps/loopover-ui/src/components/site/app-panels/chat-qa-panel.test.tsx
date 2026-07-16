@@ -14,7 +14,9 @@ const ELIGIBLE = [
 ];
 
 async function askQuestion(question = "Why is this blocked?") {
-  fireEvent.change(screen.getByPlaceholderText(/why is this pr blocked/i), { target: { value: question } });
+  fireEvent.change(screen.getByPlaceholderText(/why is this pr blocked/i), {
+    target: { value: question },
+  });
   fireEvent.click(screen.getByRole("button", { name: /ask/i }));
 }
 
@@ -25,7 +27,9 @@ describe("ChatQaPanel (#6489)", () => {
 
   it("renders nothing at all when no PR in view has chatQa enabled (not a disabled-looking version of the panel)", () => {
     const { container } = render(
-      <ChatQaPanel reviewability={[{ pr: "acme/widgets#2", title: "Fix flaky test", chatQaEnabled: false }]} />,
+      <ChatQaPanel
+        reviewability={[{ pr: "acme/widgets#2", title: "Fix flaky test", chatQaEnabled: false }]}
+      />,
     );
     expect(container.firstChild).toBeNull();
     expect(apiFetch).not.toHaveBeenCalled();
@@ -43,21 +47,42 @@ describe("ChatQaPanel (#6489)", () => {
   });
 
   it("posts the question to the selected PR's chat-qa route and renders an 'ok' answer", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "ok", model: "test-model", estimatedNeurons: 12, text: "This PR is blocked on a failing check." } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "ok",
+        model: "test-model",
+        estimatedNeurons: 12,
+        text: "This PR is blocked on a failing check.",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion("Why is this blocked?");
 
-    await waitFor(() => expect(screen.getByText("This PR is blocked on a failing check.")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("This PR is blocked on a failing check.")).toBeTruthy(),
+    );
     expect(screen.getByText("answered")).toBeTruthy();
     expect(screen.getByText("test-model")).toBeTruthy();
     expect(apiFetch).toHaveBeenCalledWith(
       "https://api.test/v1/repos/acme/widgets/pulls/1/chat-qa",
-      expect.objectContaining({ method: "POST", label: "Chat Q&A", body: JSON.stringify({ question: "Why is this blocked?" }) }),
+      expect.objectContaining({
+        method: "POST",
+        label: "Chat Q&A",
+        body: JSON.stringify({ question: "Why is this blocked?" }),
+      }),
     );
   });
 
   it("renders the 'disabled' status distinctly", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "disabled", reason: "Chat Q&A is not enabled on this instance (settings.advisoryAiRouting.chatQa is off)." } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "disabled",
+        reason:
+          "Chat Q&A is not enabled on this instance (settings.advisoryAiRouting.chatQa is off).",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Not enabled")).toBeTruthy());
@@ -65,7 +90,13 @@ describe("ChatQaPanel (#6489)", () => {
   });
 
   it("renders the 'unavailable' status distinctly", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "unavailable", reason: "Local advisory inference (env.AI_ADVISORY) is not configured." } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "unavailable",
+        reason: "Local advisory inference (env.AI_ADVISORY) is not configured.",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Unavailable")).toBeTruthy());
@@ -75,7 +106,12 @@ describe("ChatQaPanel (#6489)", () => {
   it("renders the 'declined' status with its fallback command suggestion", async () => {
     apiFetch.mockResolvedValue({
       ok: true,
-      data: { status: "declined", reason: "No cached deterministic facts are available.", suggestion: "Run `@loopover preflight` or `@loopover blockers` for the deterministic readiness facts." },
+      data: {
+        status: "declined",
+        reason: "No cached deterministic facts are available.",
+        suggestion:
+          "Run `@loopover preflight` or `@loopover blockers` for the deterministic readiness facts.",
+      },
     });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
@@ -84,7 +120,15 @@ describe("ChatQaPanel (#6489)", () => {
   });
 
   it("renders the 'quota_exceeded' status with the remaining budget", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "quota_exceeded", model: "test-model", estimatedNeurons: 900, remainingBudget: 0 } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "quota_exceeded",
+        model: "test-model",
+        estimatedNeurons: 900,
+        remainingBudget: 0,
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Daily AI budget reached")).toBeTruthy());
@@ -92,14 +136,30 @@ describe("ChatQaPanel (#6489)", () => {
   });
 
   it("renders the 'unsafe' status distinctly", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "unsafe", model: "test-model", estimatedNeurons: 20, reason: "chat answer failed public sanitizer" } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "unsafe",
+        model: "test-model",
+        estimatedNeurons: 20,
+        reason: "chat answer failed public sanitizer",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Answer withheld")).toBeTruthy());
   });
 
   it("renders the 'error' status distinctly", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "error", model: "test-model", estimatedNeurons: 0, reason: "empty_chat_answer" } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "error",
+        model: "test-model",
+        estimatedNeurons: 0,
+        reason: "empty_chat_answer",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Answer failed")).toBeTruthy());
@@ -107,7 +167,14 @@ describe("ChatQaPanel (#6489)", () => {
   });
 
   it("renders the route-local 'rate_limited' status distinctly", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { status: "rate_limited", reason: "The chat command has reached its rate limit (2 within 24h), shared with the @loopover chat PR-comment command." } });
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        status: "rate_limited",
+        reason:
+          "The chat command has reached its rate limit (2 within 24h), shared with the @loopover chat PR-comment command.",
+      },
+    });
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     await askQuestion();
     await waitFor(() => expect(screen.getByText("Rate limited")).toBeTruthy());
@@ -124,7 +191,11 @@ describe("ChatQaPanel (#6489)", () => {
   it("disables the Ask button until a question is entered", () => {
     render(<ChatQaPanel reviewability={ELIGIBLE} />);
     expect((screen.getByRole("button", { name: /ask/i }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(screen.getByPlaceholderText(/why is this pr blocked/i), { target: { value: "Why?" } });
-    expect((screen.getByRole("button", { name: /ask/i }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(screen.getByPlaceholderText(/why is this pr blocked/i), {
+      target: { value: "Why?" },
+    });
+    expect((screen.getByRole("button", { name: /ask/i }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });

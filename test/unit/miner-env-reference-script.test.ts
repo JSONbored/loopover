@@ -6,7 +6,9 @@ import {
   collectMinerEnvVars,
   isMinerEnvVar,
   renderMinerEnvReferenceMarkdown,
+  renderMinerEnvReferenceModule,
   writeMinerEnvReference,
+  writeMinerEnvReferenceModule,
 } from "../../packages/loopover-miner/scripts/generate-env-reference.mjs";
 
 function fixtureRoot(): string {
@@ -113,6 +115,53 @@ describe("generate-env-reference (#5179)", () => {
     writeMinerEnvReference({ rootDir: root, outputPath });
     const first = readFileSync(join(root, outputPath), "utf8");
     writeMinerEnvReference({ rootDir: root, outputPath });
+    const second = readFileSync(join(root, outputPath), "utf8");
+    expect(second).toBe(first);
+  });
+
+  it("renders a generated TS module with a typed rows array and a joined markdown constant (#6028)", () => {
+    const output = renderMinerEnvReferenceModule([
+      { name: "LOOPOVER_MINER_CONFIG_DIR", firstReference: "lib/a.js", defaultValue: "" },
+      { name: "LOOPOVER_MINER_RUN_STATE_DB", firstReference: "lib/run-state.js", defaultValue: null },
+    ]);
+    expect(output).toContain("export const AMS_ENV_REFERENCE_ROWS");
+    expect(output).toContain("export const AMS_ENV_REFERENCE_MARKDOWN");
+    expect(output).toContain('name: "LOOPOVER_MINER_CONFIG_DIR"');
+    expect(output).toContain('defaultValue: ""');
+    expect(output).toContain("defaultValue: null");
+    expect(output).toContain("# loopover-miner environment variable reference");
+  });
+
+  it("writes the generated TS module and reports stale output in check mode (#6028)", () => {
+    const root = fixtureRoot();
+    const outputPath = "apps/loopover-ui/src/lib/ams-env-reference.ts";
+    const outputAbs = join(root, outputPath);
+
+    const written = writeMinerEnvReferenceModule({ rootDir: root, outputPath });
+    expect(written.changed).toBe(true);
+    expect(existsSync(outputAbs)).toBe(true);
+    const generated = readFileSync(outputAbs, "utf8");
+    expect(generated).toContain("AMS_ENV_REFERENCE_MARKDOWN");
+    expect(generated).toContain("LOOPOVER_MINER_CONFIG_DIR");
+
+    expect(writeMinerEnvReferenceModule({ rootDir: root, outputPath, check: true }).changed).toBe(false);
+
+    writeFileSync(outputAbs, "stale\n");
+    const stale = writeMinerEnvReferenceModule({ rootDir: root, outputPath, check: true });
+    expect(stale.changed).toBe(true);
+    expect(readFileSync(outputAbs, "utf8")).toBe("stale\n");
+
+    const rewritten = writeMinerEnvReferenceModule({ rootDir: root, outputPath });
+    expect(rewritten.changed).toBe(true);
+    expect(readFileSync(outputAbs, "utf8")).toBe(generated);
+  });
+
+  it("REGRESSION: TS module output is byte-for-byte deterministic across two runs (#6028)", () => {
+    const root = fixtureRoot();
+    const outputPath = "apps/loopover-ui/src/lib/ams-env-reference.ts";
+    writeMinerEnvReferenceModule({ rootDir: root, outputPath });
+    const first = readFileSync(join(root, outputPath), "utf8");
+    writeMinerEnvReferenceModule({ rootDir: root, outputPath });
     const second = readFileSync(join(root, outputPath), "utf8");
     expect(second).toBe(first);
   });

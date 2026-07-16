@@ -1,0 +1,24 @@
+---
+title: AMS environment variable reference
+description: Every LOOPOVER_MINER_* / MINER_* env var the miner reads, where it's first referenced in code, and its default -- generated from source, never hand-copied.
+---
+
+import { AMS_ENV_REFERENCE_MARKDOWN } from "@/lib/ams-env-reference";
+
+AMS's environment-variable reference: every `LOOPOVER_MINER_*` / `MINER_*` var the miner reads,
+where it's first referenced in code, and its default. This is the AMS-side counterpart to
+[Self-hosting configuration](/docs/self-hosting-configuration)'s generated env reference — see
+the [AMS deployment guide](/docs/ams-deployment) and [AMS config
+precedence](/docs/ams-config-precedence) for how these variables fit into the broader
+laptop/fleet setup and precedence model.
+
+<Callout variant="note">
+  This table is generated from `env.NAME` reads (and the `resolveLocalStoreDbPath` /
+  `LOOPOVER_MINER_*_DB` per-store override pattern) under
+  `packages/loopover-miner/{bin,lib,scripts}`. It intentionally includes names, first source
+  references, and defaults only, never example values — and it's checked for drift in CI
+  (`npm run miner:env-reference:check`), so a new `LOOPOVER_MINER_*`/`MINER_*` read that isn't
+  reflected here fails the build until this reference is regenerated.
+</Callout>
+
+<CodeBlock filename="AMS env vars" code={AMS_ENV_REFERENCE_MARKDOWN} />

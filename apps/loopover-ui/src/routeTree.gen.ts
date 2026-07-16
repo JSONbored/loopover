@@ -61,6 +61,7 @@ import { Route as DocsAmsUnattendedSchedulingRouteImport } from './routes/docs.a
 import { Route as DocsAmsSizingRouteImport } from './routes/docs.ams-sizing'
 import { Route as DocsAmsOperationsRunbookRouteImport } from './routes/docs.ams-operations-runbook'
 import { Route as DocsAmsObservabilityRouteImport } from './routes/docs.ams-observability'
+import { Route as DocsAmsEnvReferenceRouteImport } from './routes/docs.ams-env-reference'
 import { Route as DocsAmsDeploymentRouteImport } from './routes/docs.ams-deployment'
 import { Route as DocsAmsConfigPrecedenceRouteImport } from './routes/docs.ams-config-precedence'
 import { Route as DocsAiSummariesRouteImport } from './routes/docs.ai-summaries'
@@ -356,6 +357,11 @@ const DocsAmsObservabilityRoute = DocsAmsObservabilityRouteImport.update({
   path: '/ams-observability',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsAmsEnvReferenceRoute = DocsAmsEnvReferenceRouteImport.update({
+  id: '/ams-env-reference',
+  path: '/ams-env-reference',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsAmsDeploymentRoute = DocsAmsDeploymentRouteImport.update({
   id: '/ams-deployment',
   path: '/ams-deployment',
@@ -475,6 +481,7 @@ export interface FileRoutesByFullPath {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-config-precedence': typeof DocsAmsConfigPrecedenceRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
+  '/docs/ams-env-reference': typeof DocsAmsEnvReferenceRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
@@ -544,6 +551,7 @@ export interface FileRoutesByTo {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-config-precedence': typeof DocsAmsConfigPrecedenceRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
+  '/docs/ams-env-reference': typeof DocsAmsEnvReferenceRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
@@ -617,6 +625,7 @@ export interface FileRoutesById {
   '/docs/ai-summaries': typeof DocsAiSummariesRoute
   '/docs/ams-config-precedence': typeof DocsAmsConfigPrecedenceRoute
   '/docs/ams-deployment': typeof DocsAmsDeploymentRoute
+  '/docs/ams-env-reference': typeof DocsAmsEnvReferenceRoute
   '/docs/ams-observability': typeof DocsAmsObservabilityRoute
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
@@ -691,6 +700,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-config-precedence'
     | '/docs/ams-deployment'
+    | '/docs/ams-env-reference'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
@@ -760,6 +770,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-config-precedence'
     | '/docs/ams-deployment'
+    | '/docs/ams-env-reference'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
@@ -832,6 +843,7 @@ export interface FileRouteTypes {
     | '/docs/ai-summaries'
     | '/docs/ams-config-precedence'
     | '/docs/ams-deployment'
+    | '/docs/ams-env-reference'
     | '/docs/ams-observability'
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
@@ -1257,6 +1269,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsAmsObservabilityRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/ams-env-reference': {
+      id: '/docs/ams-env-reference'
+      path: '/ams-env-reference'
+      fullPath: '/docs/ams-env-reference'
+      preLoaderRoute: typeof DocsAmsEnvReferenceRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/ams-deployment': {
       id: '/docs/ams-deployment'
       path: '/ams-deployment'
@@ -1438,6 +1457,7 @@ interface DocsRouteChildren {
   DocsAiSummariesRoute: typeof DocsAiSummariesRoute
   DocsAmsConfigPrecedenceRoute: typeof DocsAmsConfigPrecedenceRoute
   DocsAmsDeploymentRoute: typeof DocsAmsDeploymentRoute
+  DocsAmsEnvReferenceRoute: typeof DocsAmsEnvReferenceRoute
   DocsAmsObservabilityRoute: typeof DocsAmsObservabilityRoute
   DocsAmsOperationsRunbookRoute: typeof DocsAmsOperationsRunbookRoute
   DocsAmsSizingRoute: typeof DocsAmsSizingRoute
@@ -1484,6 +1504,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsAiSummariesRoute: DocsAiSummariesRoute,
   DocsAmsConfigPrecedenceRoute: DocsAmsConfigPrecedenceRoute,
   DocsAmsDeploymentRoute: DocsAmsDeploymentRoute,
+  DocsAmsEnvReferenceRoute: DocsAmsEnvReferenceRoute,
   DocsAmsObservabilityRoute: DocsAmsObservabilityRoute,
   DocsAmsOperationsRunbookRoute: DocsAmsOperationsRunbookRoute,
   DocsAmsSizingRoute: DocsAmsSizingRoute,

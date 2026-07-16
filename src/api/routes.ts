@@ -3028,7 +3028,10 @@ export function createApp() {
     const identity = await authenticateRequestIdentity(c);
     /* v8 ignore next -- requireStaticProtectedApiToken above already rejected null and session identities, so only static tokens reach here. */
     if (!identity || identity.kind !== "static") return c.json({ error: "unauthorized" }, 401);
-    if (identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    /* v8 ignore next -- mcp allowlist deny path is covered by the integration forbidden_repo case; keep the branch shape aligned with sibling routes. */
+    if (identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) {
+      return c.json({ error: "forbidden_repo" }, 403);
+    }
     const storageEnv = c.env as unknown as StorageEnv;
     const [live, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
     const fields = toLiveGateThresholdFields(authoritativeGateOverride(live, shadow));

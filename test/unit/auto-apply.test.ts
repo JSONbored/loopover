@@ -46,6 +46,16 @@ describe("live gate threshold projection (#6486)", () => {
       scope_cap_lines: null,
     });
     expect(toLiveGateThresholdFields(authoritativeGateOverride(null, null))).toBeNull();
+    expect(toLiveGateThresholdFields(null)).toBeNull();
+  });
+
+  it("projects a scopeCap-only override and rejects an empty override object", () => {
+    expect(toLiveGateThresholdFields({ scopeCap: { files: 4, lines: 120 } })).toEqual({
+      confidence_floor: null,
+      scope_cap_files: 4,
+      scope_cap_lines: 120,
+    });
+    expect(toLiveGateThresholdFields({})).toBeNull();
   });
 });
 

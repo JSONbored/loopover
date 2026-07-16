@@ -36,7 +36,6 @@ function normalizeLoadedSettings(data: MaintainerSettingsEditable): MaintainerSe
     autonomy: data.autonomy ?? {},
     agentPaused: data.agentPaused ?? false,
     agentDryRun: data.agentDryRun ?? false,
-    autoMaintain: data.autoMaintain ?? { requireApprovals: 1, mergeMethod: "squash" },
   };
 }
 

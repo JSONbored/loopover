@@ -1749,6 +1749,20 @@ export const LiveGateThresholdsResponseSchema = z
   })
   .openapi("LiveGateThresholdsResponse");
 
+export const GateConfigEffectiveResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    effective: z.object({
+      confidenceFloor: z.number().nullable(),
+      scopeCap: z.object({
+        files: z.number().int().nullable(),
+        lines: z.number().int().nullable(),
+      }),
+    }),
+    shadowPending: z.boolean(),
+  })
+  .openapi("GateConfigEffectiveResponse");
+
 export const BurdenForecastSchema = z
   .object({
     repoFullName: z.string(),

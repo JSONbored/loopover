@@ -31,6 +31,7 @@ import {
   InstallationRepairSchema,
   IssueQualityReportSchema,
   IssueQualityResponseSchema,
+  GateConfigEffectiveResponseSchema,
   LabelAuditSchema,
   LaneAdviceSchema,
   LiveGateThresholdsResponseSchema,
@@ -150,6 +151,7 @@ export function buildOpenApiSpec() {
   registry.register("ScorePreview", ScorePreviewSchema);
   registry.register("IssueQualityReport", IssueQualityReportSchema);
   registry.register("IssueQualityResponse", IssueQualityResponseSchema);
+  registry.register("GateConfigEffectiveResponse", GateConfigEffectiveResponseSchema);
   registry.register("LiveGateThresholdsResponse", LiveGateThresholdsResponseSchema);
   registry.register("BurdenForecast", BurdenForecastSchema);
   registry.register("ContributorScoringProfile", ContributorScoringProfileSchema);
@@ -421,6 +423,20 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "Cached or computed issue quality report for the repo", content: { "application/json": { schema: IssueQualityResponseSchema } } },
       404: { description: "Repo is unknown or has no issue-quality coverage yet" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/repos/{owner}/{repo}/gate-config/effective",
+    summary: "Current effective self-tuned gate config for a repo (#6247)",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: {
+        description: "Effective TunableOverride values (confidenceFloor / scopeCap.files / scopeCap.lines) with a shadowPending flag — never the raw override_audit history",
+        content: { "application/json": { schema: GateConfigEffectiveResponseSchema } },
+      },
+      401: { description: "Missing or invalid static protected API token" },
+      403: { description: "Static mcp credential is outside MCP_READ_REPO_ALLOWLIST for this repo" },
     },
   });
   registry.registerPath({

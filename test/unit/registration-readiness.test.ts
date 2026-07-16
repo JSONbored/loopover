@@ -106,6 +106,8 @@ describe("buildRegistrationReadiness", () => {
     });
     expect(report.queueHealth.level).toBe("low");
     expect(report.testCoverageHealth.requiredGate).toContain("npm run test:ci");
+    expect(report.testCoverageHealth.requiredGate).toContain("patch (changed-lines) coverage >= 99%");
+    expect(report.testCoverageHealth.requiredGate).not.toContain("global coverage >= 95%");
     expect(report.blockers).toHaveLength(0);
     expect(report.githubApp.warnings).toHaveLength(0);
     expect(report.labelPolicy.trustedPipelineReady).toBe(true);

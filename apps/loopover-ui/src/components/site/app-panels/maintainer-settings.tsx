@@ -8,7 +8,6 @@ import { extractPreviewRepoOptions, splitRepoFullName } from "@/lib/maintainer-s
 import {
   buildMaintainerSettingsSavePayload,
   type AgentActionClass,
-  type AutoMergeMethod,
   type AutonomyLevel,
   type CommandRole,
   type GateMode,
@@ -195,10 +194,6 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
             autonomy: result.data.autonomy ?? {},
             agentPaused: result.data.agentPaused ?? false,
             agentDryRun: result.data.agentDryRun ?? false,
-            autoMaintain: result.data.autoMaintain ?? {
-              requireApprovals: 1,
-              mergeMethod: "squash",
-            },
           }
         : null,
     );
@@ -388,41 +383,8 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
                 </label>
               ))}
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <label className="block">
-                <span className={LABEL_CLASS}>Approvals before auto-merge</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={settings.autoMaintain.requireApprovals}
-                  onChange={(event) =>
-                    setField("autoMaintain", {
-                      ...settings.autoMaintain,
-                      requireApprovals: Math.max(0, Math.min(10, Number(event.target.value) || 0)),
-                    })
-                  }
-                  className={FIELD_CLASS}
-                />
-              </label>
-              <label className="block">
-                <span className={LABEL_CLASS}>Merge method</span>
-                <select
-                  value={settings.autoMaintain.mergeMethod}
-                  onChange={(event) =>
-                    setField("autoMaintain", {
-                      ...settings.autoMaintain,
-                      mergeMethod: event.target.value as AutoMergeMethod,
-                    })
-                  }
-                  className={FIELD_CLASS}
-                >
-                  <option value="merge">merge</option>
-                  <option value="squash">squash</option>
-                  <option value="rebase">rebase</option>
-                </select>
-              </label>
-            </div>
+            {/* #6445: "Approvals before auto-merge" / "Merge method" removed -- autoMaintain is no longer
+                DB-backed, config-as-code only via .loopover.yml's settings: block now. */}
             <div className="mt-3 flex flex-wrap gap-6">
               <ToggleControl
                 label="Pause all agent actions (kill-switch)"

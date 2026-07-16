@@ -253,6 +253,19 @@ describe("api route guards and error branches", () => {
     expect(victimScorePreview.status).toBe(403);
     await expect(victimScorePreview.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
 
+    // #6621: /v1/scoring/eligibility-plan applies the same contributor gate as /v1/scoring/preview.
+    const victimEligibilityPlan = await app.request(
+      "/v1/scoring/eligibility-plan",
+      {
+        method: "POST",
+        headers: sessionHeaders,
+        body: JSON.stringify({ repoFullName: "owner/private-repo", contributorLogin: "victim", metadataOnly: true }),
+      },
+      env,
+    );
+    expect(victimEligibilityPlan.status).toBe(403);
+    await expect(victimEligibilityPlan.json()).resolves.toMatchObject({ error: "forbidden_contributor" });
+
     const victimBranchPayload = {
       login: "victim",
       repoFullName: "owner/private-repo",

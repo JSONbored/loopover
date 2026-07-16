@@ -6,10 +6,10 @@
 // genuinely separate axis combined with this score at the SURFACING layer (a later sub-issue, #4744) —
 // never blended into `improvementScore` itself.
 //
-// Activation wiring already exists (#4738/#4753: `isImprovementSignalEnabled` + the `improvementSignal`
-// ConvergedFeatureKey) but nothing calls `resolveConvergedFeature` for it yet, and this module is not an
-// exception — it is a pure, standalone computation consumed only by its own tests until the panel-surfacing
-// sub-issue (#4744) wires a caller. It carries NO gate/blocker power (epic design constraint 2): unlike
+// Activation wiring exists (#4738/#4753: `isImprovementSignalEnabled` + the `improvementSignal`
+// ConvergedFeatureKey) and is now live: this remains a pure, standalone computation, but its
+// `buildStructuralImprovementAssessment` is called by src/queue/processors.ts (gated on the resolved feature
+// value), and the panel-surfacing sub-issue (#4744) has landed. It carries NO gate/blocker power (epic design constraint 2): unlike
 // slop.ts's header comment ("the ONLY thing allowed to gate"), `improvementScore` must never appear in
 // evaluateGateCheck or any blocker path.
 //

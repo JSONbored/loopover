@@ -45,6 +45,8 @@ import {
   upsertRepositoryFromGitHub,
   upsertRepositorySettings,
 } from "../../src/db/repositories";
+import { resolveRepositorySettings } from "../../src/settings/repository-settings";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 describe("data spine repositories", () => {
@@ -297,11 +299,13 @@ describe("data spine repositories", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/autonomyrepo", autonomy: { merge: "observe" } });
     expect((await getRepositorySettings(env, "owner/autonomyrepo")).autonomy).toEqual({ merge: "observe" }); // update persists
     expect((await getRepositorySettings(env, "owner/defaultpack")).autonomy).toEqual({}); // deny-by-default
-    // #774 autoMaintain round-trips, clamps requireApprovals, and defaults to squash/1.
+    // #774/loopover#6445: autoMaintain moved off the DB entirely (config-as-code only via .loopover.yml's
+    // settings: block now) -- getRepositorySettings always resolves the built-in squash/1 default,
+    // ignoring any caller-supplied override.
     await upsertRepositorySettings(env, { repoFullName: "owner/automaintainrepo", autoMaintain: { requireApprovals: 99, mergeMethod: "rebase" } });
-    expect((await getRepositorySettings(env, "owner/automaintainrepo")).autoMaintain).toEqual({ requireApprovals: 10, mergeMethod: "rebase" });
+    expect((await getRepositorySettings(env, "owner/automaintainrepo")).autoMaintain).toEqual({ requireApprovals: 1, mergeMethod: "squash" });
     await upsertRepositorySettings(env, { repoFullName: "owner/automaintainrepo", autoMaintain: { requireApprovals: 0, mergeMethod: "merge" } });
-    expect((await getRepositorySettings(env, "owner/automaintainrepo")).autoMaintain).toEqual({ requireApprovals: 0, mergeMethod: "merge" }); // update persists
+    expect((await getRepositorySettings(env, "owner/automaintainrepo")).autoMaintain).toEqual({ requireApprovals: 1, mergeMethod: "squash" });
     expect((await getRepositorySettings(env, "owner/defaultpack")).autoMaintain).toEqual({ requireApprovals: 1, mergeMethod: "squash" }); // defaults
     // #776 kill-switch + dry-run round-trip (insert + update) and default false.
     await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentPaused: true, agentDryRun: true });
@@ -309,30 +313,31 @@ describe("data spine repositories", () => {
     await upsertRepositorySettings(env, { repoFullName: "owner/saferepo", agentPaused: false });
     expect((await getRepositorySettings(env, "owner/saferepo")).agentPaused).toBe(false); // update persists
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ agentPaused: false, agentDryRun: false }); // defaults
-    // #2270 per-contributor open PR/issue caps: no row and no cap set both default to null (disabled).
+    // #2270/loopover#6445: per-contributor open PR/issue caps moved off the DB entirely -- config-as-code
+    // only via .loopover.yml's settings: block now. getRepositorySettings always resolves the conservative
+    // null (disabled) default, ignoring any caller-supplied override; no row and no cap set both default to
+    // null (disabled) too.
     expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
-    // Round-trips on insert and persists on update.
     await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 2, contributorOpenIssueCap: 5 });
-    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 2, contributorOpenIssueCap: 5 });
-    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 3, contributorOpenIssueCap: null });
-    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 3, contributorOpenIssueCap: null }); // update persists + can clear
-    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorOpenPrCap: 101, contributorOpenIssueCap: 150 });
-    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 100, contributorOpenIssueCap: 100 }); // clamps to the live-check sample budget
-    // A cap must be a positive whole number: fractional, non-positive, and non-finite values are all
-    // dropped to null rather than silently coerced (there's no such thing as "allow 2.5 open PRs").
-    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: 2.5 as never });
-    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
-    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: 0 });
-    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
-    await upsertRepositorySettings(env, { repoFullName: "owner/badcaprepo", contributorOpenPrCap: Number.NaN as never });
-    expect((await getRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
-    // contributorCapLabel (#2270) round-trips and defaults to "over-contributor-limit".
+    expect(await getRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: null, contributorOpenIssueCap: null });
+    // resolveRepositorySettings honors an explicit manifest override, including the same validation the DB
+    // layer used to enforce: a cap must be a positive whole number (fractional/non-positive/non-finite all
+    // drop to null -- there's no such thing as "allow 2.5 open PRs"), clamped to the live-verification
+    // sample budget of 100.
+    await upsertRepoFocusManifest(env, "owner/caprepo", { settings: { contributorOpenPrCap: 3, contributorOpenIssueCap: 150 } });
+    expect(await resolveRepositorySettings(env, "owner/caprepo")).toMatchObject({ contributorOpenPrCap: 3, contributorOpenIssueCap: 100 });
+    await upsertRepoFocusManifest(env, "owner/badcaprepo", { settings: { contributorOpenPrCap: 2.5 as never } });
+    expect((await resolveRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
+    await upsertRepoFocusManifest(env, "owner/badcaprepo", { settings: { contributorOpenPrCap: 0 } });
+    expect((await resolveRepositorySettings(env, "owner/badcaprepo")).contributorOpenPrCap).toBeNull();
+    // contributorCapLabel (#2270/loopover#6445): moved off the DB entirely too -- defaults to
+    // "over-contributor-limit", ignores a caller-supplied DB override, honors a manifest override.
     expect((await getRepositorySettings(env, "missing/repo")).contributorCapLabel).toBe("over-contributor-limit");
     await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "spam-cap" });
-    expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("spam-cap");
-    await upsertRepositorySettings(env, { repoFullName: "owner/caprepo", contributorCapLabel: "renamed-cap" });
-    expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("renamed-cap"); // update persists
+    expect((await getRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("over-contributor-limit");
+    await upsertRepoFocusManifest(env, "owner/caprepo", { settings: { contributorCapLabel: "renamed-cap" } });
+    expect((await resolveRepositorySettings(env, "owner/caprepo")).contributorCapLabel).toBe("renamed-cap");
     // #2552 force-rebase-before-merge window: no row and no override both default to null (never force).
     expect((await getRepositorySettings(env, "missing/repo")).requireFreshRebaseWindowMinutes).toBeNull();
     expect((await getRepositorySettings(env, "owner/defaultpack")).requireFreshRebaseWindowMinutes).toBeNull();
@@ -347,13 +352,17 @@ describe("data spine repositories", () => {
     // contributorOpenPrCap above -- it must NOT inherit that unrelated cap's 100 ceiling.
     await upsertRepositorySettings(env, { repoFullName: "owner/rebasewindowrepo", requireFreshRebaseWindowMinutes: 500 });
     expect((await getRepositorySettings(env, "owner/rebasewindowrepo")).requireFreshRebaseWindowMinutes).toBe(500);
-    // #1936 minimum account-age gate: no row and no override both default to null (never enforced); round-trips,
-    // and (REGRESSION, same reasoning as requireFreshRebaseWindowMinutes above) is not capped at 100.
+    // #1936/loopover#6445: minimum account-age gate moved off the DB entirely -- config-as-code only via
+    // .loopover.yml's settings: block now. No row and no override both default to null (never enforced);
+    // a caller-supplied DB override is ignored; resolveRepositorySettings honors a manifest override
+    // (still not capped at 100, unlike the live-verification-sample-bounded caps above).
     expect((await getRepositorySettings(env, "missing/repo")).accountAgeThresholdDays).toBeNull();
     await upsertRepositorySettings(env, { repoFullName: "owner/accountagerepo", accountAgeThresholdDays: 365 });
-    expect((await getRepositorySettings(env, "owner/accountagerepo")).accountAgeThresholdDays).toBe(365);
-    // #2463 review-nag cooldown + shared exemption list: no row and no override both default to off/3/5/the
-    // default label/empty exemption list.
+    expect((await getRepositorySettings(env, "owner/accountagerepo")).accountAgeThresholdDays).toBeNull();
+    await upsertRepoFocusManifest(env, "owner/accountagerepo", { settings: { accountAgeThresholdDays: 365 } });
+    expect((await resolveRepositorySettings(env, "owner/accountagerepo")).accountAgeThresholdDays).toBe(365);
+    // #2463/loopover#6445: review-nag cooldown + shared exemption list moved off the DB entirely too. No row
+    // and no override both default to off/3/5/the default label/empty exemption list.
     expect(await getRepositorySettings(env, "missing/repo")).toMatchObject({
       reviewNagPolicy: "off",
       reviewNagMaxPings: 3,
@@ -362,7 +371,7 @@ describe("data spine repositories", () => {
       autoCloseExemptLogins: [],
     });
     expect(await getRepositorySettings(env, "owner/defaultpack")).toMatchObject({ reviewNagPolicy: "off", autoCloseExemptLogins: [] });
-    // Round-trips on insert and persists on update.
+    // A caller-supplied DB override is silently ignored -- always the built-in defaults.
     await upsertRepositorySettings(env, {
       repoFullName: "owner/nagrepo",
       reviewNagPolicy: "close",
@@ -372,22 +381,42 @@ describe("data spine repositories", () => {
       autoCloseExemptLogins: ["Trusted-Regular"],
     });
     expect(await getRepositorySettings(env, "owner/nagrepo")).toMatchObject({
+      reviewNagPolicy: "off",
+      reviewNagMaxPings: 3,
+      reviewNagCooldownDays: 5,
+      reviewNagLabel: "review-nag-cooldown",
+      autoCloseExemptLogins: [],
+    });
+    // resolveRepositorySettings honors an explicit manifest override, round-tripping through a re-upsert
+    // that carries it forward explicitly (upsertRepoFocusManifest replaces the manifest wholesale).
+    await upsertRepoFocusManifest(env, "owner/nagrepo", {
+      settings: {
+        reviewNagPolicy: "close",
+        reviewNagMaxPings: 5,
+        reviewNagCooldownDays: 10,
+        reviewNagLabel: "too-many-pings",
+        autoCloseExemptLogins: ["Trusted-Regular"],
+      },
+    });
+    expect(await resolveRepositorySettings(env, "owner/nagrepo")).toMatchObject({
       reviewNagPolicy: "close",
       reviewNagMaxPings: 5,
       reviewNagCooldownDays: 10,
       reviewNagLabel: "too-many-pings",
       autoCloseExemptLogins: ["Trusted-Regular"],
     });
-    await upsertRepositorySettings(env, { repoFullName: "owner/nagrepo", reviewNagPolicy: "hold", autoCloseExemptLogins: [] });
-    expect(await getRepositorySettings(env, "owner/nagrepo")).toMatchObject({ reviewNagPolicy: "hold", autoCloseExemptLogins: [] }); // update persists + can clear
+    await upsertRepoFocusManifest(env, "owner/nagrepo", { settings: { reviewNagPolicy: "hold", autoCloseExemptLogins: [] } });
+    expect(await resolveRepositorySettings(env, "owner/nagrepo")).toMatchObject({ reviewNagPolicy: "hold", autoCloseExemptLogins: [] }); // update persists + can clear
     // An invalid policy string is dropped to "off"; a non-positive/fractional ping count or cooldown falls
     // back to its default rather than being silently coerced.
-    await upsertRepositorySettings(env, { repoFullName: "owner/badnagrepo", reviewNagPolicy: "delete-everything" as never, reviewNagMaxPings: -1, reviewNagCooldownDays: 2.5 as never });
-    expect(await getRepositorySettings(env, "owner/badnagrepo")).toMatchObject({ reviewNagPolicy: "off", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
-    await upsertRepositorySettings(env, { repoFullName: "owner/bigwindowrepo", reviewNagMaxPings: 1_000, reviewNagCooldownDays: 1_000_000_000 });
-    expect(await getRepositorySettings(env, "owner/bigwindowrepo")).toMatchObject({ reviewNagMaxPings: 1_000, reviewNagCooldownDays: 365 });
-    await env.DB.prepare("update repository_settings set review_nag_cooldown_days = ? where repo_full_name = ?").bind(1_000_000_000, "owner/bigwindowrepo").run();
-    expect(await getRepositorySettings(env, "owner/bigwindowrepo")).toMatchObject({ reviewNagMaxPings: 1_000, reviewNagCooldownDays: 365 });
+    await upsertRepoFocusManifest(env, "owner/badnagrepo", { settings: { reviewNagPolicy: "delete-everything" as never, reviewNagMaxPings: -1, reviewNagCooldownDays: 2.5 as never } });
+    expect(await resolveRepositorySettings(env, "owner/badnagrepo")).toMatchObject({ reviewNagPolicy: "off", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
+    // REGRESSION: a cooldown ABOVE the 365-day ceiling is rejected outright (falls back to the built-in
+    // default), unlike the old DB-layer behavior which clamped it down to 365 -- the manifest parser's
+    // normalizeOptionalPositiveInteger + explicit ceiling check drops an out-of-range value rather than
+    // silently coercing it.
+    await upsertRepoFocusManifest(env, "owner/bigwindowrepo", { settings: { reviewNagMaxPings: 1_000, reviewNagCooldownDays: 1_000_000_000 } });
+    expect(await resolveRepositorySettings(env, "owner/bigwindowrepo")).toMatchObject({ reviewNagMaxPings: 1_000, reviewNagCooldownDays: 5 });
     expect(updated.slopAiAdvisory).toBe(false);
     expect(await getRepoSyncState(env, "missing/repo")).toBeNull();
     expect(await getPullRequest(env, "owner/repo", 404)).toBeNull();

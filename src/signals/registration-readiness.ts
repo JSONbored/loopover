@@ -92,7 +92,7 @@ export type RegistrationReadinessInput = {
 };
 
 const REQUIRED_DOCS = ["README", "CONTRIBUTING", "SECURITY", "SUPPORT"];
-const COVERAGE_GATE = ["npm run test:ci", "global coverage >= 95% (lines, statements, functions, branches)"];
+const COVERAGE_GATE = ["npm run test:ci", "patch (changed-lines) coverage >= 99%"];
 
 function laneToMode(lane: LaneAdvice): RegistrationMode {
   return lane.lane === "issue_discovery" ? "issue_discovery" : lane.lane === "split" ? "split" : "direct_pr";

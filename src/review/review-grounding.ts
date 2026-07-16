@@ -3,9 +3,12 @@
 // CI outcomes ("this will break CI" on a green PR) and undefined symbols ("X is not defined" when it's
 // defined 10 lines outside the visible hunk) — the #967 class of false blockers.
 //
-// Every review lane calls these helpers; ACTIVATION is per-project via features.ciGrounding /
-// features.fullFileContext (default OFF — wire once here, flip on per chain from its config). Fully
-// fail-safe: any fetch error degrades to "no grounding" and the review proceeds on the diff alone.
+// Every review lane calls these helpers; ACTIVATION is a single `features.grounding` ConvergedFeatureKey
+// (resolved via resolveConvergedFeature / convergedFeatureActive) plus the LOOPOVER_REVIEW_GROUNDING env
+// kill-switch (default OFF). `ciGrounding` / `fullFileContext` below are internal GroundingFlags fields —
+// today's one real caller (groundingFlags() in ./grounding-wire) always sets both identically; they are
+// not independently-settable `.loopover.yml` keys. Fully fail-safe: any fetch error degrades to "no
+// grounding" and the review proceeds on the diff alone.
 //
 // SELF-CONTAINED NATIVE PORT (reviewbot→loopover convergence): every type + helper this module needs is
 // defined HERE. No imports from reviewbot. The logic is byte-faithful to the reviewbot source
@@ -59,7 +62,10 @@ const MAX_SINGLE_FILE = 24_000; // a file larger than this is marked truncated (
 // Binary / generated / lockfile paths carry no review signal as full text — skip inlining them.
 const SKIP_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|heic|svg|ico|pdf|lock|min\.js|min\.css|map|woff2?|ttf|eot|mp4|webm|zip|gz|tgz|wasm)$/i;
 
-/** The grounding feature flags (subset of reviewbot's FeatureToggles). */
+/** The grounding feature flags (subset of reviewbot's FeatureToggles). Two internal booleans of one
+ *  GroundingFlags value — the type permits independent values so a future caller could split CI-summary
+ *  vs full-file gathering, but today's only caller (`groundingFlags()` in `./grounding-wire`) always sets
+ *  both from the single `features.grounding` / LOOPOVER_REVIEW_GROUNDING activation path. */
 export interface GroundingFlags {
   ciGrounding: boolean;
   fullFileContext: boolean;

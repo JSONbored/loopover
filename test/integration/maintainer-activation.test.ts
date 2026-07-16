@@ -143,11 +143,13 @@ describe("maintainer activation routes", () => {
     const response = await app.request(`${PATH_ACTIVATE.replace("/activation", "/settings")}`, {
       method: "PUT",
       headers: { cookie: `loopover_session=${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } }),
+      // autoMaintain moved off the DB entirely (config-as-code, loopover#6445) -- no longer a writable key on
+      // this route.
+      body: JSON.stringify({ autonomy: { merge: "auto_with_approval" } }),
     }, env);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ autonomy: { merge: "auto_with_approval" }, autoMaintain: { requireApprovals: 2, mergeMethod: "rebase" } });
+    expect(await response.json()).toMatchObject({ autonomy: { merge: "auto_with_approval" } });
   });
 
   it("persists selfAuthoredLinkedIssueGateMode from the settings PUT (API/OpenAPI parity)", async () => {

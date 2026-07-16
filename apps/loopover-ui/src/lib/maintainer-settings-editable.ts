@@ -15,7 +15,6 @@ export type CommandAuthorization = {
 export type AutonomyLevel = "observe" | "auto_with_approval" | "auto";
 export type AgentActionClass =
   "review" | "request_changes" | "approve" | "merge" | "close" | "label";
-export type AutoMergeMethod = "merge" | "squash" | "rebase";
 
 export type MaintainerSettingsEditable = {
   // #4618/#5373: a prior gateCheckMode field was a deprecated computed read-back, since removed entirely --
@@ -38,7 +37,8 @@ export type MaintainerSettingsEditable = {
   requireLinkedIssue: boolean;
   commandAuthorization: CommandAuthorization;
   autonomy: Partial<Record<AgentActionClass, AutonomyLevel>>;
-  autoMaintain: { requireApprovals: number; mergeMethod: AutoMergeMethod };
+  // #6445: autoMaintain removed -- no longer DB-backed, config-as-code only via .loopover.yml's
+  // settings: block now (the dashboard can no longer write it).
   agentPaused: boolean;
   agentDryRun: boolean;
 };
@@ -61,7 +61,6 @@ export const MAINTAINER_SETTINGS_EDITABLE_KEYS: Array<keyof MaintainerSettingsEd
   "requireLinkedIssue",
   "commandAuthorization",
   "autonomy",
-  "autoMaintain",
   "agentPaused",
   "agentDryRun",
 ];

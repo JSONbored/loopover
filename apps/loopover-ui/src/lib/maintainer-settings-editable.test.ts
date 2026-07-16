@@ -23,7 +23,6 @@ const SETTINGS: MaintainerSettingsEditable = {
   requireLinkedIssue: false,
   commandAuthorization: {},
   autonomy: {},
-  autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
   agentPaused: false,
   agentDryRun: false,
 };

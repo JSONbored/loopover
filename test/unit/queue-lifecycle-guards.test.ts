@@ -2006,11 +2006,12 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       },
       repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
     });
-    // reviewEvasionProtection/reviewEvasionComment are manifest-only now (Batch B, loopover#6443); pull any
-    // test override out of `overrides` before it reaches the DB write below so a per-test
-    // `{ reviewEvasionProtection: "off" }`/`{ reviewEvasionComment: false }` still takes effect via the
-    // manifest overlay instead of being silently outranked by the hardcoded default.
-    const { reviewEvasionProtection, reviewEvasionComment, ...dbOverrides } = overrides;
+    // reviewEvasionProtection/reviewEvasionComment (Batch B, loopover#6443) and autoCloseExemptLogins
+    // (loopover#6445) are manifest-only now; pull any test override out of `overrides` before it reaches
+    // the DB write below so a per-test `{ reviewEvasionProtection: "off" }`/`{ reviewEvasionComment: false }`/
+    // `{ autoCloseExemptLogins: [...] }` still takes effect via the manifest overlay instead of being
+    // silently outranked by the hardcoded default.
+    const { reviewEvasionProtection, reviewEvasionComment, autoCloseExemptLogins, ...dbOverrides } = overrides;
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/gittensory",
       autonomy: { close: "auto" },
@@ -2024,6 +2025,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         checkRunMode: "off",
         reviewEvasionProtection: (reviewEvasionProtection as "off" | "close" | undefined) ?? "close",
         ...(reviewEvasionComment !== undefined ? { reviewEvasionComment: reviewEvasionComment as boolean } : {}),
+        ...(autoCloseExemptLogins !== undefined ? { autoCloseExemptLogins: autoCloseExemptLogins as string[] } : {}),
       },
     });
   }

@@ -303,7 +303,7 @@ describe("queue processors", () => {
       // getRepositorySettings neutralizes it first. Mock resolveRepositorySettings directly so this test proves
       // processors.ts's OWN Math.min(reviewNagCooldownDays, MAX_REVIEW_NAG_COOLDOWN_DAYS) guard, not the DB layer.
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "hold", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 206, title: "Huge cooldown", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       // Three prior pings, all 400 DAYS ago -- outside the 365-day cap, but well within an uncapped
       // "1,000,000,000-day" window. If the guard clamps correctly, these fall outside the window and don't
@@ -346,7 +346,7 @@ describe("queue processors", () => {
 
     it("records pings under the configured threshold without acting; the normal @loopover reply still proceeds", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 201, title: "Under threshold", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubReviewNagFetch(201, seen);
@@ -375,7 +375,7 @@ describe("queue processors", () => {
 
     it("hold policy: posts a cooldown reply and short-circuits once the threshold is crossed", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagCooldownDays: 5 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 202, title: "Hold cooldown", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#202", outcome: "completed" });
@@ -409,8 +409,8 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
-      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagLabel: "too-chatty" } }, "repo_file");
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagLabel: "too-chatty" } }, "repo_file");
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 203, title: "Close cooldown", state: "open", user: { login: "chatty" }, head: { sha: "sha203" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#203", outcome: "completed" });
@@ -442,7 +442,8 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       // PR A: "chatty" already sent 3 pings (the full budget) and PR A was closed for it -- this is the exact
       // state left behind by the "close policy on a PR thread" scenario above.
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 220, title: "PR A (already closed)", state: "closed", user: { login: "chatty" }, head: { sha: "sha220" }, author_association: "NONE", labels: [], body: "" });
@@ -479,7 +480,7 @@ describe("queue processors", () => {
 
     it("close policy degrades to hold on an ISSUE thread (no closeIssue primitive yet)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#204", outcome: "completed" });
       }
@@ -503,7 +504,7 @@ describe("queue processors", () => {
 
     it("never throttles an exempt login, even over threshold", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autoCloseExemptLogins: ["chatty"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, autoCloseExemptLogins: ["chatty"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 205, title: "Exempt author", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 5; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#205", outcome: "completed" });
@@ -529,7 +530,7 @@ describe("queue processors", () => {
 
     it("never throttles a third party pinging on someone else's PR — only the thread's OWN author is tracked", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 206, title: "Third party pinger", state: "open", user: { login: "pr-author" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubReviewNagFetch(206, seen);
@@ -558,7 +559,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "noslash", full_name: "noslash", private: false, owner: { login: "" } }],
       });
-      await upsertRepositorySettings(env, { repoFullName: "noslash", reviewNagPolicy: "hold", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "noslash", { settings: { reviewNagPolicy: "hold", reviewNagMaxPings: 3 } });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "noslash#209", outcome: "completed" });
       }
@@ -586,7 +587,7 @@ describe("queue processors", () => {
 
     it("never throttles the literal repo owner self-pinging their own PR", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 1 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 1 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 207, title: "Owner PR", state: "open", user: { login: "JSONbored" }, author_association: "OWNER", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubReviewNagFetch(207, seen);
@@ -611,7 +612,7 @@ describe("queue processors", () => {
 
     it("never throttles an ADMIN_GITHUB_LOGINS fleet-operator, even over threshold", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), ADMIN_GITHUB_LOGINS: "fleet-admin" });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 208, title: "Admin PR", state: "open", user: { login: "fleet-admin" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 5; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "fleet-admin", targetKey: "JSONbored/gittensory#208", outcome: "completed" });
@@ -637,7 +638,8 @@ describe("queue processors", () => {
 
     it("hold policy respects agentDryRun — records a denied cooldown-applied audit and never posts the reply live (#2258 parity)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, agentDryRun: true });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "hold", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 209, title: "Dry-run hold", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#209", outcome: "completed" });
@@ -663,7 +665,7 @@ describe("queue processors", () => {
 
     it("close policy falls through harmlessly when the PR is no longer open by the time the threshold fires", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 210, title: "Already closed", state: "closed", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#210", outcome: "completed" });
@@ -689,7 +691,8 @@ describe("queue processors", () => {
 
     it("close policy records a denied cooldown-applied audit when autonomy is not acting for label/close (empty plan)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: {} });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: {} });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 211, title: "Observe-only autonomy", state: "open", user: { login: "chatty" }, head: { sha: "sha211" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#211", outcome: "completed" });
@@ -716,7 +719,8 @@ describe("queue processors", () => {
 
     it("close policy denies the mutation (never crashes) when no installation is on record — installationPermissions falls back to null", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, autonomy: { close: "auto", label: "auto" } });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 212, title: "No installation row", state: "open", user: { login: "chatty" }, head: { sha: "sha212" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.review_nag_ping", actor: "chatty", targetKey: "JSONbored/gittensory#212", outcome: "completed" });
@@ -771,7 +775,7 @@ describe("queue processors", () => {
 
     it("is off by default (no monitored logins configured) — no ping is tracked", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close" });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close" } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 300, title: "No monitored logins", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(300, seen);
@@ -793,7 +797,7 @@ describe("queue processors", () => {
 
     it("detects a mention of a configured maintainer login and records a ping under threshold without acting", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 301, title: "Under threshold", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(301, seen);
@@ -816,7 +820,7 @@ describe("queue processors", () => {
 
     it("REGRESSION: matches bot-shaped monitored logins literally", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["dependabot[bot]"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["dependabot[bot]"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 312, title: "Bot mention", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(312, seen);
@@ -838,7 +842,7 @@ describe("queue processors", () => {
 
     it("REGRESSION: does not treat bot-login metacharacters as a regex character class", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMonitoredMentions: ["dependabot[bot]"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMonitoredMentions: ["dependabot[bot]"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 313, title: "Bot false positive", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(313, seen);
@@ -860,7 +864,7 @@ describe("queue processors", () => {
 
     it("case-insensitively matches a monitored login and ignores an unrelated mention", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 302, title: "Case + unrelated", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(302, seen);
@@ -897,7 +901,7 @@ describe("queue processors", () => {
 
     it("counts a monitored-login mention independently of the @loopover ping counter", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 303, title: "Independent counters", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(303, seen);
@@ -922,7 +926,7 @@ describe("queue processors", () => {
 
     it("hold policy: posts a cooldown reply naming the mentioned login and short-circuits once the threshold is crossed", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "hold", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 304, title: "Hold on mention", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "JSONbored/gittensory#304#mention:jsonbored", outcome: "completed" });
@@ -952,7 +956,8 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"], reviewNagLabel: "too-chatty", autonomy: { close: "auto" } });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"], reviewNagLabel: "too-chatty" } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 305, title: "Close on mention", state: "open", user: { login: "chatty" }, head: { sha: "sha305" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.monitored_mention_ping", actor: "chatty", targetKey: "JSONbored/gittensory#305#mention:jsonbored", outcome: "completed" });
@@ -982,7 +987,8 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"], autonomy: { close: "auto" } });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored"] } });
       // PR A: "chatty" already sent 3 pings mentioning @JSONbored (the full budget) and PR A was closed for it.
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 320, title: "PR A (already closed)", state: "closed", user: { login: "chatty" }, head: { sha: "sha320" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
@@ -1019,13 +1025,8 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["issue_comment"] },
         repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
       });
-      await upsertRepositorySettings(env, {
-        repoFullName: "JSONbored/gittensory",
-        reviewNagPolicy: "close",
-        reviewNagMaxPings: 3,
-        reviewNagMonitoredMentions: ["JSONbored", "other-maintainer"],
-        autonomy: { close: "auto" },
-      });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto" } });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 3, reviewNagMonitoredMentions: ["JSONbored", "other-maintainer"] } });
       // PR A: "chatty" already exhausted the @JSONbored budget (3 pings) -- same seed as the carryover test above.
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 322, title: "PR A (JSONbored exhausted)", state: "closed", user: { login: "chatty" }, head: { sha: "sha322" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
@@ -1058,7 +1059,7 @@ describe("queue processors", () => {
 
     it("does NOT throttle the repo owner, an admin login, an automation bot, or an exempt login", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), ADMIN_GITHUB_LOGINS: "fleet-admin" });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 1, reviewNagMonitoredMentions: ["JSONbored"], autoCloseExemptLogins: ["trusted-regular"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 1, reviewNagMonitoredMentions: ["JSONbored"], autoCloseExemptLogins: ["trusted-regular"] } });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(306, seen);
       for (const [commenter, prNumber] of [
@@ -1087,7 +1088,7 @@ describe("queue processors", () => {
 
     it("does NOT throttle a third party mentioning the login on someone else's thread (thread-author-only scope)", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 310, title: "Third party", state: "open", user: { login: "thread-author" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(310, seen);
@@ -1109,7 +1110,7 @@ describe("queue processors", () => {
 
     it("REGRESSION: a redelivered webhook (same deliveryId) does not double-count the ping", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", reviewNagPolicy: "close", reviewNagMaxPings: 5, reviewNagMonitoredMentions: ["JSONbored"] });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewNagPolicy: "close", reviewNagMaxPings: 5, reviewNagMonitoredMentions: ["JSONbored"] } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 311, title: "Redelivery", state: "open", user: { login: "chatty" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[], labels: [] as string[], closed: false };
       stubMonitoredMentionFetch(311, seen);
@@ -1171,7 +1172,7 @@ describe("queue processors", () => {
 
     it("records invocations under the configured threshold without holding — the normal reply still proceeds", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 5, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 301, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       stubCommandRateLimitFetch(301, seen);
@@ -1185,7 +1186,7 @@ describe("queue processors", () => {
 
     it("hold policy: posts a cooldown reply and short-circuits once a CHEAP command crosses its threshold", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 3, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 3, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 302, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 3; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.command_invocation", actor: "maintainer", targetKey: "JSONbored/gittensory#302#help", outcome: "completed" });
@@ -1204,7 +1205,7 @@ describe("queue processors", () => {
     it("an AI-cost-bearing command uses the TIGHTER commandRateLimitAiMaxPerWindow default, not the cheap-command limit", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       // Cheap-command limit left generous (20, the default); only the AI limit is tight enough to trip here.
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 2, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 2, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 303, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       for (let i = 0; i < 2; i += 1) {
         await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.command_invocation", actor: "maintainer", targetKey: "JSONbored/gittensory#303#next-action", outcome: "completed" });
@@ -1220,7 +1221,7 @@ describe("queue processors", () => {
 
     it("commands have INDEPENDENT counters — repeatedly invoking one command never throttles a DIFFERENT command", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 304, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       // Already at the "help" limit (1) — a further "help" invocation would be held.
       await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.command_invocation", actor: "maintainer", targetKey: "JSONbored/gittensory#304#help", outcome: "completed" });
@@ -1239,7 +1240,7 @@ describe("queue processors", () => {
       // actor who exhausted the limit on one thread could get a full new budget simply by invoking the SAME
       // command on a DIFFERENT issue/PR number — the exact bypass class #4021 already fixed for review-nag.
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 340, title: "Rate limit target A", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 341, title: "Rate limit target B (fresh)", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       // Already at the "help" limit (1) on issue #340.
@@ -1257,7 +1258,8 @@ describe("queue processors", () => {
 
     it("dry-run mode: holds the command but never posts a live cooldown comment", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24, agentDryRun: true });
+      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 305, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       await repositoriesModule.recordAuditEvent(env, { eventType: "github_app.command_invocation", actor: "maintainer", targetKey: "JSONbored/gittensory#305#help", outcome: "completed" });
       const seen = { comments: [] as string[] };
@@ -1273,7 +1275,7 @@ describe("queue processors", () => {
       // second delivery would increment the counter again for what is really ONE real invocation, and could
       // incorrectly cross the rate-limit threshold on a redelivery alone.
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commandRateLimitPolicy: "hold", commandRateLimitMaxPerWindow: 1, commandRateLimitWindowHours: 24 } });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 306, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       stubCommandRateLimitFetch(306, seen);
@@ -1628,7 +1630,6 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 309, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       // advisoryAiRouting is config-as-code only -- enable intentRouting the real way, through the repo's
@@ -1637,7 +1638,7 @@ describe("queue processors", () => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1661,14 +1662,13 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "ask"}' }) } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 315, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1710,14 +1710,13 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: advisoryRun } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 316, title: "Unauthorized intent routing", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "none" });
@@ -1744,14 +1743,13 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": null}' }) } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 311, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1775,14 +1773,13 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 312, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1803,7 +1800,6 @@ describe("queue processors", () => {
     it("#4596: hold policy throttles intent-routing once the AI ceiling is crossed and skips the classifier (fails open to the existing did-you-mean hint)", async () => {
       const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 313, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       // Already at the ceiling (1) -- the next invocation must be held before it ever reaches the classifier.
       await repositoriesModule.recordAuditEvent(env, {
@@ -1817,7 +1813,7 @@ describe("queue processors", () => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 1\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1840,7 +1836,6 @@ describe("queue processors", () => {
       // classifier's own independent counter.
       const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 1, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 342, title: "Rate limit target A", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 343, title: "Rate limit target B (fresh)", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       // Already at the ceiling (1) on issue #342.
@@ -1855,7 +1850,7 @@ describe("queue processors", () => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 1\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1877,14 +1872,13 @@ describe("queue processors", () => {
     it("#4596: REGRESSION: a redelivered webhook does not re-classify or double-count the intent-routing invocation", async () => {
       const advisoryRun = vi.fn(async () => ({ response: '{"command": "blockers"}' }));
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), AI_ADVISORY: { run: advisoryRun } as unknown as Ai });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 314, title: "Rate limit target", state: "open", user: { login: "oktofeesh1" }, author_association: "NONE", labels: [], body: "" });
       const seen = { comments: [] as string[] };
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         if (url.includes("/collaborators/") && url.includes("/permission")) return Response.json({ permission: "maintain" });
@@ -1937,7 +1931,6 @@ describe("queue processors", () => {
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
         AI_ADVISORY: { run: async () => ({ response: '{"command": "blockers"}' }) } as unknown as Ai,
       });
-      await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commandRateLimitPolicy: "hold", commandRateLimitAiMaxPerWindow: 5, commandRateLimitWindowHours: 24 });
       await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 319, title: "Rate limit target", state: "open", user: { login: "own-pr-miner" }, author_association: "NONE", labels: [], body: "" });
       await upsertOfficialMinerDetection(env, "own-pr-miner", { status: "confirmed", snapshot: queueMinerSnapshot("own-pr-miner") }, 60_000);
       const seen = { comments: [] as string[] };
@@ -1945,7 +1938,7 @@ describe("queue processors", () => {
         const url = input.toString();
         const method = init?.method ?? "GET";
         if (url.includes("raw.githubusercontent.com") && url.includes(".loopover.yml")) {
-          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n", { status: 200 });
+          return new Response("settings:\n  advisoryAiRouting:\n    intentRouting: true\n  commandRateLimitPolicy: hold\n  commandRateLimitAiMaxPerWindow: 5\n  commandRateLimitWindowHours: 24\n", { status: 200 });
         }
         if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
         // No repo permission at all -- the ONLY route to authorization is the confirmed_miner role on their own PR.

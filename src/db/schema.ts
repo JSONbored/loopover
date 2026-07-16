@@ -46,8 +46,6 @@ export const repositories = sqliteTable("repositories", {
 export const repositorySettings = sqliteTable("repository_settings", {
   repoFullName: text("repo_full_name").primaryKey(),
   reviewCheckMode: text("review_check_mode").notNull().default("disabled"),
-  projectMilestoneMatchMode: text("project_milestone_match_mode").notNull().default("off"),
-  autoProjectMilestoneMatchBackend: text("auto_project_milestone_match_backend").notNull().default("github"),
   gatePack: text("gate_pack").notNull().default("gittensor"),
   // Missing a linked issue is advisory-only by default -- issues aren't always available, so it only
   // blocks when a repo explicitly sets linkedIssueGateMode: "block". The sibling requireLinkedIssue
@@ -92,41 +90,11 @@ export const repositorySettings = sqliteTable("repository_settings", {
   requireLinkedIssue: integer("require_linked_issue", { mode: "boolean" }).notNull().default(false),
   commandAuthorizationJson: text("command_authorization_json").notNull().default("{}"),
   autonomyJson: text("autonomy_json").notNull().default("{}"),
-  autoMaintainJson: text("auto_maintain_json").notNull().default("{}"),
   agentPaused: integer("agent_paused", { mode: "boolean" }).notNull().default(false),
   agentDryRun: integer("agent_dry_run", { mode: "boolean" }).notNull().default(false),
-  // Per-contributor open PR/issue caps (#2270, anti-abuse): null = no cap (default). Enforcement lands separately.
-  contributorOpenPrCap: integer("contributor_open_pr_cap"),
-  contributorOpenIssueCap: integer("contributor_open_issue_cap"),
-  contributorCapLabel: text("contributor_cap_label").notNull().default("over-contributor-limit"),
-  // Cancel in-flight CI runs on a contributor_cap close (#2462): null = unset, falls back to the
-  // CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT env var (nullable, unlike a plain boolean toggle, so an explicit `false`
-  // is distinguishable from "not configured" for that fallback). Only meaningful when the App installation has
-  // granted actions:write -- degrades gracefully (logs, never blocks the close) otherwise.
-  contributorCapCancelCi: integer("contributor_cap_cancel_ci", { mode: "boolean" }),
-  // Review-request nagging cooldown (#2463, anti-abuse): default 'off' (disabled).
-  reviewNagPolicy: text("review_nag_policy").notNull().default("off"),
-  reviewNagMaxPings: integer("review_nag_max_pings").notNull().default(3),
-  reviewNagCooldownDays: integer("review_nag_cooldown_days").notNull().default(5),
-  reviewNagLabel: text("review_nag_label").notNull().default("review-nag-cooldown"),
-  // Maintainer-mention nag moderation (#label-scoping): a JSON array of GitHub logins ALSO throttled under the
-  // review-nag cooldown above, on top of the bot's own `@loopover` handle. Default '[]' (no logins watched).
-  reviewNagMonitoredMentionsJson: text("review_nag_monitored_mentions_json").notNull().default("[]"),
-  // Shared repo-scoped exemption list (#2463): a JSON array of GitHub logins.
-  autoCloseExemptLoginsJson: text("auto_close_exempt_logins_json").notNull().default("[]"),
   // Force-rebase-before-merge window in minutes (#2552): null = never force (default). Enforcement lands in
   // runAgentMaintenancePlanAndExecute, not here.
   requireFreshRebaseWindowMinutes: integer("require_fresh_rebase_window_minutes"),
-  // Account-age throttle (#2561, anti-abuse): null = off (default). Enforcement lands in
-  // runAgentMaintenancePlanAndExecute, not here.
-  accountAgeThresholdDays: integer("account_age_threshold_days"),
-  newAccountLabel: text("new_account_label").notNull().default("new-account"),
-  // Per-command @loopover rate limit (#2560, anti-abuse): generalizes review-nag's cooldown pattern to every
-  // command, keyed by (actor, command, targetKey) independent of review-nag's own thread-author-only scope.
-  commandRateLimitPolicy: text("command_rate_limit_policy").notNull().default("off"),
-  commandRateLimitMaxPerWindow: integer("command_rate_limit_max_per_window").notNull().default(20),
-  commandRateLimitAiMaxPerWindow: integer("command_rate_limit_ai_max_per_window").notNull().default(5),
-  commandRateLimitWindowHours: integer("command_rate_limit_window_hours").notNull().default(24),
   // Draft-PR close policy (#draft-pr-close-policy): off by default -- enforces on ANY draft (including the
   // first one, before a review has run), so a maintainer opts in deliberately rather than getting it on by
   // default.

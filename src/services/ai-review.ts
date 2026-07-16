@@ -329,8 +329,9 @@ export type LoopOverAiReviewInput = {
    * caller-resolved rather than looked up internally, so a manifest already loaded once upstream for several
    * flags is never re-fetched per-flag inside this module. (The one exception, `safety`, resolves internally via
    * `convergedFeatureActive` because it is security-critical and has no upstream caller today; `improvementSignal`
-   * is a read-only advisory signal, not a security control, so it follows the majority pattern instead.) Absent/
-   * false (the default, and the only reachable value until a caller starts resolving the feature) ⇒ no instruction
+   * is a read-only advisory signal, not a security control, so it follows the majority pattern instead. That
+   * caller is now live: src/queue/processors.ts resolves the feature and passes the resolved boolean here.) Absent/
+   * false (the default) ⇒ no instruction
    * is appended and the model is never asked — byte-identical prompt, zero extra output tokens spent.
    */
   improvementSignal?: boolean | undefined;

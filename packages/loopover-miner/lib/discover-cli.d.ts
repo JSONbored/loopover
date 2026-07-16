@@ -85,6 +85,10 @@ export type RunDiscoverOptions = {
     rankedIssues: RankedCandidateIssue[],
     options: { queueStore: PortfolioQueueStore },
   ) => EnqueueRankedDiscoverySummary;
+  /** Invoked with the real structured result at each success return point (dry-run and full-run), in addition
+   *  to (never instead of) the plain exit-code return -- mirrors `RunAttemptOptions.onResult`. Never fires on a
+   *  parse-error/unexpected-error `reportCliFailure` branch, matching runAttempt's own asymmetry (#6522). */
+  onResult?: (result: DiscoverResult) => void;
 };
 
 export function parseDiscoverArgs(args: string[]): ParsedDiscoverArgs;

@@ -192,6 +192,10 @@ export async function runDiscover(args, options = {}) {
         usedDefaultGoalSpec: rankedSummary.usedDefaultGoalSpec,
         enqueueSummary,
       };
+      // Structured-outcome hook (#6522), mirroring runAttempt's onResult convention: fires only at a real
+      // structured success point (never the reportCliFailure branches), in addition to -- never instead of --
+      // the plain exit-code return, so a non-CLI caller (the /api/discover route) can read the result.
+      options.onResult?.(result);
       if (parsed.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
@@ -294,6 +298,9 @@ export async function runDiscover(args, options = {}) {
       enqueueSummary,
     };
 
+    // Structured-outcome hook (#6522) for the full-run success point -- same convention as the dry-run branch
+    // above and as runAttempt's onResult: real result only, additive to the unchanged exit-code return.
+    options.onResult?.(result);
     if (parsed.json) {
       console.log(JSON.stringify(result, null, 2));
     } else {

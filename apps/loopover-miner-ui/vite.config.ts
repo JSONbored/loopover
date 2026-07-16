@@ -4,8 +4,10 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+import { attemptApiPlugin } from "./vite-attempt-api";
 import { authPlugin } from "./vite-auth";
 import { chatApiPlugin } from "./vite-chat-api";
+import { discoverApiPlugin } from "./vite-discover-api";
 import { governorApiPlugin } from "./vite-governor-api";
 import { ledgersApiPlugin } from "./vite-ledgers-api";
 import { portfolioQueueActionsApiPlugin } from "./vite-portfolio-queue-actions-api";
@@ -29,6 +31,8 @@ export default defineConfig({
     ledgersApiPlugin(),
     governorApiPlugin(),
     rankedCandidatesApiPlugin(),
+    discoverApiPlugin(),
+    attemptApiPlugin(),
   ],
   server: {
     // Offset from gittensory-ui (5173) so both apps can run side-by-side locally.

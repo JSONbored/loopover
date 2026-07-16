@@ -1065,3 +1065,64 @@ describe("loopover-miner discover CLI entrypoint (#4247)", () => {
     expect(output).toContain("Usage: loopover-miner discover");
   });
 });
+
+describe("runDiscover onResult hook (#6522)", () => {
+  it("fires options.onResult with the structured result at the full-run success point, alongside exit 0", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Add retry helper", labels: ["help wanted", "feature"] })],
+      warnings: [],
+      rateLimitRemaining: 4987,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const onResult = vi.fn();
+
+    const exitCode = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      onResult,
+    });
+
+    expect(exitCode).toBe(0); // additive: the exit code is unchanged by the hook
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(
+      expect.objectContaining({ fanOutCount: 1, enqueueSummary: expect.objectContaining({ enqueued: 1 }) }),
+    );
+  });
+
+  it("fires options.onResult with the dry-run result at the dry-run success point", async () => {
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 2, title: "Fix flaky test" })],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const onResult = vi.fn();
+
+    const exitCode = await runDiscover(["acme/widgets", "--dry-run"], {
+      nowMs: NOW,
+      fetchCandidateIssuesWithSummary,
+      onResult,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ outcome: "dry_run", fanOutCount: 1 }));
+  });
+
+  it("REGRESSION: onResult never fires on the parse-error reportCliFailure branch, and the non-zero exit is unchanged", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const onResult = vi.fn();
+
+    const exitCode = await runDiscover(["not-a-repo"], { onResult });
+
+    expect(exitCode).not.toBe(0);
+    expect(onResult).not.toHaveBeenCalled();
+  });
+});

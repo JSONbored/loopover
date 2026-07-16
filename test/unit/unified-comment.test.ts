@@ -727,6 +727,38 @@ describe("buildUnifiedReviewInput", () => {
     expect(deriveUnifiedStatus(input)).toBe("held");
   });
 
+  it("a SOLE reviewer's blocker still counts as a consensus blocker (#6634)", () => {
+    // The one-reviewer case exercises the `valid.length === 1 && reviewersWithBlockers === 1` arm of
+    // consensusBlocker — a lone blocker in a DUAL review is a split (above), but the sole reviewer IS the
+    // consensus, so its blocker hard-blocks.
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("request_changes", { blockers: ["Real defect"] })] });
+    expect(input.consensusBlocker).toBe(true);
+    expect(deriveUnifiedStatus(input)).toBe("blocked");
+  });
+
+  it("a sole reviewer with no blocker is not a consensus blocker (#6634)", () => {
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge")] });
+    expect(input.consensusBlocker).toBe(false);
+  });
+
+  it("merges a reviewer's free-form suggestions into the rendered nits, deduped alongside explicit nits (#6634)", () => {
+    // extractReviewSummary folds each reviewer's non-blocking `suggestions` into `nits` (both are non-blocking).
+    // The shared helper defaults `suggestions: []`, so this is the first case to push a non-empty array through.
+    const input = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [
+        reviewNote("merge", { nits: ["Document the new property."], suggestions: ["Consider extracting a helper.", "document the new property."] }),
+        reviewNote("merge", { suggestions: ["Add a changeset entry."] }),
+      ],
+    });
+    // The free-form suggestions surface in nits...
+    const nits = input.nits ?? [];
+    expect(nits).toContain("Consider extracting a helper.");
+    expect(nits).toContain("Add a changeset entry.");
+    // ...alongside the explicit nit, and the case-insensitive duplicate of it is deduped away (only one survives).
+    expect(nits.filter((n) => n.toLowerCase() === "document the new property.")).toEqual(["Document the new property."]);
+  });
+
   it("counts reviewers that produced no verdict (partial review)", () => {
     const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge"), { model: "m2", notes: null }] });
     expect(input.failedCount).toBe(1);

@@ -74,6 +74,18 @@ function loopoverApiUrl(env) {
   return DEFAULT_API_URL;
 }
 
+/**
+ * Same loopover-mcp session + API URL posture `resolveGitHubToken` uses for backend calls (#6487).
+ * Returns null when there is no session token on disk (fully-standalone AMS / no `loopover-mcp login`).
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {{ apiUrl: string, sessionToken: string } | null}
+ */
+export function resolveLoopoverBackendSession(env = process.env) {
+  const sessionToken = loopoverSessionToken(env);
+  if (!sessionToken) return null;
+  return { apiUrl: loopoverApiUrl(env), sessionToken };
+}
+
 async function fetchLiveGitHubTokenFromSession(sessionToken, apiUrl, fetchImpl) {
   try {
     const response = await fetchImpl(`${apiUrl}/v1/auth/github/token`, {

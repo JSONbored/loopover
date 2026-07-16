@@ -4,8 +4,12 @@ vi.mock("@loopover/engine", async () => {
   return import("../../packages/loopover-engine/src/index");
 });
 
-import { MAX_FOCUS_MANIFEST_BYTES } from "../../packages/loopover-engine/src/index";
-import { fetchSelfReviewContext } from "../../packages/loopover-miner/lib/self-review-context.js";
+import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../packages/loopover-engine/src/index";
+import {
+  applyLiveGateThresholdsToManifest,
+  fetchSelfReviewContext,
+  parseLiveGateThresholdFields,
+} from "../../packages/loopover-miner/lib/self-review-context.js";
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -550,7 +554,7 @@ describe("fetchSelfReviewContext (#5145)", () => {
       "raw.githubusercontent.com": () => jsonResponse(null, 404),
     });
 
-    await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, requestTimeoutMs: 4000 });
+    await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, requestTimeoutMs: 4000, loopoverAuth: null });
 
     expect(timeoutSpy.mock.calls.length).toBeGreaterThan(0);
     expect(timeoutSpy.mock.calls.every(([ms]) => ms === 4000)).toBe(true);
@@ -567,10 +571,146 @@ describe("fetchSelfReviewContext (#5145)", () => {
       "raw.githubusercontent.com": () => jsonResponse(null, 404),
     });
 
-    await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, requestTimeoutMs: -3 });
+    await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, requestTimeoutMs: -3, loopoverAuth: null });
 
     expect(timeoutSpy.mock.calls.length).toBeGreaterThan(0);
     expect(timeoutSpy.mock.calls.every(([ms]) => ms === 10_000)).toBe(true);
+    timeoutSpy.mockRestore();
+  });
+});
+
+describe("live gate thresholds probe (#6487)", () => {
+  it("parseLiveGateThresholdFields accepts the field-limited snake_case payload and rejects empties", () => {
+    expect(
+      parseLiveGateThresholdFields({
+        repoFullName: "acme/widgets",
+        confidence_floor: 0.91,
+        scope_cap_files: 8,
+        scope_cap_lines: 250,
+      }),
+    ).toEqual({ confidence_floor: 0.91, scope_cap_files: 8, scope_cap_lines: 250 });
+    expect(parseLiveGateThresholdFields({ confidence_floor: 0.5, scope_cap_files: null, scope_cap_lines: null })).toEqual({
+      confidence_floor: 0.5,
+      scope_cap_files: null,
+      scope_cap_lines: null,
+    });
+    expect(parseLiveGateThresholdFields({ confidence_floor: null, scope_cap_files: null, scope_cap_lines: null })).toBeNull();
+    expect(parseLiveGateThresholdFields({ confidence_floor: 1.5 })).toBeNull();
+    expect(parseLiveGateThresholdFields(null)).toBeNull();
+  });
+
+  it("applyLiveGateThresholdsToManifest raises readinessMinScore and prefers live scope caps", () => {
+    const base = parseFocusManifestContent("gate:\n  readiness:\n    mode: block\n    minScore: 70\n  size:\n    mode: block\n    maxFiles: 20\n    maxLines: 500\n", "repo_file");
+    const overlaid = applyLiveGateThresholdsToManifest(base, {
+      confidence_floor: 0.91,
+      scope_cap_files: 8,
+      scope_cap_lines: 250,
+    });
+    expect(overlaid.gate.readinessMinScore).toBe(91);
+    expect(overlaid.gate.sizeMaxFiles).toBe(8);
+    expect(overlaid.gate.sizeMaxLines).toBe(250);
+    expect(overlaid.gate.duplicates).toBe(base.gate.duplicates);
+    // Raise-only: a lower live floor must not loosen the static reconstruction.
+    const notLoosened = applyLiveGateThresholdsToManifest(base, {
+      confidence_floor: 0.5,
+      scope_cap_files: null,
+      scope_cap_lines: null,
+    });
+    expect(notLoosened.gate.readinessMinScore).toBe(70);
+  });
+
+  it("uses live ORB thresholds when the probe returns 200", async () => {
+    const fetchImpl = routedFetch({
+      "/live-gate-thresholds": () =>
+        jsonResponse({
+          repoFullName: "acme/widgets",
+          confidence_floor: 0.91,
+          scope_cap_files: 8,
+          scope_cap_lines: 250,
+        }),
+      "/repos/acme/widgets/issues": () => jsonResponse([]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => textResponse("gate:\n  readiness:\n    mode: block\n    minScore: 70\n  size:\n    mode: block\n    maxFiles: 20\n    maxLines: 500\n"),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: { apiUrl: "https://orb.test", sessionToken: "mcp-test-token" },
+    });
+    expect(result.manifest.gate.readinessMinScore).toBe(91);
+    expect(result.manifest.gate.sizeMaxFiles).toBe(8);
+    expect(result.manifest.gate.sizeMaxLines).toBe(250);
+  });
+
+  it("falls back to static reconstruction when the probe 403s / 404s / times out", async () => {
+    const staticYml = "gate:\n  readiness:\n    mode: block\n    minScore: 70\n  size:\n    mode: block\n    maxFiles: 20\n    maxLines: 500\n";
+
+    for (const respond of [
+      () => jsonResponse({ error: "forbidden_repo" }, 403),
+      () => jsonResponse({ error: "live_gate_thresholds_not_found" }, 404),
+      () => {
+        throw new Error("timeout");
+      },
+    ]) {
+      const fetchImpl = routedFetch({
+        "/live-gate-thresholds": respond,
+        "/repos/acme/widgets/issues": () => jsonResponse([]),
+        "/repos/acme/widgets/pulls": () => jsonResponse([]),
+        "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+        "raw.githubusercontent.com": () => textResponse(staticYml),
+        "api.gittensor.io/miners": () => jsonResponse([]),
+      });
+      const result = await fetchSelfReviewContext("acme/widgets", {
+        fetchImpl: fetchImpl as never,
+        loopoverAuth: { apiUrl: "https://orb.test", sessionToken: "mcp-test-token" },
+      });
+      expect(result.manifest.gate.readinessMinScore).toBe(70);
+      expect(result.manifest.gate.sizeMaxFiles).toBe(20);
+      expect(result.manifest.gate.sizeMaxLines).toBe(500);
+    }
+  });
+
+  it("skips the probe entirely when loopoverAuth is null (fully-standalone path)", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return textResponse("gate:\n  duplicates: block\n");
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: null,
+    });
+    expect(seen.some((url) => url.includes("live-gate-thresholds"))).toBe(false);
+    expect(result.manifest.gate.duplicates).toBe("block");
+  });
+
+  it("uses the short probe timeout budget, not the GitHub request timeout", async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () => jsonResponse([]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+      "/live-gate-thresholds": () => jsonResponse({ confidence_floor: 0.9, scope_cap_files: null, scope_cap_lines: null }),
+    });
+
+    await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: { apiUrl: "https://orb.test", sessionToken: "mcp-test-token" },
+      requestTimeoutMs: 10_000,
+      liveGateProbeTimeoutMs: 350,
+    });
+
+    expect(timeoutSpy.mock.calls.some(([ms]) => ms === 350)).toBe(true);
     timeoutSpy.mockRestore();
   });
 });

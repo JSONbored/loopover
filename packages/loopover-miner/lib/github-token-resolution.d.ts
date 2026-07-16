@@ -12,6 +12,11 @@ export function resolveGitHubToken(
   options?: { fetchImpl?: GitHubTokenResolutionFetch },
 ): Promise<string | null>;
 
+/** Same loopover-mcp session + API URL posture `resolveGitHubToken` uses (#6487). Null when no session. */
+export function resolveLoopoverBackendSession(
+  env?: NodeJS.ProcessEnv,
+): { apiUrl: string; sessionToken: string } | null;
+
 export function resetGitHubTokenResolutionForTesting(): void;
 
 export function hasGitHubTokenSource(env?: NodeJS.ProcessEnv): boolean;

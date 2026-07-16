@@ -4,6 +4,7 @@ import {
   MAX_FOCUS_MANIFEST_BYTES,
   parseFocusManifestContent,
 } from "@loopover/engine";
+import { resolveLoopoverBackendSession } from "./github-token-resolution.js";
 
 // Real SelfReviewContext fetcher (#5145, Wave 3.5). Builds the context object the miner's self-review pass
 // (packages/loopover-engine/src/miner/self-review-adapter.ts) needs, at the SAME fidelity the live gate's
@@ -18,6 +19,11 @@ import {
 // `issueQuality` is populated via buildIssueQualityReport (exported from @loopover/engine as a package-local
 // twin of the host engine helper — see #6057). Bounty rows and recent-merged PR history are passed as empty
 // arrays because this fetcher does not yet pull either source. `bounties` remains omitted for the reason above.
+//
+// #6487: after the static `.loopover.yml` reconstruction, optionally probe ORB's live-gate-thresholds endpoint
+// (same loopover-mcp session posture as resolveGitHubToken). On success, overlay confidence_floor /
+// scope_cap_files / scope_cap_lines onto the parsed manifest gate; on 403/timeout/404/no-session, keep the
+// static reconstruction unchanged. Fully-standalone (ORB-absent) paths stay byte-identical.
 
 const GITHUB_API_VERSION = "2022-11-28";
 const DEFAULT_API_BASE_URL = "https://api.github.com";
@@ -26,6 +32,8 @@ const DEFAULT_GITTENSOR_API_BASE = "https://api.gittensor.io";
 const DEFAULT_PER_PAGE = 100;
 const DEFAULT_MAX_PAGES = 10;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** Short ORB probe budget (#6487) — must never make discover/gate-prediction meaningfully slower when ORB is absent. */
+const DEFAULT_LIVE_GATE_PROBE_TIMEOUT_MS = 400;
 
 // Mirrors src/signals/focus-manifest-loader.ts's MANIFEST_FILE_CANDIDATES exactly -- first candidate that
 // resolves wins, same as the live gate's own lookup order.
@@ -50,8 +58,22 @@ function githubHeaders(githubToken) {
 }
 
 function normalizeOptions(options = {}) {
+  const env = options.env ?? process.env;
+  // Explicit null skips the probe (tests / forced-standalone). Undefined ⇒ resolve from loopover-mcp session.
+  const loopoverAuth =
+    options.loopoverAuth === null
+      ? null
+      : options.loopoverAuth && typeof options.loopoverAuth.sessionToken === "string" && options.loopoverAuth.sessionToken
+        ? {
+            apiUrl:
+              typeof options.loopoverAuth.apiUrl === "string" && options.loopoverAuth.apiUrl.trim()
+                ? options.loopoverAuth.apiUrl.replace(/\/+$/, "")
+                : (resolveLoopoverBackendSession(env)?.apiUrl ?? "https://api.loopover.ai"),
+            sessionToken: options.loopoverAuth.sessionToken,
+          }
+        : resolveLoopoverBackendSession(env);
   return {
-    githubToken: options.githubToken ?? process.env.GITHUB_TOKEN ?? "",
+    githubToken: options.githubToken ?? env.GITHUB_TOKEN ?? "",
     apiBaseUrl: typeof options.apiBaseUrl === "string" && options.apiBaseUrl.trim() ? options.apiBaseUrl.trim() : DEFAULT_API_BASE_URL,
     rawContentBaseUrl:
       typeof options.rawContentBaseUrl === "string" && options.rawContentBaseUrl.trim() ? options.rawContentBaseUrl.trim() : DEFAULT_RAW_CONTENT_BASE_URL,
@@ -63,7 +85,75 @@ function normalizeOptions(options = {}) {
     contributorLogin: typeof options.contributorLogin === "string" ? options.contributorLogin.trim() : "",
     linkedIssues: Array.isArray(options.linkedIssues) ? options.linkedIssues.filter((n) => Number.isInteger(n)) : [],
     requestTimeoutMs: Number.isInteger(options.requestTimeoutMs) && options.requestTimeoutMs > 0 ? options.requestTimeoutMs : DEFAULT_REQUEST_TIMEOUT_MS,
+    liveGateProbeTimeoutMs:
+      Number.isInteger(options.liveGateProbeTimeoutMs) && options.liveGateProbeTimeoutMs > 0
+        ? options.liveGateProbeTimeoutMs
+        : DEFAULT_LIVE_GATE_PROBE_TIMEOUT_MS,
+    loopoverAuth,
   };
+}
+
+/** Validate the field-limited #6486/#6487 payload; null when nothing usable is present. */
+export function parseLiveGateThresholdFields(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const confidence_floor =
+    typeof payload.confidence_floor === "number" && payload.confidence_floor >= 0 && payload.confidence_floor <= 1
+      ? payload.confidence_floor
+      : null;
+  const scope_cap_files = typeof payload.scope_cap_files === "number" && payload.scope_cap_files > 0 ? payload.scope_cap_files : null;
+  const scope_cap_lines = typeof payload.scope_cap_lines === "number" && payload.scope_cap_lines > 0 ? payload.scope_cap_lines : null;
+  if (confidence_floor === null && scope_cap_files === null && scope_cap_lines === null) return null;
+  return { confidence_floor, scope_cap_files, scope_cap_lines };
+}
+
+/**
+ * Overlay live ORB thresholds onto a statically-reconstructed FocusManifest (#6487).
+ * - confidence_floor → raise-only readinessMinScore (mirrors applySelfTuneOverrideToSettings).
+ * - scope_cap_files / scope_cap_lines → prefer live sizeMaxFiles / sizeMaxLines when present.
+ * Other gate fields are left untouched.
+ */
+export function applyLiveGateThresholdsToManifest(manifest, fields) {
+  if (!manifest || !fields) return manifest;
+  const gate = { ...manifest.gate };
+  if (typeof fields.confidence_floor === "number") {
+    const floorScore = Math.max(0, Math.min(100, Math.round(fields.confidence_floor * 100)));
+    if (typeof gate.readinessMinScore === "number" && floorScore > gate.readinessMinScore) {
+      gate.readinessMinScore = floorScore;
+    }
+  }
+  if (typeof fields.scope_cap_files === "number" && fields.scope_cap_files > 0) {
+    gate.sizeMaxFiles = fields.scope_cap_files;
+  }
+  if (typeof fields.scope_cap_lines === "number" && fields.scope_cap_lines > 0) {
+    gate.sizeMaxLines = fields.scope_cap_lines;
+  }
+  return { ...manifest, gate };
+}
+
+async function probeLiveGateThresholds(target, resolved) {
+  const auth = resolved.loopoverAuth;
+  if (!auth?.sessionToken) return null;
+  const url = `${auth.apiUrl}/v1/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/live-gate-thresholds`;
+  try {
+    const response = await fetchWithTimeout(
+      resolved.fetchImpl,
+      url,
+      {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${auth.sessionToken}`,
+          accept: "application/json",
+          "user-agent": "loopover-miner",
+        },
+      },
+      resolved.liveGateProbeTimeoutMs,
+    );
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    return parseLiveGateThresholdFields(payload);
+  } catch {
+    return null;
+  }
 }
 
 // A fresh AbortSignal.timeout() per call, so a stalled connection can't hang context construction forever
@@ -313,13 +403,17 @@ function computeInDuplicateCluster(collisionReport, targetIssueNumbers) {
 /**
  * Build a real SelfReviewContext from live GitHub data, at the same fidelity the live gate's own DB-backed
  * construction produces. See this file's header for the one field (bounties) deliberately left undefined
- * and why; issueQuality is populated from the live GitHub snapshot.
+ * and why; issueQuality is populated from the live GitHub snapshot. Optionally overlays ORB live gate
+ * thresholds onto the static `.loopover.yml` reconstruction (#6487).
  *
  * @param {string} repoFullName
  * @param {{
  *   githubToken?: string, contributorLogin?: string, linkedIssues?: number[],
  *   apiBaseUrl?: string, rawContentBaseUrl?: string, gittensorApiBase?: string,
  *   fetchImpl?: typeof fetch, perPage?: number, maxPages?: number, requestTimeoutMs?: number,
+ *   liveGateProbeTimeoutMs?: number,
+ *   loopoverAuth?: { apiUrl?: string, sessionToken: string } | null,
+ *   env?: NodeJS.ProcessEnv,
  * }} [options]
  * @returns {Promise<import("./self-review-context.js").SelfReviewContextResult>}
  */
@@ -328,15 +422,17 @@ export async function fetchSelfReviewContext(repoFullName, options = {}) {
   if (!target) throw new Error("invalid_repo_full_name");
   const resolved = normalizeOptions(options);
 
-  const [repo, issues, pullRequests, manifestContent, confirmedContributor] = await Promise.all([
+  const [repo, issues, pullRequests, manifestContent, confirmedContributor, liveGateThresholds] = await Promise.all([
     fetchRepositoryRecord(target, resolved),
     fetchOpenIssueRecords(target, resolved),
     fetchOpenPullRequestRecords(target, resolved),
     fetchManifestContent(target, resolved),
     fetchConfirmedContributor(resolved.contributorLogin, resolved),
+    probeLiveGateThresholds(target, resolved),
   ]);
 
-  const manifest = parseFocusManifestContent(manifestContent, "repo_file");
+  const staticManifest = parseFocusManifestContent(manifestContent, "repo_file");
+  const manifest = applyLiveGateThresholdsToManifest(staticManifest, liveGateThresholds);
   // Positional args match buildIssueQualityReport(repo, issues, pullRequests, fullName, bounties, collisions, recentMerged):
   // repo is the full RepositoryRecord from fetchRepositoryRecord (not a string); empty bounties/recentMerged
   // because this fetcher has no external bounty source and does not yet pull merge history.

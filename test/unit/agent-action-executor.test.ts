@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as notifyDiscordModule from "../../src/services/notify-discord";
 
 vi.mock("../../src/github/pr-actions", () => ({
   createPullRequestReview: vi.fn(async () => ({ id: 1 })),
@@ -221,6 +222,25 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     const outcomes = await executeAgentMaintenanceActions(env, ctx(), [close]);
     expect(outcomes[0]?.detail).toBe("noise");
     expect(outcomes[0]?.detail.endsWith("…")).toBe(false);
+  });
+
+  it("enriches the disposition notification with the recorded gate verdict, falling back to the plain reason when none is on record (#6636)", async () => {
+    const env = createTestEnv({});
+    const notifySpy = vi.spyOn(notifyDiscordModule, "notifyActionToDiscord").mockResolvedValue(undefined);
+
+    // PR #7 HAS a recorded gate_decision verdict → the notification carries the enriched (verdict) reason, not
+    // the plain disposition reason ("noise"). review_audit keys the row by `${repoFullName}#${pullNumber}`.
+    await env.DB.prepare(
+      "INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, summary, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+      .bind("gv7", "owner/repo", "owner/repo#7", "gate_decision", "close", "gittensory-native", "sha7", "An AI reviewer flagged a likely blocking defect", "2026-07-16T00:00:00.000Z")
+      .run();
+    await executeAgentMaintenanceActions(env, ctx(), [close]);
+    expect(notifySpy).toHaveBeenCalledWith(env, expect.objectContaining({ pullNumber: 7, summary: "An AI reviewer flagged a likely blocking defect" }));
+
+    // PR #8 has NO recorded verdict → resolveDispositionReason falls back to the plain disposition reason.
+    await executeAgentMaintenanceActions(env, ctx({ pullNumber: 8, headSha: "sha8" }), [close]);
+    expect(notifySpy).toHaveBeenCalledWith(env, expect.objectContaining({ pullNumber: 8, summary: "noise" }));
   });
 
   it("records every structured close reason in audit metadata instead of only the flattened detail", async () => {

@@ -17,6 +17,7 @@ import {
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
 import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
+import { resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
 import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequestState, fetchLiveReviewThreadBlockers, refreshInstallationHealthForInstallation } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
@@ -562,7 +563,12 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       const notifyOutcome: NotifyOutcome | null =
         action.actionClass === "merge" ? "merged" : action.actionClass === "close" ? "closed" : action.actionClass === "request_changes" ? "manual" : null;
       if (notifyOutcome) {
-        const notifyParams = { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary: action.reason, submitter: ctx.authorLogin };
+        // #6636: enrich the notification with the AI's actual gate-verdict reasoning (the latest recorded
+        // gate_decision summary for this PR) instead of only the plain disposition reason — resolveDispositionReason
+        // falls back to `action.reason` when no verdict is on record or the read fails, so this is byte-identical
+        // when there's nothing to enrich with. review_audit keys gate_decision rows by `${repoFullName}#${number}`.
+        const summary = await resolveDispositionReason(env, `${ctx.repoFullName}#${ctx.pullNumber}`, action.reason);
+        const notifyParams = { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, outcome: notifyOutcome, summary, submitter: ctx.authorLogin };
         await notifyActionToDiscord(env, notifyParams).catch(() => undefined);
         await notifyActionToSlack(env, notifyParams).catch(() => undefined);
       }

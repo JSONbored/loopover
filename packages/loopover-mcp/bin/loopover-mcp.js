@@ -10,6 +10,7 @@ import { buildFeasibilityVerdict, buildPrTextLint } from "@loopover/engine";
 // registering them locally is just importing the same engine builders the remote server uses.
 import {
   buildApplyLabelsSpec,
+  buildClosePrSpec,
   buildCreateBranchSpec,
   buildDeleteBranchSpec,
   buildFileIssueSpec,
@@ -361,6 +362,11 @@ const applyLabelsShape = {
   repoFullName: writeToolRepoFullName,
   number: z.number().int().positive(),
   labels: z.array(z.string().min(1).max(100)).min(1).max(20),
+};
+const closePrShape = {
+  repoFullName: writeToolRepoFullName,
+  number: z.number().int().positive(),
+  comment: z.string().max(WRITE_TOOL_BODY_MAX).optional(),
 };
 const postEligibilityCommentShape = {
   repoFullName: writeToolRepoFullName,
@@ -1054,6 +1060,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "agent",
     description:
       "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write).",
+  },
+  {
+    name: "loopover_close_pr",
+    category: "agent",
+    description:
+      "Build a LOCAL-execution spec to close a PR, optionally with a comment (run it with your own gh creds; loopover never performs the write).",
   },
   {
     name: "loopover_file_issue",
@@ -2100,6 +2112,15 @@ registerStdioTool(
     inputSchema: openPrShape,
   },
   (input) => localWriteSpecResult(buildOpenPrSpec(input)),
+);
+
+registerStdioTool(
+  "loopover_close_pr",
+  {
+    description: stdioToolDescription("loopover_close_pr"),
+    inputSchema: closePrShape,
+  },
+  (input) => localWriteSpecResult(buildClosePrSpec(input)),
 );
 
 registerStdioTool(

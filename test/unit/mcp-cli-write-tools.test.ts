@@ -33,6 +33,7 @@ afterEach(async () => {
 
 const WRITE_TOOLS = [
   "loopover_open_pr",
+  "loopover_close_pr",
   "loopover_file_issue",
   "loopover_apply_labels",
   "loopover_post_eligibility_comment",
@@ -84,6 +85,17 @@ describe("loopover-mcp write-tools (#6149)", () => {
     expect(spec(result).action).toBe("apply_labels");
     expect(spec(result).command).toContain("gh issue edit 7 --repo 'acme/widgets'");
     expect(spec(result).command).toContain("--add-label");
+  });
+
+  it("loopover_close_pr composes a gh pr close spec, optionally with a comment", async () => {
+    const plain = await client.callTool({ name: "loopover_close_pr", arguments: { repoFullName: "acme/widgets", number: 7 } });
+    expect(plain.isError).toBeFalsy();
+    expect(spec(plain).action).toBe("close_pr");
+    expect(spec(plain).command).toBe("gh pr close 7 --repo 'acme/widgets'");
+
+    const withComment = await client.callTool({ name: "loopover_close_pr", arguments: { repoFullName: "acme/widgets", number: 7, comment: "superseded" } });
+    expect(withComment.isError).toBeFalsy();
+    expect(spec(withComment).command).toBe("gh pr close 7 --repo 'acme/widgets' && gh pr comment 7 --repo 'acme/widgets' --body 'superseded'");
   });
 
   it("loopover_post_eligibility_comment composes a gh issue comment spec", async () => {

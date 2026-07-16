@@ -902,6 +902,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Explain a private score preview multiplier-by-multiplier with plain-English levers and the highest-impact improvement.",
   },
   {
+    name: "loopover_get_eligibility_plan",
+    category: "discovery",
+    description:
+      "Derive a structured eligibility plan from local score-preview metadata: whether the branch/PR is eligible now, public-safe blockers, and cleanup paths. Advisory dry-run only — no GitHub writes.",
+  },
+  {
     name: "loopover_get_decision_pack",
     category: "discovery",
     description: "Return the private decision pack for a contributor: the ranked repos and issues to work on next, with per-repo go/raise/avoid guidance. Takes login (the contributor's GitHub username).",
@@ -1542,52 +1548,70 @@ registerStdioTool(
   async (input) => toolResult("LoopOver private local PR scoring preview.", await previewLocalScore(await withClientWorkspaceRoots(input))),
 );
 
+// #6621: the local-branch -> scoring-request body BOTH local scoring tools post. Extracted from
+// loopover_explain_score_breakdown so its eligibility-plan sibling sends a byte-identical request instead of a
+// second, drifting copy of this assembly. `purpose` only shapes the missing-login error message.
+async function buildLocalScoreRequestBody(input, purpose) {
+  const workspaceInput = await withClientWorkspaceRoots(input);
+  const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
+  if (!contributorLogin) throw new Error(`contributorLogin is required for ${purpose}.`);
+  const workspace = resolveWorkspaceCwd(workspaceInput);
+  const diff = collectLocalDiff(workspace.cwd, workspaceInput.baseRef, workspaceInput.workspaceRoots);
+  const branchPayload = buildBranchAnalysisPayload({
+    ...workspaceInput,
+    login: contributorLogin,
+    cwd: workspace.cwd,
+    repoFullName: workspaceInput.repoFullName,
+    baseRef: workspaceInput.baseRef,
+  });
+  const upstreamPreview = branchPayload.localScorerStatus;
+  const estimatedSourceLines = workspaceInput.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
+  return {
+    repoFullName: workspaceInput.repoFullName,
+    targetType: "local_diff",
+    targetKey: workspaceInput.targetKey ?? localDiffTargetKey(branchPayload, workspaceInput.baseRef),
+    contributorLogin,
+    labels: workspaceInput.labels,
+    linkedIssueMode: workspaceInput.linkedIssueMode,
+    sourceTokenScore: workspaceInput.sourceTokenScore ?? estimatedSourceLines,
+    sourceLines: estimatedSourceLines,
+    totalTokenScore: workspaceInput.totalTokenScore ?? diff.changedLineCount,
+    testTokenScore: diff.testFiles.length,
+    openPrCount: workspaceInput.openPrCount,
+    credibility: workspaceInput.credibility,
+    changesRequestedCount: workspaceInput.changesRequestedCount,
+    pendingMergedPrCount: workspaceInput.pendingMergedPrCount,
+    pendingClosedPrCount: workspaceInput.pendingClosedPrCount,
+    approvedPrCount: workspaceInput.approvedPrCount,
+    expectedOpenPrCountAfterMerge: workspaceInput.expectedOpenPrCountAfterMerge,
+    projectedCredibility: workspaceInput.projectedCredibility,
+    scenarioNotes: workspaceInput.scenarioNotes,
+    branchEligibility: workspaceInput.branchEligibility,
+    metadataOnly: !upstreamPreview.ok,
+  };
+}
+
 registerStdioTool(
   "loopover_explain_score_breakdown",
   {
     description: stdioToolDescription("loopover_explain_score_breakdown"),
     inputSchema: localScoreShape,
   },
-  async (input) => {
-    const workspaceInput = await withClientWorkspaceRoots(input);
-    const contributorLogin = workspaceInput.contributorLogin ?? activeProfile.session?.login;
-    if (!contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
-    const workspace = resolveWorkspaceCwd(workspaceInput);
-    const diff = collectLocalDiff(workspace.cwd, workspaceInput.baseRef, workspaceInput.workspaceRoots);
-    const branchPayload = buildBranchAnalysisPayload({
-      ...workspaceInput,
-      login: contributorLogin,
-      cwd: workspace.cwd,
-      repoFullName: workspaceInput.repoFullName,
-      baseRef: workspaceInput.baseRef,
-    });
-    const upstreamPreview = branchPayload.localScorerStatus;
-    const estimatedSourceLines = workspaceInput.sourceLines ?? Math.max(1, diff.changedLineCount - diff.testFiles.length);
-    const body = {
-      repoFullName: workspaceInput.repoFullName,
-      targetType: "local_diff",
-      targetKey: workspaceInput.targetKey ?? localDiffTargetKey(branchPayload, workspaceInput.baseRef),
-      contributorLogin,
-      labels: workspaceInput.labels,
-      linkedIssueMode: workspaceInput.linkedIssueMode,
-      sourceTokenScore: workspaceInput.sourceTokenScore ?? estimatedSourceLines,
-      sourceLines: estimatedSourceLines,
-      totalTokenScore: workspaceInput.totalTokenScore ?? diff.changedLineCount,
-      testTokenScore: diff.testFiles.length,
-      openPrCount: workspaceInput.openPrCount,
-      credibility: workspaceInput.credibility,
-      changesRequestedCount: workspaceInput.changesRequestedCount,
-      pendingMergedPrCount: workspaceInput.pendingMergedPrCount,
-      pendingClosedPrCount: workspaceInput.pendingClosedPrCount,
-      approvedPrCount: workspaceInput.approvedPrCount,
-      expectedOpenPrCountAfterMerge: workspaceInput.expectedOpenPrCountAfterMerge,
-      projectedCredibility: workspaceInput.projectedCredibility,
-      scenarioNotes: workspaceInput.scenarioNotes,
-      branchEligibility: workspaceInput.branchEligibility,
-      metadataOnly: !upstreamPreview.ok,
-    };
-    return toolResult("LoopOver private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", body));
+  async (input) =>
+    toolResult("LoopOver private score breakdown.", await apiPost("/v1/scoring/explain-breakdown", await buildLocalScoreRequestBody(input, "score breakdown"))),
+);
+
+// #6621: CLI mirror of the remote server's loopover_get_eligibility_plan — the one tool in the
+// preview/breakdown/eligibility trio that had no REST route or CLI mirror. Same local-branch request body as
+// the breakdown tool above; only the endpoint differs. deriveEligibilityPlan runs server-side.
+registerStdioTool(
+  "loopover_get_eligibility_plan",
+  {
+    description: stdioToolDescription("loopover_get_eligibility_plan"),
+    inputSchema: localScoreShape,
   },
+  async (input) =>
+    toolResult("LoopOver eligibility plan.", await apiPost("/v1/scoring/eligibility-plan", await buildLocalScoreRequestBody(input, "an eligibility plan"))),
 );
 
 registerStdioTool(

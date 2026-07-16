@@ -1173,7 +1173,7 @@ describe("GitHub backfill", () => {
   });
 
   it("marks comment, label, and check repair impacts disabled by repo settings", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, {
       repoFullName: "JSONbored/gittensory",
@@ -1182,6 +1182,10 @@ describe("GitHub backfill", () => {
       autoLabelEnabled: false,
       checkRunMode: "off",
     });
+    // Isolate from the real JSONbored/gittensory repo's live .loopover.yml -- this test's intent is
+    // pure DB-settings resolution, not manifest content, and the manifest loader falls back to a live
+    // network fetch when no fixture intercepts it.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
 
     const repair = await buildInstallationRepairDiagnostics(env, {
       installationId: 123,
@@ -1245,9 +1249,12 @@ describe("GitHub backfill", () => {
   });
 
   it("repair diagnostics require contents:write for merge autonomy (#audit-install-health display)", async () => {
-    const env = createTestEnv();
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
     await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto" } });
+    // Isolate from the real JSONbored/gittensory repo's live .loopover.yml, same as the sibling
+    // "disabled by repo settings" test above -- this asserts the DB-configured autonomy setting wins.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
 
     const repair = await buildInstallationRepairDiagnostics(env, {
       installationId: 123,

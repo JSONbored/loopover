@@ -50,6 +50,7 @@ export type PortfolioQueueStore = {
     ) => Array<{ repoFullName: string; identifier: string; apiBaseUrl?: string }>,
   ): QueueEntry[];
   getAttemptHistory(repoFullName: string, identifier: string, apiBaseUrl?: string): QueueAttemptHistory;
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

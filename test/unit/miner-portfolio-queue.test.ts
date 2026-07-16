@@ -644,4 +644,30 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
       }).not.toThrow();
     });
   });
+
+  describe("purgeByRepo (#5564, #6599)", () => {
+    it("deletes every queue row for one repo and leaves other repos untouched", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "owner/repo-a", identifier: "1" });
+      store.enqueue({ repoFullName: "owner/repo-a", identifier: "2" });
+      store.enqueue({ repoFullName: "owner/repo-b", identifier: "3" });
+
+      expect(store.purgeByRepo("owner/repo-a")).toBe(2);
+      expect(store.listQueue("owner/repo-a")).toEqual([]);
+      expect(store.listQueue()).toHaveLength(1);
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const store = tempStore();
+      store.enqueue({ repoFullName: "owner/repo-b", identifier: "1" });
+      expect(store.purgeByRepo("owner/repo-a")).toBe(0);
+      expect(store.listQueue()).toHaveLength(1);
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const store = tempStore();
+      expect(() => store.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+      expect(() => store.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+    });
+  });
 });

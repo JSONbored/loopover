@@ -1,6 +1,7 @@
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
+import { PORTFOLIO_QUEUE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
 // The miner's local portfolio/queue store (#2292): a 100% client-side, prioritized backlog of candidate work
 // items across every repo the miner has been pointed at ("what should I look at next, across everything I'm
@@ -384,6 +385,10 @@ export function initPortfolioQueueStore(dbPath = resolvePortfolioQueueDbPath()) 
         reenqueues: row.reenqueue_count,
         reachedDone: row.status === "done",
       };
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564, #6599) — never runs automatically.
+    purgeByRepo(repoFullName) {
+      return purgeStoreByRepo(db, PORTFOLIO_QUEUE_PURGE_SPEC, normalizeRepoFullName(repoFullName));
     },
     close() {
       db.close();

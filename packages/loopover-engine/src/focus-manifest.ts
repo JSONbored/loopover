@@ -262,9 +262,9 @@ export type CopycatGateMode = "off" | "warn" | "label" | "block";
 // `review.visual.enabled` keeps its own existing force-off-only semantics untouched by this change.
 // `improvementSignal` (#4738, foundation phase of the #4737 PR-improvement-signal epic) is likewise a plain
 // symmetric override: it is a READ-ONLY advisory quality-delta signal, not a security control, so a repo-
-// level `false` behaves like any other plain override with no floor/ceiling. This is activation wiring only
-// -- no tier reads the resolved value yet (sibling sub-issues #4739-#4746 build the deterministic/LLM/panel
-// behavior that will gate on it).
+// level `false` behaves like any other plain override with no floor/ceiling. The tiers that gate on it
+// (sibling sub-issues #4739-#4746) have landed -- src/queue/processors.ts reads the resolved value to drive
+// the deterministic/LLM improvement-signal behavior.
 export const CONVERGED_FEATURE_KEYS = [
   "rag",
   "reputation",

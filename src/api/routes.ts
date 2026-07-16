@@ -169,6 +169,7 @@ import { buildRemediationPlan } from "../services/remediation-plan";
 import { handleDraftCreate, handleDraftOAuthCallback, handleDraftStatus } from "../services/draft";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { explainScoreBreakdown } from "../services/score-breakdown";
+import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import {
   authoritativeContributorRepoStats,
@@ -2113,6 +2114,29 @@ export function createApp() {
     const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
     const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
     return c.json(explainScoreBreakdown(preview));
+  });
+
+  app.post("/v1/scoring/eligibility-plan", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = scorePreviewSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_scoring_preview_request", issues: parsed.error.issues }, 400);
+    // Like /v1/scoring/preview (and loopover_get_eligibility_plan's own MCP handler), the contributor gate is
+    // conditional on contributorLogin being supplied — not unconditionally required as in explain-breakdown.
+    if (parsed.data.contributorLogin) {
+      const unauthorized = await requireContributorAccess(c, parsed.data.contributorLogin);
+      if (unauthorized) return unauthorized;
+    }
+    const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
+      getRepository(c.env, parsed.data.repoFullName),
+      getOrCreateScoringModelSnapshot(c.env),
+      parsed.data.contributorLogin ? getContributorEvidence(c.env, parsed.data.contributorLogin) : Promise.resolve(null),
+      parsed.data.contributorLogin ? listContributorIssues(c.env, parsed.data.contributorLogin) : Promise.resolve([]),
+    ]);
+    const openIssueCount = contributorOpenIssueCount(contributorIssues, parsed.data.repoFullName);
+    // Time-decay (#703) is an owner-gated global, injected server-side (not caller-controllable).
+    const input = { ...parsed.data, openIssueCount, applyTimeDecay: isTimeDecayEnabled(c.env) };
+    const preview = buildScorePreview({ input, repo, snapshot, contributorEvidence: evidence });
+    return c.json(deriveEligibilityPlan(preview));
   });
 
   app.get("/v1/sync/status", async (c) => {

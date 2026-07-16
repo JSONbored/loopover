@@ -2012,6 +2012,37 @@ describe("api routes", () => {
     expect(missingContributorBreakdown.status).toBe(400);
     await expect(missingContributorBreakdown.json()).resolves.toMatchObject({ error: "contributor_login_required" });
 
+    // #6621: /v1/scoring/eligibility-plan reuses the same fetch/build as explain-breakdown but returns a
+    // deriveEligibilityPlan verdict, and — like /v1/scoring/preview — treats contributorLogin as optional.
+    const eligibilityPlan = await app.request(
+      "/v1/scoring/eligibility-plan",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify(agedScoreInput) },
+      env,
+    );
+    expect(eligibilityPlan.status).toBe(200);
+    const eligibilityPlanBody = (await eligibilityPlan.json()) as {
+      eligible: boolean;
+      branchEligibilityStatus: string;
+      blockers: string[];
+      cleanupPaths: string[];
+    };
+    expect(eligibilityPlanBody).toMatchObject({
+      eligible: expect.any(Boolean),
+      branchEligibilityStatus: expect.any(String),
+      blockers: expect.any(Array),
+      cleanupPaths: expect.any(Array),
+    });
+
+    // Unlike explain-breakdown (which 400s without a contributorLogin), the eligibility plan omits the
+    // contributor gate when no login is supplied — the conditional path shared with /v1/scoring/preview.
+    const anonymousEligibilityPlan = await app.request(
+      "/v1/scoring/eligibility-plan",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ repoFullName: "entrius/allways-ui", sourceTokenScore: 42 }) },
+      env,
+    );
+    expect(anonymousEligibilityPlan.status).toBe(200);
+    await expect(anonymousEligibilityPlan.json()).resolves.toMatchObject({ eligible: expect.any(Boolean), blockers: expect.any(Array) });
+
     for (const [signalType, payload] of [
       ["queue-health", { repoFullName: "entrius/allways-ui", signals: { openPullRequests: 2 } }],
       ["config-quality", { repoFullName: "entrius/allways-ui", notObservedConfiguredLabels: ["refactor"] }],
@@ -4537,6 +4568,7 @@ describe("api routes", () => {
 
     for (const [path, error] of [
       ["/v1/scoring/preview", "invalid_scoring_preview_request"],
+      ["/v1/scoring/eligibility-plan", "invalid_scoring_preview_request"],
       ["/v1/agent/runs", "invalid_agent_run_request"],
       ["/v1/agent/plan-next-work", "invalid_agent_plan_request"],
       ["/v1/agent/preflight-branch", "invalid_agent_preflight_branch_request"],

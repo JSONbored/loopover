@@ -553,6 +553,16 @@ declare global {
      *  token is sufficient — this probe never writes). A secret — never commit a real value. See
      *  CLOUDFLARE_D1_MONITOR_ACCOUNT_ID. */
     CLOUDFLARE_D1_MONITOR_API_TOKEN?: string;
+    /** Opt-in MCP telemetry (#6228/#6235): the PostHog project API key the typed `src/mcp/telemetry.ts`
+     *  wrapper sends anonymized tool-call counters to. Unset (default — every self-hoster who doesn't opt in)
+     *  ⇒ recordMcpToolCall is a safe no-op that records nothing, byte-identical to before this module existed.
+     *  Only the #6228 allowlist is ever sent — tool name, caller type, ok, coarse duration — never arguments,
+     *  source, or any wallet/hotkey/trust-score data. A secret — inject via `wrangler secret`, never commit. */
+    POSTHOG_API_KEY?: string;
+    /** Opt-in MCP telemetry host override (#6235): the PostHog ingestion host recordMcpToolCall points at
+     *  (e.g. https://eu.i.posthog.com for EU-cloud). Unset ⇒ the US-cloud default (https://us.i.posthog.com).
+     *  Only meaningful alongside POSTHOG_API_KEY; ignored when telemetry is unconfigured. */
+    POSTHOG_HOST?: string;
   }
 }
 

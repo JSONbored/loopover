@@ -75,6 +75,7 @@ export function CommandsPanel() {
     <StateBoundary
       isLoading={commands.status === "loading"}
       isError={commands.status === "error"}
+      errorKind={commands.status === "error" ? commands.errorKind : undefined}
       isEmpty={commands.status === "ready" && commands.data.commands.length === 0}
       onRetry={commands.reload}
       onRefresh={commands.reload}

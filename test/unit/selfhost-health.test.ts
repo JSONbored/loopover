@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -330,6 +330,11 @@ describe("emptyConfigDirAdvisory (gittensory->loopover rename incident)", () => 
     const message = emptyConfigDirAdvisory({ configured: true, entryCount: 0, acknowledged: false });
     expect(message).toMatch(/mounted directory is empty/);
     expect(message).toMatch(/CONFIG_DIR_EMPTY_ACKNOWLEDGED/);
+  });
+
+  it("regression: CONFIG_DIR_EMPTY_ACKNOWLEDGED is documented in .env.example, not just the generated UI reference (#6286)", () => {
+    const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
+    expect(envExample).toMatch(/CONFIG_DIR_EMPTY_ACKNOWLEDGED/);
   });
 });
 

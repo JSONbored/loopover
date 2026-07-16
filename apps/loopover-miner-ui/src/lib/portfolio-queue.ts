@@ -58,6 +58,13 @@ export const emptyPortfolioQueueSummary = (): PortfolioQueueSummary => ({
   oldestQueuedAgeMs: null,
 });
 
+/**
+ * Render an `oldestQueuedAgeMs` value as whole minutes, matching the CLI's `queue dashboard` output
+ * (`packages/loopover-miner/lib/portfolio-dashboard.js`'s `oldest-queued: Xm`) so the web UI honours the
+ * shared-data-path contract this module's header describes rather than only computing the field.
+ */
+export const formatOldestQueuedAge = (ageMs: number): string => `${Math.round(ageMs / 60000)}m`;
+
 /** Fetch the local queue summary; failures surface as a typed error result the view renders, never a crash. */
 export async function fetchPortfolioQueue(fetchImpl: typeof fetch = fetch): Promise<PortfolioQueueResult> {
   try {

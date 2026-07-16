@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   emptyPortfolioQueueSummary,
   fetchPortfolioQueue,
+  formatOldestQueuedAge,
   PORTFOLIO_QUEUE_API_PATH,
   type PortfolioQueueResult,
   type PortfolioQueueSummary,
@@ -60,6 +61,15 @@ describe("emptyPortfolioQueueSummary (#4306)", () => {
       repos: [],
       oldestQueuedAgeMs: null,
     });
+  });
+});
+
+describe("formatOldestQueuedAge (#6185)", () => {
+  it("renders whole minutes the same way the CLI's queue dashboard does", () => {
+    // 90 min matches the shared fixtureSummary's 5_400_000ms and the CLI's `Math.round(ms / 60000)m`.
+    expect(formatOldestQueuedAge(5_400_000)).toBe("90m");
+    expect(formatOldestQueuedAge(0)).toBe("0m");
+    expect(formatOldestQueuedAge(89_000)).toBe("1m"); // rounds to the nearest whole minute
   });
 });
 

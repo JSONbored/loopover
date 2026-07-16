@@ -17,6 +17,10 @@ const portfolioOk: PortfolioQueueResult = {
   ok: true,
   summary: { total: 5, byStatus: { queued: 2, in_progress: 1, done: 2 }, repos: [], oldestQueuedAgeMs: null },
 };
+const portfolioWithAge: PortfolioQueueResult = {
+  ok: true,
+  summary: { total: 5, byStatus: { queued: 2, in_progress: 1, done: 2 }, repos: [], oldestQueuedAgeMs: 5_400_000 },
+};
 const claimsOk: LedgersResult = {
   ok: true,
   summary: {
@@ -39,6 +43,16 @@ describe("OverviewView (#4853)", () => {
     expect(statValue("Done")).toBe("2");
     expect(statValue("Active")).toBe("3");
     expect(statValue("Total recorded")).toBe("4");
+  });
+
+  it("renders the oldest-queued age in the CLI's whole-minute format when the queue has a queued item (#6185)", () => {
+    render(<OverviewView runs={runsOk} portfolio={portfolioWithAge} claims={claimsOk} />);
+    expect(statValue("Oldest queued")).toBe("90m");
+  });
+
+  it("omits the oldest-queued stat when nothing is queued (null age), matching the CLI omitting it (#6185)", () => {
+    render(<OverviewView runs={runsOk} portfolio={portfolioOk} claims={claimsOk} />);
+    expect(screen.queryByText("Oldest queued")).toBeNull();
   });
 
   it("shows an independent loading message per card before data arrives", () => {

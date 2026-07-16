@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
 
 import { fetchLedgers, type LedgersResult } from "../lib/ledgers";
-import { fetchPortfolioQueue, type PortfolioQueueResult } from "../lib/portfolio-queue";
+import { fetchPortfolioQueue, formatOldestQueuedAge, type PortfolioQueueResult } from "../lib/portfolio-queue";
 import { fetchRunStates, type RunHistoryResult } from "../lib/run-history";
 import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
 
@@ -81,6 +81,9 @@ export function OverviewPortfolioCard({ portfolio }: { portfolio: PortfolioQueue
           <Stat label="Queued" value={portfolio.summary.byStatus.queued} />
           <Stat label="In progress" value={portfolio.summary.byStatus.in_progress} tone="text-[var(--warning)]" />
           <Stat label="Done" value={portfolio.summary.byStatus.done} tone="text-[var(--success)]" />
+          {portfolio.summary.oldestQueuedAgeMs !== null ? (
+            <Stat label="Oldest queued" value={formatOldestQueuedAge(portfolio.summary.oldestQueuedAgeMs)} />
+          ) : null}
         </>
       )}
     </SummaryCard>

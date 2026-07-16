@@ -1,4 +1,4 @@
-import { createInstallationToken } from "./app";
+import { withInstallationTokenRetry } from "./app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import type { AgentActionMode } from "../settings/agent-execution";
 
@@ -35,44 +35,47 @@ export async function ensurePullRequestAssignee(
 ): Promise<{ applied: boolean }> {
   const { owner, repo } = parseRepoFullName(repoFullName);
 
-  const token = await createInstallationToken(env, installationId);
-  // Non-live mode suppresses the assign write; the GET dedup probe below still runs.
-  const octokit = makeInstallationOctokit(env, token, options.mode ?? "live", githubRateLimitAdmissionKeyForInstallation(installationId));
-  const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {
-    owner,
-    repo,
-    issue_number: pullNumber,
-  });
-  const existingAssignees = (existing.data.assignees ?? []) as GitHubUser[];
-  if (existingAssignees.some((assignee) => assignee.login?.toLowerCase() === login.toLowerCase())) {
-    return { applied: true };
-  }
-
-  let result;
-  try {
-    result = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/assignees", {
+  // #6191: retry once with a freshly-minted token on a stale-cached-token (bad_credentials/permission-scope)
+  // rejection, self-healing like every other GitHub write path (comments.ts/pr-actions.ts).
+  return await withInstallationTokenRetry(env, installationId, async (token) => {
+    // Non-live mode suppresses the assign write; the GET dedup probe below still runs.
+    const octokit = makeInstallationOctokit(env, token, options.mode ?? "live", githubRateLimitAdmissionKeyForInstallation(installationId));
+    const existing = await octokit.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {
       owner,
       repo,
       issue_number: pullNumber,
-      assignees: [login],
     });
-  } catch (error: unknown) {
-    // GitHub blocks assigning bot/agent logins via App installation tokens (HTTP 403). This is a GitHub
-    // platform restriction with no workaround using installation-token auth. Return applied:false so the
-    // caller can fall back to a by:{login} label instead of propagating an unactionable error.
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "status" in error &&
-      (error as { status: number }).status === 403 &&
-      "message" in error &&
-      typeof (error as { message: unknown }).message === "string" &&
-      (error as { message: string }).message.includes("Assigning agents is not supported")
-    ) {
-      return { applied: false };
+    const existingAssignees = (existing.data.assignees ?? []) as GitHubUser[];
+    if (existingAssignees.some((assignee) => assignee.login?.toLowerCase() === login.toLowerCase())) {
+      return { applied: true };
     }
-    throw error;
-  }
-  const resultAssignees = (result.data.assignees ?? []) as GitHubUser[];
-  return { applied: resultAssignees.some((assignee) => assignee.login?.toLowerCase() === login.toLowerCase()) };
+
+    let result;
+    try {
+      result = await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/assignees", {
+        owner,
+        repo,
+        issue_number: pullNumber,
+        assignees: [login],
+      });
+    } catch (error: unknown) {
+      // GitHub blocks assigning bot/agent logins via App installation tokens (HTTP 403). This is a GitHub
+      // platform restriction with no workaround using installation-token auth. Return applied:false so the
+      // caller can fall back to a by:{login} label instead of propagating an unactionable error.
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        (error as { status: number }).status === 403 &&
+        "message" in error &&
+        typeof (error as { message: unknown }).message === "string" &&
+        (error as { message: string }).message.includes("Assigning agents is not supported")
+      ) {
+        return { applied: false };
+      }
+      throw error;
+    }
+    const resultAssignees = (result.data.assignees ?? []) as GitHubUser[];
+    return { applied: resultAssignees.some((assignee) => assignee.login?.toLowerCase() === login.toLowerCase()) };
+  });
 }

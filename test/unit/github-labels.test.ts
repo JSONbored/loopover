@@ -155,6 +155,41 @@ describe("GitHub PR labels", () => {
     expect(result).toEqual({ applied: true, created: false });
   });
 
+  it("expires a rejected cached installation token and retries the label write once (#6191)", async () => {
+    let mints = 0;
+    let rejectedReads = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({ token: mints === 1 ? "stale-token" : "fresh-token", expires_at: new Date(Date.now() + 60 * 60_000).toISOString() });
+      }
+      const auth = new Headers(init?.headers).get("authorization") ?? "";
+      if (url.includes("/issues/4/labels") && auth.includes("stale-token")) {
+        rejectedReads += 1;
+        return Response.json({ message: "Bad credentials" }, { status: 401 });
+      }
+      if (url.includes("/issues/4/labels") && method === "GET") {
+        expect(auth).toContain("fresh-token");
+        return Response.json([]);
+      }
+      if (url.includes("/issues/4/labels") && method === "POST") {
+        expect(auth).toContain("fresh-token");
+        return Response.json([{ name: "gittensor" }]);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+
+    const result = await ensurePullRequestLabel(createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() }), 9988, "JSONbored/gittensory", 4, "gittensor", {
+      createMissingLabel: false,
+    });
+
+    expect(result).toEqual({ applied: true, created: false });
+    expect(mints).toBe(2); // stale token rejected, fresh token minted + retried
+    expect(rejectedReads).toBe(1);
+  });
+
   it("propagates a 422 that is not an already_exists duplicate (e.g. invalid label name)", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();

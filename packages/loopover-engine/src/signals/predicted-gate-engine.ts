@@ -136,7 +136,7 @@ export function buildCollisionReport(
     const items = [issueItem(issue), ...linkedPrs.map(prItem)];
     clusters.set(`issue-${issue.number}`, {
       id: `issue-${issue.number}`,
-      risk: linkedPrs.length > 1 || issue.linkedPrs.length > 1 ? "high" : "medium",
+      risk: linkedPrs.length > 1 ? "high" : "medium",
       reason: `Open PR work references issue #${issue.number}.`,
       items,
     });

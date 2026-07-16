@@ -88,6 +88,17 @@ describe("predicted-gate engine collision parity (#2283)", () => {
     expect(collisions.clusters).toHaveLength(0);
   });
 
+  it("REGRESSION (#6629): risk uses freshly-computed linkedPrs only — stale issue.linkedPrs cannot inflate to high", () => {
+    const directRepo = repo("owner/parity");
+    // Exactly one open PR actually references the issue; the issue's own linkedPrs field is stale/inflated.
+    const shared = issue(directRepo.fullName, 7, "Auth token refresh race", { linkedPrs: [50, 51, 52] });
+    const onlyLocal = pr(directRepo.fullName, 50, "Guard the token refresh race", { linkedIssues: [7] });
+    const collisions = buildCollisionReport(directRepo.fullName, [shared], [onlyLocal]);
+    const cluster = collisions.clusters.find((c) => c.id === "issue-7");
+    expect(cluster).toBeDefined();
+    expect(cluster?.risk).toBe("medium");
+  });
+
   it("buildQueueHealth counts draft PRs and fires inactive_draft_prs finding when stale", () => {
     const directRepo = repo("owner/draft-test");
     const collisions = buildCollisionReport(directRepo.fullName, [], []);

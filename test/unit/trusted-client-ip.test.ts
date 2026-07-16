@@ -96,10 +96,11 @@ describe("trusted-client-ip (self-host rate-limit identity)", () => {
     expect(resolveTrustedClientIp("1.2.3.999", new Headers())).toBe("unknown-ip");
     expect(resolveTrustedClientIp("1.2.3.a", new Headers())).toBe("unknown-ip");
     expect(resolveTrustedClientIp("gggg::1", new Headers())).toBe("unknown-ip");
-    expect(resolveTrustedClientIp("2001:db8:::1", new Headers())).toBe("unknown-ip");
+    expect(resolveTrustedClientIp("2001:db8::1::2", new Headers())).toBe("unknown-ip");
     expect(resolveTrustedClientIp("1:2:3:4:5:6:7:8:9", new Headers())).toBe("unknown-ip");
     expect(resolveTrustedClientIp("2001:db8::zzzz", new Headers())).toBe("unknown-ip");
     expect(resolveTrustedClientIp("notaip", new Headers())).toBe("unknown-ip");
+    expect(resolveTrustedClientIp("[2001:db8::1", new Headers())).toBe("unknown-ip");
   });
 
   it("classifies expanded loopback and unique-local IPv6 peers", () => {

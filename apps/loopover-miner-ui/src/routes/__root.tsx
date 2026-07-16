@@ -1,12 +1,30 @@
 import { Outlet, createRootRoute, Link } from "@tanstack/react-router";
+import * as React from "react";
 import { GrafanaFooterLink } from "@/components/grafana-footer-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ChatRail } from "@/components/chat-rail";
 
 export const Route = createRootRoute({
-  component: RootLayout,
+  component: RootComponent,
 });
 
-function RootLayout() {
+function RootComponent() {
+  return (
+    <RootShell>
+      <Outlet />
+    </RootShell>
+  );
+}
+
+/**
+ * The persistent app shell (#6513). Exported for unit testing. It owns the chat-rail open/collapsed state, and
+ * because it's rendered by the root route, TanStack Router keeps it — and that state — mounted across
+ * client-side navigation between the four routes, so the rail never resets on a route change. The routed page
+ * is `children` (the `<Outlet/>` content), which is what swaps on navigation while this shell stays mounted.
+ */
+export function RootShell({ children }: { children: React.ReactNode }) {
+  const [railOpen, setRailOpen] = React.useState(false);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b-hairline px-6 py-4">
@@ -49,9 +67,13 @@ function RootLayout() {
           <ThemeToggle />
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-6 py-8">
-        <Outlet />
-      </main>
+      {/* Row: routed content + the persistent rail docked beside it (never overlapping) on wide viewports. */}
+      <div className="mx-auto flex w-full max-w-[calc(64rem+380px)] items-stretch">
+        <main className="min-w-0 flex-1 px-6 py-8">
+          <div className="mx-auto max-w-5xl">{children}</div>
+        </main>
+        <ChatRail open={railOpen} onOpenChange={setRailOpen} />
+      </div>
       <GrafanaFooterLink />
     </div>
   );

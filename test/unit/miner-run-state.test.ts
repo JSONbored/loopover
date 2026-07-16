@@ -359,4 +359,44 @@ describe("loopover-miner run-state store (#2289)", () => {
       }).not.toThrow();
     });
   });
+
+  describe("purgeByRepo (#5564, #6599)", () => {
+    it("deletes every run-state row for one repo and leaves other repos untouched", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        store.setRunState("owner/repo-a", "planning");
+        store.setRunState("owner/repo-a", "preparing", "https://ghe.example.com/api/v3");
+        store.setRunState("owner/repo-b", "idle");
+
+        expect(store.purgeByRepo("owner/repo-a")).toBe(2);
+        expect(store.getRunState("owner/repo-a")).toBeNull();
+        expect(store.getRunState("owner/repo-a", "https://ghe.example.com/api/v3")).toBeNull();
+        expect(store.listRunStates()).toHaveLength(1);
+        expect(store.getRunState("owner/repo-b")).toBe("idle");
+      } finally {
+        store.close();
+      }
+    });
+
+    it("returns 0 when nothing matches the repo", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        store.setRunState("owner/repo-b", "planning");
+        expect(store.purgeByRepo("owner/repo-a")).toBe(0);
+        expect(store.listRunStates()).toHaveLength(1);
+      } finally {
+        store.close();
+      }
+    });
+
+    it("rejects a missing/malformed repoFullName rather than silently no-opping", () => {
+      const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+      try {
+        expect(() => store.purgeByRepo(undefined as never)).toThrow("invalid_repo_full_name");
+        expect(() => store.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+      } finally {
+        store.close();
+      }
+    });
+  });
 });

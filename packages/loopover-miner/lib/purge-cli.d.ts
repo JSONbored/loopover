@@ -2,6 +2,8 @@ import type { ClaimLedger } from "./claim-ledger.js";
 import type { EventLedger } from "./event-ledger.js";
 import type { GovernorLedger } from "./governor-ledger.js";
 import type { PredictionLedger } from "./prediction-ledger.js";
+import type { PortfolioQueueStore } from "./portfolio-queue.js";
+import type { RunStateStore } from "./run-state.js";
 
 export const ATTEMPT_LOG_NOT_PURGEABLE_NOTE: string;
 
@@ -33,6 +35,8 @@ export type PurgeCliOptions = {
   initEventLedger?: () => EventLedger;
   initGovernorLedger?: () => GovernorLedger;
   initPredictionLedger?: () => PredictionLedger;
+  initPortfolioQueueStore?: () => PortfolioQueueStore;
+  initRunStateStore?: () => RunStateStore;
   resolveDbPaths?: Record<string, () => string>;
 };
 

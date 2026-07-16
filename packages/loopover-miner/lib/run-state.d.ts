@@ -19,6 +19,7 @@ export type RunStateStore = {
   getRunState(repoFullName: string, apiBaseUrl?: string): RunState | null;
   setRunState(repoFullName: string, state: RunState, apiBaseUrl?: string): RunStateWrite;
   listRunStates(): RunStateRow[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

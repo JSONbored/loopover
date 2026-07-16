@@ -85,6 +85,10 @@ export type RunDiscoverOptions = {
     rankedIssues: RankedCandidateIssue[],
     options: { queueStore: PortfolioQueueStore },
   ) => EnqueueRankedDiscoverySummary;
+  /** Invoked with the real structured result at each of runDiscover's two success points (dry-run + full-run),
+   *  in addition to (never instead of) the plain exit-code return -- mirrors RunAttemptOptions.onResult so a
+   *  programmatic caller sees the same structured outcome `--json` prints without scraping stdout. */
+  onResult?: (result: DiscoverResult) => void;
 };
 
 export function parseDiscoverArgs(args: string[]): ParsedDiscoverArgs;

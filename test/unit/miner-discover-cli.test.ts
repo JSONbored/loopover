@@ -1054,6 +1054,106 @@ describe("runDiscover (#4247)", () => {
   });
 });
 
+describe("runDiscover onResult hook (#6522)", () => {
+  it("fires options.onResult with the real structured result at the full-run success point, alongside the unchanged exit 0", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Add retry helper" })],
+      warnings: [],
+      rateLimitRemaining: 4987,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    const onResult = vi.fn();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      onResult,
+    });
+
+    expect(exitCode).toBe(0);
+    // The captured result is the same object `--json` prints — its full-run shape (no `outcome` field).
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.outcome).toBeUndefined();
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fanOutCount: 1,
+        enqueueSummary: expect.objectContaining({ enqueued: 1 }),
+      }),
+    );
+    expect(onResult.mock.calls[0]?.[0]).not.toHaveProperty("outcome");
+  });
+
+  it("fires options.onResult with the dry_run structured result at the dry-run success point, alongside the unchanged exit 0", async () => {
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: 4990,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    const onResult = vi.fn();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+      nowMs: NOW,
+      fetchCandidateIssuesWithSummary,
+      onResult,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ outcome: "dry_run", fanOutCount: 1 }));
+  });
+
+  it("REGRESSION: onResult is additive — omitting it leaves the plain exit-code return unchanged at both success points", async () => {
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: 4990,
+      rateLimitResetAt: null,
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    // Dry-run success point, no onResult supplied (exercises the hook-absent optional-chaining branch).
+    const dryExit = await runDiscover(["acme/widgets", "--dry-run"], { nowMs: NOW, fetchCandidateIssuesWithSummary });
+    expect(dryExit).toBe(0);
+
+    // Full-run success point, no onResult supplied (exercises the hook-absent branch there too).
+    const fullExit = await runDiscover(["acme/widgets"], {
+      nowMs: NOW,
+      initPortfolioQueue: () => tempQueueStore(),
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+    });
+    expect(fullExit).toBe(0);
+  });
+
+  it("does NOT fire options.onResult at a reportCliFailure site (fan-out failure), mirroring attempt-cli's asymmetry", async () => {
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => {
+      throw new Error("github_unreachable");
+    });
+    const onResult = vi.fn();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--dry-run"], {
+      nowMs: NOW,
+      fetchCandidateIssuesWithSummary,
+      onResult,
+    });
+
+    expect(exitCode).not.toBe(0);
+    expect(onResult).not.toHaveBeenCalled();
+  });
+});
+
 describe("loopover-miner discover CLI entrypoint (#4247)", () => {
   it("lists the discover command in --help", () => {
     const output = runCapture(["--help", "--no-update-check"]);

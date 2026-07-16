@@ -198,6 +198,11 @@ export async function runDiscover(args, options = {}) {
         console.log(renderDiscoverSummary(result));
         console.log("\nDRY RUN: no portfolio-queue write was made.");
       }
+      // Mirrors attempt-cli.js's onResult convention: fired only at a real structured outcome (here, the two
+      // genuine success points), never at a reportCliFailure site -- so a programmatic caller (the miner-ui's
+      // /api/discover bridge, #6522) sees the same structured result `--json` prints, in addition to the
+      // unchanged exit code bin/loopover-miner.js still relies on.
+      options.onResult?.(result);
       return 0;
     } catch (error) {
       return reportCliFailure(parsed.json, describeCliError(error));
@@ -299,6 +304,7 @@ export async function runDiscover(args, options = {}) {
     } else {
       console.log(renderDiscoverSummary(result));
     }
+    options.onResult?.(result);
     return 0;
   } catch (error) {
     return reportCliFailure(parsed.json, describeCliError(error));

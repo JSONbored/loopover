@@ -4,10 +4,16 @@ import { nowIso } from "../utils/json";
 import type { ConfigQuality, ContributorIntakeHealth, LabelAudit, LaneAdvice, MaintainerCutReadiness, QueueHealth } from "./engine";
 import { compileFocusManifestPolicy, type FocusManifest } from "./focus-manifest";
 import { buildRepoOnboardingPackPreview, focusManifestPolicyToCompilerOutput, type RepoOnboardingPackPreview } from "./onboarding-pack";
-import { buildRepoPolicyReadiness, policyReadinessWarningText, type RepoPolicyReadinessReport } from "./repo-policy-readiness";
+import {
+  buildRepoPolicyReadiness,
+  policyReadinessWarningText,
+  resolveIssuePolicy,
+  type IssuePolicy,
+  type RepoPolicyReadinessReport,
+} from "./repo-policy-readiness";
 
 export type RegistrationMode = "direct_pr" | "issue_discovery" | "split";
-export type IssuePolicy = "issue_discovery_enabled" | "split_pr_and_issue_discovery_enabled" | "direct_pr_requires_linked_issue" | "direct_pr_no_issue_required";
+export type { IssuePolicy };
 
 export type InstallationHealthSummary = {
   status: "healthy" | "needs_attention" | "broken";
@@ -90,12 +96,6 @@ const COVERAGE_GATE = ["npm run test:ci", "global coverage >= 95% (lines, statem
 
 function laneToMode(lane: LaneAdvice): RegistrationMode {
   return lane.lane === "issue_discovery" ? "issue_discovery" : lane.lane === "split" ? "split" : "direct_pr";
-}
-
-function resolveIssuePolicy(lane: LaneAdvice, settings: RepositorySettings): IssuePolicy {
-  if (lane.lane === "issue_discovery") return "issue_discovery_enabled";
-  if (lane.lane === "split") return "split_pr_and_issue_discovery_enabled";
-  return settings.requireLinkedIssue ? "direct_pr_requires_linked_issue" : "direct_pr_no_issue_required";
 }
 
 function buildTestCoverageHealth(labelAudit: LabelAudit, settings: RepositorySettings): TestCoverageHealth {

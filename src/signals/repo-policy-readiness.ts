@@ -2,6 +2,12 @@ import type { RepositorySettings } from "../types";
 import { isFocusManifestPublicSafe, type FocusManifest } from "./focus-manifest";
 import type { ConfigQuality, ContributorIntakeHealth, LabelAudit, LaneAdvice, QueueHealth } from "./engine";
 
+export type IssuePolicy =
+  | "issue_discovery_enabled"
+  | "split_pr_and_issue_discovery_enabled"
+  | "direct_pr_requires_linked_issue"
+  | "direct_pr_no_issue_required";
+
 export type RepoPolicyReadinessWarningCategory =
   | "contribution_flow"
   | "direct_pr_policy"
@@ -46,7 +52,7 @@ export type RepoPolicyReadinessReport = {
     queueLevel: QueueHealth["level"];
     contributorIntakeLevel: ContributorIntakeHealth["level"];
     configLevel: ConfigQuality["level"];
-    issuePolicy: string;
+    issuePolicy: IssuePolicy;
     issueDiscoveryPolicy: FocusManifest["issueDiscoveryPolicy"];
   };
   droppedPublicWarnings: Array<{
@@ -231,7 +237,10 @@ export function policyReadinessWarningText(warning: RepoPolicyReadinessWarning):
   return `${warning.title}: ${warning.detail} ${warning.action}`;
 }
 
-function resolveIssuePolicy(lane: LaneAdvice, settings: RepositorySettings): string {
+/** Shared by {@link buildRegistrationReadiness} so both readiness reports classify the same
+ *  lane/settings pair to the same issue-policy string (#6606). registration-readiness imports
+ *  this module already; exporting here avoids a second hand-maintained copy. */
+export function resolveIssuePolicy(lane: LaneAdvice, settings: RepositorySettings): IssuePolicy {
   if (lane.lane === "issue_discovery") return "issue_discovery_enabled";
   if (lane.lane === "split") return "split_pr_and_issue_discovery_enabled";
   return settings.requireLinkedIssue ? "direct_pr_requires_linked_issue" : "direct_pr_no_issue_required";

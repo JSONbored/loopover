@@ -2146,8 +2146,12 @@ describe("api routes", () => {
   });
 
   it("serves installation repair diagnostics and refreshes installation health", async () => {
+    // Deterministic manifest fetch: avoids racing a real network call before the first /repair request below.
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
     const app = createApp();
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    // Must differ from the default self-repo name (test/helpers/d1.ts), or loadRepoFocusManifest's self-repo
+    // fallback still injects the live repo's autonomy:auto block despite the stub above.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_DRIFT_ISSUE_REPO: "unrelated-org/unrelated-repo" });
     const repoPayload = { name: "gittensory", full_name: "JSONbored/gittensory", private: true, default_branch: "main", owner: { login: "JSONbored" } };
     await upsertInstallation(env, {
       installation: {

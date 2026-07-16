@@ -110,6 +110,10 @@ draftFlow:
   enabled: true
 upstreamDriftIssues:
   enabled: false
+sweepWatchdog:
+  enabled: true
+prReconciliation:
+  enabled: false
 `,
     });
     expect(result.status).toBe("ok");
@@ -128,16 +132,20 @@ upstreamDriftIssues:
       publicStats: { enabled: false },
       draftFlow: { enabled: true },
       upstreamDriftIssues: { enabled: false },
+      sweepWatchdog: { enabled: true },
+      prReconciliation: { enabled: false },
     });
   });
 
-  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues from the normalized output when none are configured", () => {
+  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues/sweepWatchdog/prReconciliation from the normalized output when none are configured", () => {
     const result = buildFocusManifestValidation({ content: "wantedPaths: [src/]\n" });
     expect(result.normalized).not.toHaveProperty("maintainerRecap");
     expect(result.normalized).not.toHaveProperty("ops");
     expect(result.normalized).not.toHaveProperty("publicStats");
     expect(result.normalized).not.toHaveProperty("draftFlow");
     expect(result.normalized).not.toHaveProperty("upstreamDriftIssues");
+    expect(result.normalized).not.toHaveProperty("sweepWatchdog");
+    expect(result.normalized).not.toHaveProperty("prReconciliation");
   });
 
   it("returns error when manifest content is not a mapping", () => {

@@ -5,6 +5,7 @@ import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 import { authPlugin } from "./vite-auth";
+import { chatApiPlugin } from "./vite-chat-api";
 import { governorApiPlugin } from "./vite-governor-api";
 import { ledgersApiPlugin } from "./vite-ledgers-api";
 import { portfolioQueueActionsApiPlugin } from "./vite-portfolio-queue-actions-api";
@@ -21,6 +22,7 @@ export default defineConfig({
     // Must run before the API plugins below: it rejects any unauthenticated /api/* request before their own
     // middlewares are reached (#4858).
     authPlugin(),
+    chatApiPlugin(),
     runStateApiPlugin(),
     portfolioQueueApiPlugin(),
     portfolioQueueActionsApiPlugin(),

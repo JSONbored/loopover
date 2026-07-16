@@ -107,7 +107,12 @@ const RESOLVED_MERGED_STATES = new Set(["merged", "merge", "accepted"]);
 const RESOLVED_CLOSED_STATES = new Set(["closed", "declined", "rejected", "closed_unmerged", "not_merged"]);
 const OPEN_STATES = new Set(["open", "draft", "pending", "ready_for_review"]);
 const INCIDENT_KINDS = new Set(["ban", "moderation", "code_of_conduct", "abuse", "spam"]);
-const PUBLIC_FIELD_BLOCKLIST = [
+/**
+ * Terms that must never reach a public/non-owner surface. Exported (#6517) so the miner chat
+ * grounding endpoint reuses this exact term set for its system-prompt instruction and its
+ * output-side redaction backstop rather than defining a second, drifting copy.
+ */
+export const PUBLIC_FIELD_BLOCKLIST = [
   /\btrust\s*score\b/iu,
   /\btrustscore\b/iu,
   /\bscoreability\b/iu,

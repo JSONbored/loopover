@@ -80,11 +80,23 @@ describe("loopover-mcp CLI — packets", () => {
     expect(help).toMatch(/contributor decision pack/);
   });
 
+  it("prints decision-pack help for a bare `help` positional too, not a --login error (#6257)", () => {
+    const help = run(["decision-pack", "help"]);
+    expect(help).toMatch(/Usage: loopover-mcp decision-pack/);
+    expect(help).not.toMatch(/Pass --login/);
+  });
+
   it("prints repo-decision help without requiring --login/--repo or making a network call", () => {
     const help = run(["repo-decision", "--help"]);
     expect(help).toMatch(/Usage: loopover-mcp repo-decision/);
     expect(help).toMatch(/loopover_explain_repo_decision/);
     expect(help).toMatch(/repo decision/);
+  });
+
+  it("prints repo-decision help for a bare `help` positional too, not a --login error (#6257)", () => {
+    const help = run(["repo-decision", "help"]);
+    expect(help).toMatch(/Usage: loopover-mcp repo-decision/);
+    expect(help).not.toMatch(/Pass --login/);
   });
 
   it("ignores incompatible decision-pack cache entries and clears cache entries on request", async () => {

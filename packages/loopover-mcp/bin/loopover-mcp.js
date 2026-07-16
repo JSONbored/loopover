@@ -2898,7 +2898,15 @@ function parseOptions(args) {
       options.json = true;
       continue;
     }
-    if (!arg?.startsWith("--")) continue;
+    if (!arg?.startsWith("--")) {
+      // A bare `help` positional means the same thing as `--help` (#6257): the option-consuming commands
+      // (decision-pack/repo-decision/review-pr) only check `options.help === true`, so without this a
+      // dashless `loopover-mcp decision-pack help` fell through to a confusing "Pass --login…" error instead
+      // of printing usage — while the raw-args commands (lint-pr-text etc.) already special-cased it. A `help`
+      // consumed as a `--key value` value is skipped via `index += 1` below, so only a STANDALONE `help` here.
+      if (arg === "help") options.help = true;
+      continue;
+    }
     // Support the inline `--key=value` form (e.g. `--format=table`) alongside the space-separated
     // `--key value` form; splitting here keeps every existing space-separated option unchanged (#2231).
     const equals = arg.indexOf("=");

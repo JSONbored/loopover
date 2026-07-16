@@ -400,6 +400,12 @@ describe("loopover-mcp CLI — review-pr", () => {
     expect(help).toMatch(/preflight \+ slop-risk \+ PR-text-lint/);
   });
 
+  it("prints help for a bare `help` positional too, not a --login error (#6257)", () => {
+    const help = run(["review-pr", "help"]);
+    expect(help).toMatch(/Usage: loopover-mcp review-pr/);
+    expect(help).not.toMatch(/Pass --login/);
+  });
+
   it("suggests review-pr for close typos", () => {
     expect(() => run(["review-pr-x"])).toThrow(/Did you mean `review-pr`\?/);
   });

@@ -9,6 +9,7 @@ const REVIEW_EXECUTION_JOB_TYPES = new Set<string>([
   "notify-evaluate",
   "notify-deliver",
   "ops-alerts",
+  "loop-escalation-sweep",
   "selftune",
   "rag-index-repo",
   "submit-draft",

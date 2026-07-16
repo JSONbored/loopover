@@ -5877,6 +5877,28 @@ describe("queue processors", () => {
     expect(sent).toEqual([expect.objectContaining({ type: "agent-regate-sweep", repoFullName: "owner/stale-repo", installationId: 9311 })]);
   });
 
+  it("loop-escalation-sweep job no-ops when LOOPOVER_LOOP_ESCALATION is OFF", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const env = createTestEnv({
+      LOOPOVER_ACTIVE_LOOPS_JSON: JSON.stringify([{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }]),
+      DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/abc",
+    });
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_needs_attention"))).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("loop-escalation-sweep job runs the fleet summary when LOOPOVER_LOOP_ESCALATION is ON", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const env = createTestEnv({
+      LOOPOVER_LOOP_ESCALATION: "true",
+      LOOPOVER_ACTIVE_LOOPS_JSON: JSON.stringify([{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }]),
+    });
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_needs_attention"))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
   it("reconcile-open-prs job no-ops when LOOPOVER_PR_RECONCILIATION is OFF (does no scan)", async () => {
     const env = createTestEnv(); // flag unset → OFF
     await upsertRepositoryFromGitHub(env, { name: "stale-repo", full_name: "owner/stale-repo", private: false, owner: { login: "owner" } }, 9410);

@@ -9,6 +9,7 @@ import { gittensorEnabledRepoFullNames } from "./review/gittensor-wire";
 import { isOpsEnabled, resolveOpsManifestOverride } from "./review/ops-wire";
 import { isRecapEnabled, resolveMaintainerRecapManifestOverride, shouldFireMaintainerRecap } from "./review/maintainer-recap-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride } from "./review/sweep-watchdog";
+import { isLoopEscalationSweepEnabled } from "./review/loop-escalation-wire";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } from "./review/pr-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
@@ -249,6 +250,10 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
       const sweepWatchdogManifestOverride = await resolveSweepWatchdogManifestOverride(env);
       if (isSweepWatchdogEnabled(env, sweepWatchdogManifestOverride)) jobs.push({ type: "sweep-liveness-watchdog", requestedBy: "schedule" });
     }
+    // Rent-a-Loop escalation (#6349, flag LOOPOVER_LOOP_ESCALATION). Hourly fleet summary → Discord when
+    // needingAttention is non-empty. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never
+    // created, so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
+    if (selfHostedReviews && isLoopEscalationSweepEnabled(env)) jobs.push({ type: "loop-escalation-sweep", requestedBy: "schedule" });
     // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Hourly self-improvement tick over
     // loopover's own review-outcome data: compute tuning recommendations, shadow-soak any strictly-tightening
     // one, and auto-promote it to live only after the soak window passes the gate (TIGHTENING-ONLY, audited).

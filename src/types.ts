@@ -214,6 +214,14 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Rent-a-Loop escalation path (#6349, flag-gated by LOOPOVER_LOOP_ESCALATION). Hourly fleet summary via
+      // buildActiveLoopFleetSummary → evaluateEscalation; when needingAttention is non-empty, emit a structured
+      // log + Discord notification (throttled). Enqueued hourly by the cron ONLY when the flag is ON
+      // (index.ts), so flag-OFF this job never exists.
+      type: "loop-escalation-sweep";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       // Self-heal (flag-gated by LOOPOVER_PR_RECONCILIATION). List-diff GitHub's open PR numbers against the
       // local table for every acting-autonomy repo — a much tighter cadence than backfillRegisteredRepositories's
       // 6-hour freshness window — and catch up (fetch + upsert + regate) any PR number GitHub has that the local

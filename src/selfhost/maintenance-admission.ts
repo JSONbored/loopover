@@ -63,6 +63,7 @@ export const MAINTENANCE_JOB_TYPES: ReadonlySet<string> = new Set([
   "notify-deliver",
   "ops-alerts",
   "sweep-liveness-watchdog",
+  "loop-escalation-sweep",
   "reconcile-open-prs",
   "selftune",
   "rag-index-repo",

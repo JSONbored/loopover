@@ -934,6 +934,7 @@ export function jobCoalesceKey(payload: string): string | null {
       case "file-upstream-drift-issues":
       case "repair-data-fidelity":
       case "ops-alerts":
+      case "loop-escalation-sweep":
       case "selftune":
       case "retry-orb-relay":
       case "reconcile-open-prs":

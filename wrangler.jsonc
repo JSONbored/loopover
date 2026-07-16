@@ -103,6 +103,12 @@
     // of requiring a human to notice and manually trigger it. Default OFF — flag-OFF the cron enqueues no
     // watchdog job, byte-identical to today.
     "LOOPOVER_SWEEP_WATCHDOG": "false",
+    // Rent-a-Loop escalation (#6349): hourly fleet summary via buildActiveLoopFleetSummary / evaluateEscalation.
+    // When needingAttention is non-empty, emit a structured `loop_escalation_needs_attention` log and (when
+    // DISCORD_WEBHOOK_URL is set) a Discord embed, throttled by audit cooldown. Active loops are read from
+    // LOOPOVER_ACTIVE_LOOPS_JSON until a rented-loop store lands. Default OFF — flag-OFF the cron enqueues no
+    // escalation job, byte-identical to today.
+    "LOOPOVER_LOOP_ESCALATION": "false",
     // Self-heal: a short-interval cron list-diffs GitHub's open PR numbers against the local table for every
     // acting-autonomy repo, and catches up (fetch + upsert + regate) any PR number GitHub has that the local
     // table doesn't — a silently-lost "opened" webhook, caught within minutes instead of the 6-hour

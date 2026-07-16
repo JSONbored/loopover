@@ -863,6 +863,29 @@ describe("worker entrypoint", () => {
     expect(on.filter((m) => m.type === "sweep-liveness-watchdog")).toEqual([{ type: "sweep-liveness-watchdog", requestedBy: "schedule" }]);
   });
 
+  it("enqueues the loop-escalation-sweep job hourly ONLY when LOOPOVER_LOOP_ESCALATION is ON (flag-OFF is byte-identical)", async () => {
+    const sentFor = async (flag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(flag === undefined ? {} : { LOOPOVER_LOOP_ESCALATION: flag }),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    expect((await sentFor()).some((m) => m.type === "loop-escalation-sweep")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "loop-escalation-sweep")).toBe(false);
+    const on = await sentFor("true");
+    expect(on.filter((m) => m.type === "loop-escalation-sweep")).toEqual([{ type: "loop-escalation-sweep", requestedBy: "schedule" }]);
+  });
+
   it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when LOOPOVER_SWEEP_WATCHDOG is ON", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({

@@ -388,6 +388,16 @@ declare global {
      *  for just that repo. Default OFF — unset/false means the cron tick enqueues NO watchdog job (does no new
      *  work), so the worker is byte-identical to today. */
     LOOPOVER_SWEEP_WATCHDOG?: string;
+    /** Rent-a-Loop escalation (#6349): when truthy, an hourly cron loads the active rented-loop snapshot
+     *  (LOOPOVER_ACTIVE_LOOPS_JSON), runs buildActiveLoopFleetSummary / evaluateEscalation, and when
+     *  needingAttention is non-empty emits a structured `loop_escalation_needs_attention` log plus an optional
+     *  Discord notification (DISCORD_WEBHOOK_URL), throttled by audit cooldown. Default OFF — unset/false means
+     *  the cron tick enqueues NO escalation job, so the worker is byte-identical to today. */
+    LOOPOVER_LOOP_ESCALATION?: string;
+    /** Simulation / staging surface for {@link LOOPOVER_LOOP_ESCALATION}: a JSON array of ActiveLoopFacts
+     *  (`loopId`, `tenantId`, `runStatus`, optional `healthStatus` / `customerFlagged` / `killRequested`).
+     *  Absent or malformed ⇒ empty fleet (no notifications). Replaced by a real store when #4793 lands. */
+    LOOPOVER_ACTIVE_LOOPS_JSON?: string;
     /** Self-heal: when truthy, a short-interval cron list-diffs GitHub's open PR numbers against the local
      *  table for every acting-autonomy repo and catches up (fetch + upsert + regate) any PR number GitHub has
      *  that the local table doesn't — a silently-lost "opened" webhook, caught within minutes instead of the

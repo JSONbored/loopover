@@ -35,6 +35,7 @@
     "build:miner": "npm --workspace @loopover/engine run build && npm --workspace @loopover/miner run build",
     "test:mcp-pack": "node scripts/check-mcp-package.mjs",
     "test:miner-pack": "node scripts/check-miner-package.mjs",
+    "test:miner-deployment-docs-audit": "node packages/loopover-miner/scripts/check-deployment-docs-audit.mjs",
     "rees:install": "npm ci --prefix review-enrichment --prefer-offline --no-audit --no-fund",
     "rees:test": "npm run rees:install && npm --prefix review-enrichment test",
     "rees:metadata": "npm --prefix review-enrichment run metadata",

@@ -340,6 +340,9 @@ jobs:
       - name: Miner package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' }}
         run: npm run test:miner-pack
+      - name: Miner deployment docs audit
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' }}
+        run: npm run test:miner-deployment-docs-audit
       # review-enrichment is not an npm workspace member (its own package-lock.json), so it needs its own
       # cache entry -- same restore/save-after-success pattern and fork/trusted key split as the root
       # install above, for the same reasons.

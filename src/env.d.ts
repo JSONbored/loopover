@@ -346,6 +346,17 @@ declare global {
      *  build the deterministic/LLM/panel behavior that will gate on it. Default OFF — unset/false the feature
      *  is never active for any repo regardless of a per-repo `features.improvementSignal` override. */
     LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL?: string;
+    /** #6485 (per #6208's decided design): master kill-switch for the `amsReputationBridge` converged feature —
+     *  an UPGRADE-ONLY, pull-based bridge letting a submitter's genuine AMS track record improve (never worsen)
+     *  their ORB reputation standing. Default OFF — unset/false the bridge is never active for any repo
+     *  regardless of a per-repo `features.amsReputationBridge` override, so the reputation path is
+     *  byte-identical to today. Needs LOOPOVER_AMS_TRACK_RECORD_URL to have anything to pull from. */
+    LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE?: string;
+    /** #6485: the operator-configured base URL of the LOCAL AMS instance the reputation bridge pulls a
+     *  submitter's track record from (`GET {url}/track-record/{login}`). Unset ⇒ the bridge applies no bonus
+     *  signal even when enabled. ORB pulls (never AMS pushing in), so an arbitrary AMS instance can never write
+     *  trust signals into ORB — see #6208. */
+    LOOPOVER_AMS_TRACK_RECORD_URL?: string;
     /** #one-shot-review-cadence: the operator's FLEET-WIDE default for AI review re-trigger cadence, consulted
      *  only when a repo's `.loopover.yml review.auto_review.cadence` is unset (a per-repo value always wins
      *  regardless of this flag — see resolveAiReviewCadence). Default OFF (unset/false) ⇒ "one_shot": the

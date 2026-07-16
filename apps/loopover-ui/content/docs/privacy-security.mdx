@@ -58,6 +58,7 @@ LOOPOVER_REVIEW_PLANNER="true"                 # @loopover plan on-demand implem
 LOOPOVER_REVIEW_SCREENSHOTS="true"             # before/after visual capture for UI changes
 LOOPOVER_REVIEW_E2E_TESTS="true"               # AI-generated E2E test coverage (needs features.e2eTests too)
 LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL="true"      # read-only PR quality-delta signal (activation only, no-op for now)
+LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE="true"   # upgrade-only AMS track-record bridge (never shown; needs features.amsReputationBridge + LOOPOVER_AMS_TRACK_RECORD_URL)
 
 # Global (cron / endpoint) flags, not scoped by LOOPOVER_REVIEW_REPOS.
 LOOPOVER_REVIEW_CONTINUOUS="true"              # fleet-wide default: re-review on every push (else one-shot)

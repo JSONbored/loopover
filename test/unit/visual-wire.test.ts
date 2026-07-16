@@ -26,7 +26,7 @@ describe("isScreenshotsEnabled", () => {
 describe("screenshots converged-feature activation (env flag AND repo cutover allowlist, with manifest opt-out)", () => {
   const repo = "JSONbored/gittensory";
   const noOverride: Pick<FocusManifest, "features"> = {
-    features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null },
+    features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
   };
 
   it("requires BOTH the global flag and the repo allowlist when no override is set", () => {

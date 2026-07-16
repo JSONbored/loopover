@@ -92,6 +92,13 @@ any per-PR feature to run on a given repo. So a per-PR feature activates only wh
   Off by default; config-as-code activation only for now — no tier reads the resolved value
   yet, so turning this on has no visible effect until a later release wires real behavior
   behind it. Per-PR.
+- `LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE` — master kill-switch for the upgrade-only
+  ORB/AMS reputation bridge: a submitter's genuine track record on a local AMS instance can
+  raise their reputation standing here, never lower it. Off by default; a repo also needs its
+  own `features.amsReputationBridge: true` override in `.loopover.yml`, and the operator must
+  point `LOOPOVER_AMS_TRACK_RECORD_URL` at the AMS instance to pull from — with either unset
+  the bridge applies no bonus signal. ORB pulls from AMS (never the reverse), and an
+  absent/unreachable/slow AMS simply yields no bonus. Per-PR.
 - `LOOPOVER_REVIEW_CONTINUOUS` — fleet-wide default AI review re-trigger cadence.
   Off by default (one-shot): AI-generated content (main review, slop advisory, linked-issue
   satisfaction) is produced once per PR and never regenerated automatically afterward — only

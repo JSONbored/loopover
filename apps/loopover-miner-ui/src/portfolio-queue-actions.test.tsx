@@ -41,8 +41,18 @@ const doneItem: PortfolioQueueActionItem = {
   status: "done",
 };
 
+function manyActionItems(count: number): PortfolioQueueActionItem[] {
+  return Array.from({ length: count }, (_, index) => ({
+    apiBaseUrl: "https://api.github.com",
+    repoFullName: `acme/repo-${String(index).padStart(2, "0")}`,
+    identifier: `issue:${index}`,
+    // Alternating status so the default sort (in_progress first) still leaves enough rows for page 2.
+    status: index % 2 === 0 ? ("in_progress" as const) : ("done" as const),
+  }));
+}
+
 describe("PortfolioQueueActionsSection (#4857)", () => {
-  it("renders a content-shaped skeleton before the first result arrives", () => {
+  it("renders a content-shaped loading skeleton (role=status), not the old flat loading text (#6511, #6831)", () => {
     // #6511: StateBoundary renders the skeleton INSTEAD of a loading title, so the old
     // "Loading actionable queue items…" text is intentionally gone; assert the placeholder instead.
     render(
@@ -54,7 +64,9 @@ describe("PortfolioQueueActionsSection (#4857)", () => {
         onRequeue={() => undefined}
       />,
     );
+    expect(screen.getByRole("status", { name: /loading actionable queue items/i })).toBeTruthy();
     expect(screen.getByTestId("queue-actions-skeleton")).toBeTruthy();
+    expect(screen.queryByText("Loading actionable queue items…")).toBeNull();
     // Shaped like the real content, not one generic bar: the real table is not rendered yet.
     expect(screen.queryByRole("table")).toBeNull();
   });
@@ -108,6 +120,65 @@ describe("PortfolioQueueActionsSection (#4857)", () => {
     expect(onRequeue).toHaveBeenCalledWith(doneItem);
   });
 
+  it("does not paginate the queue-actions table at or below 20 rows (#6831)", () => {
+    const items = manyActionItems(20);
+    render(
+      <PortfolioQueueActionsSection
+        result={{ ok: true, items }}
+        actionResult={null}
+        pending={false}
+        onRelease={() => undefined}
+        onRequeue={() => undefined}
+      />,
+    );
+    expect(screen.queryByRole("navigation", { name: /pagination/i })).toBeNull();
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    expect(screen.getByText("acme/repo-19")).toBeTruthy();
+  });
+
+  it("paginates the queue-actions table client-side above 20 rows (#6831)", () => {
+    const items = manyActionItems(45);
+    render(
+      <PortfolioQueueActionsSection
+        result={{ ok: true, items }}
+        actionResult={null}
+        pending={false}
+        onRelease={() => undefined}
+        onRequeue={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("navigation", { name: /pagination/i })).toBeTruthy();
+    // Sorted in_progress first (even indices by name): page 1 ends at repo-38; repo-40 is the 21st.
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    expect(screen.queryByText("acme/repo-40")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "2" }));
+    expect(screen.getByText("acme/repo-40")).toBeTruthy();
+    expect(screen.queryByText("acme/repo-00")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: /go to previous page/i }));
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: /go to next page/i }));
+    expect(screen.getByText("acme/repo-40")).toBeTruthy();
+  });
+
+  it("breaks same-status/same-repo ties by identifier ascending (#6831)", () => {
+    const sameRepoDone: PortfolioQueueActionItem[] = [
+      { ...doneItem, identifier: "issue:20" },
+      { ...doneItem, identifier: "issue:7" },
+    ];
+    render(
+      <PortfolioQueueActionsSection
+        result={{ ok: true, items: sameRepoDone }}
+        actionResult={null}
+        pending={false}
+        onRelease={() => undefined}
+        onRequeue={() => undefined}
+      />,
+    );
+    const rows = screen.getAllByRole("row");
+    expect(rows[1]?.textContent).toContain("issue:20");
+    expect(rows[2]?.textContent).toContain("issue:7");
+  });
+
   it("disables action buttons while an action is pending", () => {
     render(
       <PortfolioQueueActionsSection
@@ -157,6 +228,24 @@ describe("PortfolioPage queue actions (#4857)", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Release" })).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Release" }));
     await waitFor(() => expect(releaseItem).toHaveBeenCalledWith(inProgressItem));
+  });
+
+  it("wires requeue through the injected action for done rows (#6831)", async () => {
+    const requeueItem = vi.fn(async () => ({
+      ok: true as const,
+      entry: { repoFullName: "acme/widgets", identifier: "issue:7", status: "queued" },
+    }));
+    render(
+      <PortfolioPage
+        loadPortfolioQueue={loadPortfolioQueue}
+        loadPortfolioQueueItems={async () => ({ ok: true as const, items: [doneItem] })}
+        requeueItem={requeueItem}
+        pollIntervalMs={60_000}
+      />,
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Requeue" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Requeue" }));
+    await waitFor(() => expect(requeueItem).toHaveBeenCalledWith(doneItem));
   });
 
   it("REGRESSION (#6090): a failing release action renders the error and does not re-fetch items as if it succeeded", async () => {

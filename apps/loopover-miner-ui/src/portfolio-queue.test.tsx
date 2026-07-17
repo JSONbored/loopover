@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +6,7 @@ import {
   PORTFOLIO_QUEUE_API_PATH,
   type PortfolioQueueResult,
   type PortfolioQueueSummary,
+  type PortfolioRepoSummary,
 } from "./lib/portfolio-queue";
 import { PortfolioPage, PortfolioQueueView } from "./routes/portfolio";
 import { handlePortfolioQueueRequest, type PortfolioQueueApiDeps } from "../vite-portfolio-queue-api";
@@ -70,6 +71,15 @@ describe("emptyPortfolioQueueSummary (#4306)", () => {
   });
 });
 
+function manyRepos(count: number): PortfolioRepoSummary[] {
+  // Descending totals so the default sort (total desc) puts repo-00 first — mirrors ledgers' manyEventTypes.
+  return Array.from({ length: count }, (_, index) => ({
+    repoFullName: `acme/repo-${String(index).padStart(2, "0")}`,
+    byStatus: { queued: count - index, in_progress: 0, done: 0 },
+    total: count - index,
+  }));
+}
+
 describe("PortfolioQueueView (#4306, per-repo detail added by #4846)", () => {
   it("renders one card per status with the aggregated global counts", () => {
     render(<PortfolioQueueView result={{ ok: true, summary: fixtureSummary }} />);
@@ -86,6 +96,65 @@ describe("PortfolioQueueView (#4306, per-repo detail added by #4846)", () => {
     expect(screen.getByText("acme/secret-repo")).toBeTruthy();
     // header + 2 repo rows
     expect(screen.getAllByRole("row")).toHaveLength(3);
+  });
+
+  it("renders a queue-by-status chart via the ui-kit ChartContainer (#6831)", () => {
+    render(<PortfolioQueueView result={{ ok: true, summary: fixtureSummary }} />);
+    expect(screen.getByLabelText("Queue by status chart")).toBeTruthy();
+  });
+
+  it("does not paginate the per-repo table at or below 20 rows (#6831)", () => {
+    const repos = manyRepos(20);
+    const summary: PortfolioQueueSummary = {
+      total: 20,
+      byStatus: { queued: 20, in_progress: 0, done: 0 },
+      repos,
+      oldestQueuedAgeMs: null,
+    };
+    render(<PortfolioQueueView result={{ ok: true, summary }} />);
+    expect(screen.queryByRole("navigation", { name: /pagination/i })).toBeNull();
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    expect(screen.getByText("acme/repo-19")).toBeTruthy();
+  });
+
+  it("paginates the per-repo table client-side above 20 rows, sorted by total desc (#6831)", () => {
+    const repos = manyRepos(45);
+    const summary: PortfolioQueueSummary = {
+      total: 45,
+      byStatus: { queued: 45, in_progress: 0, done: 0 },
+      repos,
+      oldestQueuedAgeMs: null,
+    };
+    render(<PortfolioQueueView result={{ ok: true, summary }} />);
+    expect(screen.getByRole("navigation", { name: /pagination/i })).toBeTruthy();
+    // Highest total first: repo-00 has total 45, repo-20 has total 25 — only the first page is visible.
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    expect(screen.queryByText("acme/repo-20")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "2" }));
+    expect(screen.getByText("acme/repo-20")).toBeTruthy();
+    expect(screen.queryByText("acme/repo-00")).toBeNull();
+    // Previous / Next buttons also advance the page (covers both onClick arms).
+    fireEvent.click(screen.getByRole("link", { name: /go to previous page/i }));
+    expect(screen.getByText("acme/repo-00")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: /go to next page/i }));
+    expect(screen.getByText("acme/repo-20")).toBeTruthy();
+  });
+
+  it("breaks equal-total ties by repo name ascending (#6831)", () => {
+    const summary: PortfolioQueueSummary = {
+      total: 4,
+      byStatus: { queued: 4, in_progress: 0, done: 0 },
+      repos: [
+        { repoFullName: "acme/zeta", byStatus: { queued: 2, in_progress: 0, done: 0 }, total: 2 },
+        { repoFullName: "acme/alpha", byStatus: { queued: 2, in_progress: 0, done: 0 }, total: 2 },
+      ],
+      oldestQueuedAgeMs: null,
+    };
+    render(<PortfolioQueueView result={{ ok: true, summary }} />);
+    const rows = screen.getAllByRole("row");
+    // header + alpha then zeta
+    expect(rows[1]?.textContent).toContain("acme/alpha");
+    expect(rows[2]?.textContent).toContain("acme/zeta");
   });
 
   it("renders the fresh-install empty state without erroring", () => {
@@ -105,11 +174,14 @@ describe("PortfolioQueueView (#4306, per-repo detail added by #4846)", () => {
     expect(screen.getByRole("alert").textContent).toContain("connection refused");
   });
 
-  it("renders a content-shaped skeleton before the first result arrives", () => {
+  it("renders a content-shaped loading skeleton (role=status), not the old flat loading text (#6511, #6831)", () => {
     // #6511: StateBoundary renders the skeleton INSTEAD of a loading title, so the old
     // "Loading local portfolio queue…" text is intentionally gone; assert the placeholder instead.
+    // #6831: skeleton also announces via role=status (matching ledgers/run-history) and includes a chart-shaped bar.
     render(<PortfolioQueueView result={null} />);
+    expect(screen.getByRole("status", { name: /loading local portfolio queue/i })).toBeTruthy();
     expect(screen.getByTestId("portfolio-queue-skeleton")).toBeTruthy();
+    expect(screen.queryByText("Loading local portfolio queue…")).toBeNull();
     // Shaped like the real content, not one generic bar: the real table is not rendered yet.
     expect(screen.queryByRole("table")).toBeNull();
   });

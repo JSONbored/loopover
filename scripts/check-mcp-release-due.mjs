@@ -5,6 +5,9 @@ import { pathToFileURL } from "node:url";
 import { buildMcpReleaseIssue, buildMcpReleaseReport, latestSemverTag, MCP_RELEASE_DUE_MARKER } from "./mcp-release-core.mjs";
 
 const packageJsonPath = "packages/loopover-mcp/package.json";
+// Per-request timeout so a hung api.github.com connection can't block the unattended mcp-release-watch job
+// indefinitely, matching the connection guard sibling release/observability scripts already use (#7014).
+const GITHUB_REQUEST_TIMEOUT_MS = 30_000;
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -144,6 +147,7 @@ async function githubRequest({ token, method, path, body }) {
       "x-github-api-version": "2022-11-28",
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(GITHUB_REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;

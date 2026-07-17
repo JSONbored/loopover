@@ -47,20 +47,21 @@ const body = {
 const push = await fetch("http://otel-collector:4318/v1/metrics", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify(body)
+  body: JSON.stringify(body),
+  signal: AbortSignal.timeout(${JSON.stringify(timeoutMs)})
 });
 if (!push.ok) throw new Error("collector rejected smoke metric: " + push.status + " " + await push.text());
 const deadline = Date.now() + ${JSON.stringify(timeoutMs)};
 let last = "";
 while (Date.now() <= deadline) {
-  const res = await fetch("http://otel-collector:8889/metrics");
+  const res = await fetch("http://otel-collector:8889/metrics", { signal: AbortSignal.timeout(${JSON.stringify(timeoutMs)}) });
   if (res.ok) {
     const text = await res.text();
     if (text.includes(metricName)) {
       // Second check: the app's own /metrics is basic-shape sane (real HELP/TYPE lines exist), not just
       // that the process answers 200. Independent of the collector path above -- this is the app's own
       // in-process registry (src/selfhost/metrics.ts), not something the collector could mask a break in.
-      const appRes = await fetch("http://localhost:8787/metrics");
+      const appRes = await fetch("http://localhost:8787/metrics", { signal: AbortSignal.timeout(${JSON.stringify(timeoutMs)}) });
       if (!appRes.ok) throw new Error("app /metrics returned " + appRes.status);
       const appText = await appRes.text();
       if (!appText.includes("# HELP loopover_uptime_seconds") || !appText.includes("# TYPE loopover_uptime_seconds gauge")) {

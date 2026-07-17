@@ -48,13 +48,14 @@ const body = {
 const push = await fetch("http://otel-collector:4318/v1/traces", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify(body)
+  body: JSON.stringify(body),
+  signal: AbortSignal.timeout(${JSON.stringify(timeoutMs)})
 });
 if (!push.ok) throw new Error("collector rejected smoke trace: " + push.status + " " + await push.text());
 const deadline = Date.now() + ${JSON.stringify(timeoutMs)};
 let last = "";
 while (Date.now() <= deadline) {
-  const res = await fetch("http://tempo:3200/api/traces/" + traceId);
+  const res = await fetch("http://tempo:3200/api/traces/" + traceId, { signal: AbortSignal.timeout(${JSON.stringify(timeoutMs)}) });
   if (res.ok) {
     const json = await res.json();
     if (JSON.stringify(json).includes("selfhost.observability.smoke")) {

@@ -53,6 +53,7 @@ import {
   getRepoQueueTrendSnapshot,
   getRepositorySettings,
   getPendingAgentAction,
+  createPendingAgentActionIfAbsent,
   listAgentAuditEvents,
   listAuditEventsForTarget,
   listPendingAgentActions,
@@ -497,6 +498,19 @@ const evaluateEscalationSchema = z.object({
   healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
   customerFlagged: z.boolean().optional(),
   killRequested: z.boolean().optional(),
+});
+
+// #6744: mirrors proposeActionShape in src/mcp/server.ts VERBATIM, minus owner/repo (they are path params), so
+// POST /v1/repos/:owner/:repo/agent/pending-actions can never stage an action the loopover_propose_action MCP
+// tool would reject, or vice versa. actionClass stays the 7-value propose set (a subset of AgentActionClass).
+const proposePendingActionSchema = z.object({
+  pullNumber: z.number().int().positive(),
+  actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]),
+  reason: z.string().max(500).optional(),
+  label: z.string().min(1).max(100).optional(),
+  reviewBody: z.string().max(60000).optional(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+  closeComment: z.string().max(60000).optional(),
 });
 
 // #6755: mirrors intakeIdeaShape in src/mcp/server.ts VERBATIM. Fields are deliberately LOOSE here for the same
@@ -2754,6 +2768,42 @@ export function createApp() {
     const result = await performRepoDocRefresh(c.env, fullName);
     if (!result.opened) return c.json(result);
     return c.json({ opened: true, reused: result.reused, pullNumber: result.pullNumber, url: result.url });
+  });
+
+  // #6744 propose: the CREATE side of the approval queue the list (GET) + decision (POST /:id/:decision) routes
+  // already cover. Stages an auto_with_approval action for a maintainer to later accept/reject; it never executes
+  // one. Mirrors the loopover_propose_action MCP tool (src/mcp/server.ts:proposeAction) VERBATIM — same
+  // requireRepoWriteAccess gate as the decision route, same head-SHA pinning (#2255), same { created, action } shape.
+  app.post("/v1/repos/:owner/:repo/agent/pending-actions", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const gate = await requireRepoWriteAccess(c, fullName);
+    /* v8 ignore next -- unauthorized requests are rejected by the auth middleware before reaching the handler. */
+    if (gate instanceof Response) return gate;
+    const body = await c.req.json().catch(() => null);
+    const parsed = proposePendingActionSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_propose_action_request", issues: parsed.error.issues }, 400);
+    const repo = await getRepository(c.env, fullName);
+    if (!repo?.installationId) return c.json({ error: "app_not_installed", detail: "The LoopOver App is not installed on this repository." }, 409);
+    // Pin the staged action to the head the proposer saw, so the accept path's force-push freshness guard can
+    // catch an unreviewed force-push between proposal and accept (matches proposeAction, #2255).
+    const pr = await getPullRequest(c.env, fullName, parsed.data.pullNumber);
+    const params = {
+      ...(parsed.data.label !== undefined ? { label: parsed.data.label } : {}),
+      ...(parsed.data.reviewBody !== undefined ? { reviewBody: parsed.data.reviewBody } : {}),
+      ...(parsed.data.mergeMethod !== undefined ? { mergeMethod: parsed.data.mergeMethod } : {}),
+      ...(parsed.data.closeComment !== undefined ? { closeComment: parsed.data.closeComment } : {}),
+      ...(pr?.headSha ? { expectedHeadSha: pr.headSha } : {}),
+    };
+    const { action, created } = await createPendingAgentActionIfAbsent(c.env, {
+      repoFullName: fullName,
+      pullNumber: parsed.data.pullNumber,
+      installationId: repo.installationId,
+      actionClass: parsed.data.actionClass,
+      autonomyLevel: "auto_with_approval",
+      params,
+      reason: parsed.data.reason ?? null,
+    });
+    return c.json({ created, action: { id: action.id, actionClass: action.actionClass, pullNumber: action.pullNumber, status: action.status, reason: action.reason } });
   });
 
   // #784 audit feed: the agent's executed actions + approval-queue decisions for this repo. Maintainer-scoped,
@@ -6080,7 +6130,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoValidateLinkedIssuePath(path)) return true;
   if (isRepoAgentAuditFeedPath(path)) return true; // route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoDocRefreshPath(path)) return true; // route's requireRepoWriteAccess enforces real per-repo write authority
-  if (isRepoAgentPendingActionsPath(path)) return true; // list-only: requireRepoMaintainer; decision POSTs require server tokens
+  if (isRepoAgentPendingActionsPath(path)) return true; // list (GET, requireRepoMaintainer) + propose (POST, requireRepoWriteAccess); decision POSTs on /:id/:decision require server tokens
   if (isRepoIncidentReportsPath(path)) return true; // #5672: route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === OPPORTUNITIES_FIND_PATH) return true;

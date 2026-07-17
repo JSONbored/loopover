@@ -1085,7 +1085,9 @@ describe("runAttempt (#5132)", () => {
         dbPath: ":memory:",
         worktreeBaseDir: "/tmp/unused",
         maxConcurrency: 1,
+        maxLeaseMs: 6 * 60 * 60 * 1000,
         processPid: process.pid,
+        hostId: "test-host",
         acquire: () => {
           throw new Error("no_free_worktree_slots");
         },

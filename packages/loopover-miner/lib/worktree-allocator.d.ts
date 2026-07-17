@@ -5,6 +5,7 @@ export type WorktreeAllocation = {
   repoFullName: string | null;
   status: "free" | "active";
   ownerPid: number | null;
+  ownerHost: string | null;
   allocatedAt: string | null;
 };
 
@@ -12,12 +13,16 @@ export type WorktreeAllocator = {
   dbPath: string;
   worktreeBaseDir: string;
   maxConcurrency: number;
+  maxLeaseMs: number;
   processPid: number;
+  hostId: string;
   acquire(attemptId: string, repoFullName: string): WorktreeAllocation;
   release(attemptId: string): WorktreeAllocation | null;
   listSlots(): WorktreeAllocation[];
   close(): void;
 };
+
+export const DEFAULT_MAX_LEASE_MS: number;
 
 export function resolveWorktreeAllocatorDbPath(env?: Record<string, string | undefined>): string;
 
@@ -29,7 +34,10 @@ export function openWorktreeAllocator(options?: {
   dbPath?: string;
   worktreeBaseDir?: string;
   maxConcurrency?: number;
+  maxLeaseMs?: number;
   processPid?: number;
+  hostId?: string;
+  nowMs?: number;
 }): WorktreeAllocator;
 
 export function acquireWorktree(attemptId: string, repoFullName: string): WorktreeAllocation;

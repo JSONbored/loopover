@@ -92,7 +92,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision"],
+  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision", "audit-feed"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -2796,6 +2796,9 @@ function printMaintainHelp() {
       `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
       `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
       "  precision [--window-days N]  Show gate false-positive telemetry (blocked-then-merged per gate type).",
+      "  audit-feed [--since ISO]     Show the agent audit feed (who did what, when).",
+      "             [--limit N]       Cap the events returned (1-200).",
+      "             [--pull N]        Scope the feed to one pull request.",
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",
@@ -2902,7 +2905,35 @@ async function maintainCli(args) {
     emit(payload, lines.join("\n"));
     return;
   }
-  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision.`);
+  if (subcommand === "audit-feed") {
+    // #6733: read-only mirror of GET {repoBase}/agent/audit-feed (the same surface loopover_get_agent_audit_feed
+    // exposes over MCP). The API enforces maintainer authorization and validates every query param -- `since`
+    // must be ISO-8601, `limit` 1..200, `pull` a positive integer -- so the CLI forwards them verbatim rather
+    // than re-deciding locally, and a bad value surfaces as the API's own 400 detail. Omitted flags are omitted
+    // from the query entirely, so the route applies its own defaults.
+    const query = new URLSearchParams();
+    if (options.since !== undefined) query.set("since", String(options.since));
+    if (options.limit !== undefined) query.set("limit", String(options.limit));
+    if (options.pull !== undefined) query.set("pull", String(options.pull));
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    const payload = await apiGet(`${repoBase}/agent/audit-feed${suffix}`);
+    const events = payload.events ?? [];
+    // `pullNumber` is echoed by the route only on the ?pull= branch, so the scope line reports what was asked for.
+    const scope = payload.pullNumber ? `${repoFullName}#${payload.pullNumber}` : repoFullName;
+    // #6261: every field below is the API's own; the composed line reaches the terminal only on the plain-text
+    // path (--json re-serializes `payload` untouched), so the route's already-sanitized `detail` is echoed as-is.
+    emit(
+      payload,
+      [
+        `Agent audit feed for ${scope}: ${events.length} event${events.length === 1 ? "" : "s"}.`,
+        ...events.map((event) =>
+          [event.createdAt, event.eventType, event.actor, event.outcome, event.detail].filter(Boolean).join("  "),
+        ),
+      ].join("\n"),
+    );
+    return;
+  }
+  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | audit-feed.`);
 }
 
 async function runCli(args) {

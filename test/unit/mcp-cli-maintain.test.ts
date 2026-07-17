@@ -95,6 +95,47 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(scoped).toMatch(/Gate precision for owner\/repo \(last 30d\)/);
   });
 
+  it("audit-feed shows the agent audit feed (plain + json), with output parity between the surfaces (#6733)", async () => {
+    const e = await env();
+    const out = await runAsync(["maintain", "audit-feed", "--repo", "owner/repo"], e);
+    expect(out).toMatch(/Agent audit feed for owner\/repo: 2 events\./);
+    expect(out).toMatch(/2026-05-30T00:00:00\.000Z {2}github_app\.merged {2}loopover {2}success {2}merged #7/);
+    // A null detail is dropped from the line rather than printed as "null".
+    expect(out).toMatch(/github_app\.review_evasion_closed {2}loopover {2}denied$/m);
+    // Parity: --json re-serializes the API payload untouched, so the same events reach both surfaces.
+    const json = JSON.parse(await runAsync(["maintain", "audit-feed", "--repo", "owner/repo", "--json"], e)) as {
+      repoFullName: string;
+      events: Array<{ id: string; eventType: string }>;
+    };
+    expect(json.repoFullName).toBe("owner/repo");
+    expect(json.events.map((event) => event.id)).toEqual(["ae-1", "ae-2"]);
+  });
+
+  it("audit-feed forwards --since/--limit/--pull to the route and scopes the header to the pull (#6733)", async () => {
+    const e = await env();
+    // The API validates these (ISO since, limit 1..200, positive pull), so the CLI must forward them verbatim
+    // rather than re-deciding locally -- this pins that they arrive.
+    const payload = JSON.parse(
+      await runAsync(
+        ["maintain", "audit-feed", "--repo", "owner/repo", "--since", "2026-05-29T00:00:00.000Z", "--limit", "1", "--pull", "7", "--json"],
+        e,
+      ),
+    ) as { echoedQuery: { since: string; limit: string; pull: string }; pullNumber: number; events: unknown[] };
+    expect(payload.echoedQuery).toEqual({ since: "2026-05-29T00:00:00.000Z", limit: "1", pull: "7" });
+    expect(payload.events).toHaveLength(1);
+    // The ?pull= branch echoes pullNumber, and the plain-text header reflects that scope.
+    const scoped = await runAsync(["maintain", "audit-feed", "--repo", "owner/repo", "--pull", "7"], e);
+    expect(scoped).toMatch(/Agent audit feed for owner\/repo#7: /);
+  });
+
+  it("audit-feed omits absent flags from the query entirely, so the route applies its own defaults (#6733)", async () => {
+    const e = await env();
+    const payload = JSON.parse(await runAsync(["maintain", "audit-feed", "--repo", "owner/repo", "--json"], e)) as {
+      echoedQuery: { since: string | null; limit: string | null; pull: string | null };
+    };
+    expect(payload.echoedQuery).toEqual({ since: null, limit: null, pull: null });
+  });
+
   it("validates inputs: --repo required, id required for approve, known subcommand + action/level", async () => {
     const e = await env();
     await expect(runAsync(["maintain", "status"], e)).rejects.toThrow(/Pass --repo/);

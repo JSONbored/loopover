@@ -205,6 +205,7 @@ import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { evaluateEscalation } from "../loop-escalation";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
+import { buildAutomationStateResponse } from "../automation-state";
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
@@ -2501,6 +2502,23 @@ export function createApp() {
     const response = await buildIssueQualityResponse(c.env, fullName);
     if (!response) return c.json({ error: "issue_quality_not_found", repoFullName: fullName }, 404);
     return c.json(response);
+  });
+
+  // #6742: REST mirror of the loopover_get_automation_state MCP tool (src/mcp/server.ts). Same
+  // buildAutomationStateResponse the tool calls, and the same session/static-mcp repo-access gate as
+  // issue-quality above, so the two surfaces can never drift on either the data or who may read it.
+  app.get("/v1/repos/:owner/:repo/automation-state", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific repo guards. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const repo = identity.kind === "session" ? await getRepository(c.env, fullName) : null;
+    if (identity.kind === "session") {
+      const forbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (forbidden) return forbidden;
+    }
+    if (identity.kind === "static" && identity.actor === "mcp" && !(await import("../auth/security")).isMcpReadRepoAllowed(c.env.MCP_READ_REPO_ALLOWLIST, fullName)) return c.json({ error: "forbidden_repo" }, 403);
+    return c.json(await buildAutomationStateResponse(c.env, fullName));
   });
 
   app.post("/v1/repos/:owner/:repo/validate-linked-issue", async (c) => {
@@ -6023,6 +6041,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoOutcomeCalibrationPath(path)) return true;
   if (isRepoGatePrecisionPath(path)) return true;
   if (isRepoMaintainerNoisePath(path)) return true;
+  if (isRepoAutomationStatePath(path)) return true; // route's own requireSessionRepoAccess enforces per-repo authority
   if (isRepoSelftuneOverridesPath(path)) return true;
   if (isRepoSettingsPreviewPath(path)) return true;
   if (isRepoOnboardingPackPreviewPath(path)) return true;
@@ -6063,6 +6082,12 @@ function isRepoGatePrecisionPath(path: string): boolean {
 
 function isRepoMaintainerNoisePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/maintainer-noise$/.test(path);
+}
+
+// #6742: mirrors isRepoMaintainerNoisePath above — the automation-state route's own requireSessionRepoAccess
+// check enforces per-repo authority, so this coarse allowlist only needs to let a session reach the route.
+function isRepoAutomationStatePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/automation-state$/.test(path);
 }
 
 // #6168: let a browser (session) maintainer reach the self-tune override admin routes; the route's own

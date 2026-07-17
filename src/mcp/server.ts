@@ -33,14 +33,12 @@ import {
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
-  countPendingAgentActions,
   countOpenPullRequests,
   createPendingAgentActionIfAbsent,
   getBounty,
   listBountiesByRepo,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
-  getInstallation,
   getIssue,
   getPendingAgentAction,
   getPullRequest,
@@ -159,9 +157,7 @@ import {
 import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, isCodeFile, isTestPath, TEST_FRAMEWORKS } from "../signals/test-evidence";
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
-import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
-import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
-import { resolveRepositorySettings } from "../settings/repository-settings";
+import { AUTONOMY_LEVELS } from "../settings/autonomy";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/predicted-gate";
@@ -171,6 +167,7 @@ import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
 import { evaluateEscalation } from "../loop-escalation";
+import { buildAutomationStateResponse } from "../automation-state";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildRepoDataQuality } from "../signals/data-quality";
@@ -4023,33 +4020,14 @@ export class LoopoverMcp {
 
   // #784 — read the agent automation state for a repo. Repo-access scoped; surfaces the count (not the
   // details) of the approval queue — the full queue + accept/reject stay behind the maintainer-authed REST API.
+  // The response shape is built by the shared buildAutomationStateResponse (#6742), also used by the REST mirror.
   private async getAutomationState(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(fullName);
-    const [repo, settings, pendingActionCount] = await Promise.all([
-      getRepository(this.env, fullName),
-      resolveRepositorySettings(this.env, fullName),
-      countPendingAgentActions(this.env, { repoFullName: fullName, status: "pending" }),
-    ]);
-    const autonomy = settings.autonomy;
-    const actingActionClasses = AGENT_ACTION_CLASSES.filter((actionClass) => isActingAutonomyLevel(resolveAutonomy(autonomy, actionClass)));
-    const installation = repo?.installationId ? await getInstallation(this.env, repo.installationId) : null;
-    const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(this.env) || (await isGlobalAgentFrozen(this.env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
-    const permissionReadiness = resolveAgentPermissionReadiness({ autonomy, installationPermissions: installation?.permissions ?? null });
+    const data = await buildAutomationStateResponse(this.env, fullName);
     return {
-      summary: `Agent automation for ${fullName}: mode=${mode}, ${actingActionClasses.length} acting class(es), ${pendingActionCount} pending approval(s).`,
-      data: {
-        repoFullName: fullName,
-        configured: actingActionClasses.length > 0,
-        autonomy,
-        autoMaintain: settings.autoMaintain,
-        agentPaused: settings.agentPaused === true,
-        agentDryRun: settings.agentDryRun === true,
-        mode,
-        permissionReadiness,
-        actingActionClasses,
-        pendingActionCount,
-      },
+      summary: `Agent automation for ${fullName}: mode=${data.mode}, ${data.actingActionClasses.length} acting class(es), ${data.pendingActionCount} pending approval(s).`,
+      data,
     };
   }
 

@@ -1233,6 +1233,11 @@ const STDIO_TOOL_DESCRIPTORS = [
   // Categories mirror the remote server's MCP_TOOL_CATEGORIES entries for the same names, so a caller sees one
   // consistent grouping across both surfaces.
   {
+    name: "loopover_get_automation_state",
+    category: "agent",
+    description: "Return a repo's agent automation state: the per-action autonomy levels, kill-switch / dry-run mode, GitHub write-permission readiness, and how many auto_with_approval actions are awaiting a maintainer decision — the read-side counterpart to `loopover-mcp maintain pause|resume|set-level`. Maintainer access required.",
+  },
+  {
     name: "loopover_list_pending_actions",
     category: "agent",
     description: "List the agent actions currently staged and awaiting a decision in a repo's approval queue, so a maintainer can review what is pending. Returns the pending queue only — the same list as `loopover-mcp maintain queue`. Maintainer access required.",
@@ -2406,6 +2411,18 @@ registerStdioTool(
 function toolRepoBase(owner, repo) {
   return `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
+
+registerStdioTool(
+  "loopover_get_automation_state",
+  {
+    description: stdioToolDescription("loopover_get_automation_state"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/automation-state`);
+    return toolResult(`Agent automation for ${owner}/${repo}: mode=${payload.mode ?? "unknown"}.`, payload);
+  },
+);
 
 registerStdioTool(
   "loopover_list_pending_actions",

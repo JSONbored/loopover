@@ -460,6 +460,23 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/automation-state" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          configured: true,
+          autonomy: { merge: "auto" },
+          autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
+          agentPaused: false,
+          agentDryRun: false,
+          mode: "live",
+          permissionReadiness: "ready",
+          actingActionClasses: ["merge"],
+          pendingActionCount: 2,
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/maintainer-noise" && request.method === "GET") {
       response.end(
         JSON.stringify({

@@ -8,6 +8,21 @@ import {
   writeSelfHostEnvReference,
 } from "../../scripts/gen-selfhost-env-reference.mjs";
 
+// #6993: DEFAULT_SOURCE_ROOTS never scanned src/services/ai-review.ts, src/queue/ai-review-orchestration.ts,
+// or src/queue/processors.ts, so four AI review-pipeline env vars that ARE read in those files (and already
+// documented in src/env.d.ts's self-host doc-comment block) never reached the generated reference. Runs
+// against the real repo (default rootDir/sourceRoots) rather than a fixture, since the point is confirming
+// the actual new source roots are scanned, not a synthetic stand-in for them.
+describe("gen-selfhost-env-reference AI review-pipeline source roots (#6993)", () => {
+  it("scans the newly-added source roots and finds their env vars", () => {
+    const names = collectSelfHostEnvVars().map((entry) => entry.name);
+    expect(names).toContain("AI_SUMMARIES_ENABLED");
+    expect(names).toContain("AI_PUBLIC_COMMENTS_ENABLED");
+    expect(names).toContain("AI_MAX_OUTPUT_TOKENS");
+    expect(names).toContain("AI_BYOK_DAILY_REPO_LIMIT");
+  });
+});
+
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "gt-env-reference-"));
   mkdirSync(join(root, "src", "selfhost", "nested"), { recursive: true });

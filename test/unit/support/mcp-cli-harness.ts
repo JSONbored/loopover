@@ -420,6 +420,39 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true, ...(body.autonomy ? { autonomy: body.autonomy } : {}) }));
       return;
     }
+    // #6757 contributor-issue-draft generation. Echoes dryRun/create so the CLI's preview-vs-create wiring is
+    // testable; the fixture never trips the route's explicit-create guard because the CLI always pairs them.
+    if (request.url === "/v1/repos/owner/repo/contributor-issue-drafts/generate" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { dryRun?: boolean; create?: boolean; limit?: number };
+      const dryRun = body.dryRun !== false;
+      const createRequested = body.create === true;
+      const willCreate = !dryRun && createRequested;
+      const limit = body.limit ?? 2;
+      const drafts = Array.from({ length: Math.min(limit, 2) }, (_, index) => ({
+        fingerprint: `fp-${index}`,
+        topic: "focus:wanted_path:src/",
+        title: `Draft ${index}`,
+        body: "Draft body",
+        labels: ["help wanted"],
+        status: willCreate ? "created" : "proposed",
+      }));
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-06-01T00:00:00.000Z",
+          dryRun,
+          createRequested,
+          proposed: willCreate ? 0 : drafts.length,
+          skippedDuplicate: 0,
+          skippedDeclined: 0,
+          skippedUnsafe: 0,
+          created: willCreate ? drafts.length : 0,
+          skippedCreateFailed: 0,
+          drafts,
+        }),
+      );
+      return;
+    }
     // #554 gate precision telemetry (read-only). Echoes ?windowDays so the CLI window pass-through is testable.
     if (request.url?.startsWith("/v1/repos/owner/repo/gate-precision") && request.method === "GET") {
       const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");

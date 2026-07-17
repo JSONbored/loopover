@@ -96,6 +96,7 @@ import {
 } from "../services/agent-orchestrator";
 import { authoritativeContributorRepoStats, loadContributorDecisionPackForServing, repoDecisionFromPack } from "../services/decision-pack";
 import { buildPublicPrBodyDraft } from "../services/pr-body-draft";
+import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
 import { buildRemediationPlan } from "../services/remediation-plan";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
@@ -631,6 +632,44 @@ const refreshRepoDocsOutputSchema = {
   pullNumber: z.number().optional(),
   url: z.string().optional(),
   reason: z.string().optional(),
+};
+
+// #6757 — MCP mirror of the contributor-issue-drafts/generate REST route (src/api/routes.ts). Delegates to the
+// SAME generateContributorIssueDrafts service, so the dry-run-by-default / explicit-create-requires-dryRun-false
+// safety guard is shared, not re-implemented. dryRun/create/limit mirror contributorIssueDraftGenerateSchema's
+// bounds; leaving them unset takes the service defaults (dryRun true, create false, limit 5).
+const generateContributorIssueDraftsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  dryRun: z.boolean().optional(),
+  create: z.boolean().optional(),
+  limit: z.number().int().min(1).max(20).optional(),
+};
+
+const contributorIssueDraftEntrySchema = z.object({
+  fingerprint: z.string(),
+  topic: z.string(),
+  title: z.string(),
+  body: z.string(),
+  labels: z.array(z.string()),
+  status: z.string(),
+  duplicateOf: z.object({ number: z.number(), title: z.string(), reason: z.string() }).optional(),
+  declinedBy: z.object({ number: z.number(), title: z.string(), reason: z.string() }).optional(),
+  issue: z.object({ number: z.number(), url: z.string() }).optional(),
+});
+
+const generateContributorIssueDraftsOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  dryRun: z.boolean().optional(),
+  createRequested: z.boolean().optional(),
+  proposed: z.number().optional(),
+  skippedDuplicate: z.number().optional(),
+  skippedDeclined: z.number().optional(),
+  skippedUnsafe: z.number().optional(),
+  created: z.number().optional(),
+  skippedCreateFailed: z.number().optional(),
+  drafts: z.array(contributorIssueDraftEntrySchema).optional(),
 };
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
@@ -1789,6 +1828,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_list_pending_actions: "agent",
   loopover_decide_pending_action: "agent",
   loopover_refresh_repo_docs: "maintainer",
+  loopover_generate_contributor_issue_drafts: "maintainer",
   loopover_get_agent_audit_feed: "agent",
   loopover_explain_score_breakdown: "review",
   loopover_explain_review_risk: "review",
@@ -2540,6 +2580,17 @@ export class LoopoverMcp {
         outputSchema: refreshRepoDocsOutputSchema,
       },
       async (input) => this.toolResult(await this.refreshRepoDocs(input)),
+    );
+
+    register(
+      "loopover_generate_contributor_issue_drafts",
+      {
+        description:
+          "Generate contributor-issue drafts for a repo -- the MCP mirror of the web dashboard's contributor-issue-drafts/generate call. Dry-run by default: it only PREVIEWS drafts unless create:true is paired with dryRun:false, and even then a paused/frozen agent is never allowed to file. It never silently opens issues. Maintainer access required.",
+        inputSchema: generateContributorIssueDraftsShape,
+        outputSchema: generateContributorIssueDraftsOutputSchema,
+      },
+      async (input) => this.toolResult(await this.generateContributorIssueDraftsTool(input)),
     );
 
     register(
@@ -4220,6 +4271,31 @@ export class LoopoverMcp {
     return {
       summary: `${result.reused ? "Found the already-open" : "Opened a new"} repo-doc pull request for ${fullName}: ${result.url}`,
       data: { opened: true, reused: result.reused, pullNumber: result.pullNumber, url: result.url },
+    };
+  }
+
+  // #6757 — MCP mirror of POST /v1/repos/:owner/:repo/contributor-issue-drafts/generate. requireRepoManageAccess
+  // is the write-manage gate (the same authority the route's create path additionally demands via
+  // requireRepoWriteAccess), checked FIRST. The explicit-create guard is re-asserted here so an implicit/default
+  // dry run can never be turned into a silent create, exactly mirroring the route; the deeper kill-switch brake
+  // (paused/frozen agent) lives inside generateContributorIssueDrafts and applies to every caller.
+  private async generateContributorIssueDraftsTool(
+    input: z.infer<z.ZodObject<typeof generateContributorIssueDraftsShape>>,
+  ): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoManageAccess(fullName);
+    if (input.create && input.dryRun !== false) {
+      throw new Error("explicit_create_requires_dry_run_false");
+    }
+    const result = await generateContributorIssueDrafts(this.env, fullName, {
+      dryRun: input.dryRun,
+      create: input.create,
+      limit: input.limit,
+      requestedBy: this.identity.actor,
+    });
+    return {
+      summary: `${result.dryRun ? "Previewed" : "Generated"} ${result.drafts.length} contributor issue draft(s) for ${fullName}: ${result.proposed} proposed, ${result.created} created.`,
+      data: result as unknown as Record<string, unknown>,
     };
   }
 

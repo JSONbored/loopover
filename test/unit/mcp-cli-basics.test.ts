@@ -220,7 +220,7 @@ describe("loopover-mcp CLI — basics", () => {
     expect(ps).toContain("Register-ArgumentCompleter -Native -CommandName loopover-mcp");
     expect(ps).toContain("[System.Management.Automation.CompletionResult]::new");
     expect(ps).toContain("$commands = @('login', 'logout'");
-    expect(ps).toContain("'maintain' = @('status', 'queue', 'approve', 'reject', 'pause', 'resume', 'set-level', 'precision')");
+    expect(ps).toContain("'maintain' = @('status', 'queue', 'approve', 'reject', 'pause', 'resume', 'set-level', 'precision', 'generate-issue-drafts')");
   });
 
   it("emits completion as machine-readable json", () => {

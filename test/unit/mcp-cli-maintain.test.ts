@@ -95,6 +95,27 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(scoped).toMatch(/Gate precision for owner\/repo \(last 30d\)/);
   });
 
+  it("generate-issue-drafts previews by default and files with --create (#6757)", async () => {
+    const e = await env();
+    const preview = await runAsync(["maintain", "generate-issue-drafts", "--repo", "owner/repo"], e);
+    expect(preview).toMatch(/Previewed 2 contributor issue draft\(s\) for owner\/repo: 2 proposed, 0 created\./);
+    const previewJson = JSON.parse(await runAsync(["maintain", "generate-issue-drafts", "--repo", "owner/repo", "--json"], e)) as {
+      dryRun: boolean;
+      createRequested: boolean;
+      created: number;
+    };
+    expect(previewJson).toMatchObject({ dryRun: true, createRequested: false, created: 0 });
+
+    const created = await runAsync(["maintain", "generate-issue-drafts", "--repo", "owner/repo", "--create"], e);
+    expect(created).toMatch(/Generated 2 contributor issue draft\(s\) for owner\/repo: 0 proposed, 2 created\./);
+    const createdJson = JSON.parse(await runAsync(["maintain", "generate-issue-drafts", "--repo", "owner/repo", "--create", "--limit", "1", "--json"], e)) as {
+      dryRun: boolean;
+      createRequested: boolean;
+      created: number;
+    };
+    expect(createdJson).toMatchObject({ dryRun: false, createRequested: true, created: 1 });
+  });
+
   it("validates inputs: --repo required, id required for approve, known subcommand + action/level", async () => {
     const e = await env();
     await expect(runAsync(["maintain", "status"], e)).rejects.toThrow(/Pass --repo/);

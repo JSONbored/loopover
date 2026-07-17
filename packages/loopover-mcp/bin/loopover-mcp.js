@@ -87,7 +87,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision"],
+  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision", "generate-issue-drafts"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -2691,6 +2691,8 @@ function printMaintainHelp() {
       `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
       `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
       "  precision [--window-days N]  Show gate false-positive telemetry (blocked-then-merged per gate type).",
+      "  generate-issue-drafts        Preview contributor-issue drafts (dry-run). Pass --create to actually file",
+      "                               them, --limit N to cap how many (default 5).",
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",
@@ -2797,7 +2799,24 @@ async function maintainCli(args) {
     emit(payload, lines.join("\n"));
     return;
   }
-  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision.`);
+  if (subcommand === "generate-issue-drafts") {
+    // #6757 — mirror of POST /v1/repos/:owner/:repo/contributor-issue-drafts/generate. Dry-run by default: the
+    // preview never writes. `--create` is the only way to actually file, and it always pairs create with
+    // dryRun:false so the request itself can never trip the route's explicit-create safety guard. The API still
+    // enforces write access + the paused/frozen kill-switch; the CLI never decides locally.
+    const create = options.create === true;
+    const body = { dryRun: !create, create };
+    const limit = Number(options.limit);
+    if (Number.isFinite(limit)) body.limit = limit;
+    const payload = await apiPost(`${repoBase}/contributor-issue-drafts/generate`, body);
+    const drafts = payload.drafts ?? [];
+    emit(
+      payload,
+      `${payload.dryRun ? "Previewed" : "Generated"} ${drafts.length} contributor issue draft(s) for ${repoFullName}: ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created.`,
+    );
+    return;
+  }
+  throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | generate-issue-drafts.`);
 }
 
 async function runCli(args) {

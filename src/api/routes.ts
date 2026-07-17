@@ -57,6 +57,9 @@ import {
   listAgentAuditEvents,
   listAuditEventsForTarget,
   listNotificationDeliveriesForRecipient,
+  listIssueWatchSubscriptionsForLogin,
+  upsertIssueWatchSubscription,
+  deleteIssueWatchSubscription,
   markNotificationDeliveriesRead,
   MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
   MAX_NOTIFICATION_MARK_READ_IDS,
@@ -200,6 +203,7 @@ import {
 import {
   buildStaticControlPanelRoleSummary,
   canLoginAccessRepo,
+  canWatchRepo,
   loadControlPanelAccessScope,
   loadControlPanelRoleSummary,
 } from "../services/control-panel-roles";
@@ -453,6 +457,13 @@ const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
 // (src/mcp/server.ts) minus `login` (which is the path param): `ids` is optional (absent = mark all delivered).
 const markNotificationsReadBodySchema = z.object({
   ids: z.array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH)).max(MAX_NOTIFICATION_MARK_READ_IDS).optional(),
+});
+
+// #6746: body of POST/DELETE /v1/contributors/:login/watches. Mirrors watchIssuesShape (src/mcp/server.ts) minus
+// `login` (the path param) and `action` (the HTTP verb): repoFullName is required, labels is an optional filter.
+const watchIssuesBodySchema = z.object({
+  repoFullName: z.string().min(3).max(200),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
 });
 
 const preflightSchema = z.object({
@@ -3427,6 +3438,43 @@ export function createApp() {
     return c.json({ login: login.toLowerCase(), marked });
   });
 
+  // REST mirror of the `loopover_watch_issues` MCP tool (LoopoverMcp.watchIssues) — a contributor's own
+  // issue-watch subscriptions, self-scoped via requireContributorAccess. GET lists them; POST watches a repo
+  // (optional label filter); DELETE unwatches. watch/unwatch additionally gate the repo via canWatchRepo,
+  // mirroring the tool's requireWatchableRepo. Response bodies match the tool's structuredContent. (#6746)
+  app.get("/v1/contributors/:login/watches", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    return c.json({ watching: await buildContributorWatchList(c.env, login) });
+  });
+
+  app.post("/v1/contributors/:login/watches", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const parsed = watchIssuesBodySchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "invalid_watch", issues: parsed.error.issues }, 400);
+    const forbidden = await requireWatchableRepo(c, login, parsed.data.repoFullName);
+    if (forbidden) return forbidden;
+    await upsertIssueWatchSubscription(c.env, { login, repoFullName: parsed.data.repoFullName, labels: parsed.data.labels });
+    const changed = `watching ${parsed.data.repoFullName}${parsed.data.labels && parsed.data.labels.length > 0 ? ` (labels: ${parsed.data.labels.join(", ")})` : ""}`;
+    return c.json({ watching: await buildContributorWatchList(c.env, login), changed });
+  });
+
+  app.delete("/v1/contributors/:login/watches", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const parsed = watchIssuesBodySchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "invalid_watch", issues: parsed.error.issues }, 400);
+    const forbidden = await requireWatchableRepo(c, login, parsed.data.repoFullName);
+    if (forbidden) return forbidden;
+    const removed = await deleteIssueWatchSubscription(c.env, login, parsed.data.repoFullName);
+    const changed = removed ? `unwatched ${parsed.data.repoFullName}` : `was not watching ${parsed.data.repoFullName}`;
+    return c.json({ watching: await buildContributorWatchList(c.env, login), changed });
+  });
+
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {
     const login = c.req.param("login");
     const unauthorized = await requireContributorAccess(c, login);
@@ -6328,6 +6376,25 @@ async function requireContributorAccess(c: ProtectedRouteContext, login: string)
     return c.json({ error: "forbidden_contributor" }, 403);
   }
   return null;
+}
+
+// #6746: the contributor's issue-watch list, shaped identically to the loopover_watch_issues MCP tool's
+// `watching` structuredContent so the REST↔MCP parity test holds.
+async function buildContributorWatchList(env: Env, login: string): Promise<Array<{ repoFullName: string; labels: string[] }>> {
+  const subscriptions = await listIssueWatchSubscriptionsForLogin(env, login);
+  return subscriptions.map((sub) => ({ repoFullName: sub.repoFullName, labels: sub.labels }));
+}
+
+// #6746: REST mirror of LoopoverMcp.requireWatchableRepo. Only session identities are repo-gated; a session may
+// watch/unwatch a repo only when canWatchRepo allows it (public loopover-tracked repos are watchable; private ones
+// require access). Static/operator tokens are already scoped by requireContributorAccess.
+async function requireWatchableRepo(c: ProtectedRouteContext, login: string, repoFullName: string): Promise<Response | null> {
+  const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- contributor route guard authenticates before the watchable-repo check runs. */
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  if (identity.kind !== "session") return null;
+  if (await canWatchRepo(c.env, login, repoFullName)) return null;
+  return c.json({ error: "forbidden_watch_repo" }, 403);
 }
 
 async function requireContributorRepoAccess(c: ProtectedRouteContext, repoFullName: string, repo: RepositoryRecord): Promise<Response | null> {

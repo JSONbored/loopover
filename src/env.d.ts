@@ -1,5 +1,6 @@
 declare global {
   interface Env {
+    // (no-op comment: scratch verification touch, retest #2 after actions:write permission grant)
     DB: D1Database;
     JOBS: Queue;
     /** Self-host webhook queue binding. Cloudflare no longer binds this because hosted reviews are retired. */

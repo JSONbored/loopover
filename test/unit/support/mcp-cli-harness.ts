@@ -487,13 +487,12 @@ export async function startFixtureServer(
       return;
     }
     const onboardingPackUrl = new URL(request.url ?? "/", "http://localhost");
-    if (
-      onboardingPackUrl.pathname === "/v1/repos/owner/repo/onboarding-pack/preview" &&
-      ["true", "false"].includes(onboardingPackUrl.searchParams.get("refresh") ?? "") &&
-      request.method === "GET"
-    ) {
-      response.end(JSON.stringify(repoOnboardingPackFixture));
-      return;
+    if (onboardingPackUrl.pathname === "/v1/repos/owner/repo/onboarding-pack/preview" && request.method === "GET") {
+      const refresh = onboardingPackUrl.searchParams.get("refresh");
+      if (refresh === null || refresh === "true") {
+        response.end(JSON.stringify(repoOnboardingPackFixture));
+        return;
+      }
     }
     if (request.url === "/v1/upstream/drift" && request.method === "GET") {
       response.end(

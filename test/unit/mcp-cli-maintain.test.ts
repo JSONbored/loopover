@@ -108,7 +108,7 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     const plain = await runAsync(["maintain", "onboarding-pack", "--repo", "owner/repo"], e);
     expect(plain).toContain("LoopOver onboarding pack preview for owner/repo (preview-only, not published).");
     expect(plain).toContain(repoOnboardingPackFixture.preview.previewMarkdown);
-    expect(requests.at(-1)).toBe("/v1/repos/owner/repo/onboarding-pack/preview?refresh=false");
+    expect(requests.at(-1)).toBe("/v1/repos/owner/repo/onboarding-pack/preview");
   });
 
   it("validates inputs: --repo required, id required for approve, known subcommand + action/level", async () => {

@@ -2937,7 +2937,12 @@ async function maintainCli(args) {
     return;
   }
   if (subcommand === "onboarding-pack") {
-    const payload = await apiGet(`${repoBase}/onboarding-pack/preview?refresh=${options.refresh === true ? "true" : "false"}`);
+    // #6738: session-authenticated mirror of GET /onboarding-pack/preview (and the remote
+    // loopover_get_repo_onboarding_pack tool). Bare `--refresh` becomes options.refresh === true via
+    // parseOptions; omit the query otherwise so the default matches the precision-style GET pattern
+    // (server treats only the exact string "true" as a refresh).
+    const query = options.refresh === true ? "?refresh=true" : "";
+    const payload = await apiGet(`${repoBase}/onboarding-pack/preview${query}`);
     emit(
       payload,
       [

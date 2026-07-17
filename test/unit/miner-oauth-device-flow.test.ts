@@ -85,6 +85,13 @@ describe("requestDeviceCode (#5682)", () => {
       expect((error as DeviceFlowError).code).toBe("device_code_request_failed");
     }
   });
+
+  it("caps the device-code fetch with an AbortSignal timeout so a stalled connection can't hang forever (#6988)", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ device_code: "dc1", user_code: "u", verification_uri: "v" }));
+    await requestDeviceCode({ clientId: "c", fetchFn });
+    const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe("pollForAccessToken (#5682)", () => {
@@ -121,6 +128,20 @@ describe("pollForAccessToken (#5682)", () => {
     const result = await pollForAccessToken({ clientId: "c", deviceCode: "dc1", fetchFn, sleepFn: noSleep });
     expect(result.accessToken).toBe("gho_final");
     expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries the next attempt when a poll fetch times out mid-poll, instead of crashing the flow (#6988)", async () => {
+    const fetchFn = vi
+      .fn()
+      // A timed-out poll fetch rejects; it must be treated as a per-attempt failure and retried, not propagated.
+      .mockRejectedValueOnce(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "gho_after_timeout" }));
+    const result = await pollForAccessToken({ clientId: "c", deviceCode: "dc1", fetchFn, sleepFn: noSleep });
+    expect(result.accessToken).toBe("gho_after_timeout");
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    // And the poll fetch also carries the timeout guard.
+    const [, init] = fetchFn.mock.calls[1] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("slow_down widens the poll interval to GitHub's requested value (observable via the sleep call)", async () => {

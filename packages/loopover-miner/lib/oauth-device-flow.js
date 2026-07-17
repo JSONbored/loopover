@@ -15,6 +15,9 @@ const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const DEFAULT_SCOPE = "repo";
 const DEFAULT_EXPIRES_IN_SECONDS = 900;
 const DEFAULT_INTERVAL_SECONDS = 5;
+// #6988: cap each GitHub-facing device-flow fetch so a stalled connection can't hang forever — matching the
+// #miner-github-read-timeouts convention (github-token-resolution.js's GITHUB_TOKEN_FETCH_TIMEOUT_MS).
+const DEVICE_FLOW_FETCH_TIMEOUT_MS = 10_000;
 
 /** The centrally-held loopover-ams App's OAuth client id -- public (not secret), so it's safe to read from a
  *  plain env var. Empty/unset means device-flow authorization isn't available in this build/deployment. */
@@ -40,6 +43,9 @@ export async function requestDeviceCode({ clientId, scope = DEFAULT_SCOPE, fetch
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: clientId, scope }).toString(),
+    // A timeout rejects this fetch, which propagates as a DeviceFlowError-shaped failure the caller falls back
+    // from (init-wizard's pasted-token path), instead of hanging the wizard forever. (#6988)
+    signal: AbortSignal.timeout(DEVICE_FLOW_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new DeviceFlowError("device_code_request_failed", `GitHub returned HTTP ${res.status} requesting a device code`);
   const data = await res.json();
@@ -75,15 +81,23 @@ export async function pollForAccessToken({
   for (;;) {
     if (now() >= deadline) throw new DeviceFlowError("expired_token", "the device code expired before authorization completed");
     await sleepFn(interval * 1000);
-    const res = await fetchFn(ACCESS_TOKEN_URL, {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId,
-        device_code: deviceCode,
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      }).toString(),
-    });
+    let res;
+    try {
+      res = await fetchFn(ACCESS_TOKEN_URL, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          device_code: deviceCode,
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        }).toString(),
+        signal: AbortSignal.timeout(DEVICE_FLOW_FETCH_TIMEOUT_MS),
+      });
+    } catch {
+      // #6988: a stalled/timed-out poll fetch is a per-attempt failure, not terminal — retry on the next
+      // interval (still bounded by `deadline` above) so a single hung connection can't hang the whole flow.
+      continue;
+    }
     const data = await res.json().catch(() => ({}));
     if (data && typeof data.access_token === "string" && data.access_token) {
       return { accessToken: data.access_token, scope: typeof data.scope === "string" ? data.scope : "" };

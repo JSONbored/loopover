@@ -52,6 +52,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_github_rest_rate_limit_remaining", { help: "Newest observed GitHub REST rate-limit remaining count, by key scope.", type: "gauge" }],
   ["loopover_host_load_avg1_per_core", { help: "One-minute host load average normalized by CPU core count.", type: "gauge" }],
   ["loopover_clock_skew_seconds", { help: "Clock skew in seconds between this process and GitHub's server time (positive = ahead), sampled from GitHub App JWT-mint response Date headers.", type: "gauge" }],
+  ["loopover_clock_skew_sample_age_seconds", { help: "Seconds since the last successful clock-skew sample (loopover_clock_skew_seconds); -1 when no sample has landed yet, so a stale reading is distinguishable from a fresh one.", type: "gauge" }],
   ["loopover_uptime_seconds", { help: "Self-host process uptime in seconds.", type: "gauge" }],
   ["loopover_backup_acknowledged", { help: "1 when SQLite backup is acknowledged or Postgres is in use; 0 when the boot backup advisory would fire.", type: "gauge" }],
   ["loopover_config_dir_empty_acknowledged", { help: "1 when LOOPOVER_REPO_CONFIG_DIR is unset, has entries, or is acknowledged; 0 when it's configured but the mounted directory is empty.", type: "gauge" }],

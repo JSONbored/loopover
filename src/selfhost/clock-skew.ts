@@ -8,6 +8,10 @@
 // outbound request, sampled at exactly the cadence the vulnerable code path itself runs.
 
 let lastSkewSeconds = 0;
+// The wall-clock time (ms) of the last SUCCESSFUL sample, or null before the first one. Backs the staleness
+// signal below so an old sample can't silently look current if token-mint activity — the only thing that
+// refreshes lastSkewSeconds — stalls (#7000).
+let lastSkewSampleAtMs: number | null = null;
 
 /**
  * Update the last-observed clock-skew sample from a GitHub response's `Date` header. Positive means
@@ -20,7 +24,9 @@ export function recordClockSkewFromResponse(response: Response): void {
   if (!dateHeader) return;
   const remoteMs = Date.parse(dateHeader);
   if (!Number.isFinite(remoteMs)) return;
-  lastSkewSeconds = (Date.now() - remoteMs) / 1000;
+  const localMs = Date.now();
+  lastSkewSeconds = (localMs - remoteMs) / 1000;
+  lastSkewSampleAtMs = localMs;
 }
 
 /** The most recently observed clock-skew sample in seconds (0 until the first successful sample). */
@@ -28,7 +34,18 @@ export function clockSkewSecondsSample(): number {
   return lastSkewSeconds;
 }
 
+/**
+ * Seconds since the last successful clock-skew sample, or a -1 sentinel when none has landed yet — the same
+ * "never sampled" convention as {@link d1DatabaseSizeBytesSample} (src/selfhost/d1-size-probe.ts). Lets an
+ * operator tell a fresh reading apart from an old sample the token-mint path simply hasn't refreshed (#7000).
+ */
+export function clockSkewSampleAgeSeconds(): number {
+  if (lastSkewSampleAtMs === null) return -1;
+  return (Date.now() - lastSkewSampleAtMs) / 1000;
+}
+
 /** Test-only: reset the module-level sample between tests. */
 export function resetClockSkewForTest(): void {
   lastSkewSeconds = 0;
+  lastSkewSampleAtMs = null;
 }

@@ -1,3 +1,4 @@
+import { useLocation } from "@tanstack/react-router";
 import { Keyboard } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -16,44 +17,61 @@ interface ShortcutGroup {
   items: Shortcut[];
 }
 
-const GROUPS: ShortcutGroup[] = [
-  {
-    group: "Navigation",
-    items: [
-      { keys: ["⌘", "K"], label: "Open command palette" },
-      { keys: ["g", "h"], label: "Go home" },
-      { keys: ["g", "d"], label: "Go to docs" },
-      { keys: ["g", "a"], label: "Go to app" },
-      { keys: ["g", "r"], label: "Go to API reference" },
-    ],
-  },
-  {
-    group: "API reference",
-    items: [
-      { keys: ["←"], label: "Previous endpoint" },
-      { keys: ["→"], label: "Next endpoint" },
-      { keys: ["["], label: "Previous tag section" },
-      { keys: ["]"], label: "Next tag section" },
-    ],
-  },
-  {
-    group: "Reading",
-    items: [
-      { keys: ["j"], label: "Scroll down" },
-      { keys: ["k"], label: "Scroll up" },
-      { keys: ["t"], label: "Back to top" },
-    ],
-  },
-  {
-    group: "General",
-    items: [
-      { keys: ["?"], label: "Open this cheat sheet" },
-      { keys: ["Esc"], label: "Close dialogs / menus" },
-    ],
-  },
+// AppShell (app-shell.tsx) owns "g <key>" navigation while an /app/* route is mounted, using its own
+// destination map (o/w/r/p/a). The site-wide map below only applies outside /app/*, so the advertised
+// list here must match whichever map is actually live (#6811).
+const SITE_NAV_SHORTCUTS: Shortcut[] = [
+  { keys: ["g", "h"], label: "Go home" },
+  { keys: ["g", "d"], label: "Go to docs" },
+  { keys: ["g", "a"], label: "Go to app" },
+  { keys: ["g", "r"], label: "Go to API reference" },
+];
+const APP_NAV_SHORTCUTS: Shortcut[] = [
+  { keys: ["g", "o"], label: "Go to overview" },
+  { keys: ["g", "w"], label: "Go to workbench" },
+  { keys: ["g", "r"], label: "Go to runs" },
+  { keys: ["g", "p"], label: "Go to repositories" },
+  { keys: ["g", "a"], label: "Go to analytics" },
 ];
 
+function buildGroups(isAppRoute: boolean): ShortcutGroup[] {
+  const navShortcuts = isAppRoute ? APP_NAV_SHORTCUTS : SITE_NAV_SHORTCUTS;
+  return [
+    {
+      group: "Navigation",
+      items: [{ keys: ["⌘", "K"], label: "Open command palette" }, ...navShortcuts],
+    },
+    {
+      group: "API reference",
+      items: [
+        { keys: ["←"], label: "Previous endpoint" },
+        { keys: ["→"], label: "Next endpoint" },
+        { keys: ["["], label: "Previous tag section" },
+        { keys: ["]"], label: "Next tag section" },
+      ],
+    },
+    {
+      group: "Reading",
+      items: [
+        { keys: ["j"], label: "Scroll down" },
+        { keys: ["k"], label: "Scroll up" },
+        { keys: ["t"], label: "Back to top" },
+      ],
+    },
+    {
+      group: "General",
+      items: [
+        { keys: ["?"], label: "Open this cheat sheet" },
+        { keys: ["Esc"], label: "Close dialogs / menus" },
+      ],
+    },
+  ];
+}
+
 export function KeyboardShortcutsDialog() {
+  const location = useLocation();
+  const isAppRoute = location.pathname.startsWith("/app");
+  const groups = buildGroups(isAppRoute);
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
 
@@ -103,7 +121,10 @@ export function KeyboardShortcutsDialog() {
         return;
       }
 
-      // Two-key "g <x>" sequences
+      // Two-key "g <x>" sequences — AppShell owns these while an /app/* route is mounted (its own
+      // "g <key>" handler uses a different destination map), so defer entirely rather than racing
+      // it with a second, colliding hard navigation (#6811).
+      if (isAppRoute) return;
       if (e.key === "g") {
         setPending("g");
         if (timer) clearTimeout(timer);
@@ -130,7 +151,7 @@ export function KeyboardShortcutsDialog() {
       window.removeEventListener("keydown", onKey);
       if (timer) clearTimeout(timer);
     };
-  }, [pending]);
+  }, [pending, isAppRoute]);
 
   return (
     <>
@@ -156,13 +177,13 @@ export function KeyboardShortcutsDialog() {
             </DialogTitle>
           </DialogHeader>
           <div className="mt-2 grid gap-5">
-            {GROUPS.length === 0 ? (
+            {groups.length === 0 ? (
               <EmptyState
                 title="No shortcuts available"
                 description="Shortcut metadata did not load. Close this sheet and try opening it again."
               />
             ) : (
-              GROUPS.map((g) => (
+              groups.map((g) => (
                 <section key={g.group}>
                   <div className="mb-2 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
                     {g.group}

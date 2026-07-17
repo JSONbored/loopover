@@ -147,4 +147,21 @@ describe("dispatchChatAction (#6519)", () => {
     const result = await dispatchChatAction({ action: "demo", params: {} }, { env: enabledEnv, registry });
     expect(result).toEqual({ ok: false, status: "invalid_params", action: "demo", error: "boom" });
   });
+
+  it("fails closed with handler_error when the handler throws, not an unhandled rejection (#6989)", async () => {
+    const registry = registryWith("demo", () => true, () => {
+      throw new Error("network down");
+    });
+    const result = await dispatchChatAction({ action: "demo", params: {} }, { env: enabledEnv, registry });
+    // Distinct from invalid_params so a caller can tell an execution failure from a validation failure.
+    expect(result).toEqual({ ok: false, status: "handler_error", action: "demo", error: "network down" });
+  });
+
+  it("stringifies a non-Error thrown by the handler (#6989)", async () => {
+    const registry = registryWith("demo", () => true, () => {
+      throw "kaboom";
+    });
+    const result = await dispatchChatAction({ action: "demo", params: {} }, { env: enabledEnv, registry });
+    expect(result).toEqual({ ok: false, status: "handler_error", action: "demo", error: "kaboom" });
+  });
 });

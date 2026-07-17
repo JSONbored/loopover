@@ -71,7 +71,15 @@ export async function dispatchChatAction(request, options = {}) {
     return { ok: false, status: "invalid_params", action };
   }
 
-  const result = await registered.handler(request);
+  let result;
+  try {
+    result = await registered.handler(request);
+  } catch (error) {
+    // A handler that throws fails closed with the module's typed result shape (#6989), consistent with the
+    // paramsValidator catch above -- a distinct "handler_error" status lets a caller tell an execution
+    // failure apart from a params-validation failure.
+    return { ok: false, status: "handler_error", action, error: error instanceof Error ? error.message : String(error) };
+  }
   return { ok: true, status: "dispatched", action, result };
 }
 

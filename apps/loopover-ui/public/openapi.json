@@ -14405,6 +14405,91 @@
           "summary",
           "outcomes"
         ]
+      },
+      "NotificationFeed": {
+        "type": "object",
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "unreadCount": {
+            "type": "number"
+          },
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationFeedItem"
+            }
+          }
+        },
+        "required": [
+          "login",
+          "unreadCount",
+          "notifications"
+        ]
+      },
+      "NotificationFeedItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "eventType": {
+            "type": "string"
+          },
+          "repoFullName": {
+            "type": "string"
+          },
+          "pullNumber": {
+            "type": "number",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deeplink": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "delivered",
+              "read"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventType",
+          "repoFullName",
+          "pullNumber",
+          "title",
+          "body",
+          "deeplink",
+          "status",
+          "createdAt"
+        ]
+      },
+      "NotificationsMarked": {
+        "type": "object",
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "marked": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "login",
+          "marked"
+        ]
       }
     },
     "parameters": {},
@@ -18683,6 +18768,96 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/notifications": {
+      "get": {
+        "summary": "Contributor badge notification feed",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The contributor's own badge notification feed (self-scoped), newest first, with an unread count.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationFeed"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/notifications/read": {
+      "post": {
+        "summary": "Mark contributor notifications read",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Marks the contributor's delivered badge notifications read; an absent/empty ids array marks all.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationsMarked"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid mark-read body"
           }
         },
         "security": [

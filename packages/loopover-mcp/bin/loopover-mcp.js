@@ -90,6 +90,8 @@ const CLI_COMMAND_SPEC = {
   "contributor-profile": [],
   "monitor-open-prs": [],
   "pr-outcomes": [],
+  notifications: [],
+  "notifications-read": [],
   "analyze-branch": [],
   preflight: [],
   "review-pr": [],
@@ -3399,6 +3401,8 @@ async function runCli(args) {
   if (command === "contributor-profile") return contributorProfileCli(options);
   if (command === "monitor-open-prs") return monitorOpenPrsCli(options);
   if (command === "pr-outcomes") return prOutcomesCli(options);
+  if (command === "notifications") return notificationsCli(options);
+  if (command === "notifications-read") return notificationsReadCli(options);
   if (command === "review-pr") return reviewPrCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
     const suggestion = suggestCommand(command);
@@ -3900,6 +3904,66 @@ async function prOutcomesCli(options) {
   }
 }
 
+function printNotificationsHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp notifications --login <github-login> [--json]",
+      "",
+      "Your own badge notification feed (newest first) with an unread count, self-scoped.",
+      "Mirrors the loopover_list_notifications MCP tool and GET /v1/contributors/{login}/notifications. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #6745: CLI mirror of loopover_list_notifications. Login resolves from --login / the active session /
+// LOOPOVER_LOGIN / GITHUB_LOGIN, like the sibling contributor commands.
+async function notificationsCli(options) {
+  if (options.help === true) return printNotificationsHelp();
+  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+  const payload = await getNotifications(login);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`LoopOver notifications for ${login}: ${payload.unreadCount} unread.\n`);
+  for (const item of payload.notifications ?? []) {
+    // `login` is the user's own value; the API chooses the title text, so it is sanitized before the terminal.
+    const flag = item.status === "delivered" ? "*" : " ";
+    process.stdout.write(`${sanitizePlainTextTerminalOutput(`${flag} ${item.repoFullName}#${item.pullNumber} ${item.title}`)}\n`);
+  }
+}
+
+function printNotificationsReadHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]",
+      "",
+      "Mark your delivered notifications read. With no --id, marks all of them.",
+      "Mirrors the loopover_mark_notifications_read MCP tool and POST /v1/contributors/{login}/notifications/read.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #6745: CLI mirror of loopover_mark_notifications_read. Repeated --id flags collect into an ids array; omitting
+// them marks every delivered notification read (mirrors the route's absent-body behavior).
+async function notificationsReadCli(options) {
+  if (options.help === true) return printNotificationsReadHelp();
+  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+  const ids = Array.isArray(options.id) ? options.id : options.id ? [options.id] : undefined;
+  const payload = await postMarkNotificationsRead(login, ids);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`Marked ${payload.marked} LoopOver notification(s) read for ${login}.\n`);
+}
+
 function printRepoDecisionHelp() {
   process.stdout.write(
     [
@@ -4380,6 +4444,8 @@ function printHelp() {
   loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   loopover-mcp monitor-open-prs --login <github-login> [--json]
   loopover-mcp pr-outcomes --login <github-login> [--limit N] [--json]
+  loopover-mcp notifications --login <github-login> [--json]
+  loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]
   loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
@@ -4398,7 +4464,7 @@ function printHelp() {
   LOOPOVER_PROFILE
   LOOPOVER_CONFIG_PATH or LOOPOVER_CONFIG_DIR
   LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_TOKEN, or a session from loopover-mcp login
-  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, pr-outcomes, and agent plan/packet)
+  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, pr-outcomes, notifications, notifications-read, and agent plan/packet)
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
@@ -4443,7 +4509,7 @@ Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, d
 
 function parseOptions(args) {
   const options = {};
-  const repeatable = new Set(["label", "issue", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
+  const repeatable = new Set(["label", "issue", "id", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -5531,6 +5597,15 @@ function getPrOutcomes(login, limit) {
   if (limit != null) query.set("limit", String(limit));
   const suffix = query.size > 0 ? `?${query}` : "";
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/pr-outcomes${suffix}`);
+}
+
+// #6745: contributor notification feed + mark-read. `postMarkNotificationsRead` sends no ids to mark all
+// delivered notifications read, mirroring markNotificationsReadShape's optional ids.
+function getNotifications(login) {
+  return apiGet(`/v1/contributors/${encodeURIComponent(login)}/notifications`);
+}
+function postMarkNotificationsRead(login, ids) {
+  return apiPost(`/v1/contributors/${encodeURIComponent(login)}/notifications/read`, ids ? { ids } : {});
 }
 
 // Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP

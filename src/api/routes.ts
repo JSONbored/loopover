@@ -55,6 +55,10 @@ import {
   getPendingAgentAction,
   listAgentAuditEvents,
   listAuditEventsForTarget,
+  listNotificationDeliveriesForRecipient,
+  markNotificationDeliveriesRead,
+  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
+  MAX_NOTIFICATION_MARK_READ_IDS,
   listPendingAgentActions,
   recordAuditEvent,
   recordPostMergeIncidentReport,
@@ -271,6 +275,7 @@ import {
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
+import { buildNotificationFeed } from "../notifications/service";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildIssueSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN } from "../signals/issue-slop";
@@ -441,6 +446,12 @@ async function readRequestBodyWithLimit(request: Request, maxBytes: number): Pro
 
 const MAX_LOCAL_BRANCH_REF_CHARS = 256;
 const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+
+// #6745: body of POST /v1/contributors/:login/notifications/read. Mirrors markNotificationsReadShape
+// (src/mcp/server.ts) minus `login` (which is the path param): `ids` is optional (absent = mark all delivered).
+const markNotificationsReadBodySchema = z.object({
+  ids: z.array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH)).max(MAX_NOTIFICATION_MARK_READ_IDS).optional(),
+});
 
 const preflightSchema = z.object({
   repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
@@ -3341,6 +3352,28 @@ export function createApp() {
       limit = parsed;
     }
     return c.json(await buildContributorPrOutcomes(c.env, login, limit));
+  });
+
+  // REST mirror of the `loopover_list_notifications` MCP tool (LoopoverMcp.listNotifications) — a contributor's
+  // own badge notification feed, self-scoped via requireContributorAccess. (#6745)
+  app.get("/v1/contributors/:login/notifications", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const deliveries = await listNotificationDeliveriesForRecipient(c.env, login, { channel: "badge", limit: 50 });
+    return c.json(buildNotificationFeed(login, deliveries));
+  });
+
+  // REST mirror of the `loopover_mark_notifications_read` MCP tool (LoopoverMcp.markNotificationsRead) — marks the
+  // contributor's own delivered badge notifications read; an absent/empty body marks all of them. (#6745)
+  app.post("/v1/contributors/:login/notifications/read", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const parsed = markNotificationsReadBodySchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "invalid_mark_read", issues: parsed.error.issues }, 400);
+    const marked = await markNotificationDeliveriesRead(c.env, login, parsed.data.ids);
+    return c.json({ login: login.toLowerCase(), marked });
   });
 
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {

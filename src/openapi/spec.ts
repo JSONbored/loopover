@@ -25,6 +25,8 @@ import {
   ContributorDecisionPackSchema,
   ContributorOpenPrMonitorSchema,
   ContributorPrOutcomesSchema,
+  NotificationFeedSchema,
+  NotificationsMarkedSchema,
   ContributorRewardRiskStrategySchema,
   ContributorProfileSchema,
   ContributorScoringProfileSchema,
@@ -790,6 +792,40 @@ export function buildOpenApiSpec() {
         description: "Self-scoped post-merge outcome records with public-safe attribution (mirrors loopover_pr_outcome).",
         content: { "application/json": { schema: ContributorPrOutcomesSchema } },
       },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/notifications",
+    summary: "Contributor badge notification feed",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own badge notification feed (self-scoped), newest first, with an unread count.",
+        content: { "application/json": { schema: NotificationFeedSchema } },
+      },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/notifications/read",
+    summary: "Mark contributor notifications read",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ ids: z.array(z.string()).optional() }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Marks the contributor's delivered badge notifications read; an absent/empty ids array marks all.",
+        content: { "application/json": { schema: NotificationsMarkedSchema } },
+      },
+      400: { description: "Invalid mark-read body" },
     },
   });
   registry.registerPath({

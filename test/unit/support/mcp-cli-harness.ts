@@ -177,6 +177,10 @@ export async function startFixtureServer(
     validateConfigWarnings?: string[];
     openPrMonitor?: Record<string, unknown>;
     prOutcomes?: Record<string, unknown>;
+    /** #6745: overrides the notification feed / mark-read responses, and captures the mark-read POST body. */
+    notifications?: Record<string, unknown>;
+    notificationsRead?: Record<string, unknown>;
+    onMarkNotificationsRead?: (body: unknown) => void;
     intakeStatus?: number;
     localBranchAnalysisStatus?: number;
     /** #6743: overrides the repo-doc refresh route's default "opened a new PR" response, e.g. to exercise
@@ -316,6 +320,15 @@ export async function startFixtureServer(
     if (prOutcomesMatch && request.method === "GET") {
       const login = decodeURIComponent(prOutcomesMatch[1]!);
       response.end(JSON.stringify({ ...prOutcomesFixture(login), ...(options.prOutcomes ?? {}) }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/notifications" && request.method === "GET") {
+      response.end(JSON.stringify({ ...notificationsFixture(), ...(options.notifications ?? {}) }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/notifications/read" && request.method === "POST") {
+      options.onMarkNotificationsRead?.(await readJsonRequest(request));
+      response.end(JSON.stringify({ login: "jsonbored", marked: 2, ...(options.notificationsRead ?? {}) }));
       return;
     }
     if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/loopover/decision" && request.method === "GET") {
@@ -899,6 +912,43 @@ export function prOutcomesFixture(login = "JSONbored") {
       },
     ],
   };
+}
+
+/** #6745: mirrors the NotificationFeed { login, unreadCount, notifications } shape the route/tool returns. */
+export function notificationsFixture() {
+  return {
+    login: "jsonbored",
+    unreadCount: 1,
+    notifications: [
+      {
+        id: "d-42",
+        eventType: "pull_request_merged",
+        repoFullName: "JSONbored/loopover",
+        pullNumber: 42,
+        title: "Your pull request JSONbored/loopover#42 was merged.",
+        body: "Nice work.",
+        deeplink: "https://github.com/JSONbored/loopover/pull/42",
+        status: "delivered",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      },
+      {
+        id: "d-7",
+        eventType: "pull_request_changes_requested",
+        repoFullName: "JSONbored/loopover",
+        pullNumber: 7,
+        title: "Changes requested on JSONbored/loopover#7.",
+        body: "Please address review.",
+        deeplink: "https://github.com/JSONbored/loopover/pull/7",
+        status: "read",
+        createdAt: "2026-05-20T00:00:00.000Z",
+      },
+    ],
+  };
+}
+
+/** #6745: mirrors the { login, marked } shape POST /notifications/read returns. */
+export function notificationsReadFixture() {
+  return { login: "jsonbored", marked: 2 };
 }
 
 export function decisionPackFixture() {

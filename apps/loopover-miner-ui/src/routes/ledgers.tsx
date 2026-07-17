@@ -4,12 +4,7 @@ import { Bar, BarChart, Cell, XAxis, YAxis } from "recharts";
 
 import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@loopover/ui-kit/components/chart";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@loopover/ui-kit/components/chart";
 import { Input } from "@loopover/ui-kit/components/input";
 import {
   Pagination,

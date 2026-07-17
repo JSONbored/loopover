@@ -953,7 +953,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate((loopover_http_requests_total or gittensory_http_requests_total){status=\"5xx\"}[5m])) / clamp_min(sum((rate(loopover_http_requests_total[5m]) or rate(gittensory_http_requests_total[5m]))), 1e-9)",
+          "expr": "sum((rate(loopover_http_requests_total{status=\"5xx\"}[5m]) or rate(gittensory_http_requests_total{status=\"5xx\"}[5m]))) / clamp_min(sum((rate(loopover_http_requests_total[5m]) or rate(gittensory_http_requests_total[5m]))), 1e-9)",
           "legendFormat": "5xx ratio",
           "refId": "A"
         }
@@ -1552,7 +1552,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(time() - max((loopover_backup_latest_timestamp_seconds or gittensory_backup_latest_timestamp_seconds){target=~\"postgres|sqlite\"})) and max((loopover_backup_latest_timestamp_seconds or gittensory_backup_latest_timestamp_seconds){target=~\"postgres|sqlite\"}) > 0",
+          "expr": "(time() - max((loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"} or gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"}))) and max((loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"} or gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite\"})) > 0",
           "legendFormat": "age",
           "refId": "A"
         }
@@ -1823,7 +1823,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(time() - (loopover_backup_latest_timestamp_seconds or gittensory_backup_latest_timestamp_seconds){target=~\"postgres|sqlite|qdrant\"}) and (loopover_backup_latest_timestamp_seconds or gittensory_backup_latest_timestamp_seconds){target=~\"postgres|sqlite|qdrant\"} > 0",
+          "expr": "(time() - (loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"} or gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"})) and (loopover_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"} or gittensory_backup_latest_timestamp_seconds{target=~\"postgres|sqlite|qdrant\"}) > 0",
           "legendFormat": "{{target}} age seconds",
           "refId": "A"
         },
@@ -1832,7 +1832,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(loopover_backup_files or gittensory_backup_files){target=~\"postgres|sqlite|qdrant\"} or vector(0)",
+          "expr": "(loopover_backup_files{target=~\"postgres|sqlite|qdrant\"} or gittensory_backup_files{target=~\"postgres|sqlite|qdrant\"}) or vector(0)",
           "legendFormat": "{{target}} files",
           "refId": "B"
         }
@@ -2244,7 +2244,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum((loopover_orb_relay_register_total or gittensory_orb_relay_register_total){result=\"failed\"}) or vector(0)",
+          "expr": "sum((loopover_orb_relay_register_total{result=\"failed\"} or gittensory_orb_relay_register_total{result=\"failed\"})) or vector(0)",
           "legendFormat": "register failed"
         }
       ]
@@ -2279,7 +2279,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum((loopover_installation_health_broker_probe_total or gittensory_installation_health_broker_probe_total){result=\"failed\"}) or vector(0)",
+          "expr": "sum((loopover_installation_health_broker_probe_total{result=\"failed\"} or gittensory_installation_health_broker_probe_total{result=\"failed\"})) or vector(0)",
           "legendFormat": "broker probe failed"
         }
       ]

@@ -188,7 +188,47 @@ describe("Loopover Self-Host Grafana dashboard", () => {
     expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_live_tup{datname="loopover"}) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === 'topk(10, pg_stat_user_tables_n_dead_tup{datname="loopover"}) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === 'sum by (relname) (increase(pg_stat_user_tables_autovacuum_count{datname="loopover"}[1h])) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === '(loopover_backup_files or gittensory_backup_files){target=~"postgres|sqlite|qdrant"} or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === '(loopover_backup_files{target=~"postgres|sqlite|qdrant"} or gittensory_backup_files{target=~"postgres|sqlite|qdrant"}) or vector(0)')).toBe(true);
+  });
+
+  // REGRESSION: #6779 unioned every panel query with its pre-rebrand gittensory_ counterpart for historical
+  // continuity, but for six queries that filter on a label (e.g. {result="failed"}), the mechanical rewrite
+  // attached the label matcher AFTER the closing paren of the (loopover_x or gittensory_x) union instead of
+  // to each side of it before the union -- e.g. `(loopover_x or gittensory_x){result="failed"}`. PromQL label
+  // matchers can only bind to a bare vector selector, never to the result of a parenthesized binary
+  // expression, so every one of these six queries was an outright Prometheus parse error ("unexpected {{ in
+  // aggregation"), rendering as "No data" on every affected panel -- confirmed live against the deployed
+  // dashboard. The fix applies the label matcher to each metric individually before the union.
+  it("applies label matchers to each side of a metric union BEFORE the union, never after the closing paren (#6779 follow-up)", () => {
+    const dashboard = readDashboard(selfhostDashboardPath);
+    const targets = dashboard.panels.flatMap((panel) => panel.targets ?? []);
+
+    for (const target of targets) {
+      if (!target.expr) continue;
+      expect(target.expr, `invalid PromQL -- label matcher applied after a closing paren: ${target.expr}`).not.toMatch(/\)\s*\{/);
+    }
+
+    expect(
+      targets.some(
+        (target) =>
+          target.expr ===
+          'sum((rate(loopover_http_requests_total{status="5xx"}[5m]) or rate(gittensory_http_requests_total{status="5xx"}[5m]))) / clamp_min(sum((rate(loopover_http_requests_total[5m]) or rate(gittensory_http_requests_total[5m]))), 1e-9)',
+      ),
+    ).toBe(true);
+    expect(
+      targets.some(
+        (target) =>
+          target.expr ===
+          '(time() - max((loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} or gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"}))) and max((loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite"} or gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite"})) > 0',
+      ),
+    ).toBe(true);
+    expect(
+      targets.some(
+        (target) =>
+          target.expr ===
+          '(time() - (loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite|qdrant"} or gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite|qdrant"})) and (loopover_backup_latest_timestamp_seconds{target=~"postgres|sqlite|qdrant"} or gittensory_backup_latest_timestamp_seconds{target=~"postgres|sqlite|qdrant"}) > 0',
+      ),
+    ).toBe(true);
   });
 
   it("ships Postgres and backup alerts for the same dashboarded failure modes", () => {
@@ -248,8 +288,8 @@ describe("Loopover Self-Host Grafana dashboard", () => {
     // Every stat-panel counter is sum()-wrapped, matching its siblings -- a multi-instance self-host scrape
     // must render one fleet-level value per stat, not one value per target (gate finding, #chore-runtime-drift).
     expect(targets.some((target) => target.expr === "sum((loopover_jobs_maintenance_trickle_admitted_persisted_total or gittensory_jobs_maintenance_trickle_admitted_persisted_total)) or vector(0)")).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum((loopover_orb_relay_register_total or gittensory_orb_relay_register_total){result="failed"}) or vector(0)')).toBe(true);
-    expect(targets.some((target) => target.expr === 'sum((loopover_installation_health_broker_probe_total or gittensory_installation_health_broker_probe_total){result="failed"}) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum((loopover_orb_relay_register_total{result="failed"} or gittensory_orb_relay_register_total{result="failed"})) or vector(0)')).toBe(true);
+    expect(targets.some((target) => target.expr === 'sum((loopover_installation_health_broker_probe_total{result="failed"} or gittensory_installation_health_broker_probe_total{result="failed"})) or vector(0)')).toBe(true);
     expect(targets.some((target) => target.expr === "sum(loopover_agent_action_permission_denied_total) or vector(0)")).toBe(true);
     // Grouped (sum-by) queries must NOT have "or vector(0)": Prometheus's `or` unions result sets, and
     // vector(0) is a single unlabeled series that can't match the actionClass/mode,result label set --

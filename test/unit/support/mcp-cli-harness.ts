@@ -185,6 +185,10 @@ export async function startFixtureServer(
     notifications?: Record<string, unknown>;
     notificationsRead?: Record<string, unknown>;
     onMarkNotificationsRead?: (body: unknown) => void;
+    /** #6746: overrides the watch list, and captures the watch (POST) / unwatch (DELETE) request bodies. */
+    watches?: Record<string, unknown>;
+    onWatch?: (body: unknown) => void;
+    onUnwatch?: (body: unknown) => void;
     intakeStatus?: number;
     localBranchAnalysisStatus?: number;
     /** #6743: overrides the repo-doc refresh route's default "opened a new PR" response, e.g. to exercise
@@ -333,6 +337,20 @@ export async function startFixtureServer(
     if (request.url === "/v1/contributors/JSONbored/notifications/read" && request.method === "POST") {
       options.onMarkNotificationsRead?.(await readJsonRequest(request));
       response.end(JSON.stringify({ login: "jsonbored", marked: 2, ...(options.notificationsRead ?? {}) }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/watches" && request.method === "GET") {
+      response.end(JSON.stringify({ ...watchesFixture(), ...(options.watches ?? {}) }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/watches" && request.method === "POST") {
+      options.onWatch?.(await readJsonRequest(request));
+      response.end(JSON.stringify({ ...watchesFixture(), changed: "watching acme/widgets", ...(options.watches ?? {}) }));
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/watches" && request.method === "DELETE") {
+      options.onUnwatch?.(await readJsonRequest(request));
+      response.end(JSON.stringify({ watching: [], changed: "unwatched acme/widgets", ...(options.watches ?? {}) }));
       return;
     }
     if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/loopover/decision" && request.method === "GET") {
@@ -1032,6 +1050,16 @@ export function notificationsFixture() {
 /** #6745: mirrors the { login, marked } shape POST /notifications/read returns. */
 export function notificationsReadFixture() {
   return { login: "jsonbored", marked: 2 };
+}
+
+/** #6746: mirrors the { watching: [{ repoFullName, labels }] } shape GET /watches (and the list tool) returns. */
+export function watchesFixture() {
+  return {
+    watching: [
+      { repoFullName: "acme/widgets", labels: ["bug"] },
+      { repoFullName: "acme/gadgets", labels: [] },
+    ],
+  };
 }
 
 export function decisionPackFixture() {

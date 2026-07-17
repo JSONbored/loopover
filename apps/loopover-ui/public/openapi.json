@@ -14527,6 +14527,38 @@
           "recommendation",
           "summary"
         ]
+      },
+      "IssueWatchList": {
+        "type": "object",
+        "properties": {
+          "watching": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "repoFullName": {
+                  "type": "string"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "repoFullName",
+                "labels"
+              ]
+            }
+          },
+          "changed": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "watching"
+        ]
       }
     },
     "parameters": {},
@@ -18926,6 +18958,165 @@
           },
           "403": {
             "description": "Forbidden when contributorLogin does not match the authenticated session"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      }
+    },
+    "/v1/contributors/{login}/watches": {
+      "get": {
+        "summary": "Contributor issue-watch subscriptions",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The contributor's own issue-watch subscriptions (self-scoped): the repos and label filters they watch for new grabbable issues.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueWatchList"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Watch a repository for new grabbable issues",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repoFullName": {
+                    "type": "string"
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "repoFullName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscribes the contributor to a repo (optional label filter) and returns their updated watch list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueWatchList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watch body"
+          },
+          "403": {
+            "description": "Session cannot watch this repository"
+          }
+        },
+        "security": [
+          {
+            "LoopOverBearer": []
+          },
+          {
+            "LoopOverSessionCookie": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Unwatch a repository",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "login",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repoFullName": {
+                    "type": "string"
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "repoFullName"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Removes the contributor's watch on a repo and returns their updated watch list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueWatchList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid watch body"
+          },
+          "403": {
+            "description": "Session cannot watch this repository"
           }
         },
         "security": [

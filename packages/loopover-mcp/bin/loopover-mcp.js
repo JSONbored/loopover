@@ -93,6 +93,8 @@ const CLI_COMMAND_SPEC = {
   "explain-review-risk": [],
   notifications: [],
   "notifications-read": [],
+  watch: [],
+  unwatch: [],
   "analyze-branch": [],
   preflight: [],
   "review-pr": [],
@@ -3474,6 +3476,8 @@ async function runCli(args) {
   if (command === "explain-review-risk") return explainReviewRiskCli(options);
   if (command === "notifications") return notificationsCli(options);
   if (command === "notifications-read") return notificationsReadCli(options);
+  if (command === "watch") return watchCli(options);
+  if (command === "unwatch") return unwatchCli(options);
   if (command === "review-pr") return reviewPrCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
     const suggestion = suggestCommand(command);
@@ -4100,6 +4104,73 @@ async function notificationsReadCli(options) {
   process.stdout.write(`Marked ${payload.marked} LoopOver notification(s) read for ${login}.\n`);
 }
 
+function printWatchHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp watch --login <github-login> [--repo owner/repo] [--label <label>]... [--json]",
+      "",
+      "Watch repos for NEW grabbable, high-multiplier issues. With --repo, subscribes that repo (optional",
+      "--label filters, repeatable); without --repo, lists your current watches (the default action).",
+      "Mirrors the loopover_watch_issues MCP tool and GET/POST /v1/contributors/{login}/watches.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #6746: CLI mirror of loopover_watch_issues (watch + list). Login resolves like the sibling contributor
+// commands. With --repo it POSTs a subscription (repeated --label flags collect into a filter); without --repo
+// it GETs the current watch list (the tool's default `list` action).
+async function watchCli(options) {
+  if (options.help === true) return printWatchHelp();
+  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+  if (options.repo !== undefined && !String(options.repo).includes("/")) throw new Error("Pass --repo owner/repo.");
+  const labels = Array.isArray(options.label) ? options.label : options.label ? [options.label] : undefined;
+  const payload = options.repo ? await postWatch(login, options.repo, labels) : await getWatches(login);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `Watching ${payload.watching?.length ?? 0} repo(s) for new grabbable issues${payload.changed ? ` (${payload.changed})` : ""}.\n`,
+  );
+  for (const item of payload.watching ?? []) {
+    // The repo/label strings come from the API; sanitize before writing them to the terminal.
+    const suffix = item.labels && item.labels.length > 0 ? ` [labels: ${item.labels.join(", ")}]` : "";
+    process.stdout.write(`${sanitizePlainTextTerminalOutput(`- ${item.repoFullName}${suffix}`)}\n`);
+  }
+}
+
+function printUnwatchHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp unwatch --login <github-login> --repo owner/repo [--json]",
+      "",
+      "Stop watching a repo for new grabbable issues.",
+      "Mirrors the loopover_watch_issues MCP tool (action=unwatch) and DELETE /v1/contributors/{login}/watches.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+// #6746: CLI mirror of loopover_watch_issues (unwatch). DELETEs the subscription and reports the updated count.
+async function unwatchCli(options) {
+  if (options.help === true) return printUnwatchHelp();
+  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+  if (!options.repo || !String(options.repo).includes("/")) throw new Error("Pass --repo owner/repo.");
+  const payload = await deleteWatch(login, options.repo);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `${sanitizePlainTextTerminalOutput(payload.changed ?? `unwatched ${options.repo}`)} — now watching ${payload.watching?.length ?? 0} repo(s).\n`,
+  );
+}
+
 function printRepoDecisionHelp() {
   process.stdout.write(
     [
@@ -4585,6 +4656,8 @@ function printHelp() {
   loopover-mcp explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]
   loopover-mcp notifications --login <github-login> [--json]
   loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]
+  loopover-mcp watch --login <github-login> [--repo owner/repo] [--label <label>]... [--json]
+  loopover-mcp unwatch --login <github-login> --repo owner/repo [--json]
   loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
@@ -4603,7 +4676,7 @@ function printHelp() {
   LOOPOVER_PROFILE
   LOOPOVER_CONFIG_PATH or LOOPOVER_CONFIG_DIR
   LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_TOKEN, or a session from loopover-mcp login
-  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, pr-outcomes, notifications, notifications-read, and agent plan/packet)
+  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, pr-outcomes, notifications, notifications-read, watch, unwatch, and agent plan/packet)
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
@@ -5745,6 +5818,21 @@ function getNotifications(login) {
 }
 function postMarkNotificationsRead(login, ids) {
   return apiPost(`/v1/contributors/${encodeURIComponent(login)}/notifications/read`, ids ? { ids } : {});
+}
+function getWatches(login) {
+  return apiGet(`/v1/contributors/${encodeURIComponent(login)}/watches`);
+}
+function postWatch(login, repoFullName, labels) {
+  return apiPost(
+    `/v1/contributors/${encodeURIComponent(login)}/watches`,
+    labels && labels.length > 0 ? { repoFullName, labels } : { repoFullName },
+  );
+}
+function deleteWatch(login, repoFullName) {
+  return apiFetch(`/v1/contributors/${encodeURIComponent(login)}/watches`, {
+    method: "DELETE",
+    body: JSON.stringify({ repoFullName }),
+  });
 }
 
 // Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP

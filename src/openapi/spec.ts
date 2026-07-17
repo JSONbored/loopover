@@ -25,6 +25,7 @@ import {
   ContributorDecisionPackSchema,
   ContributorOpenPrMonitorSchema,
   ContributorPrOutcomesSchema,
+  IssueWatchListSchema,
   NotificationFeedSchema,
   NotificationsMarkedSchema,
   ContributorRewardRiskStrategySchema,
@@ -828,6 +829,64 @@ export function buildOpenApiSpec() {
         content: { "application/json": { schema: NotificationsMarkedSchema } },
       },
       400: { description: "Invalid mark-read body" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Contributor issue-watch subscriptions",
+    request: { params: z.object({ login: z.string() }) },
+    responses: {
+      200: {
+        description: "The contributor's own issue-watch subscriptions (self-scoped): the repos and label filters they watch for new grabbable issues.",
+        content: { "application/json": { schema: IssueWatchListSchema } },
+      },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Watch a repository for new grabbable issues",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ repoFullName: z.string(), labels: z.array(z.string()).optional() }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Subscribes the contributor to a repo (optional label filter) and returns their updated watch list.",
+        content: { "application/json": { schema: IssueWatchListSchema } },
+      },
+      400: { description: "Invalid watch body" },
+      403: { description: "Session cannot watch this repository" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/v1/contributors/{login}/watches",
+    summary: "Unwatch a repository",
+    request: {
+      params: z.object({ login: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ repoFullName: z.string(), labels: z.array(z.string()).optional() }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        description: "Removes the contributor's watch on a repo and returns their updated watch list.",
+        content: { "application/json": { schema: IssueWatchListSchema } },
+      },
+      400: { description: "Invalid watch body" },
+      403: { description: "Session cannot watch this repository" },
     },
   });
   registry.registerPath({

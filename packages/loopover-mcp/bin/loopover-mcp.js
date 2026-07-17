@@ -338,6 +338,12 @@ const ownerRepoPullShape = {
   number: z.number().int().positive(),
 };
 
+// #6736: the remote loopover_get_bounty_advisory tool's input shape (src/mcp/server.ts's bountyShape) --
+// a single cached-bounty id, GET /v1/bounties/:id/advisory.
+const bountyAdvisoryShape = {
+  id: z.string().min(1),
+};
+
 // #6619: same PR coordinates plus the OPTIONAL author login. Omitted, it resolves from the local session /
 // LOOPOVER_LOGIN / GITHUB_LOGIN, so an already-logged-in contributor never has to retype their own login.
 const prAiReviewFindingsShape = {
@@ -1054,6 +1060,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_get_upstream_drift",
     category: "utility",
     description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
+  },
+  {
+    name: "loopover_get_bounty_advisory",
+    category: "discovery",
+    description:
+      "Return the lifecycle, funding, and consensus-risk context for a cached Gittensor bounty by id, from the public LoopOver API.",
   },
   {
     name: "loopover_get_label_audit",
@@ -1803,6 +1815,17 @@ registerStdioTool(
     inputSchema: {},
   },
   async () => toolResult("LoopOver registry changes.", await apiGet("/v1/registry/changes")),
+);
+
+// #6736: CLI mirror of the public loopover_get_bounty_advisory tool. Proxies the same unauthenticated
+// GET /v1/bounties/:id/advisory the remote tool wraps -- no owner/repo, just the cached-bounty id.
+registerStdioTool(
+  "loopover_get_bounty_advisory",
+  {
+    description: stdioToolDescription("loopover_get_bounty_advisory"),
+    inputSchema: bountyAdvisoryShape,
+  },
+  async ({ id }) => toolResult("LoopOver bounty advisory.", await apiGet(`/v1/bounties/${encodeURIComponent(id)}/advisory`)),
 );
 
 registerStdioTool(

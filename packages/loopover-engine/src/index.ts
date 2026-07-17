@@ -607,6 +607,7 @@ export {
 } from "./feasibility.js";
 export {
   buildClaimPlan,
+  buildIdeaClaimPlanResult,
   buildTaskGraph,
   scoreTaskGraph,
   validateIdeaSubmission,
@@ -619,6 +620,7 @@ export {
   type AcceptanceCriterionKind,
   type ConstituentIssue,
   type ConstituentIssueDraft,
+  type IdeaClaimPlanResult,
   type IdeaPriority,
   type IdeaSubmission,
   type IdeaValidationResult,

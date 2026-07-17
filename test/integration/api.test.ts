@@ -45,6 +45,7 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { recordOverrideAudit, writeLiveOverride, writeShadowOverride, type StorageEnv } from "../../src/review/auto-apply";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
+import { buildIdeaClaimPlanResult } from "../../src/idea-intake";
 import type { JsonValue } from "../../src/types";
 
 vi.mock("../../src/github/app", async (importOriginal) => ({
@@ -1461,6 +1462,53 @@ describe("api routes", () => {
     expect(malformedSlopRisk.status).toBe(400);
     const malformedIssueSlop = await app.request("/v1/lint/issue-slop", { method: "POST", headers: apiHeaders(env), body: "{not json" }, env);
     expect(malformedIssueSlop.status).toBe(400);
+
+    // Idea-claim planning over REST (#6756): mirrors the loopover_plan_idea_claims MCP tool, delegating to the
+    // shared buildIdeaClaimPlanResult. A single-issue baseline is claimable with verdict go.
+    const singleIdea = { id: "idea-P", title: "Retry flaky uploads", body: "Retry a few times before failing.", targetRepo: "acme/widgets" };
+    const planSingle = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: apiHeaders(env), body: JSON.stringify(singleIdea) }, env);
+    expect(planSingle.status).toBe(200);
+    const planSingleBody = await planSingle.json();
+    expect(planSingleBody).toMatchObject({ ok: true, verdict: "go", claimPlan: { targetRepo: "acme/widgets", claimable: [expect.objectContaining({ key: "issue-1" })], deferred: [], skipped: [] } });
+    // Output parity: the REST body is byte-for-byte the shared pure builder's result for identical input.
+    expect(planSingleBody).toEqual(buildIdeaClaimPlanResult(singleIdea, undefined));
+    expect(JSON.stringify(planSingleBody)).not.toMatch(FORBIDDEN_PUBLIC_REPORT_TERMS);
+
+    // A multi-step decomposition holds the dependent issue at deferred and drops the graph verdict to raise.
+    const decomposedIdea = {
+      id: "idea-D",
+      title: "Add API key auth",
+      body: "Authenticate the read API with a key.",
+      targetRepo: "acme/widgets",
+      decomposition: [
+        { key: "issue-1", title: "Introduce API-key store", body: "validate keys" },
+        { key: "issue-2", title: "Gate the read endpoints", body: "require a key", dependsOn: ["issue-1"] },
+      ],
+    };
+    const planDecomposed = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: apiHeaders(env), body: JSON.stringify(decomposedIdea) }, env);
+    expect(planDecomposed.status).toBe(200);
+    const planDecomposedBody = await planDecomposed.json();
+    expect(planDecomposedBody).toMatchObject({ ok: true, verdict: "raise", claimPlan: { claimable: [expect.objectContaining({ key: "issue-1" })], deferred: [expect.objectContaining({ key: "issue-2" })] } });
+    expect(planDecomposedBody).toEqual(buildIdeaClaimPlanResult(decomposedIdea, decomposedIdea.decomposition));
+
+    // A semantically-invalid submission is a domain result (200 { ok:false, errors }), not a transport error.
+    const planInvalid = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ title: "missing id and body", targetRepo: "not-a-slug" }) }, env);
+    expect(planInvalid.status).toBe(200);
+    await expect(planInvalid.json()).resolves.toMatchObject({ ok: false, errors: expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]) });
+
+    // A schema-invalid body (decomposition entry missing a required field) is rejected up front with a 400.
+    const planSchemaInvalid = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ id: "i", title: "t", body: "b", targetRepo: "a/b", decomposition: [{ key: "issue-1" }] }) }, env);
+    expect(planSchemaInvalid.status).toBe(400);
+    await expect(planSchemaInvalid.json()).resolves.toMatchObject({ error: "invalid_plan_idea_claims_request" });
+
+    // An unparseable JSON body falls through the catch to a 400, not a 500.
+    const planMalformed = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: apiHeaders(env), body: "{not json" }, env);
+    expect(planMalformed.status).toBe(400);
+
+    // Session identities (not just the API token) can reach it — it is allowlisted like the other self-checks.
+    const { token: planSessionToken } = await createSessionForGitHubUser(env, { login: "plan-idea-user", id: 4646 });
+    const planSession = await app.request("/v1/loop/plan-idea-claims", { method: "POST", headers: { authorization: `Bearer ${planSessionToken}`, "content-type": "application/json" }, body: JSON.stringify(singleIdea) }, env);
+    expect(planSession.status).toBe(200);
 
     const queueIntelligence = await app.request(
       "/v1/internal/queue-intelligence",

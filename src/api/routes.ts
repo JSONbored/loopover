@@ -263,6 +263,7 @@ import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-mo
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildIssueSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN } from "../signals/issue-slop";
+import { buildIdeaClaimPlanResult } from "../idea-intake";
 import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "../signals/slop";
 import { buildPredictedGateVerdict } from "../rules/predicted-gate";
 import { computeContributorCalibration } from "../review/predicted-gate-calibration-ledger";
@@ -493,6 +494,24 @@ const slopRiskSchema = z.object({
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
   body: z.string().max(40000).optional(),
+});
+
+// Idea-claim planning (#6756): loose fields mirroring the loopover_plan_idea_claims MCP tool's intakeIdeaShape
+// (src/mcp/server.ts) — the engine's validateIdeaSubmission owns the real semantic checks and returns the
+// actionable error list, so a semantically-invalid submission still reaches the handler (a 200 { ok:false,
+// errors } domain result) rather than a schema 400. Only a truly unparseable/oversized body 400s here.
+const planIdeaClaimsSchema = z.object({
+  id: z.string().max(200).optional(),
+  title: z.string().max(4000).optional(),
+  body: z.string().max(40000).optional(),
+  targetRepo: z.string().max(400).optional(),
+  constraints: z.array(z.string().max(4000)).max(50).optional(),
+  acceptanceHints: z.array(z.string().max(4000)).max(50).optional(),
+  priority: z.string().max(50).optional(),
+  decomposition: z
+    .array(z.object({ key: z.string().max(200), title: z.string().max(4000), body: z.string().max(40000), dependsOn: z.array(z.string().max(200)).max(50).optional() }))
+    .max(50)
+    .optional(),
 });
 
 const selfhostDeadLetterQueueQuerySchema = z
@@ -3225,6 +3244,17 @@ export function createApp() {
     return c.json({ ...buildIssueSlopAssessment(parsed.data), rubric: ISSUE_SLOP_RUBRIC_MARKDOWN });
   });
 
+  // Idea-claim planning over REST (#6756): mirror the loopover_plan_idea_claims MCP tool, delegating to the
+  // SAME pure buildIdeaClaimPlanResult so the MCP/REST/CLI surfaces can never disagree. A malformed/empty
+  // submission is a domain result (200 { ok:false, errors }), not a transport error — only an unparseable or
+  // oversized body 400s. Deterministic and source-free; allowlisted like the other agent-native self-checks.
+  app.post(LOOP_PLAN_IDEA_CLAIMS_PATH, async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = planIdeaClaimsSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_plan_idea_claims_request", issues: parsed.error.issues }, 400);
+    return c.json(buildIdeaClaimPlanResult(parsed.data, parsed.data.decomposition));
+  });
+
   app.post(OPPORTUNITIES_FIND_PATH, async (c) => {
     const identity = await authenticateRequestIdentity(c);
     /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific guards. */
@@ -5730,6 +5760,7 @@ const LINT_PR_TEXT_PATH = "/v1/lint/pr-text";
 const VALIDATE_FOCUS_MANIFEST_PATH = "/v1/validate/focus-manifest";
 const LINT_SLOP_RISK_PATH = "/v1/lint/slop-risk";
 const LINT_ISSUE_SLOP_PATH = "/v1/lint/issue-slop";
+const LOOP_PLAN_IDEA_CLAIMS_PATH = "/v1/loop/plan-idea-claims";
 // Contributor (miner) side of the extension (#556). Minted for NON-maintainer sign-ins; strictly
 // self-only — a token may only reach `/v1/extension/contributors/<self>/*`, enforced by the coarse
 // path check below plus `requireContributorAccess` (actor === login) in every handler.
@@ -5798,6 +5829,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
   if (path === OPPORTUNITIES_FIND_PATH) return true;
   if (path === ISSUE_RAG_RETRIEVE_PATH) return true;
+  if (path === LOOP_PLAN_IDEA_CLAIMS_PATH) return true; // #6756: pure idea-claim planning, allowlisted like the other agent-native self-checks
   if (path === LINT_PR_TEXT_PATH || path === VALIDATE_FOCUS_MANIFEST_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
   if (path === EXTENSION_PULL_CONTEXT_PATH && isExtensionScopedSession(identity)) return true;
   // Contributor extension scope reaches only `/v1/extension/contributors/<login>/*`; the handler's

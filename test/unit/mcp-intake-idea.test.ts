@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { LoopoverMcp } from "../../src/mcp/server";
+import { buildIdeaClaimPlanResult } from "../../src/idea-intake";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect() {
@@ -91,5 +92,22 @@ describe("MCP loopover_plan_idea_claims", () => {
     const data = result.structuredContent as { ok: boolean; errors: string[] };
     expect(data.ok).toBe(false);
     expect(data.errors).toEqual(expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]));
+  });
+
+  it("emits exactly the shared buildIdeaClaimPlanResult output — the MCP↔REST↔CLI parity anchor (#6756)", async () => {
+    const client = await connect();
+    const valid = {
+      id: "idea-P", title: "Add API key auth", body: "Authenticate the read API with a key.", targetRepo: "acme/widgets",
+      decomposition: [
+        { key: "issue-1", title: "Introduce API-key store", body: "validate keys" },
+        { key: "issue-2", title: "Gate the read endpoints", body: "require a key", dependsOn: ["issue-1"] },
+      ],
+    };
+    const validResult = await client.callTool({ name: "loopover_plan_idea_claims", arguments: valid });
+    expect(validResult.structuredContent).toEqual(buildIdeaClaimPlanResult(valid, valid.decomposition));
+
+    const invalid = { title: "no id/body", targetRepo: "not-a-slug" };
+    const invalidResult = await client.callTool({ name: "loopover_plan_idea_claims", arguments: invalid });
+    expect(invalidResult.structuredContent).toEqual(buildIdeaClaimPlanResult(invalid, undefined));
   });
 });

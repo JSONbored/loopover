@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildClaimPlan,
+  buildIdeaClaimPlanResult,
   buildTaskGraph,
   scoreTaskGraph,
   validateIdeaSubmission,
@@ -226,5 +227,46 @@ describe("buildClaimPlan — routes a scored task-graph into a loop claim plan (
     expect(plan.deferred[0]?.reasons).toContain("dependency_not_landed");
     expect(plan.skipped.map((s) => s.key)).toEqual(["issue-3"]);
     expect(plan.graphVerdict).toBe("avoid"); // least-favorable across the graph
+  });
+});
+
+describe("buildIdeaClaimPlanResult — the shared MCP/REST/CLI claim-plan builder (#6756)", () => {
+  it("returns { ok:false, errors } for a malformed/empty submission (never throws)", () => {
+    const result = buildIdeaClaimPlanResult({ title: "no id or body", targetRepo: "not-a-slug" });
+    expect(result.ok).toBe(false);
+    // Narrow on the discriminant so the error list is type-safe to read.
+    if (result.ok) throw new Error("expected an invalid result");
+    expect(result.errors).toEqual(expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]));
+  });
+
+  it("plans a single-issue baseline as claimable with verdict go when no decomposition is given", () => {
+    const result = buildIdeaClaimPlanResult(validIdea({ id: "idea-P", targetRepo: "acme/widgets" }));
+    if (!result.ok) throw new Error(`expected a valid result, got ${result.errors.join(", ")}`);
+    expect(result.verdict).toBe("go");
+    expect(result.claimPlan.targetRepo).toBe("acme/widgets");
+    expect(result.claimPlan.claimable.map((s) => s.key)).toEqual(["issue-1"]);
+    expect(result.claimPlan.deferred).toHaveLength(0);
+    expect(result.claimPlan.skipped).toHaveLength(0);
+  });
+
+  it("holds a dependent issue at deferred and matches validate→buildTaskGraph→buildClaimPlan composed by hand", () => {
+    const idea = validIdea({ id: "idea-D", targetRepo: "acme/widgets" });
+    const decomposition: ConstituentIssueDraft[] = [
+      { key: "issue-1", title: "Introduce API-key store", body: "validate keys" },
+      { key: "issue-2", title: "Gate the read endpoints", body: "require a key", dependsOn: ["issue-1"] },
+    ];
+    const result = buildIdeaClaimPlanResult(idea, decomposition);
+    if (!result.ok) throw new Error(`expected a valid result, got ${result.errors.join(", ")}`);
+    expect(result.verdict).toBe("raise");
+    expect(result.claimPlan.claimable.map((s) => s.key)).toEqual(["issue-1"]);
+    expect(result.claimPlan.deferred.map((s) => s.key)).toEqual(["issue-2"]);
+
+    // The builder must be exactly the composition of the primitives it wraps — the parity guarantee the
+    // mirrored MCP/REST/CLI surfaces all rely on.
+    const validated = validateIdeaSubmission(idea);
+    if (!validated.ok) throw new Error("fixture idea should validate");
+    const expected = buildClaimPlan(buildTaskGraph(validated.idea, decomposition), validated.idea.targetRepo);
+    expect(result.claimPlan).toEqual(expected);
+    expect(result.verdict).toBe(expected.graphVerdict);
   });
 });

@@ -266,3 +266,24 @@ export function buildClaimPlan(graph: TaskGraph, targetRepo: string): ClaimPlan 
   }
   return { ideaId: graph.ideaId, targetRepo, graphVerdict: graph.rubric.verdict, claimable, deferred, skipped };
 }
+
+/** The claim-plan result the MCP tool, the `POST /v1/loop/plan-idea-claims` route, and the CLI/stdio tool
+ *  all return for one idea submission (#6756): the dependency-ordered claim plan for a valid submission, or
+ *  the actionable error list for a malformed/empty one. One shared shape so the mirrored surfaces can never
+ *  disagree for identical input. */
+export type IdeaClaimPlanResult =
+  | { ok: true; verdict: FeasibilityVerdict; claimPlan: ClaimPlan }
+  | { ok: false; errors: string[] };
+
+/** Route a raw renter submission through validate → task-graph → claim-plan (#4798 → #4799) in one call, so
+ *  every surface that mirrors `loopover_plan_idea_claims` (#6756) delegates to the SAME pure function and
+ *  cannot drift. Deterministic and source-free; `drafts` is the optional renter-reviewed decomposition,
+ *  omitted for the single-issue baseline. A malformed/empty submission returns `{ ok: false, errors }`
+ *  rather than throwing, matching validateIdeaSubmission's own "surface every problem at once" contract. */
+export function buildIdeaClaimPlanResult(raw: unknown, drafts?: ConstituentIssueDraft[]): IdeaClaimPlanResult {
+  const validated = validateIdeaSubmission(raw);
+  if (!validated.ok) return { ok: false, errors: validated.errors };
+  const graph = buildTaskGraph(validated.idea, drafts);
+  const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+  return { ok: true, verdict: claimPlan.graphVerdict, claimPlan };
+}

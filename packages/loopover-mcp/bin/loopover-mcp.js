@@ -6,6 +6,9 @@ import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint } from "@loopover/engine";
+// #6756: the same pure idea-claim-plan builder the remote server (src/mcp/server.ts) and the
+// POST /v1/loop/plan-idea-claims route use, so loopover_plan_idea_claims plans fully in-process here.
+import { buildIdeaClaimPlanResult } from "@loopover/engine";
 // #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // registering them locally is just importing the same engine builders the remote server uses.
 import {
@@ -547,6 +550,24 @@ const checkIssueSlopShape = {
   body: z.string().max(40000).optional(),
 };
 
+// #6756 — loopover_plan_idea_claims input, mirroring the remote server's intakeIdeaShape (src/mcp/server.ts)
+// and the POST /v1/loop/plan-idea-claims route's schema. Fields are loose because the engine's
+// validateIdeaSubmission owns the real bounds/format checks and returns the actionable error list, so an
+// empty/malformed submission reaches the handler rather than being rejected upstream by the schema.
+const planIdeaClaimsShape = {
+  id: z.string().max(200).optional(),
+  title: z.string().max(4000).optional(),
+  body: z.string().max(40000).optional(),
+  targetRepo: z.string().max(400).optional(),
+  constraints: z.array(z.string().max(4000)).max(50).optional(),
+  acceptanceHints: z.array(z.string().max(4000)).max(50).optional(),
+  priority: z.string().max(50).optional(),
+  decomposition: z
+    .array(z.object({ key: z.string().max(200), title: z.string().max(4000), body: z.string().max(40000), dependsOn: z.array(z.string().max(200)).max(50).optional() }))
+    .max(50)
+    .optional(),
+};
+
 // #6150 — loopover_run_local_scorer's input, mirroring the remote server's changedFileSchema/validationEntrySchema.
 const localScorerChangedFileShape = z
   .object({
@@ -845,6 +866,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_issue_slop",
     category: "review",
     description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
+  },
+  {
+    name: "loopover_plan_idea_claims",
+    category: "discovery",
+    description:
+      "Route a freeform idea into a claim/code/submit-loop plan (#4799): validates the submission, builds the scored task-graph, and returns which constituent issues the loop can claim now vs. defer (held on a prerequisite) vs. skip (unshippable) — dependency-ordered so a prerequisite is always claimed before its dependents. Deterministic and source-free; it decides what to claim, it does not claim or run anything. A malformed/empty submission returns an actionable error list. Computed in-process; no repo data and no API round-trip.",
   },
   // #6150 — the miner-auto-dev profile's plan-DAG + local-scorer + gate-prediction tools, previously listed in
   // recommendedTools below but never actually registered.
@@ -1408,6 +1435,18 @@ registerStdioTool(
     inputSchema: checkIssueSlopShape,
   },
   async (input) => toolResult("LoopOver issue-slop self-check.", await apiPost("/v1/lint/issue-slop", input)),
+);
+
+registerStdioTool(
+  "loopover_plan_idea_claims",
+  {
+    description: stdioToolDescription("loopover_plan_idea_claims"),
+    inputSchema: planIdeaClaimsShape,
+  },
+  // Computed in-process from @loopover/engine (#6756) — matches the remote server's own buildIdeaClaimPlanResult
+  // call (src/mcp/server.ts) and the POST /v1/loop/plan-idea-claims route with no API round-trip, so idea-claim
+  // planning works fully offline.
+  (input) => toolResult("LoopOver idea-claim plan.", buildIdeaClaimPlanResult(input, input.decomposition)),
 );
 
 registerStdioTool(

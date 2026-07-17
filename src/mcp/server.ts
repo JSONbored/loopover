@@ -167,7 +167,7 @@ import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/f
 import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
-import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
+import { validateIdeaSubmission, buildTaskGraph, buildIdeaClaimPlanResult } from "../idea-intake";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
 import { evaluateEscalation } from "../loop-escalation";
@@ -3582,18 +3582,18 @@ export class LoopoverMcp {
 
   private async planIdeaClaims(input: z.infer<z.ZodObject<typeof intakeIdeaShape>>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_plan_idea_claims");
-    const validated = validateIdeaSubmission(input);
-    if (!validated.ok) {
+    // Delegate to the shared pure builder (#6756) so this tool, the POST /v1/loop/plan-idea-claims route,
+    // and the CLI/stdio mirror can never disagree for identical input.
+    const result = buildIdeaClaimPlanResult(input, input.decomposition);
+    if (!result.ok) {
       return {
-        summary: `Invalid idea submission: ${validated.errors.join(", ")}.`,
-        data: { ok: false, errors: validated.errors } as unknown as Record<string, unknown>,
+        summary: `Invalid idea submission: ${result.errors.join(", ")}.`,
+        data: { ok: false, errors: result.errors } as unknown as Record<string, unknown>,
       };
     }
-    const graph = buildTaskGraph(validated.idea, input.decomposition);
-    const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
     return {
-      summary: `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
-      data: { ok: true, verdict: claimPlan.graphVerdict, claimPlan } as unknown as Record<string, unknown>,
+      summary: `Claim plan: ${result.claimPlan.claimable.length} claimable, ${result.claimPlan.deferred.length} deferred, ${result.claimPlan.skipped.length} skipped.`,
+      data: { ok: true, verdict: result.verdict, claimPlan: result.claimPlan } as unknown as Record<string, unknown>,
     };
   }
 

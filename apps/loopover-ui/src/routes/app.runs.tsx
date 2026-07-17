@@ -25,7 +25,7 @@ import {
 } from "@/components/site/control-primitives";
 import { useApiResource } from "@/lib/api/use-api-resource";
 import { useSession } from "@/lib/api/session";
-import { EmptyState, StateBoundary } from "@/components/site/state-views";
+import { EmptyState, StateActionButton, StateBoundary } from "@/components/site/state-views";
 import { RefreshMeta } from "@/components/site/refresh-meta";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLocalStorage } from "@/lib/use-local-storage";
@@ -112,6 +112,77 @@ export const Route = createFileRoute("/app/runs")({
   component: AgentRuns,
 });
 
+/**
+ * The Agent Runs filter bar: Status/Kind chips, the search box, and the persistent "Reset filters" control
+ * (#6818). Before that control existed, the ONLY way to clear filters was the button inside the zero-results
+ * empty state — unreachable while the active filters still matched at least one run. The reset is always
+ * rendered here (mirroring `AuditFilters`' always-present Reset in components/site/audit-feed.tsx) and enabled
+ * only once some filter is away from its default.
+ *
+ * Exported and fully prop-driven — like `DrawerSurface` — so the filter/reset behavior is unit-testable without
+ * mounting the routed page (and its router/session/API context).
+ */
+export function RunsFilterBar({
+  status,
+  kind,
+  q,
+  hasActiveFilters,
+  onStatusChange,
+  onKindChange,
+  onQChange,
+  onReset,
+}: {
+  status: StatusFilter;
+  kind: KindFilter;
+  q: string;
+  hasActiveFilters: boolean;
+  onStatusChange: (value: StatusFilter) => void;
+  onKindChange: (value: KindFilter) => void;
+  onQChange: (value: string) => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="rounded-token border border-border bg-transparent p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex items-center gap-1.5 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+          <Filter className="size-3.5" />
+          Status
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {STATUS_FILTERS.map((s) => (
+            <Chip key={s} active={status === s} onClick={() => onStatusChange(s)}>
+              {s}
+            </Chip>
+          ))}
+        </div>
+        <span aria-hidden className="ml-2 hidden accent-divider-v-tall sm:inline-block" />
+        <div className="inline-flex items-center gap-1.5 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+          Kind
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {KIND_FILTERS.map((k) => (
+            <Chip key={k} active={kind === k} onClick={() => onKindChange(k)}>
+              {k}
+            </Chip>
+          ))}
+        </div>
+        <div className="ml-auto inline-flex items-center gap-2 rounded-token border border-border bg-background/40 px-2">
+          <Search className="size-3.5 text-muted-foreground" />
+          <input
+            value={q}
+            onChange={(e) => onQChange(e.target.value)}
+            placeholder="Search runs…"
+            className="w-40 border-0 bg-transparent py-1 text-token-sm outline-none placeholder:text-muted-foreground"
+          />
+        </div>
+        <StateActionButton onClick={onReset} disabled={!hasActiveFilters}>
+          Reset filters
+        </StateActionButton>
+      </div>
+    </div>
+  );
+}
+
 function AgentRuns() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
@@ -173,6 +244,27 @@ function AgentRuns() {
       }),
       replace: true,
     });
+
+  /** Any filter away from its default ("all"/"all"/empty search) — drives the filter bar's persistent Reset. */
+  const hasActiveFilters = status !== "all" || kind !== "all" || q !== "";
+
+  /** Clear every filter in a single navigation (#6818). Shared by the filter bar's persistent Reset control and
+   *  the zero-results empty state's "Clear filters" button, so the two can never drift apart — mirroring
+   *  AuditFilters' `resetFilters` in components/site/audit-feed.tsx. */
+  const resetFilters = () => {
+    navigate({
+      search: (p: z.infer<typeof searchSchema>) => ({
+        ...p,
+        status: undefined,
+        kind: undefined,
+        q: undefined,
+      }),
+      replace: true,
+    });
+    toast("Filters cleared", {
+      description: "Showing all available agent runs again.",
+    });
+  };
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -253,41 +345,16 @@ function AgentRuns() {
         loadingSkeleton={<RunsListSkeleton />}
       >
         <div className="space-y-5">
-          <div className="rounded-token border border-border bg-transparent p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center gap-1.5 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                <Filter className="size-3.5" />
-                Status
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {STATUS_FILTERS.map((s) => (
-                  <Chip key={s} active={status === s} onClick={() => setStatus(s)}>
-                    {s}
-                  </Chip>
-                ))}
-              </div>
-              <span aria-hidden className="ml-2 hidden accent-divider-v-tall sm:inline-block" />
-              <div className="inline-flex items-center gap-1.5 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                Kind
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {KIND_FILTERS.map((k) => (
-                  <Chip key={k} active={kind === k} onClick={() => setKind(k)}>
-                    {k}
-                  </Chip>
-                ))}
-              </div>
-              <div className="ml-auto inline-flex items-center gap-2 rounded-token border border-border bg-background/40 px-2">
-                <Search className="size-3.5 text-muted-foreground" />
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search runs…"
-                  className="w-40 border-0 bg-transparent py-1 text-token-sm outline-none placeholder:text-muted-foreground"
-                />
-              </div>
-            </div>
-          </div>
+          <RunsFilterBar
+            status={status}
+            kind={kind}
+            q={q}
+            hasActiveFilters={hasActiveFilters}
+            onStatusChange={setStatus}
+            onKindChange={setKind}
+            onQChange={setQ}
+            onReset={resetFilters}
+          />
 
           <SavedViews
             current={{ status, kind, q }}
@@ -316,14 +383,7 @@ function AgentRuns() {
                   action={
                     <button
                       type="button"
-                      onClick={() => {
-                        setStatus("all");
-                        setKind("all");
-                        setQ("");
-                        toast("Filters cleared", {
-                          description: "Showing all available agent runs again.",
-                        });
-                      }}
+                      onClick={resetFilters}
                       className="inline-flex min-w-0 items-center justify-center rounded-token border border-border bg-transparent px-3 py-1.5 text-center text-token-xs font-medium text-foreground transition-all duration-150 hover:bg-accent focus-ring motion-reduce:transition-none motion-reduce:active:scale-100 active:scale-[0.98]"
                     >
                       Clear filters

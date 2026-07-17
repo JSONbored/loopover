@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { success, error } = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success, error } }));
 
-import { DrawerSurface } from "./app.runs";
+import { DrawerSurface, RunsFilterBar } from "./app.runs";
 
 const run = {
   id: "run_1",
@@ -111,5 +111,59 @@ describe("run drawer Inputs copy button", () => {
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining("selected=run_1")),
     );
     expect(success).toHaveBeenCalledWith("Permalink copied", expect.anything());
+  });
+});
+
+// #6818: the filter bar previously had NO reset affordance — a "Clear filters" button existed only inside the
+// `filtered.length === 0` empty state, so an operator whose filters still matched at least one run had no way to
+// clear them without hand-editing the URL. These lock in the persistent control in the bar itself.
+describe("Agent Runs filter bar persistent reset (#6818)", () => {
+  const noop = () => undefined;
+  const renderBar = (over: Partial<Parameters<typeof RunsFilterBar>[0]> = {}) =>
+    render(
+      <RunsFilterBar
+        status="all"
+        kind="all"
+        q=""
+        hasActiveFilters={false}
+        onStatusChange={noop}
+        onKindChange={noop}
+        onQChange={noop}
+        onReset={noop}
+        {...over}
+      />,
+    );
+
+  it("renders the reset control in the bar itself, not only in the zero-results empty state", () => {
+    renderBar();
+    expect(screen.getByRole("button", { name: "Reset filters" })).toBeTruthy();
+  });
+
+  it("disables the reset while every filter is still at its default", () => {
+    renderBar();
+    expect(
+      (screen.getByRole("button", { name: "Reset filters" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("enables the reset as soon as any filter is non-default", () => {
+    for (const active of [
+      { status: "ready" as const },
+      { kind: "plan-next-work" as const },
+      { q: "acme" },
+    ]) {
+      const { unmount } = renderBar({ hasActiveFilters: true, ...active });
+      expect(
+        (screen.getByRole("button", { name: "Reset filters" }) as HTMLButtonElement).disabled,
+      ).toBe(false);
+      unmount();
+    }
+  });
+
+  it("clears every filter through one shared handler when clicked", () => {
+    const onReset = vi.fn();
+    renderBar({ hasActiveFilters: true, status: "ready", onReset });
+    fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(onReset).toHaveBeenCalledTimes(1);
   });
 });

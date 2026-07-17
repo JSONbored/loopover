@@ -326,6 +326,12 @@ const skippedPrAuditShape = {
   limit: z.number().int().positive().optional(),
 };
 
+// #6736: mirrors src/mcp/server.ts's bountyShape (same `id: z.string().min(1)` bound) so the local
+// server validates the bounty id identically to the remote surface it proxies.
+const bountyShape = {
+  id: z.string().min(1),
+};
+
 const ownerRepoPullShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -965,6 +971,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Derive a structured eligibility plan from local score-preview metadata: whether the branch/PR is eligible now, public-safe blockers, and cleanup paths. Advisory dry-run only — no GitHub writes.",
   },
   {
+    name: "loopover_get_bounty_advisory",
+    category: "discovery",
+    description: "Return lifecycle, funding, and consensus-risk context for a cached Gittensor bounty. Takes id (the bounty id).",
+  },
+  {
     name: "loopover_get_decision_pack",
     category: "discovery",
     description: "Return the private decision pack for a contributor: the ranked repos and issues to work on next, with per-repo go/raise/avoid guidance. Takes login (the contributor's GitHub username).",
@@ -1340,6 +1351,18 @@ registerStdioTool(
     const qs = query.toString();
     return toolResult("LoopOver skipped-PR audit trail.", await apiGet(`/v1/app/skipped-pr-audit${qs ? `?${qs}` : ""}`));
   },
+);
+
+// #6736: CLI mirror of the remote server's loopover_get_bounty_advisory. The fully public route
+// GET /v1/bounties/:id/advisory is the single source of truth (it delegates to the same buildBountyAdvisory
+// the MCP server's getBountyAdvisory calls); this tool only proxies it.
+registerStdioTool(
+  "loopover_get_bounty_advisory",
+  {
+    description: stdioToolDescription("loopover_get_bounty_advisory"),
+    inputSchema: bountyShape,
+  },
+  async ({ id }) => toolResult("LoopOver bounty advisory.", await apiGet(`/v1/bounties/${encodeURIComponent(id)}/advisory`)),
 );
 
 registerStdioTool(

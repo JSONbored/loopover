@@ -539,6 +539,24 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ generatedAt: "2026-05-30T00:00:00.000Z", limit: 20, hasMore: false, items: [{ prNumber: 7, reason: "duplicate", remediation: "link the canonical PR" }] }));
       return;
     }
+    // #6736: the bounty-advisory mirror proxies GET /v1/bounties/:id/advisory; echo a fixed advisory payload.
+    if (request.url?.startsWith("/v1/bounties/") && request.url.endsWith("/advisory") && request.method === "GET") {
+      const id = decodeURIComponent(request.url.slice("/v1/bounties/".length, request.url.length - "/advisory".length));
+      response.end(
+        JSON.stringify({
+          id,
+          repoFullName: "owner/repo",
+          issueNumber: 12,
+          status: "open",
+          isActiveOpportunity: true,
+          fundingStatus: { funded: true },
+          consensusRisk: { level: "low" },
+          linkedPrs: [],
+          findings: [],
+        }),
+      );
+      return;
+    }
     // #6750: the boundary-tests lint mirror proxies here; echo a fired finding + spec.
     if (request.url === "/v1/lint/boundary-tests" && request.method === "POST") {
       response.end(

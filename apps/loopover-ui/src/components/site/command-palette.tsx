@@ -1,9 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Command, ArrowRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+
+/** id prefix for each result's `role="option"` element, referenced by the input's `aria-activedescendant`. */
+const OPTION_ID_PREFIX = "command-palette-option-";
+const LISTBOX_ID = "command-palette-listbox";
 
 export interface PaletteItem {
   label: string;
@@ -68,10 +72,11 @@ const DEFAULT_ITEMS: PaletteItem[] = [
 export function CommandPalette({ items = DEFAULT_ITEMS }: { items?: PaletteItem[] }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOpen((v) => !v);
@@ -87,6 +92,32 @@ export function CommandPalette({ items = DEFAULT_ITEMS }: { items?: PaletteItem[
     if (!term) return items;
     return items.filter((i) => `${i.label} ${i.group ?? ""}`.toLowerCase().includes(term));
   }, [q, items]);
+
+  // The highlighted result resets whenever the filtered set changes or the palette re-opens, so a
+  // stale index from a previous, longer list can never point past the current end.
+  useEffect(() => {
+    setHighlightedIndex(0);
+  }, [filtered, open]);
+
+  function selectItem(item: PaletteItem | undefined) {
+    if (!item) return;
+    setOpen(false);
+    navigate({ to: item.to });
+  }
+
+  function onInputKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (filtered.length > 0) setHighlightedIndex((i) => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (filtered.length > 0)
+        setHighlightedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      selectItem(filtered[highlightedIndex]);
+    }
+  }
 
   return (
     <>
@@ -123,26 +154,40 @@ export function CommandPalette({ items = DEFAULT_ITEMS }: { items?: PaletteItem[
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                onKeyDown={onInputKeyDown}
                 placeholder="Search the app…"
+                role="combobox"
+                aria-expanded={open}
+                aria-controls={LISTBOX_ID}
+                aria-activedescendant={
+                  filtered[highlightedIndex] ? `${OPTION_ID_PREFIX}${highlightedIndex}` : undefined
+                }
                 className="w-full border-b border-border bg-transparent px-4 py-3 text-token-sm outline-none placeholder:text-muted-foreground"
               />
-              <ul className="max-h-[60vh] overflow-auto p-2">
+              <ul
+                id={LISTBOX_ID}
+                role="listbox"
+                aria-label="Command palette results"
+                className="max-h-[60vh] overflow-auto p-2"
+              >
                 {filtered.length === 0 && (
                   <li className="px-3 py-6 text-center text-token-sm text-muted-foreground">
                     No matches
                   </li>
                 )}
-                {filtered.map((i) => (
-                  <li key={i.to}>
+                {filtered.map((i, index) => (
+                  <li key={i.to} role="presentation">
                     <button
+                      id={`${OPTION_ID_PREFIX}${index}`}
+                      role="option"
+                      aria-selected={index === highlightedIndex}
                       type="button"
-                      onClick={() => {
-                        setOpen(false);
-                        navigate({ to: i.to });
-                      }}
+                      onClick={() => selectItem(i)}
+                      onMouseEnter={() => setHighlightedIndex(index)}
                       className={cn(
                         "flex w-full items-center justify-between gap-3 rounded-token px-3 py-2 text-left text-token-sm transition-colors",
                         "text-foreground/90 hover:bg-accent hover:text-foreground",
+                        index === highlightedIndex && "bg-accent text-foreground",
                       )}
                     >
                       <span className="flex items-center gap-2">

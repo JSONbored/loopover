@@ -1,0 +1,17 @@
+import type { ContributionProfile } from "./contribution-profile.js";
+
+/**
+ * Extract a best-effort ContributionProfile for a repo from its published label taxonomy and contribution docs.
+ * Never throws: any fetch/parse failure degrades the relevant signal to `absent`/`unknown`. Generic — no
+ * loopover-specific hardcoding.
+ */
+export function extractContributionProfile(
+  repoFullName: string,
+  options?: {
+    fetchImpl?: typeof fetch;
+    githubToken?: string;
+    apiBaseUrl?: string;
+    /** ISO timestamp for the profile's generatedAt; defaults to now. Injected so tests stay deterministic. */
+    generatedAt?: string;
+  },
+): Promise<ContributionProfile>;

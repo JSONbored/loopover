@@ -769,7 +769,7 @@ export function localBranchAnalysisFixture() {
       summary: "No hard blockers predicted for this planned PR.",
       readinessScore: 72,
       blockers: [],
-      warnings: [],
+      warnings: [{ code: "missing_tests", title: "Missing tests", detail: "No test files accompany the changed paths." }],
     },
   };
 }

@@ -64,12 +64,21 @@ export function createRedisTokenCache(redis: Redis): InstallationTokenStore {
         1,
         Math.floor((value.expiresAtMs - Date.now()) / 1000),
       );
-      await redis.set(
-        keyFor(installationId),
-        JSON.stringify(value),
-        "EX",
-        ttlSeconds,
-      );
+      // Fail open on a connection error, same contract as get() above: the caller (github/app.ts's
+      // createInstallationToken, right after successfully minting a fresh token) has no try/catch of its own,
+      // so an uncaught error here would turn an otherwise-successful mint into a hard failure over a transient
+      // cache-write hiccup. The token was already obtained from GitHub before this call, so a write failure
+      // just costs one extra real mint next time -- never the caller's job to fail.
+      try {
+        await redis.set(
+          keyFor(installationId),
+          JSON.stringify(value),
+          "EX",
+          ttlSeconds,
+        );
+      } catch {
+        recordTokenCacheMetric("error");
+      }
     },
   };
 }

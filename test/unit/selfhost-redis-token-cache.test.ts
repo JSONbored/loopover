@@ -4,7 +4,7 @@ import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { createRedisTokenCache } from "../../src/selfhost/redis-token-cache";
 
 /** Minimal ioredis stand-in that records the TTL passed to set(). */
-function fakeRedis(options: { getThrows?: boolean } = {}): {
+function fakeRedis(options: { getThrows?: boolean; setThrows?: boolean } = {}): {
   redis: Redis;
   store: Map<string, string>;
   ttl: () => number;
@@ -17,6 +17,7 @@ function fakeRedis(options: { getThrows?: boolean } = {}): {
       return store.get(k) ?? null;
     },
     async set(k: string, v: string, _ex: "EX", ttl: number) {
+      if (options.setThrows) throw new Error("connection refused");
       store.set(k, v);
       lastTtl = ttl;
       return "OK";
@@ -109,5 +110,20 @@ describe("createRedisTokenCache (#perf installation-token persistence)", () => {
     expect(await renderMetrics()).toContain(
       'loopover_redis_token_cache_total{result="error"} 1',
     );
+  });
+
+  it("regression: set() fails open (does not throw) and records an error metric on a Redis connection failure (#6999)", async () => {
+    // The token was already successfully minted from GitHub before set() is called (github/app.ts's
+    // createInstallationToken has no try/catch around this write), so a transient cache-write failure must
+    // never surface as a token-mint failure -- same fail-open contract as get()'s own regression test above.
+    const { redis, store } = fakeRedis({ setThrows: true });
+    await expect(
+      createRedisTokenCache(redis).set(9, { token: "sensitive-value", expiresAtMs: Date.now() + 60_000 }),
+    ).resolves.toBeUndefined();
+
+    expect(store.has("gh:insttoken:9")).toBe(false); // the write never actually landed
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('loopover_redis_token_cache_total{result="error"} 1');
+    expect(metrics).not.toContain("sensitive-value");
   });
 });

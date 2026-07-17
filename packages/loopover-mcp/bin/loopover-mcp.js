@@ -118,6 +118,10 @@ const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage
 // purpose. Do not "sync" it to the engine list.
 const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
 const MAINTAIN_AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"];
+// #6744: the loopover_propose_action / POST .../agent/pending-actions action-class enum. A superset of
+// MAINTAIN_ACTION_CLASSES (adds review_state_label) — kept separate so `maintain propose` accepts exactly what the
+// route + MCP tool accept, while set-level keeps its own autonomy-configurable subset above.
+const PROPOSE_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"];
 
 // #6150 — plan-DAG step tracking for loopover_build_plan/loopover_plan_status/loopover_record_step_result.
 // Hand-duplicated from src/services/plan-dag.ts (packages/loopover-engine/src/services/plan-dag.ts is NOT
@@ -2925,6 +2929,9 @@ function printMaintainHelp() {
       "Subcommands:",
       "  status                       List the agent approval queue (auto_with_approval actions awaiting a decision).",
       "  queue                        List pending actions (id, kind, target) for approve/reject. Alias: pending.",
+      "  propose <class> <pull-num>   Stage a new auto_with_approval action for a maintainer to approve later.",
+      `                               classes: ${PROPOSE_ACTION_CLASSES.join(", ")}`,
+      "                               opts: --reason, --label, --review-body, --merge-method, --close-comment.",
       "  approve <id>                 Approve a staged action -> execute it.",
       "  reject <id>                  Reject a staged action -> cancel it.",
       "  pause                        Pause ALL agent actions on the repo (kill-switch).",
@@ -3002,6 +3009,26 @@ async function maintainCli(args) {
     const decision = subcommand === "approve" ? "accept" : "reject";
     const payload = await apiPost(`${queueBase}/${encodeURIComponent(positional)}/${decision}`, {});
     emit(payload, `${subcommand === "approve" ? "Accepted" : "Rejected"} ${positional}: ${payload.status ?? "ok"}${payload.executionOutcome ? ` (${payload.executionOutcome})` : ""}.`);
+    return;
+  }
+  if (subcommand === "propose") {
+    const actionClass = positional;
+    const pullArg = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
+    if (!actionClass || !pullArg) {
+      throw new Error("Usage: loopover-mcp maintain propose <action-class> <pull-number> --repo owner/repo [--reason ...] [--label ...] [--review-body ...] [--merge-method merge|squash|rebase] [--close-comment ...].");
+    }
+    if (!PROPOSE_ACTION_CLASSES.includes(actionClass)) throw new Error(`Unknown action class: ${actionClass}. Use ${PROPOSE_ACTION_CLASSES.join(", ")}.`);
+    const pullNumber = Number(pullArg);
+    if (!Number.isInteger(pullNumber) || pullNumber <= 0) throw new Error(`Invalid pull number: ${pullArg}. Pass a positive integer.`);
+    const payload = await apiPost(
+      queueBase,
+      stripUndefined({ pullNumber, actionClass, reason: options.reason, label: options.label, reviewBody: options.reviewBody, mergeMethod: options.mergeMethod, closeComment: options.closeComment }),
+    );
+    const action = payload.action ?? {};
+    emit(
+      payload,
+      `${payload.created ? "Staged" : "Already staged"} ${sanitizePlainTextTerminalOutput(action.actionClass ?? actionClass)} on ${repoFullName}#${pullNumber} (${sanitizePlainTextTerminalOutput(action.status ?? "pending")}), id ${sanitizePlainTextTerminalOutput(action.id ?? "?")}.`,
+    );
     return;
   }
   if (subcommand === "pause" || subcommand === "resume") {
@@ -3087,7 +3114,7 @@ async function maintainCli(args) {
     return;
   }
   throw new Error(
-    `Unknown maintain subcommand: ${subcommand}. Use status | queue | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | onboarding-pack | audit-feed.`,
+    `Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | onboarding-pack | audit-feed.`,
   );
 }
 

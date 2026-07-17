@@ -152,6 +152,29 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(payload.echoedQuery).toEqual({ since: null, limit: null, pull: null });
   });
 
+  it("propose stages a new action (plain + json), POSTing to the bare pending-actions path", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    const e = await env((request) => requests.push({ url: request.url ?? "", method: request.method ?? "" }));
+    const plain = await runAsync(["maintain", "propose", "review", "7", "--repo", "owner/repo", "--reason", "needs a look"], e);
+    expect(plain).toMatch(/Staged review on owner\/repo#7 \(pending\), id pa-1\./);
+    // The bare create path (no trailing slash) — distinct from the decision `/:id/:decision` POST.
+    expect(requests.at(-1)).toEqual({ url: "/v1/repos/owner/repo/agent/pending-actions", method: "POST" });
+    const json = JSON.parse(await runAsync(["maintain", "propose", "merge", "7", "--repo", "owner/repo", "--merge-method", "squash", "--json"], e)) as {
+      created: boolean;
+      action: { actionClass: string; pullNumber: number };
+    };
+    expect(json).toMatchObject({ created: true, action: { actionClass: "merge", pullNumber: 7 } });
+  });
+
+  it("propose validates the action class and pull number before any request", async () => {
+    const e = await env();
+    await expect(runAsync(["maintain", "propose", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: loopover-mcp maintain propose/);
+    await expect(runAsync(["maintain", "propose", "review", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: loopover-mcp maintain propose/);
+    await expect(runAsync(["maintain", "propose", "bogus", "7", "--repo", "owner/repo"], e)).rejects.toThrow(/Unknown action class/);
+    await expect(runAsync(["maintain", "propose", "review", "0", "--repo", "owner/repo"], e)).rejects.toThrow(/Invalid pull number/);
+    await expect(runAsync(["maintain", "propose", "review", "1.5", "--repo", "owner/repo"], e)).rejects.toThrow(/Invalid pull number/);
+  }, 45_000);
+
   it("validates inputs: --repo required, id required for approve, known subcommand + action/level", async () => {
     const e = await env();
     await expect(runAsync(["maintain", "status"], e)).rejects.toThrow(/Pass --repo/);
@@ -192,6 +215,7 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     const out = await runAsync(["maintain"], e);
     expect(out).toMatch(/Usage: loopover-mcp maintain/);
     expect(out).toMatch(/approve <id>/);
+    expect(out).toMatch(/propose <class> <pull-num>/);
     expect(out).toMatch(/queue/);
     expect(out).toMatch(/pause/);
     expect(out).toMatch(/onboarding-pack/);

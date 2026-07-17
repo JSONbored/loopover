@@ -189,6 +189,85 @@ describe("agent approval-queue routes (#779)", () => {
   });
 });
 
+describe("agent propose route (#6744) — POST create side of the approval queue", () => {
+  // Seed the repo + installation (and optionally a PR) WITHOUT staging an action — the route is what creates it.
+  async function seedRepo(env: Env, pr?: { number: number; headSha: string }) {
+    await upsertInstallation(env, {
+      installation: { id: 5, account: { login: "owner", id: 1, type: "User" }, repository_selection: "selected", permissions: { metadata: "read", contents: "write", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }],
+    });
+    // upsertInstallation registers the installation; the repo row's own installationId is set by this call — the
+    // route's `repo?.installationId` check (mirroring proposeAction) reads that column.
+    await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 5);
+    if (pr) await upsertPullRequestFromGitHub(env, "owner/repo", { number: pr.number, title: "PR", state: "open", user: { login: "contributor" }, head: { sha: pr.headSha }, labels: [], body: "x" });
+  }
+  const post = (env: Env, body: unknown) => app.request("/v1/repos/owner/repo/agent/pending-actions", { method: "POST", headers: headers(env), body: JSON.stringify(body) }, env);
+
+  it("stages a minimal action, pinning the PR head SHA and defaulting the rest (parity with the MCP tool's data.action)", async () => {
+    const env = createTestEnv();
+    await seedRepo(env, { number: 7, headSha: "h7" });
+    const res = await post(env, { pullNumber: 7, actionClass: "review" });
+    expect(res.status).toBe(200);
+    // The route returns EXACTLY the { created, action:{ id, actionClass, pullNumber, status, reason } } shape the
+    // loopover_propose_action MCP tool returns in data — no extra/missing fields.
+    const json = (await res.json()) as { created: boolean; action: { id: string; actionClass: string; pullNumber: number; status: string; reason: string | null } };
+    expect(json.created).toBe(true);
+    expect(json.action).toEqual({ id: expect.any(String), actionClass: "review", pullNumber: 7, status: "pending", reason: null });
+    // Head-SHA pinned; no optional params carried when none were sent.
+    const stored = await getPendingAgentAction(env, json.action.id);
+    expect(stored?.params).toEqual({ expectedHeadSha: "h7" });
+  });
+
+  it("carries every optional param and omits the head pin when the PR is unknown", async () => {
+    const env = createTestEnv();
+    await seedRepo(env); // installation only — PR #8 is deliberately not seeded, so there is no head to pin
+    const res = await post(env, { pullNumber: 8, actionClass: "merge", reason: "stale base", label: "needs-rebase", reviewBody: "please rebase", mergeMethod: "squash", closeComment: "closing stale" });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { created: boolean; action: { id: string; reason: string | null } };
+    expect(json.created).toBe(true);
+    expect(json.action.reason).toBe("stale base");
+    const stored = await getPendingAgentAction(env, json.action.id);
+    expect(stored?.params).toEqual({ label: "needs-rebase", reviewBody: "please rebase", mergeMethod: "squash", closeComment: "closing stale" });
+  });
+
+  it("is idempotent: a second identical propose returns created:false", async () => {
+    const env = createTestEnv();
+    await seedRepo(env, { number: 7, headSha: "h7" });
+    const first = (await (await post(env, { pullNumber: 7, actionClass: "review" })).json()) as { created: boolean; action: { id: string } };
+    expect(first.created).toBe(true);
+    const second = (await (await post(env, { pullNumber: 7, actionClass: "review" })).json()) as { created: boolean; action: { id: string } };
+    expect(second.created).toBe(false);
+    expect(second.action.id).toBe(first.action.id);
+  });
+
+  it("rejects a schema-invalid or unparseable body with 400", async () => {
+    const env = createTestEnv();
+    await seedRepo(env, { number: 7, headSha: "h7" });
+    for (const body of [{ actionClass: "review" }, { pullNumber: 7, actionClass: "bogus" }, { pullNumber: -1, actionClass: "review" }]) {
+      const res = await post(env, body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: "invalid_propose_action_request" });
+    }
+    const malformed = await app.request("/v1/repos/owner/repo/agent/pending-actions", { method: "POST", headers: headers(env), body: "{not json" }, env);
+    expect(malformed.status).toBe(400);
+  });
+
+  it("409s when the LoopOver App is not installed on the repo", async () => {
+    const env = createTestEnv(); // no installation seeded → getRepository has no installationId
+    const res = await post(env, { pullNumber: 7, actionClass: "review" });
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({ error: "app_not_installed" });
+  });
+
+  it("forbids a non-maintainer session from staging an action", async () => {
+    const env = createTestEnv();
+    await seedRepo(env, { number: 7, headSha: "h7" });
+    const { token } = await createSessionForGitHubUser(env, { login: "rando", id: 555 });
+    const res = await app.request("/v1/repos/owner/repo/agent/pending-actions", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ pullNumber: 7, actionClass: "review" }) }, env);
+    expect([401, 403]).toContain(res.status);
+  });
+});
+
 describe("agent audit-feed route (#784)", () => {
   async function seedAudit(env: Env) {
     await recordAuditEvent(env, { eventType: "agent.action.merge", actor: "loopover", targetKey: "owner/repo#7", outcome: "completed", detail: "merged", createdAt: "2026-06-18T10:00:00.000Z" });

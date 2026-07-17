@@ -439,6 +439,15 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #6744 propose: the CREATE side of the approval queue — bare path POST (no trailing slash), so it does NOT
+    // collide with the decision `.../pending-actions/:id/:decision` POST stub below. Echoes the posted actionClass
+    // + pullNumber so a test can assert the CLI serialized the right body.
+    if (request.url === "/v1/repos/owner/repo/agent/pending-actions" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { pullNumber?: number; actionClass?: string; reason?: string | null };
+      const action = { id: "pa-1", actionClass: body.actionClass ?? "merge", pullNumber: body.pullNumber ?? 7, status: "pending", reason: body.reason ?? null };
+      response.end(JSON.stringify({ created: true, action: options.terminalInjection ? { ...action, actionClass: options.terminalInjection } : action }));
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/maintainer-noise" && request.method === "GET") {
       response.end(
         JSON.stringify({

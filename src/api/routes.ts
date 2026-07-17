@@ -201,6 +201,7 @@ import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } f
 import { buildTestEvidenceReport } from "../signals/test-evidence";
 import { evaluateEscalation } from "../loop-escalation";
 import { buildResultsPayload } from "../results-payload";
+import { validateIdeaSubmission, buildTaskGraph } from "../idea-intake";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
@@ -489,6 +490,24 @@ const evaluateEscalationSchema = z.object({
   healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
   customerFlagged: z.boolean().optional(),
   killRequested: z.boolean().optional(),
+});
+
+// #6755: mirrors intakeIdeaShape in src/mcp/server.ts VERBATIM. Fields are deliberately LOOSE here for the same
+// reason they are on the tool: the engine's validateIdeaSubmission owns the real bounds/format checks and returns
+// the actionable error list, so an empty/malformed submission must reach the handler rather than be rejected
+// upstream by the schema.
+const intakeIdeaSchema = z.object({
+  id: z.string().optional(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  targetRepo: z.string().optional(),
+  constraints: z.array(z.string()).max(50).optional(),
+  acceptanceHints: z.array(z.string()).max(50).optional(),
+  priority: z.string().optional(),
+  decomposition: z
+    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+    .max(50)
+    .optional(),
 });
 
 // #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so the
@@ -3317,6 +3336,22 @@ export function createApp() {
     const parsed = resultsPayloadSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_results_payload_request", issues: parsed.error.issues }, 400);
     return c.json(buildResultsPayload(parsed.data));
+  });
+
+  // #6755: REST mirror of the loopover_intake_idea MCP tool, bringing it to the same REST/CLI parity its
+  // same-tier sibling loopover_check_slop_risk (/v1/lint/slop-risk) already has. Reproduces the tool's handler
+  // exactly -- validate, then assemble the task-graph from the optional caller-supplied decomposition (else the
+  // single-issue baseline) -- delegating to the same pure functions and adding no logic of its own. A malformed
+  // or empty submission returns the engine's actionable error list (mirroring the find-opportunities route's
+  // semantic-validation shape: the payload, with 400), never a silent failure.
+  app.post("/v1/loop/intake-idea", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = intakeIdeaSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_intake_idea_request", issues: parsed.error.issues }, 400);
+    const validated = validateIdeaSubmission(parsed.data);
+    if (!validated.ok) return c.json({ ok: false, errors: validated.errors }, 400);
+    const taskGraph = buildTaskGraph(validated.idea, parsed.data.decomposition);
+    return c.json({ ok: true, verdict: taskGraph.rubric.verdict, taskGraph });
   });
 
   app.post("/v1/lint/issue-slop", async (c) => {

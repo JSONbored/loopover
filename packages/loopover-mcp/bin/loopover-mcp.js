@@ -32,6 +32,8 @@ import { buildTestEvidenceReport } from "@loopover/engine/signals/test-evidence"
 import { evaluateEscalation } from "@loopover/engine";
 // #6752: the same pure composer the remote MCP tool + /v1/loop/results-payload both call.
 import { buildResultsPayload } from "@loopover/engine";
+// #6755: the same pure bridge the remote MCP tool + /v1/loop/intake-idea both call.
+import { validateIdeaSubmission, buildTaskGraph } from "@loopover/engine";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -547,6 +549,22 @@ const evaluateEscalationShape = {
   killRequested: z.boolean().optional(),
 };
 
+// #6755: mirrors intakeIdeaShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and the REST
+// route all accept an identical payload. Deliberately loose -- validateIdeaSubmission owns the real checks.
+const intakeIdeaShape = {
+  id: z.string().optional(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  targetRepo: z.string().optional(),
+  constraints: z.array(z.string()).max(50).optional(),
+  acceptanceHints: z.array(z.string()).max(50).optional(),
+  priority: z.string().optional(),
+  decomposition: z
+    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
+    .max(50)
+    .optional(),
+};
+
 // #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
 // the REST route all accept an identical payload.
 const resultsPayloadShape = {
@@ -910,6 +928,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "agent",
     description:
       "Package a completed loop iteration into the customer-facing result (#4801): a PR link, a plain-language summary, and a bounded diff preview, from already-computed iteration metadata. Deterministic and source-free — it formats the result, it does not fetch, open, or deliver anything. Computed in-process; no API round-trip.",
+  },
+  {
+    name: "loopover_intake_idea",
+    category: "agent",
+    description:
+      "Turn a freeform renter idea into a strict, claimable task-graph (spec #4779) and score it against the same feasibility gate the loop runs on. Deterministic and source-free: validates the submission, assembles constituent issues (an optional caller-supplied decomposition, else a single-issue baseline), and returns the graph plus its go/raise/avoid verdict. A malformed or empty submission returns an actionable error list, not a silent failure. Computed in-process; no API round-trip.",
   },
   {
     name: "loopover_check_issue_slop",
@@ -1518,6 +1542,27 @@ registerStdioTool(
   // (src/mcp/server.ts) and the /v1/loop/results-payload route both call, so all three surfaces return an
   // identical payload for identical input, and results composition works fully offline.
   (input) => toolResult("LoopOver loop results payload.", buildResultsPayload(input)),
+);
+
+registerStdioTool(
+  "loopover_intake_idea",
+  {
+    description: stdioToolDescription("loopover_intake_idea"),
+    inputSchema: intakeIdeaShape,
+  },
+  // Computed in-process from @loopover/engine (#6755) — the same pure validateIdeaSubmission/buildTaskGraph the
+  // remote server (src/mcp/server.ts) and the /v1/loop/intake-idea route both call, reproducing the tool's
+  // handler exactly so all three surfaces return an identical payload for identical input, fully offline.
+  (input) => {
+    const validated = validateIdeaSubmission(input);
+    if (!validated.ok) return toolResult(`Invalid idea submission: ${validated.errors.join(", ")}.`, { ok: false, errors: validated.errors });
+    const taskGraph = buildTaskGraph(validated.idea, input.decomposition);
+    return toolResult(`Task-graph verdict: ${taskGraph.rubric.verdict} across ${taskGraph.issues.length} issue(s).`, {
+      ok: true,
+      verdict: taskGraph.rubric.verdict,
+      taskGraph,
+    });
+  },
 );
 
 registerStdioTool(

@@ -1546,7 +1546,9 @@ const simulateOpenPrPressureQueueHealthSchema = z
 
 // #2224 - pure, read-only open-PR pressure simulator surfaced over MCP. The simulator only reads
 // bounded queue counts and maintainer-lane state, so validate those fields at the MCP boundary.
-const simulateOpenPrPressureShape = {
+// #6751: exported so POST /v1/lint/open-pr-pressure parses with this EXACT shape rather than a second,
+// drifting copy — the REST mirror and this tool can never diverge on what they accept.
+export const simulateOpenPrPressureShape = {
   repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
   generatedAt: z.string().min(1).max(100),
   queueHealth: simulateOpenPrPressureQueueHealthSchema,

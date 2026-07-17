@@ -579,6 +579,11 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #6751: the open-PR-pressure mirror proxies here.
+    if (request.url === "/v1/lint/open-pr-pressure" && request.method === "POST") {
+      response.end(JSON.stringify({ repoFullName: "acme/widgets", summary: "Ranked 2 scenarios.", scenarios: [{ id: "close_stale", rank: 1 }] }));
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/pulls/7/reviewability" && request.method === "GET") {
       response.end(
         JSON.stringify({

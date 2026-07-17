@@ -155,6 +155,8 @@ import {
 } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
+import { simulateOpenPrPressureShape } from "../mcp/server";
+import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { COMMAND_RATE_LIMIT_EVENT_TYPE, generateSignalSnapshots } from "../queue/processors";
 import { generateChatQaAnswer } from "../services/ai-chat-qa";
@@ -3269,6 +3271,17 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6751: REST mirror of the loopover_simulate_open_pr_pressure MCP tool — deterministic, public-safe, and
+  // read-only (no repo access, no GitHub writes), the same tier as the lint routes it sits with. Parses with the
+  // tool's OWN exported simulateOpenPrPressureShape so the two surfaces cannot diverge on accepted input, then
+  // delegates to the same pure simulateOpenPrPressure. No logic of its own.
+  app.post("/v1/lint/open-pr-pressure", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z.object(simulateOpenPrPressureShape).safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_open_pr_pressure_request", issues: parsed.error.issues }, 400);
+    return c.json(simulateOpenPrPressure(parsed.data as unknown as OpenPrPressureInput));
   });
 
   // #6750: REST mirror of the loopover_suggest_boundary_tests MCP tool, bringing it to the same parity its

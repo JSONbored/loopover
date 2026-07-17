@@ -578,6 +578,46 @@ const suggestBoundaryTestsShape = {
   testFiles: z.array(z.string().max(400)).max(2000).optional(),
 };
 
+// #6751: mirrors simulateOpenPrPressureShape in src/mcp/server.ts VERBATIM. The bin cannot import from src/
+// (package boundary), so this copy is the one place parity is by convention rather than construction — the
+// route parses with the tool's own exported shape, and mcp-cli-open-pr-pressure-tool.test.ts pins that a
+// payload this shape accepts is one the route accepts too.
+const simulateOpenPrPressureCount = z.number().int().min(0).max(1000000);
+const simulateOpenPrPressureShape = {
+  repoFullName: z.string().min(3).max(200),
+  generatedAt: z.string().min(1).max(100),
+  queueHealth: z
+    .object({
+      repoFullName: z.string().min(3).max(200),
+      generatedAt: z.string().min(1).max(100),
+      burdenScore: z.number().finite(),
+      level: z.enum(["low", "medium", "high", "critical"]),
+      summary: z.string().max(1000),
+      signals: z
+        .object({
+          openIssues: simulateOpenPrPressureCount,
+          openPullRequests: simulateOpenPrPressureCount,
+          unlinkedPullRequests: simulateOpenPrPressureCount,
+          stalePullRequests: simulateOpenPrPressureCount,
+          draftPullRequests: simulateOpenPrPressureCount,
+          maintainerAuthoredPullRequests: simulateOpenPrPressureCount,
+          collisionClusters: simulateOpenPrPressureCount,
+          ageBuckets: z
+            .object({ under7Days: simulateOpenPrPressureCount, days7To30: simulateOpenPrPressureCount, over30Days: simulateOpenPrPressureCount })
+            .passthrough(),
+          likelyReviewablePullRequests: simulateOpenPrPressureCount,
+          cachedOpenPullRequests: simulateOpenPrPressureCount.optional(),
+          likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
+        })
+        .passthrough(),
+      findings: z.array(z.unknown()).max(100),
+    })
+    .passthrough()
+    .nullable(),
+  roleContext: z.object({ maintainerLane: z.boolean() }).passthrough(),
+  contributorOpenPrCount: simulateOpenPrPressureCount.optional(),
+};
+
 const checkSlopRiskShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -886,6 +926,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_slop_risk",
     category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
+  },
+  {
+    name: "loopover_simulate_open_pr_pressure",
+    category: "discovery",
+    description:
+      "Rank what-if scenarios for easing a repo's open-PR pressure from already-computed queue-health metadata — deterministic, public-safe, and read-only. Needs no repo access and performs no GitHub writes.",
   },
   {
     name: "loopover_suggest_boundary_tests",
@@ -1469,6 +1515,19 @@ registerStdioTool(
   // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
   // round-trip, so slop-risk self-checks work fully offline.
   (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+);
+
+// #6751: CLI mirror of the remote server's loopover_simulate_open_pr_pressure. Proxies rather than computing
+// in-process (like the boundary-tests mirror, #6750): simulateOpenPrPressure lives app-side in
+// src/services/open-pr-pressure-scenarios.ts, not in @loopover/engine, so POST /v1/lint/open-pr-pressure stays
+// the single source of truth for the ranking.
+registerStdioTool(
+  "loopover_simulate_open_pr_pressure",
+  {
+    description: stdioToolDescription("loopover_simulate_open_pr_pressure"),
+    inputSchema: simulateOpenPrPressureShape,
+  },
+  async (input) => toolResult("LoopOver open-PR pressure simulation.", await apiPost("/v1/lint/open-pr-pressure", input)),
 );
 
 // #6750: CLI mirror of the remote server's loopover_suggest_boundary_tests. Unlike its check_slop_risk sibling

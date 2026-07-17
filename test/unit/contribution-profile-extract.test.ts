@@ -240,9 +240,164 @@ describe("extractContributionProfile (#6796)", () => {
     const profile = await extractContributionProfile("acme/widgets", {
       fetchImpl: asFetch(fetchImpl),
       generatedAt: AT,
+      sleepFn: async () => {},
     });
     expect(profile.eligibilityLabels.confidence).toBe("absent");
     expect(profile.completeness).toBe("absent");
+  });
+
+  it("retries a transient 5xx on the labels fetch and yields the same profile as an immediate success (#7090)", async () => {
+    // A single 5xx blip on the first attempt must NOT degrade the label signal — the retry rides it out and the
+    // resulting profile is identical to one where the labels fetch succeeded immediately.
+    const sleeps: number[] = [];
+    let labelsCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels")) {
+        labelsCalls += 1;
+        if (labelsCalls === 1)
+          return {
+            ok: false,
+            status: 500,
+            json: async () => ({}),
+          } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            { name: "help wanted", description: "Extra attention is needed" },
+          ],
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+      sleepFn: async (ms: number) => {
+        sleeps.push(ms);
+      },
+    });
+    expect(labelsCalls).toBe(2);
+    expect(sleeps).toHaveLength(1);
+    expect(profile.eligibilityLabels.confidence).toBe("explicit");
+    expect(profile.eligibilityLabels.value).toEqual([
+      { field: "name", contains: "help wanted" },
+    ]);
+  });
+
+  it("retries a transient 5xx on the CONTRIBUTING.md fetch and reads the linked-issue rule as if it never blipped (#7090)", async () => {
+    const sleeps: number[] = [];
+    let docCalls = 0;
+    const body = bigContributing("Reference an issue with Closes #7.");
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels"))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as unknown as Response;
+      if (u.includes("/contents/CONTRIBUTING.md")) {
+        docCalls += 1;
+        if (docCalls === 1)
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({}),
+          } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            encoding: "base64",
+            content: Buffer.from(body).toString("base64"),
+          }),
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+      sleepFn: async (ms: number) => {
+        sleeps.push(ms);
+      },
+    });
+    expect(docCalls).toBe(2);
+    expect(sleeps).toHaveLength(1);
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: true },
+      confidence: "explicit",
+      provenance: [{ source: "contributing_md", detail: "CONTRIBUTING.md" }],
+    });
+  });
+
+  it("still degrades labels to absent once the 5xx retries are genuinely exhausted, without throwing (#7090)", async () => {
+    const sleeps: number[] = [];
+    let labelsCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes("/labels")) {
+        labelsCalls += 1;
+        return {
+          ok: false,
+          status: 502,
+          json: async () => ({}),
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+      sleepFn: async (ms: number) => {
+        sleeps.push(ms);
+      },
+    });
+    // DEFAULT_MAX_ATTEMPTS attempts, 2 sleeps between them — then fail open exactly as before.
+    expect(labelsCalls).toBe(3);
+    expect(sleeps).toHaveLength(2);
+    expect(profile.eligibilityLabels.confidence).toBe("absent");
+    expect(profile.completeness).toBe("absent");
+  });
+
+  it("still degrades the doc to absent once its 5xx retries are exhausted, preserving the fail-open contract (#7090)", async () => {
+    let docCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels"))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as unknown as Response;
+      docCalls += 1;
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+      sleepFn: async () => {},
+    });
+    // Both the root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths).
+    expect(docCalls).toBe(6);
+    expect(profile.prBody.confidence).toBe("absent");
   });
 
   it("degrades to absent when the transport throws, without propagating the error", async () => {

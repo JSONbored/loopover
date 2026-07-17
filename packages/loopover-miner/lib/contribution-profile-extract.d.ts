@@ -13,5 +13,7 @@ export function extractContributionProfile(
     apiBaseUrl?: string;
     /** ISO timestamp for the profile's generatedAt; defaults to now. Injected so tests stay deterministic. */
     generatedAt?: string;
+    /** Sleep seam for the transient-5xx/rate-limit retry (via fetchWithRetry). Injected so tests use no real timers. */
+    sleepFn?: (ms: number) => Promise<unknown>;
   },
 ): Promise<ContributionProfile>;

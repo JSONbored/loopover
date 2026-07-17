@@ -9,6 +9,7 @@ import {
   emptyContributionProfile,
   weakestConfidence,
 } from "./contribution-profile.js";
+import { fetchWithRetry } from "./http-retry.js";
 
 const DEFAULT_API_BASE_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
@@ -75,15 +76,20 @@ function githubHeaders(githubToken) {
   return headers;
 }
 
-/** Bounded, never-throwing JSON GET. Returns null on any transport/HTTP/parse failure. */
-async function getJson(url, headers, fetchImpl) {
+/** Bounded, never-throwing JSON GET. Rides out a transient GitHub 5xx or rate-limit response (429 / secondary-403)
+ *  via `fetchWithRetry` — the same discipline opportunity-fanout.js's sibling `githubGetJson` already uses — before
+ *  falling back to its fail-open contract: returns null on a non-retryable/exhausted HTTP, transport, or parse
+ *  failure. `timeoutMs` gives each attempt its own fresh `AbortSignal.timeout` (preserving the per-request bound),
+ *  and `sleepFn` is the injectable no-real-timers seam every other `fetchWithRetry` call site exposes. */
+async function getJson(url, headers, fetchImpl, sleepFn) {
   let response;
   try {
-    response = await fetchImpl(url, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    response = await fetchWithRetry(
+      fetchImpl,
+      url,
+      { method: "GET", headers },
+      { sleepFn, timeoutMs: REQUEST_TIMEOUT_MS },
+    );
   } catch {
     return null;
   }
@@ -146,12 +152,13 @@ function decodeContents(payload) {
 }
 
 /** Fetch CONTRIBUTING.md, probing the repo root then `.github/` (#6794: 6/10 at root, 2/10 under `.github/`). */
-async function fetchContributing(base, target, headers, fetchImpl) {
+async function fetchContributing(base, target, headers, fetchImpl, sleepFn) {
   for (const path of ["CONTRIBUTING.md", ".github/CONTRIBUTING.md"]) {
     const payload = await getJson(
       `${base}/repos/${target.owner}/${target.repo}/contents/${path}`,
       headers,
       fetchImpl,
+      sleepFn,
     );
     const text = decodeContents(payload);
     if (text !== null) return text;
@@ -183,7 +190,7 @@ function extractPrBody(contributing) {
  * Extract a best-effort ContributionProfile for a repo from what it actually publishes.
  *
  * @param {string} repoFullName owner/repo
- * @param {{ fetchImpl?: typeof fetch, githubToken?: string, apiBaseUrl?: string, generatedAt?: string }} [options]
+ * @param {{ fetchImpl?: typeof fetch, githubToken?: string, apiBaseUrl?: string, generatedAt?: string, sleepFn?: (ms: number) => Promise<unknown> }} [options]
  * @returns {Promise<import("./contribution-profile.js").ContributionProfile>}
  */
 export async function extractContributionProfile(repoFullName, options = {}) {
@@ -209,10 +216,12 @@ export async function extractContributionProfile(repoFullName, options = {}) {
     options.githubToken ?? process.env.GITHUB_TOKEN,
   );
 
+  const sleepFn = options.sleepFn;
   const labelsPayload = await getJson(
     `${base}/repos/${target.owner}/${target.repo}/labels?per_page=100`,
     headers,
     fetchImpl,
+    sleepFn,
   );
   const labels = Array.isArray(labelsPayload) ? labelsPayload : [];
   const contributing = await fetchContributing(
@@ -220,6 +229,7 @@ export async function extractContributionProfile(repoFullName, options = {}) {
     target,
     headers,
     fetchImpl,
+    sleepFn,
   );
 
   const eligibilityLabels = classifyLabels(

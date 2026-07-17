@@ -72,6 +72,57 @@ async function defaultRunGit(args, cwd, timeoutMs) {
   }
 }
 
+// Per-repoPath in-process serialization for ensureRepoCloned (#6762). Two attempts for the SAME repo share
+// one deterministic base-clone path and mutate it in place (git fetch/checkout/reset --hard); worktree-
+// allocator.js only caps the TOTAL active-slot count, never per-repo exclusivity, so without this two
+// same-repo attempts can interleave git subprocesses on the same .git dir and corrupt the index/HEAD/refs or
+// trip .git/index.lock. `repoCloneLocks` maps a resolved repoPath to the tail of its in-flight promise chain:
+// same-repo calls run strictly one after another, while different repoPaths stay fully parallel. The tail
+// promise's handlers swallow, so it never rejects -- one failing attempt can neither reject a waiter nor
+// wedge the queue -- and the finally drops the entry once the chain drains, keeping the Map bounded.
+const repoCloneLocks = new Map();
+
+/**
+ * @template T
+ * @param {string} repoPath key: the resolved base-clone path the git mutations run against.
+ * @param {() => Promise<T>} fn the critical section (a single ensureRepoClonedUnlocked run).
+ * @returns {Promise<T>}
+ */
+async function withRepoCloneLock(repoPath, fn) {
+  const previous = repoCloneLocks.get(repoPath) ?? Promise.resolve();
+  const run = previous.then(() => fn());
+  const tail = run.then(
+    () => {},
+    () => {},
+  );
+  repoCloneLocks.set(repoPath, tail);
+  try {
+    return await run;
+  } finally {
+    if (repoCloneLocks.get(repoPath) === tail) repoCloneLocks.delete(repoPath);
+  }
+}
+
+/**
+ * Serialize the git mutations of {@link ensureRepoClonedUnlocked} per resolved repo path so concurrent
+ * same-repo attempts never race the shared base clone (#6762), while different repos still run in parallel.
+ * Resolves the same `repoPath` the unlocked step computes and uses it as the mutex key; throws (before
+ * locking) on a malformed `repoFullName`, matching the prior behaviour.
+ *
+ * @param {string} repoFullName
+ * @param {{
+ *   baseBranch?: string, cloneBaseDir?: string, env?: Record<string, string | undefined>, timeoutMs?: number,
+ *   remoteUrl?: string, runGit?: (args: string[], cwd: string, timeoutMs: number) => Promise<{ ok: boolean, stdout: string, stderr: string }>,
+ * }} [options]
+ * @returns {Promise<{ ok: boolean, repoPath: string, error?: string }>}
+ */
+export async function ensureRepoCloned(repoFullName, options = {}) {
+  const target = normalizeRepoFullName(repoFullName);
+  const cloneBaseDir = typeof options.cloneBaseDir === "string" && options.cloneBaseDir.trim() ? options.cloneBaseDir.trim() : resolveRepoCloneBaseDir(options.env);
+  const repoPath = join(cloneBaseDir, target.owner, target.repo);
+  return withRepoCloneLock(repoPath, () => ensureRepoClonedUnlocked(repoFullName, options));
+}
+
 /**
  * Ensure a real, current local clone of `repoFullName` exists at the deterministic per-repo cache path.
  * First use: `git clone`. Subsequent use: `git fetch origin` + hard-reset the base branch to
@@ -84,7 +135,7 @@ async function defaultRunGit(args, cwd, timeoutMs) {
  * }} [options]
  * @returns {Promise<{ ok: boolean, repoPath: string, error?: string }>}
  */
-export async function ensureRepoCloned(repoFullName, options = {}) {
+async function ensureRepoClonedUnlocked(repoFullName, options = {}) {
   const target = normalizeRepoFullName(repoFullName);
   const baseBranch = typeof options.baseBranch === "string" && options.baseBranch.trim() ? options.baseBranch.trim() : DEFAULT_BASE_BRANCH;
   const cloneBaseDir = typeof options.cloneBaseDir === "string" && options.cloneBaseDir.trim() ? options.cloneBaseDir.trim() : resolveRepoCloneBaseDir(options.env);

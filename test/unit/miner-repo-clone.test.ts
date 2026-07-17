@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -193,5 +193,118 @@ describe("ensureRepoCloned (#5132)", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe("invalid_remote_url");
     expect(runGitCalls).toBe(0);
+  });
+});
+
+describe("ensureRepoCloned per-repo concurrency guard (#6762)", () => {
+  // Drains the microtask queue: a setImmediate callback only fires once no microtasks remain ready, so
+  // awaiting this lets every already-schedulable git op run while leaving anything still blocked on a gate
+  // (or queued behind the mutex) untouched.
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it("REGRESSION: serializes two concurrent ensureRepoCloned calls for the SAME repo (no interleaved git ops)", async () => {
+    // Both concurrent calls share one injected runGit whose first invocation blocks on `firstGate`. WITHOUT
+    // the per-repo mutex the second call enters its own git op immediately and `events` shows two
+    // "start:clone" before either ends; WITH the guard the second cannot start any git op until the first
+    // fully settles, so exactly one op is ever in flight.
+    const root = tempRoot("loopover-miner-repo-clone-concurrent-same-");
+    const cloneBaseDir = join(root, "cache");
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstBlocked = false;
+    const runGit = async (args: string[]) => {
+      events.push(`start:${args[0]}`);
+      if (!firstBlocked) {
+        firstBlocked = true;
+        await firstGate;
+      }
+      events.push(`end:${args[0]}`);
+      return { ok: true, stdout: "", stderr: "" };
+    };
+
+    const first = ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", runGit });
+    const second = ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", runGit });
+
+    // Only the first call may have reached git; the second must be queued behind the per-repo lock.
+    await flush();
+    expect(events).toEqual(["start:clone"]);
+
+    releaseFirst();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
+    // Strict, non-overlapping ordering: first runs start->end fully before second starts.
+    expect(events).toEqual(["start:clone", "end:clone", "start:clone", "end:clone"]);
+  });
+
+  it("does NOT serialize across DIFFERENT repos -- they run in parallel", async () => {
+    // repo-a's git op blocks; repo-b's must still proceed (different repoPath => different lock), proving the
+    // guard is per-repo rather than a single global mutex.
+    const root = tempRoot("loopover-miner-repo-clone-concurrent-diff-");
+    const cloneBaseDir = join(root, "cache");
+    const started: string[] = [];
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const runGitFor = (name: string) => async () => {
+      started.push(name);
+      if (name === "a") await gateA;
+      return { ok: true, stdout: "", stderr: "" };
+    };
+
+    const a = ensureRepoCloned("acme/repo-a", { cloneBaseDir, remoteUrl: "unused", runGit: runGitFor("a") });
+    const b = ensureRepoCloned("acme/repo-b", { cloneBaseDir, remoteUrl: "unused", runGit: runGitFor("b") });
+
+    await flush();
+    // repo-b advanced into git even though repo-a is still blocked -> not serialized against each other.
+    expect(started).toContain("b");
+
+    releaseA();
+    const [aResult, bResult] = await Promise.all([a, b]);
+    expect(aResult.ok).toBe(true);
+    expect(bResult.ok).toBe(true);
+  });
+
+  it("releases the per-repo lock when a call throws, so a later same-repo call still proceeds", async () => {
+    const root = tempRoot("loopover-miner-repo-clone-concurrent-throw-");
+    const cloneBaseDir = join(root, "cache");
+    const throwing = async () => {
+      throw new Error("git exploded");
+    };
+    await expect(ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", runGit: throwing })).rejects.toThrow("git exploded");
+
+    // If the lock were not released on throw, this second call would block forever (test would time out).
+    const ok = async () => ({ ok: true, stdout: "", stderr: "" });
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", runGit: ok });
+    expect(result.ok).toBe(true);
+  });
+
+  it("keys the lock off the env-resolved base dir when no cloneBaseDir option is given", async () => {
+    // Exercises the wrapper's env-fallback path for the lock key (no explicit cloneBaseDir option).
+    const root = tempRoot("loopover-miner-repo-clone-concurrent-envdir-");
+    const ok = async () => ({ ok: true, stdout: "", stderr: "" });
+    const result = await ensureRepoCloned("acme/widgets", { env: { LOOPOVER_MINER_REPO_CLONE_DIR: root }, remoteUrl: "unused", runGit: ok });
+    expect(result.ok).toBe(true);
+    expect(result.repoPath).toBe(join(root, "acme", "widgets"));
+  });
+
+  it("propagates real git stderr and falls back to a default across the fetch/checkout/reset steps", async () => {
+    // existsSync(repoPath) true => fetch/checkout/reset path, driven entirely with injected runGit (fast,
+    // deterministic). Covers both the real-stderr and empty-stderr fallback branch of each step.
+    const root = tempRoot("loopover-miner-repo-clone-concurrent-stderr-");
+    const cloneBaseDir = join(root, "cache");
+    const repoPath = join(cloneBaseDir, "acme", "widgets");
+    mkdirSync(repoPath, { recursive: true });
+
+    const failOn = (step: string, stderr: string) => async (args: string[]) => (args[0] === step ? { ok: false, stdout: "", stderr } : { ok: true, stdout: "", stderr: "" });
+
+    expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("fetch", "") })).error).toBe("git_fetch_failed");
+    expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("fetch", "boom-fetch") })).error).toBe("boom-fetch");
+    expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("checkout", "boom-checkout") })).error).toBe("boom-checkout");
+    expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("reset", "boom-reset") })).error).toBe("boom-reset");
   });
 });

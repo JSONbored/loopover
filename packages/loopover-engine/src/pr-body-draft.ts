@@ -28,11 +28,14 @@ export type PublicPrBodyDraft = {
   sourceUploadDisabled: true;
 };
 
-/** Structural subset of a local-branch analysis the drafter consumes (all public-safe). */
+/** Structural subset of a local-branch analysis the drafter consumes (all public-safe).
+ *  Extra fields from the full LocalBranchAnalysis are allowed so callers can pass the analysis
+ *  object through without stripping (and so existing unit fixtures keep typechecking). */
 export type PrBodyDraftSource = {
   repoFullName: string;
   prPacket: {
     titleSuggestion: string;
+    markdown?: string;
     bodySections: Array<{ heading: string; lines: string[] }>;
     validationSummary: {
       passed: number;
@@ -45,22 +48,35 @@ export type PrBodyDraftSource = {
       }>;
     };
     publicSafeWarnings: string[];
+    reviewerNotes?: string[];
   };
   baseFreshness: {
     status: string;
     changedFileCount: number;
     testFileCount: number;
+    passedValidationCount?: number;
     warnings: string[];
     recommendation?: string | undefined;
   };
   manifestGuidance: {
     present: boolean;
     publicNextSteps: string[];
+    source?: string;
+    linkedIssuePolicy?: string;
+    issueDiscoveryPolicy?: string;
+    matchedWantedPaths?: string[];
+    preferredLabelHits?: string[];
+    findings?: unknown[];
+    warnings?: string[];
+    summary?: string;
   };
   preflight: {
     linkedIssues: number[];
     collisions: Array<{
-      items: Array<{ type: string; number: number }>;
+      id?: string;
+      risk?: string;
+      reason?: string;
+      items: Array<{ type: string; number: number; title?: string }>;
     }>;
     reviewBurden?: string | undefined;
   };

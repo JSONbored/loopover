@@ -61,6 +61,7 @@ loopover-mcp completion fish
 loopover-mcp completion powershell
 loopover-mcp decision-pack --login jsonbored --json
 loopover-mcp repo-decision --login jsonbored --repo we-promise/sure --json
+loopover-mcp monitor-open-prs --login jsonbored --json
 loopover-mcp analyze-branch --login jsonbored --json
 loopover-mcp preflight --login jsonbored --json
 loopover-mcp review-pr --login jsonbored --commit "feat(mcp): add doctor grouping" --body "Fixes #160. Validated with npm test." --linked-issue 160 --json

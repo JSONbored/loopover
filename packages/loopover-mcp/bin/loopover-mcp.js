@@ -77,6 +77,7 @@ const CLI_COMMAND_SPEC = {
   "init-client": [],
   "decision-pack": [],
   "repo-decision": [],
+  "monitor-open-prs": [],
   "analyze-branch": [],
   preflight: [],
   "review-pr": [],
@@ -925,6 +926,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the go/raise/avoid decision for one specific contributor-and-repo pair, drawn from that contributor's decision pack — narrower than loopover_get_decision_pack, which returns the whole pack. Takes login (GitHub username), owner, and repo.",
   },
   {
+    name: "loopover_monitor_open_prs",
+    category: "discovery",
+    description:
+      "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
+  },
+  {
     name: "loopover_compare_pr_variants",
     category: "branch",
     description: "Compare private LoopOver scoring previews across local/metadata variants.",
@@ -1652,6 +1659,18 @@ registerStdioTool(
   async ({ login, owner, repo }) => {
     const payload = await getRepoDecisionWithCache(login, owner, repo);
     return toolResult(repoDecisionToolSummary(login, `${owner}/${repo}`, payload), payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_monitor_open_prs",
+  {
+    description: stdioToolDescription("loopover_monitor_open_prs"),
+    inputSchema: loginShape,
+  },
+  async ({ login }) => {
+    const payload = await getOpenPrMonitor(login);
+    return toolResult(openPrMonitorToolSummary(login, payload), payload);
   },
 );
 
@@ -2826,6 +2845,7 @@ async function runCli(args) {
   if (command === "issue-slop") return issueSlopCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
+  if (command === "monitor-open-prs") return monitorOpenPrsCli(options);
   if (command === "review-pr") return reviewPrCli(options);
   if (command !== "analyze-branch" && command !== "preflight") {
     const suggestion = suggestCommand(command);
@@ -3187,6 +3207,40 @@ async function decisionPackCli(options) {
   process.stdout.write(`${decisionPackToolSummary(login, payload)}\n`);
   if (payload.summary) process.stdout.write(`${sanitizePlainTextTerminalOutput(payload.summary)}\n`);
   if (payload.cache?.rerunGuidance) process.stdout.write(`Rerun when: ${sanitizePlainTextTerminalOutput(payload.cache.rerunGuidance)}\n`);
+}
+
+function printMonitorOpenPrsHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp monitor-open-prs --login <github-login> [--json]",
+      "",
+      "Review your open PRs across registered repos: queue classification and next steps per PR.",
+      "Mirrors the loopover_monitor_open_prs MCP tool and GET /v1/contributors/{login}/open-pr-monitor. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+async function monitorOpenPrsCli(options) {
+  if (options.help === true) return printMonitorOpenPrsHelp();
+  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
+  const payload = await getOpenPrMonitor(login);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  // #6261: every value below is the API's to choose -- the summary/guidance it composes, and PR titles it echoes
+  // back from third-party repos -- so all of it is sanitized before it reaches the terminal. `login` is the user's
+  // own --login/env value and needs no sanitizing, but it only reaches stdout via the literal fallback branch.
+  process.stdout.write(`${sanitizePlainTextTerminalOutput(openPrMonitorToolSummary(login, payload))}\n`);
+  for (const line of payload?.guidance ?? []) process.stdout.write(`${sanitizePlainTextTerminalOutput(line)}\n`);
+  for (const pr of payload?.pullRequests ?? []) {
+    const heading = `${pr.repoFullName}#${pr.number} [${pr.classification}] ${pr.title}`;
+    process.stdout.write(`${sanitizePlainTextTerminalOutput(heading)}\n`);
+    for (const step of pr.nextSteps ?? []) process.stdout.write(`  - ${sanitizePlainTextTerminalOutput(step)}\n`);
+  }
 }
 
 function printRepoDecisionHelp() {
@@ -3667,6 +3721,7 @@ function printHelp() {
   loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
   loopover-mcp decision-pack --login <github-login> [--json]
   loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
+  loopover-mcp monitor-open-prs --login <github-login> [--json]
   loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
   loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
@@ -3684,7 +3739,7 @@ function printHelp() {
   LOOPOVER_PROFILE
   LOOPOVER_CONFIG_PATH or LOOPOVER_CONFIG_DIR
   LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_TOKEN, or a session from loopover-mcp login
-  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, and agent plan/packet)
+  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, and agent plan/packet)
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT
@@ -4793,6 +4848,18 @@ function decisionPackToolSummary(login, payload) {
 function repoDecisionToolSummary(login, repoFullName, payload) {
   if (payload?.source === "local_cache") return `LoopOver repo decision for ${login} in ${repoFullName} (stale local cache).`;
   return `LoopOver repo decision for ${login} in ${repoFullName}.`;
+}
+
+function getOpenPrMonitor(login) {
+  return apiGet(`/v1/contributors/${encodeURIComponent(login)}/open-pr-monitor`);
+}
+
+// Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP
+// tool (which returns monitor.summary verbatim) never drift into two different sentences for one payload.
+function openPrMonitorToolSummary(login, payload) {
+  const summary = typeof payload?.summary === "string" ? payload.summary.trim() : "";
+  if (summary) return summary;
+  return `LoopOver open-PR monitor for ${login}.`;
 }
 
 function isCacheableDecisionPack(payload, login) {

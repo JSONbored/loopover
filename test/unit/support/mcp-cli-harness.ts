@@ -153,6 +153,7 @@ export async function startFixtureServer(
     onPacketRequest?: (body: unknown) => void;
     onApiRequest?: (request: IncomingMessage) => void;
     validateConfigWarnings?: string[];
+    openPrMonitor?: Record<string, unknown>;
     intakeStatus?: number;
     localBranchAnalysisStatus?: number;
   } = {},
@@ -247,6 +248,10 @@ export async function startFixtureServer(
             : decisionPackFixture(),
         ),
       );
+      return;
+    }
+    if (request.url === "/v1/contributors/JSONbored/open-pr-monitor" && request.method === "GET") {
+      response.end(JSON.stringify({ ...openPrMonitorFixture(), ...(options.openPrMonitor ?? {}) }));
       return;
     }
     if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/gittensory/decision" && request.method === "GET") {
@@ -622,6 +627,31 @@ export function localBranchAnalysisFixture() {
       blockers: [],
       warnings: [],
     },
+  };
+}
+
+/** Mirrors the ContributorOpenPrMonitor shape src/signals/contributor-open-pr-monitor.ts returns. */
+export function openPrMonitorFixture() {
+  return {
+    login: "JSONbored",
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    openPrCount: 1,
+    registeredRepoCount: 2,
+    cleanupFirst: true,
+    summary: "1 open PR needs attention before starting new work.",
+    guidance: ["Clear the failing check on JSONbored/gittensory#42 before opening anything new."],
+    pendingScenarios: [],
+    pullRequests: [
+      {
+        repoFullName: "JSONbored/gittensory",
+        number: 42,
+        title: "fix(queue): drain stale entries",
+        classification: "failing_checks",
+        summary: "CI is red on this PR.",
+        reasons: ["1 check is failing."],
+        nextSteps: ["Fix the failing check, then push."],
+      },
+    ],
   };
 }
 

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, Lock, Shield, GitPullRequestArrow } from "lucide-react";
+import { Copy, Download, Lock, Shield, GitPullRequestArrow } from "lucide-react";
 import { useState } from "react";
 import { motion } from "motion/react";
 import { toast } from "sonner";
@@ -10,6 +10,14 @@ import { Reveal } from "@/components/site/reveal";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
 import { cn } from "@/lib/utils";
+
+/** Write `text` to the clipboard or throw when the Clipboard API is missing / rejects. */
+async function writeClipboardText(text: string): Promise<void> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    throw new Error("Clipboard API unavailable");
+  }
+  await navigator.clipboard.writeText(text);
+}
 
 export const Route = createFileRoute("/extension")({
   head: () => ({
@@ -145,9 +153,31 @@ const EXTENSION_PANELS = [
   },
 ] as const;
 
-function ExtensionTokenButton() {
+// Exported for unit tests — the create-token path used to swallow clipboard failures and report
+// false success (#6824). Keeping the button extractable lets the regression suite drive it without
+// mounting the full marketing page / router.
+export function ExtensionTokenButton() {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const copyToken = async (value: string, { created }: { created: boolean }) => {
+    try {
+      await writeClipboardText(value);
+      toast.success(created ? "Extension token created" : "Extension token copied", {
+        description: created
+          ? "Copied to clipboard."
+          : "The token is ready to paste into the extension.",
+      });
+    } catch {
+      // Match the app.runs / CodeBlock copy-fail channel: never claim success when writeText rejected.
+      toast.error("Couldn't copy extension token", {
+        description: created
+          ? "Token was created — use the Copy button next to it, or select the token and copy manually."
+          : "Select the token and copy it manually.",
+      });
+    }
+  };
+
   return (
     <div className="flex max-w-full flex-col gap-2">
       <button
@@ -175,17 +205,29 @@ function ExtensionTokenButton() {
             return;
           }
           setToken(result.data.token);
-          await navigator.clipboard?.writeText(result.data.token).catch(() => undefined);
-          toast.success("Extension token created", { description: "Copied to clipboard." });
+          await copyToken(result.data.token, { created: true });
         }}
         className="inline-flex items-center gap-2 rounded-token border border-border bg-transparent px-4 py-2 text-token-sm font-medium hover:border-foreground/30 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {busy ? "Creating token…" : "Create extension token"}
       </button>
       {token && (
-        <code className="max-w-[320px] truncate rounded-token border border-border bg-background/60 px-2 py-1 font-mono text-token-2xs text-muted-foreground">
-          {token}
-        </code>
+        <div className="flex max-w-full items-center gap-1.5">
+          <code
+            data-testid="extension-token-value"
+            className="max-w-[320px] truncate rounded-token border border-border bg-background/60 px-2 py-1 font-mono text-token-2xs text-muted-foreground"
+          >
+            {token}
+          </code>
+          <button
+            type="button"
+            aria-label="Copy extension token"
+            onClick={() => void copyToken(token, { created: false })}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-token border border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+          >
+            <Copy className="size-3.5" aria-hidden />
+          </button>
+        </div>
       )}
     </div>
   );

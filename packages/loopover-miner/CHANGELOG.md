@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.1.1](https://github.com/JSONbored/loopover/compare/miner-v3.1.0...miner-v3.1.1) (2026-07-17)
+
+
+### Fixes
+
+* **miner:** bound oauth-device-flow.js's GitHub fetches with a request timeout ([cd9aedf](https://github.com/JSONbored/loopover/commit/cd9aedf7cceb45146302158225193bb963ab4eca))
+* **miner:** fail closed when a chat-action handler throws ([8ba48bd](https://github.com/JSONbored/loopover/commit/8ba48bd707dcf002a31991ac434be8cd6a7822d8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.0.0 to ^3.2.1
+
 ## [3.1.0](https://github.com/JSONbored/loopover/compare/miner-v3.0.0...miner-v3.1.0) (2026-07-17)
 
 

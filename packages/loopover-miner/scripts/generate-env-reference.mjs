@@ -10,6 +10,10 @@ export const DEFAULT_SOURCE_ROOTS = [
   "packages/loopover-miner/bin",
   "packages/loopover-miner/lib",
   "packages/loopover-miner/scripts",
+  // The coding-agent driver (MINER_CODING_AGENT_* vars) lives in the shared engine package, not under
+  // packages/loopover-miner itself -- scoped narrowly to src/miner so this doesn't pull in unrelated
+  // packages/loopover-engine env vars that belong to a different generator/doc.
+  "packages/loopover-engine/src/miner",
 ];
 
 const MINER_ENV_PREFIXES = ["LOOPOVER_MINER_", "MINER_"];

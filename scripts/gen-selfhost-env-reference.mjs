@@ -104,7 +104,13 @@ function isStaticEnvHelperCall(node) {
 // isStaticEnvHelperCall above (envString) because these take the var NAME as arg[0], not arg[1] after a
 // container.
 const PROCESS_ENV_NAME_HELPERS = new Set(["parsePositiveIntEnv"]);
-const ENV_NAME_LITERAL_ARG_HELPERS = new Map([["resolveLocalStoreDbPath", 1]]);
+const ENV_NAME_LITERAL_ARG_HELPERS = new Map([
+  ["resolveLocalStoreDbPath", 1],
+  // createCliProvider(command, modelEnvKey, options, env) (packages/loopover-engine/src/miner/driver-factory.ts)
+  // reads env[modelEnvKey] -- a computed access AST-invisible without this, since modelEnvKey is a parameter,
+  // not a literal at the read site. The literal var name is only visible at the CALL site (arg index 1).
+  ["createCliProvider", 1],
+]);
 
 function isProcessEnvNameHelperCall(node) {
   return (

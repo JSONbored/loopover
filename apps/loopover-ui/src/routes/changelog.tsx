@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Rss } from "lucide-react";
 
 import { Section, Eyebrow, Card } from "@/components/site/primitives";
+import { ErrorState, LoadingState } from "@/components/site/state-views";
 import { cn } from "@/lib/utils";
 import {
   MCP_PACKAGE_NAME,
@@ -37,8 +38,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
-function Changelog() {
-  const { data, isLoading, isError } = useMcpPackageMetadata();
+export function Changelog() {
+  const { data, isLoading, isError, refetch } = useMcpPackageMetadata();
   const latestVersion = getLatestMcpVersion(data);
 
   const sortedVersions = data
@@ -81,14 +82,14 @@ function Changelog() {
 
       <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_200px]">
         <div className="space-y-4">
-          {isLoading && (
-            <div className="text-token-sm text-muted-foreground">Loading from npm…</div>
-          )}
+          {isLoading && <LoadingState title="Loading from npm…" />}
           {isError && (
             <Card>
-              <div className="text-token-sm text-muted-foreground">
-                Could not reach the npm registry. Try again later.
-              </div>
+              <ErrorState
+                title="Could not reach the npm registry"
+                description="The npm registry didn't respond. This can happen during brief outages."
+                onRetry={() => void refetch()}
+              />
             </Card>
           )}
           {sortedVersions.map((v) => {

@@ -537,9 +537,12 @@ review:
   # blockers -- it can never change the merge/close disposition.
   # memory: false
 
-  # Display-only floor for inline AI findings (`critical` | `major` | `minor` | `nitpick`). Findings below the
-  # configured level are suppressed from inline comments — never from gate blockers. Default: null (show all).
-  # min_finding_severity: major
+  # Display-only floor for inline AI findings. Findings below the configured level are suppressed from inline
+  # comments — never from gate blockers. Default: null (show all). NOTE: inline findings currently occupy only
+  # two of the four severity tiers — `blocker` (ranked `critical`) and `nit` (ranked `nitpick`) — so only two
+  # floors are actually distinguishable: `critical` shows blockers only, and `nitpick` shows everything. `major`
+  # and `minor` behave identically to `critical` (blocker-only) today, NOT an intermediate level.
+  # min_finding_severity: critical
 
   # Display-only caps on how many blocker/nit lines render in the unified comment (#2049).
   # Never removes a blocker from the gate decision — truncation applies to display only.

@@ -141,6 +141,7 @@ import {
 } from "../signals/engine";
 import { PUBLIC_SURFACE_SKIP_REASONS, skippedPrAuditRemediation, type PublicSurfaceSkipReason } from "../signals/settings-preview";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
+import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { computeLocalScorerTokens } from "../signals/local-scorer";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
@@ -3762,18 +3763,10 @@ export class LoopoverMcp {
 
   private async prOutcomes(login: string, limit?: number): Promise<ToolPayload> {
     this.requireContributorAccess(login);
-    const deliveries = await listNotificationDeliveriesForRecipient(this.env, login, { eventType: "pull_request_merged", limit: limit ?? 50 });
-    const outcomes = deliveries.map((delivery) => ({
-      repoFullName: delivery.repoFullName,
-      pullNumber: delivery.pullNumber,
-      outcome: "merged" as const,
-      attribution: delivery.body,
-      deeplink: delivery.deeplink,
-      recordedAt: delivery.createdAt,
-    }));
+    const result = await buildContributorPrOutcomes(this.env, login, limit);
     return {
-      summary: `LoopOver post-merge outcomes for ${login}: ${outcomes.length} merged PR(s).`,
-      data: { login: login.toLowerCase(), count: outcomes.length, outcomes } as unknown as Record<string, unknown>,
+      summary: `LoopOver post-merge outcomes for ${login}: ${result.count} merged PR(s).`,
+      data: result as unknown as Record<string, unknown>,
     };
   }
 

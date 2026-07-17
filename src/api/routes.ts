@@ -269,6 +269,7 @@ import {
 } from "../signals/extension-contributor-context";
 import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, buildRepoDataQuality, buildSignalFidelity } from "../signals/data-quality";
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
+import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildIssueSlopAssessment, ISSUE_SLOP_RUBRIC_MARKDOWN } from "../signals/issue-slop";
@@ -3294,6 +3295,25 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
     return c.json(await buildContributorOpenPrMonitor(c.env, login));
+  });
+
+  // #6747: REST mirror of the loopover_pr_outcome MCP tool, bringing a contributor's own post-merge outcome
+  // history to the same /v1/contributors/:login/... family its open-pr-monitor sibling (directly above) already
+  // has. Self-scoped via requireContributorAccess -- only the authenticated login's outcomes -- and delegating
+  // to the same buildContributorPrOutcomes builder the tool and CLI call, so all three surfaces return one
+  // identical payload. `limit` mirrors the tool's bound (1..100); a malformed value is rejected, not clamped.
+  app.get("/v1/contributors/:login/pr-outcomes", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const limitParam = c.req.query("limit");
+    let limit: number | undefined;
+    if (limitParam !== undefined) {
+      const parsed = Number(limitParam);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) return c.json({ error: "invalid_limit" }, 400);
+      limit = parsed;
+    }
+    return c.json(await buildContributorPrOutcomes(c.env, login, limit));
   });
 
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {

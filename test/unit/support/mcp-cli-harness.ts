@@ -308,6 +308,10 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ ...openPrMonitorFixture(), ...(options.openPrMonitor ?? {}) }));
       return;
     }
+    if (request.url?.split("?")[0] === "/v1/contributors/JSONbored/pr-outcomes" && request.method === "GET") {
+      response.end(JSON.stringify(prOutcomesFixture()));
+      return;
+    }
     if (request.url === "/v1/contributors/JSONbored/repos/JSONbored/gittensory/decision" && request.method === "GET") {
       if (options.repoDecisionStatus && options.repoDecisionStatus >= 400) {
         response.statusCode = options.repoDecisionStatus;
@@ -794,6 +798,24 @@ export function openPrMonitorFixture() {
         summary: "CI is red on this PR.",
         reasons: ["1 check is failing."],
         nextSteps: ["Fix the failing check, then push."],
+      },
+    ],
+  };
+}
+
+/** Mirrors the ContributorPrOutcomes shape src/signals/contributor-pr-outcomes.ts returns. */
+export function prOutcomesFixture() {
+  return {
+    login: "jsonbored",
+    count: 1,
+    outcomes: [
+      {
+        repoFullName: "JSONbored/gittensory",
+        pullNumber: 42,
+        outcome: "merged",
+        attribution: "Your pull request JSONbored/gittensory#42 merged. Merged contributions strengthen your standing on JSONbored/gittensory.",
+        deeplink: "https://github.com/JSONbored/gittensory/pull/42",
+        recordedAt: "2026-06-01T00:00:00.000Z",
       },
     ],
   };

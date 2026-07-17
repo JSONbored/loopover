@@ -421,6 +421,13 @@ const loginShape = {
   login: z.string().min(1),
 };
 
+// #6747: mirrors prOutcomeShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and the REST
+// route all accept an identical payload (login + the optional 1..100 limit).
+const prOutcomeShape = {
+  login: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),
+};
+
 const loginRepoShape = {
   login: z.string().min(1),
   owner: z.string().min(1),
@@ -1123,6 +1130,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "discovery",
     description:
       "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
+  },
+  {
+    name: "loopover_pr_outcome",
+    category: "discovery",
+    description:
+      "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
   },
   {
     name: "loopover_compare_pr_variants",
@@ -2026,6 +2039,20 @@ registerStdioTool(
   async ({ login }) => {
     const payload = await getOpenPrMonitor(login);
     return toolResult(openPrMonitorToolSummary(login, payload), payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_pr_outcome",
+  {
+    description: stdioToolDescription("loopover_pr_outcome"),
+    inputSchema: prOutcomeShape,
+  },
+  // #6747: proxies GET /v1/contributors/:login/pr-outcomes — the same self-scoped history the remote MCP tool
+  // returns and the same buildContributorPrOutcomes builder both call, so the CLI, tool, and route never drift.
+  async ({ login, limit }) => {
+    const payload = await getPrOutcomes(login, limit);
+    return toolResult(`LoopOver post-merge outcomes for ${login}: ${payload?.count ?? 0} merged PR(s).`, payload);
   },
 );
 
@@ -5359,6 +5386,12 @@ function repoDecisionToolSummary(login, repoFullName, payload) {
 
 function getOpenPrMonitor(login) {
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/open-pr-monitor`);
+}
+
+// #6747: the contributor's own post-merge outcome history — the REST mirror of loopover_pr_outcome.
+function getPrOutcomes(login, limit) {
+  const query = typeof limit === "number" ? `?limit=${encodeURIComponent(limit)}` : "";
+  return apiGet(`/v1/contributors/${encodeURIComponent(login)}/pr-outcomes${query}`);
 }
 
 // Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP

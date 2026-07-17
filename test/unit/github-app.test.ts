@@ -28,6 +28,8 @@ import type { Advisory } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 import { getInstallation, listLatestGitHubRateLimitObservations, upsertInstallation } from "../../src/db/repositories";
 import { clockSkewSecondsSample, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
+import { createRedisTokenCache } from "../../src/selfhost/redis-token-cache";
+import type { Redis } from "ioredis";
 
 beforeEach(() => {
   clearInstallationTokenCacheForTest();
@@ -2712,6 +2714,32 @@ describe("self-host Redis token store + GitHub GET response cache", () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
     await expect(getAppInstallation(env, 99)).rejects.toThrow();
     expect(store.size).toBe(0); // non-200 not cached
+  });
+
+  it("REGRESSION (#6999): a Redis write failure never fails an otherwise-successful token mint", async () => {
+    // The real createRedisTokenCache implementation (not a hand-rolled store), wired to a Redis stand-in whose
+    // set() always throws -- pins that the fail-open fix actually reaches createInstallationToken's uncaught
+    // writeCachedToken call, not just the unit-level contract on redis-token-cache.ts's own set().
+    const throwingRedis = {
+      get: async () => null,
+      set: async () => {
+        throw new Error("connection refused");
+      },
+    } as unknown as Redis;
+    setInstallationTokenStore(createRedisTokenCache(throwingRedis));
+    const privateKey = await generatePrivateKeyPem();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString().includes("/access_tokens")) {
+        return Response.json({
+          token: "minted-despite-cache-failure",
+          expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    await expect(createInstallationToken(env, 888)).resolves.toBe("minted-despite-cache-failure");
   });
 });
 

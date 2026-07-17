@@ -198,8 +198,8 @@ function OverlayDemo() {
       {/* faux github header */}
       <div className="rounded-token border border-border bg-[oklch(0.18_0.005_260)]">
         <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-token-xs text-muted-foreground">
-          <span className="size-2 rounded-full bg-[oklch(0.7_0.18_25)]/60" />
-          <span className="size-2 rounded-full bg-[oklch(0.8_0.15_85)]/60" />
+          <span className="size-2 rounded-full bg-danger/60" />
+          <span className="size-2 rounded-full bg-warning/60" />
           <span className="size-2 rounded-full bg-success/60" />
           <span className="ml-2 truncate font-mono text-token-2xs">
             github.com/jsonbored/loopover/pull/1218

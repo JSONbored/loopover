@@ -895,6 +895,13 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, no GitHub writes.",
   },
   {
+    // #6734: mirrors the remote server's own loopover_get_repo_outcome_patterns descriptor verbatim, so the two
+    // surfaces describe the same tool identically rather than drifting into two wordings of one thing.
+    name: "loopover_get_repo_outcome_patterns",
+    category: "maintainer",
+    description: "Return cached or freshly-computed per-repo accepted/rejected PR outcome patterns: what maintainers actually merge or close, separated from maintainer-lane activity, with a freshness marker and explicit evidence-completeness.",
+  },
+  {
     name: "loopover_get_pr_ai_review_findings",
     category: "review",
     description:
@@ -1345,6 +1352,22 @@ registerStdioTool(
   async ({ owner, repo, number }) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
+  },
+);
+
+// #6734: CLI mirror of the remote server's loopover_get_repo_outcome_patterns. The route is the single source
+// of truth (GET /v1/repos/:owner/:repo/outcome-patterns delegates to the same getRepoOutcomePatterns the MCP
+// server uses); this tool only proxies it, so the two surfaces cannot compute different answers. The route is
+// public/unauthenticated, so — unlike the maintainer tools above — there is nothing to scope here.
+registerStdioTool(
+  "loopover_get_repo_outcome_patterns",
+  {
+    description: stdioToolDescription("loopover_get_repo_outcome_patterns"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver repo outcome patterns.", await apiGet(`${prefix}/outcome-patterns`));
   },
 );
 

@@ -468,6 +468,20 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true, ...(body.autonomy ? { autonomy: body.autonomy } : {}) }));
       return;
     }
+    // #6734 repo outcome patterns (public/unauthenticated, read-only). Mirrors the route's real payload shape:
+    // accepted/rejected pattern buckets plus the freshness + evidence-completeness markers.
+    if (request.url?.startsWith("/v1/repos/owner/repo/outcome-patterns") && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          freshness: { computedAt: "2026-05-30T00:00:00.000Z", stale: false },
+          evidenceComplete: true,
+          accepted: [{ pattern: "small, single-purpose diffs with a linked issue", support: 12 }],
+          rejected: [{ pattern: "unlinked drive-by refactors", support: 4 }],
+        }),
+      );
+      return;
+    }
     // #554 gate precision telemetry (read-only). Echoes ?windowDays so the CLI window pass-through is testable.
     if (request.url?.startsWith("/v1/repos/owner/repo/gate-precision") && request.method === "GET") {
       const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");

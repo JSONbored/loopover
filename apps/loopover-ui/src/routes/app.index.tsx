@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { StatusPill } from "@/components/site/control-primitives";
@@ -494,7 +495,7 @@ function OnboardingChecklist() {
   );
 }
 
-function SparkStat({
+export function SparkStat({
   label,
   value,
   hint,
@@ -518,10 +519,10 @@ function SparkStat({
         aria-label={`Loading ${label}`}
         className="rounded-token border-hairline bg-card p-4"
       >
-        <div className="h-3 w-24 animate-pulse rounded bg-muted/40 motion-reduce:animate-none" />
+        <Skeleton className="h-3 w-24" />
         <div className="mt-3 flex items-end justify-between gap-3">
-          <div className="h-7 w-16 animate-pulse rounded bg-muted/40 motion-reduce:animate-none" />
-          <div className="h-10 w-24 animate-pulse rounded bg-muted/30 motion-reduce:animate-none" />
+          <Skeleton className="h-7 w-16" />
+          <Skeleton className="h-10 w-24" />
         </div>
       </div>
     );

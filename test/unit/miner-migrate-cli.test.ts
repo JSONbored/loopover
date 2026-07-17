@@ -14,7 +14,7 @@ import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "../../pac
 
 const roots: string[] = [];
 
-function tempEnv() {
+function tempEnv(): NodeJS.ProcessEnv {
   const root = mkdtempSync(join(tmpdir(), "loopover-miner-migrate-"));
   roots.push(root);
   return { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };

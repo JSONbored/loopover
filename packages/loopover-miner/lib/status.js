@@ -21,6 +21,10 @@ import { resolvePortfolioQueueDbPath } from "./portfolio-queue.js";
 import { resolveClaimLedgerDbPath } from "./claim-ledger.js";
 import { resolveRunStateDbPath } from "./run-state.js";
 import { resolvePlanStoreDbPath } from "./plan-store.js";
+import { resolveGovernorStateDbPath } from "./governor-state.js";
+import { resolveAttemptLogDbPath } from "./attempt-log.js";
+import { resolveReplaySnapshotDbPath } from "./replay-snapshot.js";
+import { resolveWorktreeAllocatorDbPath } from "./worktree-allocator.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
@@ -297,7 +301,8 @@ function checkStateDirWritable(stateDir) {
 }
 
 /** Per-store `PRAGMA integrity_check` sweep for `doctor` (#4834) — flags a corrupted store instead of probing
- *  only one with `SELECT 1`. A store file that does not exist yet is healthy by absence. */
+ *  only one with `SELECT 1`. A store file that does not exist yet is healthy by absence. Keep in sync with
+ *  migrate-cli.js's `STORES` list (#6768): every durable local SQLite store using resolveLocalStoreDbPath. */
 function storeIntegrityChecks(env) {
   const stores = [
     ["event-ledger", resolveEventLedgerDbPath(env)],
@@ -307,6 +312,10 @@ function storeIntegrityChecks(env) {
     ["claim-ledger", resolveClaimLedgerDbPath(env)],
     ["run-state", resolveRunStateDbPath(env)],
     ["plan-store", resolvePlanStoreDbPath(env)],
+    ["governor-state", resolveGovernorStateDbPath(env)],
+    ["attempt-log", resolveAttemptLogDbPath(env)],
+    ["replay-snapshot", resolveReplaySnapshotDbPath(env)],
+    ["worktree-allocator", resolveWorktreeAllocatorDbPath(env)],
   ];
   return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
 }

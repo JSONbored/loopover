@@ -43,13 +43,34 @@ export type CodingAgentDriverName = (typeof CODING_AGENT_DRIVER_NAMES)[number];
  *  misleading config-as-code surface. Deliberately NOT declared: a max-turns key (the turn budget is task-level
  *  input — `CodingAgentDriverTask.maxTurns` — set by the orchestrator per attempt, not per-provider config) and
  *  an agent-sdk model key (the SDK session uses the account/CLI default; it exposes no model option on the
- *  driver today). */
+ *  driver today). A CLI provider's own credential env is NOT declared here either — it is not a per-provider
+ *  "companion var" an operator sets, and this map's one-kind-to-one-env-var-NAME shape is relied on by generic
+ *  consumers (`init-wizard.js`'s `promptCompanionVars`); see `CODING_AGENT_CLI_CREDENTIAL_ENV` below. */
 export const CODING_AGENT_DRIVER_CONFIG_ENV: Readonly<Record<CodingAgentDriverName, { model?: string; timeoutMs?: string }>> =
   Object.freeze({
     noop: {},
     "claude-cli": { model: "MINER_CODING_AGENT_CLAUDE_MODEL", timeoutMs: "MINER_CODING_AGENT_TIMEOUT_MS" },
     "codex-cli": { model: "MINER_CODING_AGENT_CODEX_MODEL", timeoutMs: "MINER_CODING_AGENT_TIMEOUT_MS" },
     "agent-sdk": {},
+  });
+
+/** The credential env var each CLI provider authenticates with, in preference order (#6875). Kept OUT of
+ *  `CODING_AGENT_DRIVER_CONFIG_ENV` deliberately: that map's contract is one `kind -> single env var NAME`, and
+ *  its generic consumers rely on it — `init-wizard.js`'s `promptCompanionVars` iterates its entries and prompts
+ *  once per value, so a list-valued entry there renders as
+ *  `Optional undefined for claude-cli (env CLAUDE_CODE_OAUTH_TOKEN,ANTHROPIC_API_KEY)` and writes a junk .env
+ *  line if answered. These are also not "companion vars" an operator sets per provider — they are the upstream
+ *  CLI's own credential, which is why they are declared here instead.
+ *
+ *  Keyed by the CLI `command` rather than the driver name because only the two spawning providers have one:
+ *  `agent-sdk` authenticates in-process and `noop` runs nothing, so neither can appear here, and the lookup is
+ *  total (no unreachable fallback branch). Order is preference order — the first configured key wins, mirroring
+ *  `firstConfiguredEnvValue`. Not a REQUIREMENT: `isConfiguredCodingAgentDriver` treats CLI providers as
+ *  locally-authenticated, so a credential persisted under `HOME` is the equally-valid other path. */
+export const CODING_AGENT_CLI_CREDENTIAL_ENV: Readonly<Record<"claude" | "codex", readonly string[]>> =
+  Object.freeze({
+    claude: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+    codex: ["OPENAI_API_KEY", "CODEX_ACCESS_TOKEN"],
   });
 
 /** `firstConfigured` (src/selfhost/ai.ts:117-134) pattern: a set-and-non-empty env value, else undefined. */
@@ -144,6 +165,22 @@ function buildCliArgsWithConfiguredModel(
   };
 }
 
+/** Resolve the ONE credential the selected CLI actually authenticates with, as a `{key: value}` overlay for the
+ *  driver's `env` (#6875). Returns `{}` when none is configured — a CLI provider is locally-authenticated, so a
+ *  credential persisted under `HOME` is the equally-valid other path and an absent key must not fail closed
+ *  here. Only the FIRST configured key of that command's own list is returned: forwarding every credential an
+ *  operator happens to have exported would hand a prompt-injectable subprocess keys it has no use for. */
+function resolveProviderCredentialEnv(
+  command: "claude" | "codex",
+  env: Record<string, string | undefined>,
+): Record<string, string> {
+  for (const key of CODING_AGENT_CLI_CREDENTIAL_ENV[command]) {
+    const value = firstConfiguredEnvValue(env[key]);
+    if (value !== undefined) return { [key]: value };
+  }
+  return {};
+}
+
 function createCliProvider(
   command: "claude" | "codex",
   modelEnvKey: string,
@@ -164,13 +201,27 @@ function createCliProvider(
   const model = firstConfiguredEnvValue(env[modelEnvKey]);
   const timeoutMs = configuredTimeoutMs(env);
   const buildArgs = buildCliArgsWithConfiguredModel(command, model);
+  // The credential rides in as the driver's `env` OVERLAY rather than as an allowlist entry (#6875). This is
+  // the pattern `createClaudeCodeAi` (src/selfhost/ai.ts) already uses for the REVIEWER CLI, for the reason
+  // stated there verbatim: threaded "explicitly here ... rather than widening SUBSCRIPTION_CLI_ENV_ALLOWLIST
+  // itself (which also gates the codex subprocess and should stay minimal)". Identical logic applies here --
+  // the allowlist is shared and provider-agnostic, so putting credential names in it would hand codex's key to
+  // a claude subprocess and vice versa. Resolving the overlay per provider is what keeps this least-privilege.
+  // `buildAllowlistedEnv` applies `extra` last, so it wins over any allowlisted parent value.
+  const credentialEnv = resolveProviderCredentialEnv(command, env);
+  // Anything we deliberately hand the child must also be redactable out of anything the child says back: the
+  // subprocess is prompt-injectable, and its stdout becomes a stored transcript and an error detail. The driver
+  // already redacts `knownSecrets` from both -- it just never had this value to redact. Merged with (not
+  // replacing) a caller's own list.
+  const knownSecrets = [...(options.knownSecrets ?? []), ...Object.values(credentialEnv)];
   return createCliSubprocessCodingAgentDriver({
     command,
     spawn: options.spawn,
     parentEnv: env,
+    ...(Object.keys(credentialEnv).length > 0 ? { env: credentialEnv } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(buildArgs !== undefined ? { buildArgs } : {}),
-    ...(options.knownSecrets !== undefined ? { knownSecrets: options.knownSecrets } : {}),
+    ...(knownSecrets.length > 0 ? { knownSecrets } : {}),
   });
 }
 

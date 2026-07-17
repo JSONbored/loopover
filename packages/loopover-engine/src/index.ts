@@ -353,6 +353,7 @@ export {
   type LintGuardSpawnFn,
 } from "./miner/lint-guard.js";
 export {
+  CODING_AGENT_CLI_CREDENTIAL_ENV,
   CODING_AGENT_DRIVER_CONFIG_ENV,
   CODING_AGENT_DRIVER_NAMES,
   createCodingAgentDriver,

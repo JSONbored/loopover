@@ -136,10 +136,20 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
     expect(env.HOME).toBe("/tmp/isolated-agent-home");
     expect(env.PATH).toBe("/usr/bin");
     expect(env.AGENT_SESSION_HANDLE).toBe("provided-by-caller");
+    // The actual invariant this case exists to defend, and it is unchanged: an arbitrary runtime var from the
+    // parent env never reaches a prompt-injectable child. Only the allowlist decides, and it is not the full env.
     expect(env.RUNTIME_ONLY_FLAG).toBeUndefined();
-    expect(env.XDG_CONFIG_HOME).toBeUndefined();
-    expect(env.XDG_DATA_HOME).toBeUndefined();
-    expect(env.XDG_STATE_HOME).toBeUndefined();
+    // The XDG paths ARE forwarded now (#6875). This case previously asserted them undefined -- that was a
+    // characterization of the driver's private, drifted allowlist rather than an invariant anyone argued for
+    // (the assertion arrived in #5362, a commit about deriving SDK changed files from git, with no rationale;
+    // the private list itself dates to the #5743 mechanical rename). `claude`/`codex` resolve their persisted
+    // credential under HOME/XDG_CONFIG_HOME, so withholding these is precisely what made every spawned agent
+    // answer "Not logged in · Please run /login". They are config PATHS, not credentials: the name of this case
+    // still holds -- the allowlisted parent copy carries no runtime secret, and a credential still arrives only
+    // via an explicit overlay.
+    expect(env.XDG_CONFIG_HOME).toBe("/home/miner/.config");
+    expect(env.XDG_DATA_HOME).toBe("/home/miner/.local/share");
+    expect(env.XDG_STATE_HOME).toBe("/home/miner/.local/state");
   });
 
   it("redacts known secret values and honors a custom argv builder", async () => {

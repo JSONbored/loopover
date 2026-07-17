@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { buildPublicPrBodyDraft } from "@loopover/engine";
+import { buildPublicPrBodyDraft } from "../../packages/loopover-engine/src/pr-body-draft";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

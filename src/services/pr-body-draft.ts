@@ -1,9 +1,10 @@
 // #6741: buildPublicPrBodyDraft moved to @loopover/engine so the CLI stdio mirror can share it.
-// This file is a thin re-export preserving every existing import path (MCP server, unit tests).
+// Re-export from the engine SOURCE path (not the published dist) so vitest/Codecov attribute
+// coverage to packages/loopover-engine/src/pr-body-draft.ts — same pattern as src/rules/predicted-gate.ts.
 export {
   EXCLUDED_PRIVATE_PR_BODY_FIELDS,
   buildPublicPrBodyDraft,
   type PrBodyDraftSection,
   type PrBodyDraftSource,
   type PublicPrBodyDraft,
-} from "@loopover/engine";
+} from "../../packages/loopover-engine/src/pr-body-draft.js";

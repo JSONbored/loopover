@@ -743,12 +743,14 @@ export {
 } from "./local-scorer.js";
 export {
   buildPredictedGateVerdict,
+  buildGateDispositions,
   predictedGateNote,
   publicSafeFinding,
   applyContributorCalibration,
   MIN_CALIBRATION_SAMPLES,
   MAX_READINESS_ADJUSTMENT,
   type GateCheckConclusion,
+  type GateDisposition,
   type GatePolicyPack,
   type PredictedGateInput,
   type PredictedGateVerdict,

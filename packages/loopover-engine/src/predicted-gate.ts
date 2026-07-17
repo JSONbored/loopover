@@ -335,3 +335,18 @@ export function buildPredictedGateVerdict(args: {
     note: predictedGateNote(hasChangedPaths),
   };
 }
+
+/** One per-rule gate disposition (#2234 / #6740): a fired gate rule and whether it BLOCKS or is merely ADVISORY,
+ *  with the public-safe reason already computed by the predictor. */
+export type GateDisposition = { rule: string; status: "block" | "advisory"; reason: string };
+
+/** Itemize a predicted-gate verdict into per-rule dispositions (#2234 / #6740): every fired blocker is a `block`,
+ *  every warning an `advisory`, in that order. A rule that did not fire is not listed (it passed). PURE — a
+ *  read-only reshaping of what {@link buildPredictedGateVerdict} already computed; it adds no gate logic and
+ *  no decision. */
+export function buildGateDispositions(verdict: Pick<PredictedGateVerdict, "blockers" | "warnings">): GateDisposition[] {
+  return [
+    ...verdict.blockers.map((finding) => ({ rule: finding.code, status: "block" as const, reason: finding.detail })),
+    ...verdict.warnings.map((finding) => ({ rule: finding.code, status: "advisory" as const, reason: finding.detail })),
+  ];
+}

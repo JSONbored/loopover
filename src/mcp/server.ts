@@ -164,7 +164,8 @@ import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAu
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
-import { buildPredictedGateVerdict, type PredictedGateVerdict } from "../rules/predicted-gate";
+import { buildGateDispositions, buildPredictedGateVerdict, type GateDisposition, type PredictedGateVerdict } from "../rules/predicted-gate";
+export { buildGateDispositions, type GateDisposition };
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
@@ -1233,20 +1234,6 @@ const suggestBoundaryTestsOutputSchema = {
   finding: z.unknown().optional(),
   spec: z.unknown().optional(),
 };
-
-/** One per-rule gate disposition (#2234): a fired gate rule and whether it BLOCKS or is merely ADVISORY, with the
- *  public-safe reason already computed by the predictor. */
-export type GateDisposition = { rule: string; status: "block" | "advisory"; reason: string };
-
-/** Itemize a predicted-gate verdict into per-rule dispositions (#2234): every fired blocker is a `block`, every
- *  warning an `advisory`, in that order. A rule that did not fire is not listed (it passed). PURE — a read-only
- *  reshaping of what {@link buildPredictedGateVerdict} already computed; it adds no gate logic and no decision. */
-export function buildGateDispositions(verdict: Pick<PredictedGateVerdict, "blockers" | "warnings">): GateDisposition[] {
-  return [
-    ...verdict.blockers.map((finding) => ({ rule: finding.code, status: "block" as const, reason: finding.detail })),
-    ...verdict.warnings.map((finding) => ({ rule: finding.code, status: "advisory" as const, reason: finding.detail })),
-  ];
-}
 
 const explainGateDispositionOutputSchema = {
   conclusion: z.string().optional(),

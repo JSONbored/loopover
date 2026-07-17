@@ -267,3 +267,105 @@ describe("loopover-mcp loopover_predict_gate (#6150) — HTTP-backed", () => {
     expect(outcome.isError).toBe(true);
   });
 });
+
+describe("loopover-mcp loopover_explain_gate_disposition (#6740) — HTTP-backed", () => {
+  let client: Client | null = null;
+  let transport: StdioClientTransport | null = null;
+  let configDir: string | null = null;
+  let capturedRequests: Array<{ url: string; method: string; body: unknown }>;
+
+  async function connect(options: { localBranchAnalysisStatus?: number; localBranchAnalysis?: Record<string, unknown> } = {}) {
+    configDir = mkdtempSync(join(tmpdir(), "loopover-explain-gate-disposition-"));
+    capturedRequests = [];
+    const apiUrl = await startFixtureServer({
+      ...options,
+      onApiRequest: (request) => {
+        if (request.url === "/v1/local/branch-analysis") capturedRequests.push({ url: request.url, method: request.method ?? "POST", body: null });
+      },
+    });
+    transport = new StdioClientTransport({
+      command: "node",
+      args: [bin, "--stdio"],
+      env: { ...process.env, LOOPOVER_CONFIG_DIR: configDir, LOOPOVER_API_URL: apiUrl, LOOPOVER_TOKEN: "session-token", LOOPOVER_API_TIMEOUT_MS: "5000" },
+    });
+    client = new Client({ name: "explain-gate-disposition-test", version: "0.0.1" });
+    await client.connect(transport);
+  }
+
+  afterEach(async () => {
+    await client?.close().catch(() => undefined);
+    client = null;
+    transport = null;
+    await closeFixtureServer();
+    if (configDir) rmSync(configDir, { recursive: true, force: true });
+    configDir = null;
+  });
+
+  it("registers on the local stdio server", async () => {
+    await connect();
+    const names = new Set((await client!.listTools()).tools.map((t) => t.name));
+    expect(names).toContain("loopover_explain_gate_disposition");
+  });
+
+  it("proxies to /v1/local/branch-analysis then returns buildGateDispositions(predictedGate)", async () => {
+    await connect({
+      localBranchAnalysis: {
+        predictedGate: {
+          pack: "oss-anti-slop",
+          conclusion: "failure",
+          title: "Predicted gate: failure",
+          summary: "Missing linked issue.",
+          readinessScore: 40,
+          blockers: [{ code: "missing_linked_issue", title: "Missing linked issue", detail: "Link an issue." }],
+          warnings: [{ code: "missing_tests", title: "Missing tests", detail: "Add tests." }],
+        },
+      },
+    });
+    const result = await client!.callTool({
+      name: "loopover_explain_gate_disposition",
+      arguments: { login: "JSONbored", owner: "acme", repo: "widgets", title: "Add X", changedPaths: ["src/x.ts"] },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(capturedRequests).toHaveLength(1);
+    expect(capturedRequests[0]!.url).toBe("/v1/local/branch-analysis");
+    const data = structured(result);
+    expect(data).toEqual({
+      conclusion: "failure",
+      pack: "oss-anti-slop",
+      dispositions: [
+        { rule: "missing_linked_issue", status: "block", reason: "Link an issue." },
+        { rule: "missing_tests", status: "advisory", reason: "Add tests." },
+      ],
+    });
+  });
+
+  it("matches loopover_predict_gate's predictedGate dispositions for identical input (parity)", async () => {
+    await connect();
+    const args = { login: "JSONbored", owner: "acme", repo: "widgets", title: "Add X", changedPaths: ["src/x.ts"] };
+    const predicted = structured(await client!.callTool({ name: "loopover_predict_gate", arguments: args }));
+    const explained = structured(await client!.callTool({ name: "loopover_explain_gate_disposition", arguments: args }));
+    expect(explained.conclusion).toBe(predicted.conclusion);
+    expect(explained.pack).toBe(predicted.pack);
+    expect(explained.dispositions).toEqual([]);
+  });
+
+  it("surfaces an API failure as a tool error", async () => {
+    await connect({ localBranchAnalysisStatus: 503 });
+    const result = await client!.callTool({
+      name: "loopover_explain_gate_disposition",
+      arguments: { login: "JSONbored", owner: "acme", repo: "widgets", title: "Add X" },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/503/);
+  });
+
+  it("rejects a missing required field (zod input-schema validation)", async () => {
+    await connect();
+    const outcome = await client!.callTool({ name: "loopover_explain_gate_disposition", arguments: { login: "JSONbored", owner: "acme", repo: "widgets" } }).then(
+      (r) => ({ threw: false, isError: Boolean(r.isError) }),
+      () => ({ threw: true, isError: true }),
+    );
+    expect(outcome.isError).toBe(true);
+  });
+});
+

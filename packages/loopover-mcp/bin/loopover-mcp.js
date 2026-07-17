@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { buildFeasibilityVerdict, buildPrTextLint } from "@loopover/engine";
+import { buildFeasibilityVerdict, buildGateDispositions, buildPrTextLint } from "@loopover/engine";
 // #6149: the miner write-tools are PURE local-execution spec builders (loopover never performs the write);
 // registering them locally is just importing the same engine builders the remote server uses.
 import {
@@ -1041,6 +1041,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Predict the LoopOver gate outcome for a planned PR before any local code exists — the same advisory + gate evaluation the maintainer pipeline runs, using only the repo's public .loopover.yml policy. Takes login, owner, repo, title, and optional body/labels/linkedIssues/changedPaths. Metadata-only, no source upload.",
   },
   {
+    name: "loopover_explain_gate_disposition",
+    category: "review",
+    description: "Explain WHY the LoopOver gate would pass or block a planned PR: the itemized per-rule dispositions (which specific gate rules block vs advise, and why) behind loopover_predict_gate's verdict. Read-only reasoning surface from the repo's PUBLIC .loopover.yml only — no merge/close decision. Metadata-only, no source upload.",
+  },
+  {
     name: "loopover_preflight_local_diff",
     category: "branch",
     description: "Inspect local git diff metadata and run LoopOver preflight without uploading source contents.",
@@ -1766,6 +1771,35 @@ registerStdioTool(
     };
     const result = await apiPost("/v1/local/branch-analysis", body);
     return toolResult(`LoopOver predicted gate for ${input.owner}/${input.repo}.`, result.predictedGate);
+  },
+);
+
+registerStdioTool(
+  "loopover_explain_gate_disposition",
+  {
+    description: stdioToolDescription("loopover_explain_gate_disposition"),
+    inputSchema: predictGateShape,
+  },
+  // #6740: same metadata-only /v1/local/branch-analysis proxy as loopover_predict_gate, then the shared
+  // buildGateDispositions reshape from @loopover/engine — identical to the remote MCP tool's output shape.
+  async (input) => {
+    const body = {
+      login: input.login,
+      repoFullName: `${input.owner}/${input.repo}`,
+      title: input.title,
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.labels !== undefined ? { labels: input.labels } : {}),
+      ...(input.linkedIssues !== undefined ? { linkedIssues: input.linkedIssues } : {}),
+      ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path) => ({ path })) } : {}),
+    };
+    const result = await apiPost("/v1/local/branch-analysis", body);
+    const predictedGate = result.predictedGate;
+    const dispositions = buildGateDispositions(predictedGate);
+    return toolResult(`LoopOver gate disposition for ${input.owner}/${input.repo}.`, {
+      conclusion: predictedGate.conclusion,
+      pack: predictedGate.pack,
+      dispositions,
+    });
   },
 );
 

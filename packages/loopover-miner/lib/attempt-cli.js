@@ -513,23 +513,33 @@ export async function runAttempt(args, options = {}) {
     claimedIssue = true;
 
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
-    const result = await runAttemptPipeline(
-      {
-        loopInput,
-        issueNumber: parsed.issueNumber,
-        minerLogin: parsed.minerLogin,
-        base: parsed.base,
-        killSwitchScope,
-        slopThreshold: amsPolicy.spec.slopThreshold,
-        submissionMode: amsPolicy.spec.submissionMode,
-        governor,
-      },
-      {
-        ...deps,
-        shouldAbort,
-        resolveKillSwitchScope: () => resolveLiveKillSwitch().scope,
-      },
-    );
+    let result;
+    try {
+      result = await runAttemptPipeline(
+        {
+          loopInput,
+          issueNumber: parsed.issueNumber,
+          minerLogin: parsed.minerLogin,
+          base: parsed.base,
+          killSwitchScope,
+          slopThreshold: amsPolicy.spec.slopThreshold,
+          submissionMode: amsPolicy.spec.submissionMode,
+          governor,
+        },
+        {
+          ...deps,
+          shouldAbort,
+          resolveKillSwitchScope: () => resolveLiveKillSwitch().scope,
+        },
+      );
+    } catch (error) {
+      // A real attempt that CRASHED is exactly the case that most needs its worktree kept for post-mortem
+      // inspection, so record the failure explicitly before unwinding. Without this, `attemptOk` stayed
+      // `undefined` and the finally block's `?? true` default (meant for the earlier blocked paths that never
+      // ran anything in the worktree) deleted it -- inverting shouldRetainWorktree's documented policy.
+      worktreeResult.attemptOk = false;
+      throw error;
+    }
 
     worktreeResult.attemptOk = result.outcome === "submitted";
 
@@ -670,8 +680,10 @@ export async function runAttempt(args, options = {}) {
     return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     // worktreeResult.attemptOk is set to the REAL runMinerAttempt outcome (submitted = true) once that call
-    // happens; every earlier blocked path (rejection/worktree-prep-failure/infeasible) never sets it, since
-    // nothing ran in the worktree to postmortem -- those default to `true` (nothing to retain), matching
+    // happens, and explicitly to `false` when that call THROWS -- a crashed attempt is precisely what needs a
+    // retained worktree to postmortem, so it must never fall through to the `?? true` default below. Every
+    // earlier blocked path (rejection/worktree-prep-failure/infeasible) never sets it, since nothing ran in
+    // the worktree to postmortem -- those are the cases that default to `true` (nothing to retain), matching
     // cleanupAttemptWorktree's own retention policy (a failed REAL attempt is what gets retained).
     if (worktreeResult?.ok) {
       const cleanupWorktree = options.cleanupAttemptWorktree ?? cleanupAttemptWorktree;

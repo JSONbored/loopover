@@ -1541,6 +1541,33 @@ describe("runAttempt: real claim-ledger wiring (#5393)", () => {
     expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
   });
 
+  it("REGRESSION: retains the worktree when runMinerAttempt throws — a crashed attempt is what needs post-mortem (#6759)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const cleanupAttemptWorktreeSpy = vi.fn().mockResolvedValue({ ok: true, removed: false });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        cleanupAttemptWorktree: cleanupAttemptWorktreeSpy,
+        runMinerAttempt: async () => {
+          throw new Error("boom");
+        },
+      }),
+    });
+
+    expect(exitCode).toBe(2);
+    // attemptOk MUST be false: shouldRetainWorktree(attemptOk) === !attemptOk, so a crashed attempt's
+    // worktree is retained for inspection. Before the fix, the throw skipped the `attemptOk` assignment
+    // entirely and the finally block's `?? true` default deleted exactly the worktree worth keeping.
+    expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), false);
+  });
+
   it("never claims when the attempt is blocked before feasibility is even checked (rejection-signaled)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "error").mockImplementation(() => undefined);

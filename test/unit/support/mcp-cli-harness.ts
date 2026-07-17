@@ -584,6 +584,11 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "acme/widgets", summary: "Ranked 2 scenarios.", scenarios: [{ id: "close_stale", rank: 1 }] }));
       return;
     }
+    // #6748: the improvement-potential mirror proxies here.
+    if (request.url === "/v1/lint/improvement-potential" && request.method === "POST") {
+      response.end(JSON.stringify({ improvementScore: 62, band: "moderate", findings: [{ code: "complexity_reduced", detail: "2 functions simplified." }] }));
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/pulls/7/reviewability" && request.method === "GET") {
       response.end(
         JSON.stringify({

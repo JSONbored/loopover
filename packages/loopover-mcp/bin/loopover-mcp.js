@@ -636,6 +636,36 @@ const simulateOpenPrPressureShape = {
   contributorOpenPrCount: simulateOpenPrPressureCount.optional(),
 };
 
+// #6748: mirrors checkImprovementPotentialShape in src/mcp/server.ts VERBATIM. The bin cannot import from
+// src/ (package boundary), so this is the one copy parity rests on by convention — its own tests pin that the
+// bounds the real schema enforces are enforced here too, rather than waved through to a route 400.
+const checkImprovementPotentialShape = {
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000)
+    .optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  patchCoverageDeltaPercent: z.number().optional(),
+  complexityDeltas: z
+    .array(
+      z.object({
+        file: z.string().min(1).max(400),
+        line: z.number().int().min(1),
+        name: z.string().min(1).max(400),
+        before: z.number().int().min(0),
+        after: z.number().int().min(0),
+        delta: z.number().int(),
+      }),
+    )
+    .max(2000)
+    .optional(),
+  duplicationDeltas: z
+    .array(z.object({ file: z.string().min(1).max(400), line: z.number().int().min(1), duplicateOfLine: z.number().int().min(1), lines: z.number().int().min(1) }))
+    .max(2000)
+    .optional(),
+};
+
 const checkSlopRiskShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -944,6 +974,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_slop_risk",
     category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
+  },
+  {
+    name: "loopover_check_improvement_potential",
+    category: "review",
+    description:
+      "Assess a planned change's deterministic structural-improvement potential from local diff metadata alone (no source uploaded) — reduced complexity, resolved duplication, patch-coverage delta, added test evidence. Returns improvementScore (0-100), band, and findings. The positive-axis counterpart to check_slop_risk; advisory-only, never blocks.",
   },
   {
     name: "loopover_simulate_open_pr_pressure",
@@ -1539,6 +1575,19 @@ registerStdioTool(
   // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
   // round-trip, so slop-risk self-checks work fully offline.
   (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+);
+
+// #6748: CLI mirror of the remote server's loopover_check_improvement_potential. Proxies rather than computing
+// in-process (like the boundary-tests / open-PR-pressure mirrors): buildStructuralImprovementAssessment lives
+// app-side in src/signals/improvement.ts, not in @loopover/engine, so POST /v1/lint/improvement-potential stays
+// the single source of truth for the scoring.
+registerStdioTool(
+  "loopover_check_improvement_potential",
+  {
+    description: stdioToolDescription("loopover_check_improvement_potential"),
+    inputSchema: checkImprovementPotentialShape,
+  },
+  async (input) => toolResult("LoopOver improvement-potential self-check.", await apiPost("/v1/lint/improvement-potential", input)),
 );
 
 // #6751: CLI mirror of the remote server's loopover_simulate_open_pr_pressure. Proxies rather than computing

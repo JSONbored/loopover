@@ -155,6 +155,8 @@ import {
 } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
+import { checkImprovementPotentialShape } from "../mcp/server";
+import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { simulateOpenPrPressureShape } from "../mcp/server";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { buildOpenApiSpec } from "../openapi/spec";
@@ -3290,6 +3292,19 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6748: REST mirror of the loopover_check_improvement_potential MCP tool — deterministic, rate-limit-only,
+  // pure local-metadata, the same tier as the /v1/lint/* routes it sits with. Parses with the tool's OWN
+  // exported checkImprovementPotentialShape so the two surfaces cannot diverge on accepted input, then returns
+  // the SAME field subset the tool's handler returns (improvementScore/band/findings) rather than the whole
+  // assessment, so the mirror is byte-identical to the tool rather than merely similar.
+  app.post("/v1/lint/improvement-potential", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z.object(checkImprovementPotentialShape).safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_improvement_potential_request", issues: parsed.error.issues }, 400);
+    const assessment = buildStructuralImprovementAssessment(parsed.data);
+    return c.json({ improvementScore: assessment.improvementScore, band: assessment.band, findings: assessment.findings });
   });
 
   // #6751: REST mirror of the loopover_simulate_open_pr_pressure MCP tool — deterministic, public-safe, and

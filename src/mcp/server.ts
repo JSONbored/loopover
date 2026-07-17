@@ -1139,7 +1139,9 @@ const evaluateEscalationOutputSchema = {
 // auth required — same choice as checkSlopRisk: a pure function over caller-supplied structured data with no
 // owner/repo/login to scope, and improvementScore carries no gate/blocker power (advisory-only; see
 // improvement.ts's header comment), so there is nothing to gate.
-const checkImprovementPotentialShape = {
+// #6748: exported so POST /v1/lint/improvement-potential parses with this EXACT shape rather than a second,
+// drifting copy — the REST mirror and this tool can never diverge on what they accept.
+export const checkImprovementPotentialShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
     .max(2000)

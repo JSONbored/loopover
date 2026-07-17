@@ -1720,7 +1720,7 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     claimLedger.claimIssue("acme/widgets", 99, "other-attempt");
-    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
+    const claimWithinCapSpy = vi.spyOn(claimLedger, "claimIssueWithinCap");
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -1735,7 +1735,9 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
     });
 
     expect(exitCode).toBe(11);
-    expect(claimIssueSpy).not.toHaveBeenCalled();
+    // The cap is now enforced ATOMICALLY inside claimIssueWithinCap (repo, issue, note, apiBaseUrl, cap), which
+    // returns claimed: false for the loser -- no separate listActiveClaims pre-check (#6758).
+    expect(claimWithinCapSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/), undefined, 1);
     const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
     expect(payload).toMatchObject({
       outcome: "blocked_max_concurrent_claims",
@@ -1792,8 +1794,8 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
   it("REGRESSION: proceeds when active claims are below the configured cap", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
     claimLedger.claimIssue("acme/widgets", 99, "other-attempt");
+    const claimWithinCapSpy = vi.spyOn(claimLedger, "claimIssueWithinCap");
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -1813,13 +1815,13 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
     });
 
     expect(exitCode).toBe(7);
-    expect(claimIssueSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/));
+    expect(claimWithinCapSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/), undefined, 2);
   });
 
   it("REGRESSION: proceeds with the default cap when there are zero prior active claims", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const claimIssueSpy = vi.spyOn(claimLedger, "claimIssue");
+    const claimWithinCapSpy = vi.spyOn(claimLedger, "claimIssueWithinCap");
 
     const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
       env: { MINER_CODING_AGENT_PROVIDER: "noop" },
@@ -1834,6 +1836,6 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
     });
 
     expect(exitCode).toBe(7);
-    expect(claimIssueSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/));
+    expect(claimWithinCapSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/), undefined, 1);
   });
 });

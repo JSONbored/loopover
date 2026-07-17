@@ -458,10 +458,23 @@ export async function runAttempt(args, options = {}) {
     const reputationHistory = readReputationHistory(parsed.repoFullName);
     const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput, reputationHistory);
 
-    // Real maxConcurrentClaims enforcement (#6056): the repo's .loopover-miner.yml cap is parsed and
-    // validated by resolveMinerGoalSpec above, but must be honored here before recording a new soft-claim.
-    const activeClaims = claimLedger.listActiveClaims(parsed.repoFullName);
-    if (activeClaims.length >= minerGoalSpec.spec.maxConcurrentClaims) {
+    // Real maxConcurrentClaims enforcement (#6758): the repo's .loopover-miner.yml cap is honored ATOMICALLY by
+    // the ledger's count-and-claim, not by a listActiveClaims pre-check here. The old check-then-act split -- read
+    // the count in this file, then record the claim in a separate claimLedger call -- let two sibling miner
+    // processes racing the same repo both pass a stale sub-cap count and both claim, exceeding the cap.
+    // claimIssueWithinCap fuses the count and the insert into one transaction; the loser gets `claimed: false`
+    // and is reported below rather than silently dropped. This is also the real soft-claim (#5393): once it
+    // returns claimed, a sibling process sees it via claimLedger.listActiveClaims while this attempt is in
+    // flight, it is released in `finally` on every terminal outcome (mirroring the worktree allocation slot's
+    // acquire-then-always-release), and its claimedAt feeds the post-submission conflict check further down (#4848).
+    const claimResult = claimLedger.claimIssueWithinCap(
+      parsed.repoFullName,
+      parsed.issueNumber,
+      `attempt:${attemptId}`,
+      undefined,
+      minerGoalSpec.spec.maxConcurrentClaims,
+    );
+    if (!claimResult.claimed) {
       const reason = "max_concurrent_claims_exceeded";
       attemptLog.appendAttemptLogEvent({
         eventType: "attempt_aborted",
@@ -473,7 +486,7 @@ export async function runAttempt(args, options = {}) {
           repoFullName: parsed.repoFullName,
           issueNumber: parsed.issueNumber,
           maxConcurrentClaims: minerGoalSpec.spec.maxConcurrentClaims,
-          activeClaimCount: activeClaims.length,
+          activeClaimCount: claimResult.activeClaimCount,
         },
       });
       eventLedger.appendEvent({
@@ -485,7 +498,7 @@ export async function runAttempt(args, options = {}) {
         outcome: "blocked_max_concurrent_claims",
         reason,
         maxConcurrentClaims: minerGoalSpec.spec.maxConcurrentClaims,
-        activeClaimCount: activeClaims.length,
+        activeClaimCount: claimResult.activeClaimCount,
         repoFullName: parsed.repoFullName,
         issueNumber: parsed.issueNumber,
         minerLogin: parsed.minerLogin,
@@ -497,19 +510,14 @@ export async function runAttempt(args, options = {}) {
         console.log(JSON.stringify(blockedResult, null, 2));
       } else {
         console.error(
-          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's maxConcurrentClaims cap (${minerGoalSpec.spec.maxConcurrentClaims}) is already met (${activeClaims.length} active claim(s)).`,
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: this repo's maxConcurrentClaims cap (${minerGoalSpec.spec.maxConcurrentClaims}) is already met (${claimResult.activeClaimCount} active claim(s)).`,
         );
       }
       options.onResult?.(blockedResult);
       return 11;
     }
 
-    // Real soft-claim (#5393): recorded once we've committed to a real attempt (past feasibility), so a
-    // sibling miner process on this machine sees it via claimLedger.listActiveClaims while this
-    // attempt is in flight. Released in `finally` on every terminal outcome -- mirrors the worktree
-    // allocation slot's own acquire-then-always-release pattern below. The real claimedAt this returns is
-    // ALSO this miner's own claim-time for the post-submission conflict check further down (#4848).
-    const claimRecord = claimLedger.claimIssue(parsed.repoFullName, parsed.issueNumber, `attempt:${attemptId}`);
+    const claimRecord = claimResult.claim;
     claimedIssue = true;
 
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;

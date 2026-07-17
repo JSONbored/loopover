@@ -540,6 +540,96 @@ describe("loopover-miner claim ledger (#2314)", () => {
   });
 });
 
+describe("claimIssueWithinCap: atomic per-repo concurrency cap (#6758)", () => {
+  it("records the claim when the repo is under the cap, reporting the pre-insert count", () => {
+    const ledger = tempLedger();
+    const result = ledger.claimIssueWithinCap("acme/widgets", 7, "attempt:x", undefined, 2);
+    expect(result).toMatchObject({ claimed: true, activeClaimCount: 0, maxConcurrentClaims: 2 });
+    expect(result.claim).toMatchObject({
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      status: "active",
+      note: "attempt:x",
+    });
+    expect(ledger.listActiveClaims("acme/widgets")).toHaveLength(1);
+  });
+
+  it("rejects a new claim once the repo is at the cap, without recording it", () => {
+    const ledger = tempLedger();
+    ledger.claimIssueWithinCap("acme/widgets", 1, "first", undefined, 1);
+    const result = ledger.claimIssueWithinCap("acme/widgets", 2, "second", undefined, 1);
+    expect(result).toEqual({ claimed: false, claim: null, activeClaimCount: 1, maxConcurrentClaims: 1 });
+    // The rejected issue was never written; only the winner's claim is active for the repo.
+    expect(ledger.listActiveClaims("acme/widgets").map((c) => c.issueNumber)).toEqual([1]);
+    expect(ledger.listClaims({ repoFullName: "acme/widgets" })).toHaveLength(1);
+  });
+
+  it("counts the cap PER REPO, so a different repo's active claims never block", () => {
+    const ledger = tempLedger();
+    ledger.claimIssueWithinCap("acme/other", 1, "other", undefined, 1);
+    expect(ledger.claimIssueWithinCap("acme/widgets", 2, "widgets", undefined, 1).claimed).toBe(true);
+  });
+
+  it("REGRESSION: two sibling connections to the same DB racing the cap -- only one wins (#6758)", () => {
+    // Two DatabaseSync connections to ONE file are exactly the two sibling miner PROCESSES the issue describes:
+    // SQLite's file locking treats them identically. Before the fix the count and the insert were split across
+    // attempt-cli.js and claimLedger, so both could pass a stale count. Now each claimIssueWithinCap fuses count
+    // + insert under BEGIN IMMEDIATE, so the second connection sees the first's committed claim and is rejected.
+    const root = tempRoot();
+    const dbPath = join(root, "shared-claim-ledger.sqlite3");
+    const processA = openClaimLedger(dbPath);
+    const processB = openClaimLedger(dbPath);
+    ledgers.push(processA, processB);
+
+    const resultA = processA.claimIssueWithinCap("acme/widgets", 1, "A", undefined, 1);
+    const resultB = processB.claimIssueWithinCap("acme/widgets", 2, "B", undefined, 1);
+
+    expect(resultA.claimed).toBe(true);
+    expect(resultB).toMatchObject({ claimed: false, claim: null, activeClaimCount: 1, maxConcurrentClaims: 1 });
+    // The cap holds ACROSS the two connections: exactly one active claim exists for the repo.
+    expect(processB.listActiveClaims("acme/widgets").map((c) => c.issueNumber)).toEqual([1]);
+  });
+
+  it("sweeps an orphaned claim inside the transaction to free a slot, then claims within the restored cap", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-01T00:00:00Z"));
+    const ledger = tempLedger();
+    ledger.claimIssueWithinCap("acme/widgets", 1, "stale", undefined, 1);
+    // While the first claim is fresh, a second at cap=1 is rejected.
+    expect(ledger.claimIssueWithinCap("acme/widgets", 2, "blocked", undefined, 1).claimed).toBe(false);
+    // Advance well past the 14-day expiry window: the first claim is now orphaned.
+    vi.setSystemTime(new Date("2026-08-01T00:00:00Z"));
+    const result = ledger.claimIssueWithinCap("acme/widgets", 2, "after-sweep", undefined, 1);
+    expect(result.claimed).toBe(true);
+    // The stale claim was swept to 'expired' by the same transaction; only the new claim is active.
+    expect(ledger.listActiveClaims("acme/widgets").map((c) => c.issueNumber)).toEqual([2]);
+    expect(
+      ledger.listClaims({ repoFullName: "acme/widgets", status: "expired" }).map((c) => c.issueNumber),
+    ).toEqual([1]);
+  });
+
+  it("rejects a non-integer or below-1 maxConcurrentClaims before touching the DB", () => {
+    const ledger = tempLedger();
+    expect(() => ledger.claimIssueWithinCap("acme/widgets", 1, undefined, undefined, 1.5)).toThrow(
+      "invalid_max_concurrent_claims",
+    );
+    expect(() => ledger.claimIssueWithinCap("acme/widgets", 1, undefined, undefined, 0)).toThrow(
+      "invalid_max_concurrent_claims",
+    );
+    expect(ledger.listClaims()).toEqual([]);
+  });
+
+  it("rolls the transaction back if recording throws (invalid issue), leaving the ledger clean and usable", () => {
+    const ledger = tempLedger();
+    expect(() => ledger.claimIssueWithinCap("acme/widgets", 0, "bad", undefined, 1)).toThrow(
+      "invalid_issue_number",
+    );
+    // BEGIN IMMEDIATE was rolled back: no partial write, and a subsequent claim still succeeds (no stranded txn).
+    expect(ledger.listClaims()).toEqual([]);
+    expect(ledger.claimIssueWithinCap("acme/widgets", 5, "ok", undefined, 1).claimed).toBe(true);
+  });
+});
+
 function tempRoot() {
   const root = mkdtempSync(join(tmpdir(), "loopover-miner-claim-default-"));
   roots.push(root);

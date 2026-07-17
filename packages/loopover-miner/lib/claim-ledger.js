@@ -38,6 +38,16 @@ function normalizeIssueNumber(issueNumber) {
   return issueNumber;
 }
 
+// The per-repo concurrent-claim cap the atomic count-and-claim gates on (#6758). Always an already-validated
+// positive integer from the caller's MinerGoalSpec, but re-checked here because a bad value must fail loudly
+// rather than silently disable the cap (a comparison against `undefined` is always false).
+function normalizeMaxConcurrentClaims(maxConcurrentClaims) {
+  if (!Number.isInteger(maxConcurrentClaims) || maxConcurrentClaims < 1) {
+    throw new Error("invalid_max_concurrent_claims");
+  }
+  return maxConcurrentClaims;
+}
+
 /** Optional forge host, scoping rows so two hosts serving the same owner/repo name never collide (#5563).
  *  Omitted/nullish → the github.com default, so every pre-existing single-forge caller is unaffected. */
 function normalizeApiBaseUrl(apiBaseUrl) {
@@ -168,6 +178,12 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
   const listRepoStatusStatement = db.prepare(
     "SELECT * FROM miner_claims WHERE repo_full_name = ? AND status = ? ORDER BY id ASC",
   );
+  // Repo-wide active-claim tally for the atomic concurrency cap (#6758). Scoped by repo_full_name only (not
+  // api_base_url), matching the cross-forge counting that listActiveClaims(repoFullName) -- and the prior
+  // attempt-cli.js pre-check built on it -- already did, so the cap's MEANING is unchanged; only its atomicity is.
+  const countActiveRepoStatement = db.prepare(
+    "SELECT COUNT(*) AS count FROM miner_claims WHERE repo_full_name = ? AND status = 'active'",
+  );
 
   function normalizeListRepoFilter(repoFullName) {
     if (repoFullName === undefined || repoFullName === null) return undefined;
@@ -234,6 +250,41 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       // (portfolio-queue-manager.js), where a lease stranded by a dead process would otherwise starve the queue.
       sweepExpiredClaims(ledger, Date.now(), DEFAULT_MAX_CLAIM_AGE_MS);
       return ledger.recordClaim({ repoFullName, issueNumber, note, apiBaseUrl });
+    },
+    /**
+     * Atomic, concurrency-capped claim (#6758). Sweeps orphaned claims, counts this repo's ACTIVE claims, and
+     * records the new claim ONLY while still strictly under `maxConcurrentClaims` -- all inside ONE `BEGIN
+     * IMMEDIATE` transaction. The prior enforcement split the count (attempt-cli.js's listActiveClaims) from the
+     * insert (claimIssue) across two statements with no shared transaction, so two sibling miner processes racing
+     * the same repo could both read the same sub-cap count and both claim, exceeding the cap. Fusing count +
+     * insert under an IMMEDIATE write lock -- with node:sqlite's shared `busy_timeout`, so the loser WAITS for the
+     * winner's commit rather than erroring -- closes that window: the second process sees the committed count and
+     * is cleanly rejected with `claimed: false` (never silently dropped), so the caller can log the cap violation.
+     * Returns the pre-insert `activeClaimCount` and the resolved `maxConcurrentClaims` on both paths.
+     */
+    claimIssueWithinCap(repoFullName, issueNumber, note, apiBaseUrl, maxConcurrentClaims) {
+      const cap = normalizeMaxConcurrentClaims(maxConcurrentClaims);
+      // Normalize the repo up front: the count query keys on it, and a bad value must throw BEFORE `BEGIN` so it
+      // can never strand an open transaction. `issueNumber`/`note`/`apiBaseUrl` are validated by recordClaim
+      // INSIDE the transaction -- a bad value there is rolled back whole via the catch below.
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        sweepExpiredClaims(ledger, Date.now(), DEFAULT_MAX_CLAIM_AGE_MS);
+        const activeClaimCount = countActiveRepoStatement.get(normalizedRepo).count;
+        if (activeClaimCount >= cap) {
+          // COMMIT, not ROLLBACK: a claim the sweep just expired is a legitimate transition that must persist even
+          // though THIS claim is rejected -- rolling back would resurrect a dead process's stale claim.
+          db.exec("COMMIT");
+          return { claimed: false, claim: null, activeClaimCount, maxConcurrentClaims: cap };
+        }
+        const claim = ledger.recordClaim({ repoFullName, issueNumber, note, apiBaseUrl });
+        db.exec("COMMIT");
+        return { claimed: true, claim, activeClaimCount, maxConcurrentClaims: cap };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
     listActiveClaims(repoFullName) {
       const filter = { status: "active" };

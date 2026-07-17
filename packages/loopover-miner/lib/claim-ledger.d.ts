@@ -22,11 +22,27 @@ export type ListClaimsFilter = {
   status?: ClaimStatus | null;
 };
 
+/** Result of an atomic, concurrency-capped claim (#6758). `claimed` discriminates success (a recorded claim)
+ *  from a cap rejection (`claim: null`); both carry the pre-insert active count and the resolved cap so a
+ *  rejected caller can still log the violation. */
+export type ClaimWithinCapResult =
+  | { claimed: true; claim: ClaimEntry; activeClaimCount: number; maxConcurrentClaims: number }
+  | { claimed: false; claim: null; activeClaimCount: number; maxConcurrentClaims: number };
+
 export type ClaimLedger = {
   dbPath: string;
   recordClaim(claim: RecordClaimInput): ClaimEntry;
   /** Claims the issue, expiring any claim orphaned by a dead process first (#6156). */
   claimIssue(repoFullName: string, issueNumber: number, note?: string, apiBaseUrl?: string): ClaimEntry;
+  /** Atomically records the claim only while this repo's active-claim count is under `maxConcurrentClaims`,
+   *  counting and inserting in one transaction so racing sibling processes can't exceed the cap (#6758). */
+  claimIssueWithinCap(
+    repoFullName: string,
+    issueNumber: number,
+    note: string | undefined,
+    apiBaseUrl: string | undefined,
+    maxConcurrentClaims: number,
+  ): ClaimWithinCapResult;
   /** Expire claims orphaned by a crashed/killed process, returning the transitioned rows (#6156). */
   reclaimExpiredClaims(maxAgeMs?: number): ClaimEntry[];
   releaseClaim(repoFullName: string, issueNumber: number, apiBaseUrl?: string): ClaimEntry | null;

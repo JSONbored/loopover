@@ -423,10 +423,15 @@ export function shouldIncludeTrackRecordSummary(
  */
 export function renderTrackRecordSummaryMarkdown(summary: TrackRecordSummary): string {
   if (!summary.enabled) return "";
-  const lines = [
+  // The login is the contributor's own IDENTITY, not computed content, and a hyphen is a legal GitHub username
+  // character — so a real login like `team-wallet`/`payout-bot` trips the word-boundary blocklist and used to
+  // throw on that contributor's own summary (#6772). The blocklist exists to catch leaked COMPUTED fields, not
+  // to validate identity, so the login line is composed after the scan and excluded from it. Everything the
+  // blocklist is actually for (labels, evidence, counts) still goes through assertPublicSummaryText below, so a
+  // genuinely-injected blocked term in a computed field still fails closed exactly as before.
+  const scannedLines = [
     "### Public contributor record",
     "",
-    `- GitHub login: ${markdownSafe(summary.login)}`,
     `- Resolved public PRs: ${summary.outcomes.resolved} (${summary.outcomes.merged} merged, ${summary.outcomes.closedWithoutMerge} closed without merge)`,
     `- Public merge rate: ${summary.mergeRate.label}`,
     `- Public tenure: ${summary.tenure.label}`,
@@ -434,15 +439,18 @@ export function renderTrackRecordSummaryMarkdown(summary: TrackRecordSummary): s
   ];
 
   if (summary.outcomes.openIgnored > 0) {
-    lines.push(`- Open PRs ignored for rate: ${summary.outcomes.openIgnored}`);
+    scannedLines.push(`- Open PRs ignored for rate: ${summary.outcomes.openIgnored}`);
   }
   if (summary.incidents.hasPublicIncident && summary.incidents.evidenceUrls.length > 0) {
-    lines.push(
+    scannedLines.push(
       `- Public evidence: ${summary.incidents.evidenceUrls.map((url) => markdownSafe(url)).join(", ")}`,
     );
   }
 
-  const rendered = `${lines.join("\n")}\n`;
-  assertPublicSummaryText(rendered);
-  return rendered;
+  assertPublicSummaryText(`${scannedLines.join("\n")}\n`);
+
+  // Re-insert the identity line in its original position (right after the heading's blank line).
+  const lines = [...scannedLines];
+  lines.splice(2, 0, `- GitHub login: ${markdownSafe(summary.login)}`);
+  return `${lines.join("\n")}\n`;
 }

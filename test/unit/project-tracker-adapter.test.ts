@@ -416,7 +416,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
@@ -453,7 +453,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "some-org/gittensory" },
       4,
@@ -488,7 +488,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "some-org/gittensory" },
       4,
@@ -519,7 +519,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "some-org/gittensory" },
       4,
@@ -555,7 +555,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "some-org/gittensory" },
       4,
@@ -586,7 +586,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
@@ -616,7 +616,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
         const page = Number(new URL(url).searchParams.get("page") ?? "1");
         requestedPages.push(page);
         if (page === 1) return Response.json(pageOneComments);
-        if (page === 2) return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
+        if (page === 2) return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "loopover-orb[bot]" } }]);
         return Response.json([]);
       }
       if (url.includes("/issues/4/comments") && method === "POST") {
@@ -625,7 +625,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
@@ -653,7 +653,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch({ env, installationId: 123, repoFullName: "JSONbored/gittensory" }, 4, "unrelated typo fix", null,
       "github",
       "https://github.com/JSONbored/gittensory/pull/4",
@@ -671,7 +671,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       if (url.includes("/milestones")) return Response.json([{ number: 14, title: "Self-host reliability roadmap" }]);
       if (url.endsWith("/graphql")) return Response.json(noOpenProjectsGraphQlBody());
       if (url.includes("/issues/4/comments") && method === "GET") {
-        return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "gittensory[bot]" } }]);
+        return Response.json([{ body: PROJECT_TRACKER_SUGGEST_COMMENT_MARKER, user: { type: "Bot", login: "loopover-orb[bot]" } }]);
       }
       if (url.includes("/comments") && method === "POST") {
         posted = true;
@@ -679,7 +679,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
@@ -709,7 +709,7 @@ describe("maybeSuggestProjectOrMilestoneMatch (#3183/#3184)", () => {
       }
       return new Response("unexpected", { status: 500 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const result = await maybeSuggestProjectOrMilestoneMatch(
       { env, installationId: 123, repoFullName: "JSONbored/gittensory" },
       4,
@@ -730,7 +730,7 @@ describe("maybeSuggestMilestoneMatchForPr (#3183 webhook-level gating)", () => {
 
   function baseArgs(overrides: Partial<Parameters<typeof maybeSuggestMilestoneMatchForPr>[0]> = {}) {
     return {
-      env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+      env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" }),
       installationId: 123,
       repoFullName: "JSONbored/gittensory",
       pullNumber: 4,
@@ -897,7 +897,7 @@ describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
   const PR_URL = "https://github.com/JSONbored/gittensory/pull/4";
 
   const ctx = () => ({
-    env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+    env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" }),
     installationId: 123,
     repoFullName: "JSONbored/gittensory",
   });
@@ -1017,7 +1017,7 @@ describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
     });
     await expect(
       maybeSuggestMilestoneMatchForPr({
-        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" }),
         installationId: 123,
         repoFullName: "JSONbored/gittensory",
         pullNumber: 4,
@@ -1042,7 +1042,7 @@ describe("maybeAutoApplyProjectOrMilestoneMatch (#3185)", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(
       maybeSuggestMilestoneMatchForPr({
-        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" }),
+        env: createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" }),
         installationId: 123,
         repoFullName: "JSONbored/gittensory",
         pullNumber: 4,

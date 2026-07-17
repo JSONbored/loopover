@@ -1741,7 +1741,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/issues/45/comments") && method === "GET") {
         calls.commentGets += 1;
-        return Response.json([{ id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+        return Response.json([{ id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
       }
       if (url.includes("/issues/comments/777") && method === "PATCH") {
         calls.commentPatches += 1;
@@ -1760,7 +1760,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 45, title: "Refresh panel", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -1861,7 +1861,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 46, title: "Pending CI rerun", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 778, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -1922,7 +1922,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/pulls/45/reviews")) return Response.json([]);
       if (url.includes("/commits/panel123/check-runs")) return Response.json({ check_runs: [] });
-      if (url.includes("/issues/45/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+      if (url.includes("/issues/45/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
       if (url.includes("/issues/comments/777") && method === "PATCH") return Response.json({ id: 777 });
       return new Response("not found", { status: 404 });
     });
@@ -1936,7 +1936,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 45, title: "Refresh panel", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -1990,7 +1990,7 @@ describe("queue processors", () => {
         calls.permission += 1;
         return Response.json({ permission: "none" });
       }
-      if (url.includes("/issues/48/comments") && method === "GET") return Response.json([{ id: 778, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+      if (url.includes("/issues/48/comments") && method === "GET") return Response.json([{ id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
       if (url.includes("/issues/comments/778") && method === "PATCH") {
         calls.commentPatches += 1;
         return Response.json({ id: 778 });
@@ -2007,7 +2007,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 48, title: "Miner self-rerun", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 778, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "contributor", type: "User" },
       },
     });
@@ -2054,7 +2054,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/issues/46/comments")) {
         calls.commentGets += 1;
-        return Response.json([{ id: 778, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+        return Response.json([{ id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
       }
       if (url.includes("/issues/comments/778")) {
         calls.commentPatches += 1;
@@ -2072,7 +2072,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 46, title: "Unauthorized panel refresh", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 778, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 778, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "drive-by-user", type: "User" },
       },
     });
@@ -2133,7 +2133,7 @@ describe("queue processors", () => {
       }
       if (url.includes("/issues/47/comments") && method === "GET") {
         calls.commentGets += 1;
-        return Response.json([{ id: 779, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+        return Response.json([{ id: 779, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
       }
       if (url.includes("/issues/comments/779") && method === "PATCH") {
         calls.commentPatches += 1;
@@ -2151,7 +2151,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 47, title: "Refresh panel as collaborator", state: "open", user: { login: "contributor" }, pull_request: {} },
-        comment: { id: 779, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 779, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "writer", type: "User" },
       },
     });
@@ -2191,7 +2191,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 48, title: "Unknown panel refresh actor", state: "open", pull_request: {} },
-        comment: { id: 780, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 780, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
       },
     });
 
@@ -2232,7 +2232,7 @@ describe("queue processors", () => {
       payload: {
         action: "created",
         ...basePayload,
-        comment: { id: 800, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 800, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2243,7 +2243,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 801, body: uncheckedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 801, body: uncheckedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2271,7 +2271,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 806, body: "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review", user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 806, body: "- [x] <!-- gittensory-rerun-review:v1 --> Re-run LoopOver review", user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2282,7 +2282,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 807, body: "<!-- gittensory-pr-panel:v1 -->\n\n- [x] Re-run LoopOver review", user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 807, body: "<!-- gittensory-pr-panel:v1 -->\n\n- [x] Re-run LoopOver review", user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2304,8 +2304,8 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 803, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
-        sender: { login: "gittensory[bot]", type: "Bot" },
+        comment: { id: 803, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
+        sender: { login: "loopover-orb[bot]", type: "Bot" },
       },
     });
     await processJob(env, {
@@ -2315,7 +2315,7 @@ describe("queue processors", () => {
       payload: {
         action: "edited",
         ...basePayload,
-        comment: { id: 804, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 804, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -2325,7 +2325,7 @@ describe("queue processors", () => {
       eventName: "issue_comment",
       payload: {
         action: "edited",
-        comment: { id: 805, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 805, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
         sender: { login: "maintainer", type: "User" },
       },
     });
@@ -6837,7 +6837,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 1, content: "+1", user: { login: "maintainer", type: "User" } },
       },
     });
@@ -6847,7 +6847,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-maintainer", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 2, content: "-1", user: { login: "maintainer", type: "User" } },
       },
     });
@@ -6857,7 +6857,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 3, content: "+1", user: { login: "oktofeesh1", type: "User" } },
       },
     });
@@ -6867,7 +6867,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9002, body: commandAnswerBody("answer-author", "next-action"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 4, content: "+1", user: { login: "random", type: "User" } },
       },
     });
@@ -6880,7 +6880,7 @@ describe("queue processors", () => {
         installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
         repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
         issue: { number: 78, title: "No author", state: "open", pull_request: {}, author_association: "NONE" },
-        comment: { id: 9003, body: commandAnswerBody("answer-no-author", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9003, body: commandAnswerBody("answer-no-author", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 5, content: "+1", user: { login: "random", type: "User" } },
       },
     });
@@ -6921,7 +6921,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         action: "deleted",
-        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 1, content: "+1", user: { login: "maintainer", type: "User" } },
       },
     });
@@ -6931,7 +6931,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 11, content: "+1", user: { login: "maintainer", type: "User" } },
       },
     });
@@ -6942,7 +6942,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         action: "created",
-        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-skip", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 2, content: "+1", user: { login: "helper[bot]", type: "Bot" } },
       },
     });
@@ -6953,7 +6953,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         action: "created",
-        comment: { id: 9001, body: commandAnswerBody("answer-missing", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-missing", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
         reaction: { id: 3, content: "-1", user: { login: "maintainer", type: "User" } },
       },
     });
@@ -6976,7 +6976,7 @@ describe("queue processors", () => {
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
       repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
       issue: { number: 77, title: "Miner command context", state: "open", pull_request: {}, user: { login: "oktofeesh1" }, author_association: "NONE" },
-      comment: { id: 9001, body: commandAnswerBody("answer-owner", "blockers"), user: { login: "gittensory[bot]", type: "Bot" } },
+      comment: { id: 9001, body: commandAnswerBody("answer-owner", "blockers"), user: { login: "loopover-orb[bot]", type: "Bot" } },
     };
 
     await processJob(env, {
@@ -7022,7 +7022,7 @@ describe("queue processors", () => {
       eventName: "reaction",
       payload: {
         ...basePayload,
-        comment: { id: 9002, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9002, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
       },
     });
     await processJob(env, {
@@ -7032,7 +7032,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         repository: { name: "other", full_name: "JSONbored/other", private: false, owner: { login: "JSONbored" } },
-        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
       },
     });
     await processJob(env, {
@@ -7042,7 +7042,7 @@ describe("queue processors", () => {
       payload: {
         ...basePayload,
         issue: { ...basePayload.issue, number: 78 },
-        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "gittensory[bot]", type: "Bot" } },
+        comment: { id: 9001, body: commandAnswerBody("answer-bound", "preflight"), user: { login: "loopover-orb[bot]", type: "Bot" } },
       },
     });
 

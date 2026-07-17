@@ -31,25 +31,25 @@ describe("GET /v1/internal/decision — operator decision-trail endpoint", () =>
 
   it("200s with the decision trail for a seeded target, scoped to the app slug", async () => {
     const app = createApp();
-    const env = createTestEnv(); // GITHUB_APP_SLUG defaults to "gittensory"
+    const env = createTestEnv(); // GITHUB_APP_SLUG defaults to "loopover-orb"
     // review_targets is raw-SQL-only (migration 0050) — seed the row the endpoint reads back. Its id is the
     // project-namespaced natural key `${slug}:${kind}:${repo}#${number}` (rowId).
     await env.DB.prepare(
       `INSERT INTO review_targets (id, project, kind, repo, number, status, verdict, head_sha, decided_sha, attempt_count, terminal_at, decision_json)
        VALUES (?, ?, 'pull_request', ?, ?, 'merged', 'merge', 'abc123', 'abc123', 1, '2026-07-01T00:00:00Z', ?)`,
     )
-      .bind("gittensory:pull_request:owner/repo#5", "gittensory", "owner/repo", 5, JSON.stringify({ action: "merge", confidence: 0.9 }))
+      .bind("loopover-orb:pull_request:owner/repo#5", "loopover-orb", "owner/repo", 5, JSON.stringify({ action: "merge", confidence: 0.9 }))
       .run();
     await env.DB.prepare(
       `INSERT INTO review_audit (id, project, target_id, event_type, decision, summary, created_at)
-       VALUES ('a1', 'gittensory', ?, 'reviewed', 'merge', 'looks good', '2026-07-01T00:00:00Z')`,
+       VALUES ('a1', 'loopover-orb', ?, 'reviewed', 'merge', 'looks good', '2026-07-01T00:00:00Z')`,
     )
-      .bind("gittensory:pull_request:owner/repo#5")
+      .bind("loopover-orb:pull_request:owner/repo#5")
       .run();
     const res = await app.request("/v1/internal/decision?repo=owner/repo&number=5", { headers: bearer(env) }, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: string; target: { number: number; status: string }; decision: unknown; audit: Array<{ event: string }> };
-    expect(body.project).toBe("gittensory");
+    expect(body.project).toBe("loopover-orb");
     expect(body.target.number).toBe(5);
     expect(body.target.status).toBe("merged");
     expect(body.decision).toEqual({ action: "merge", confidence: 0.9 });
@@ -72,7 +72,7 @@ describe("GET /v1/internal/calibration — operator calibration endpoint", () =>
     const res = await app.request("/v1/internal/calibration", { headers: bearer(env) }, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { project: string; calibration: { currentFloor: number; note: string } };
-    expect(body.project).toBe("gittensory");
+    expect(body.project).toBe("loopover-orb");
     expect(typeof body.calibration.currentFloor).toBe("number");
     expect(typeof body.calibration.note).toBe("string");
   });

@@ -14,7 +14,7 @@ function generateRsaPrivateKeyPem(): string {
 }
 
 function suggestTestEnv() {
-  return createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+  return createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
 }
 
 describe("LinearAdapter (#3186)", () => {

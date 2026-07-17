@@ -3353,7 +3353,7 @@ describe("queue processors", () => {
 
   it("drops already-enqueued self-authored app CI completions without re-reviewing", async () => {
     const env = createTestEnv({
-      GITHUB_APP_SLUG: "gittensory-orb",
+      GITHUB_APP_SLUG: "loopover-orb",
       LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
     });
     let fetchCount = 0;
@@ -3373,7 +3373,7 @@ describe("queue processors", () => {
         check_suite: {
           head_sha: "a7",
           pull_requests: [{ number: 7 }],
-          app: { slug: "gittensory-orb" },
+          app: { slug: "loopover-orb" },
         },
       } as never,
     });
@@ -5960,7 +5960,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a70/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/70/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/70/comments") && method === "POST") {
           commentPosts += 1;
@@ -6044,7 +6044,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a71/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/71/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/71/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6122,7 +6122,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a72/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/72/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/72/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6232,7 +6232,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a90/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/90/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/90/comments") && method === "POST") {
           commentPosts += 1;
@@ -6304,7 +6304,7 @@ describe("queue processors", () => {
         if (url.includes(`/commits/${headSha}/status`)) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/91/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/91/comments") && method === "POST") {
           commentPosts += 1;
@@ -6369,7 +6369,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/d92/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/92/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/92/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6431,7 +6431,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a71/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/71/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/71/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6493,7 +6493,7 @@ describe("queue processors", () => {
         if (url.includes(`/commits/${headSha}/status`)) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/72/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/72/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6559,7 +6559,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a73/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/73/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/73/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6664,7 +6664,7 @@ describe("queue processors", () => {
         if (url.includes("/commits/a75-v2/status")) return Response.json({ state: "success", statuses: [] });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/issues/75/comments") && method === "GET") {
-          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(stickyComment.current ? [{ ...stickyComment.current, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes("/issues/75/comments") && method === "POST") {
           const body = String((JSON.parse(String(init?.body ?? "{}")) as { body?: string }).body ?? "");
@@ -6729,7 +6729,7 @@ describe("queue processors", () => {
         if (url.endsWith("/pulls/90")) return Response.json({ number: 90, title: "Clean PR awaiting retrigger", state: "open", user: { login: "contributor" }, head: { sha: "a90" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
         if (url.includes("/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
         if (url.includes("/status")) return Response.json({ state: "success", statuses: [] });
-        if (url.includes("/issues/90/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } }]);
+        if (url.includes("/issues/90/comments") && method === "GET") return Response.json([{ id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } }]);
         if (url.includes("/issues/comments/777") && method === "PATCH") return Response.json({ id: 777 });
         if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
         if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
@@ -6756,7 +6756,7 @@ describe("queue processors", () => {
           installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
           repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
           issue: { number: 90, title: "Clean PR awaiting retrigger", state: "open", user: { login: "contributor" }, pull_request: {} },
-          comment: { id: 777, body: checkedPanel, user: { login: "gittensory[bot]", type: "Bot" } },
+          comment: { id: 777, body: checkedPanel, user: { login: "loopover-orb[bot]", type: "Bot" } },
           sender: { login: "maintainer", type: "User" },
         },
       });

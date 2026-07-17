@@ -154,7 +154,7 @@ describe("createSqliteQueue (durable #980)", () => {
     await q.binding.send(msg("agent-regate-pr"), { delaySeconds: 60 });
     await q.binding.send(msg("recapture-preview"), { delaySeconds: 60 });
     await q.binding.send(msg("agent-regate-sweep"), { delaySeconds: 60 });
-    await q.binding.send(webhook({ login: "gittensory-orb[bot]", type: "Bot" }), { delaySeconds: 60 });
+    await q.binding.send(webhook({ login: "loopover-orb[bot]", type: "Bot" }), { delaySeconds: 60 });
     await q.binding.send(webhook({ login: "maintainer", type: "User" }), { delaySeconds: 60 });
     await q.binding.send(msg("rag-index-repo"), { delaySeconds: 60 });
     await q.binding.send({} as unknown as JobMessage, { delaySeconds: 60 }); // no type → priority 0 fallback
@@ -171,7 +171,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(prio(JSON.stringify(msg("recapture-preview")))).toBe(9);
     expect(prio(JSON.stringify(msg("agent-regate-sweep")))).toBe(8);
     expect(prio(JSON.stringify(webhook({ login: "maintainer", type: "User" })))).toBe(10);
-    expect(prio(JSON.stringify(webhook({ login: "gittensory-orb[bot]", type: "Bot" })))).toBe(0);
+    expect(prio(JSON.stringify(webhook({ login: "loopover-orb[bot]", type: "Bot" })))).toBe(0);
     expect(prio(JSON.stringify(msg("rag-index-repo")))).toBe(0);
     expect(prio("{}")).toBe(0);
   });
@@ -802,7 +802,7 @@ describe("createSqliteQueue (durable #980)", () => {
     );
     driver.query(
       "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 10)",
-      [JSON.stringify(webhook({ login: "gittensory-orb[bot]", type: "Bot" }))],
+      [JSON.stringify(webhook({ login: "loopover-orb[bot]", type: "Bot" }))],
     );
 
     createSqliteQueue(driver, async () => undefined);
@@ -814,7 +814,7 @@ describe("createSqliteQueue (durable #980)", () => {
     expect(rows.map((row) => row as { payload: string; priority: number })).toEqual([
       { payload: JSON.stringify(msg("agent-regate-pr")), priority: 9 },
       { payload: JSON.stringify(msg("github-webhook")), priority: 10 },
-      { payload: JSON.stringify(webhook({ login: "gittensory-orb[bot]", type: "Bot" })), priority: 0 },
+      { payload: JSON.stringify(webhook({ login: "loopover-orb[bot]", type: "Bot" })), priority: 0 },
     ]);
   });
 
@@ -1445,7 +1445,7 @@ describe("createSqliteQueue (durable #980)", () => {
     );
     driver.query(
       "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 0)",
-      [JSON.stringify(webhook({ login: "gittensory-orb[bot]", type: "Bot" }))],
+      [JSON.stringify(webhook({ login: "loopover-orb[bot]", type: "Bot" }))],
     );
     driver.query(
       "INSERT INTO _selfhost_jobs (payload, status, attempts, run_after, created_at, priority) VALUES (?, 'pending', 0, 0, 0, 10)",

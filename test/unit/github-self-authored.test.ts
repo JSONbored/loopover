@@ -12,11 +12,11 @@ import { createTestEnv } from "../helpers/d1";
 
 describe("self-authored GitHub webhook detection", () => {
   it("recognizes only comments authored by this GitHub App bot", () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
     const payload = {
       action: "edited",
-      sender: { login: "gittensory-orb[bot]", type: "Bot" },
-      comment: { user: { login: "gittensory-orb[bot]", type: "Bot" } },
+      sender: { login: "loopover-orb[bot]", type: "Bot" },
+      comment: { user: { login: "loopover-orb[bot]", type: "Bot" } },
     } as GitHubWebhookPayload;
     const missingSlugEnv = createTestEnv();
     delete (missingSlugEnv as { GITHUB_APP_SLUG?: string }).GITHUB_APP_SLUG;
@@ -36,30 +36,30 @@ describe("self-authored GitHub webhook detection", () => {
   });
 
   it("recognizes self-authored check suites and check runs without matching other CI events", () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
 
     expect(
       isSelfAuthoredCiCompletionWebhook(env, "check_suite", {
         action: "completed",
-        check_suite: { app: { slug: "gittensory-orb" } },
+        check_suite: { app: { slug: "loopover-orb" } },
       } as never),
     ).toBe(true);
     expect(
       isSelfAuthoredCiCompletionWebhook(env, "check_run", {
         action: "completed",
-        check_run: { app: { slug: "gittensory-orb" } },
+        check_run: { app: { slug: "loopover-orb" } },
       } as never),
     ).toBe(true);
     expect(
       isSelfAuthoredCiCompletionWebhook(env, "check_run", {
         action: "completed",
-        check_run: { check_suite: { app: { slug: "gittensory-orb" } } },
+        check_run: { check_suite: { app: { slug: "loopover-orb" } } },
       } as never),
     ).toBe(true);
     expect(
       isSelfAuthoredCiCompletionWebhook(env, "check_run", {
         action: "rerequested",
-        check_run: { app: { slug: "gittensory-orb" } },
+        check_run: { app: { slug: "loopover-orb" } },
       } as never),
     ).toBe(false);
     expect(
@@ -73,7 +73,7 @@ describe("self-authored GitHub webhook detection", () => {
   });
 
   it("classifies non-completed CI lifecycle events as non-actionable noise only until completion", () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
 
     expect(isNonCompletedCiWebhook("check_suite", { action: "requested" })).toBe(true);
     expect(isNonCompletedCiWebhook("check_run", { action: "rerequested" })).toBe(true);
@@ -88,11 +88,11 @@ describe("self-authored GitHub webhook detection", () => {
   });
 
   it("drops bot-sender issue comment edits while preserving human panel edits", () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
     const humanPanelEdit = {
       action: "edited",
       sender: { login: "maintainer", type: "User" },
-      comment: { user: { login: "gittensory-orb[bot]", type: "Bot" } },
+      comment: { user: { login: "loopover-orb[bot]", type: "Bot" } },
     } as GitHubWebhookPayload;
 
     expect(

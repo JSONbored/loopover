@@ -103,8 +103,8 @@ describe("operator dashboard payload", () => {
       slug: "custom-app",
       secrets: {},
     });
-    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "gittensory" }))).toEqual({
-      slug: "gittensory",
+    expect(operatorAgentConfig(createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" }))).toEqual({
+      slug: "loopover-orb",
       secrets: {},
     });
     const unset = createTestEnv();

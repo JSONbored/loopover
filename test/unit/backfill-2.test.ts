@@ -673,9 +673,9 @@ describe("GitHub backfill", () => {
               { name: "test", status: "completed", conclusion: "success" },
               // BOTH bot-posted checks, still in_progress (posted but not yet concluded). Counting EITHER would
               // defer the very review that concludes it — the self-deadlock that froze green-CI PRs as "CI pending".
-              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
-              { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
-              { name: "LoopOver Context", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "loopover-orb" } },
+              { name: "Gittensory Gate", status: "in_progress", conclusion: null, app: { slug: "loopover-orb" } },
+              { name: "LoopOver Context", status: "in_progress", conclusion: null, app: { slug: "loopover-orb" } },
             ],
           });
         }
@@ -721,7 +721,7 @@ describe("GitHub backfill", () => {
         const url = input.toString();
         if (url.includes("/check-runs?")) {
           return Response.json({
-            check_runs: [{ name: "LoopOver Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Real gate failure" }, app: { slug: "gittensory" } }],
+            check_runs: [{ name: "LoopOver Orb Review Agent", status: "completed", conclusion: "failure", output: { title: "Real gate failure" }, app: { slug: "loopover-orb" } }],
           });
         }
         if (url.includes("/status?")) return Response.json({ statuses: [] });
@@ -786,7 +786,7 @@ describe("GitHub backfill", () => {
           return Response.json({
             check_runs: [
               { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
-              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "gittensory" } },
+              { name: "LoopOver Orb Review Agent", status: "in_progress", conclusion: null, app: { slug: "loopover-orb" } },
             ],
           });
         }
@@ -2005,7 +2005,7 @@ describe("GitHub backfill", () => {
                           {
                             body: "Own bot requested change",
                             url: "https://github.example/thread/own-member",
-                            author: { login: "gittensory-orb[bot]" },
+                            author: { login: "loopover-orb[bot]" },
                             authorAssociation: "MEMBER",
                           },
                         ],
@@ -2157,8 +2157,8 @@ describe("GitHub backfill", () => {
                     nodes: [
                       { isResolved: true, isOutdated: false, path: "a.ts", line: 1, comments: { nodes: [{ body: "resolved", author: { login: "superagent-security[bot]" } }] } },
                       { isResolved: false, isOutdated: true, path: "b.ts", line: 2, comments: { nodes: [{ body: "outdated", author: { login: "superagent-security[bot]" } }] } },
-                      { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "gittensory-orb[bot]" }, authorAssociation: "OWNER" }] } },
-                      { isResolved: false, isOutdated: false, path: "own-collaborator.ts", line: 5, comments: { nodes: [{ body: "own bot with collaborator association", author: { login: "gittensory[bot]" }, authorAssociation: "COLLABORATOR" }] } },
+                      { isResolved: false, isOutdated: false, path: "c.ts", line: 3, comments: { nodes: [{ body: "own bot", author: { login: "loopover-orb[bot]" }, authorAssociation: "OWNER" }] } },
+                      { isResolved: false, isOutdated: false, path: "own-collaborator.ts", line: 5, comments: { nodes: [{ body: "own bot with collaborator association", author: { login: "loopover-orb[bot]" }, authorAssociation: "COLLABORATOR" }] } },
                       { isResolved: false, isOutdated: false, path: "no-comments.ts", line: 6, comments: null },
                       { isResolved: false, isOutdated: false, path: "d.ts", line: 4, comments: { nodes: [{ body: "   ", author: { login: "superagent-security[bot]" } }, null] } },
                       null,
@@ -2652,18 +2652,21 @@ describe("GitHub backfill", () => {
 });
 
 describe("isOwnReviewThreadAuthor", () => {
-  const env = createTestEnv(); // GITHUB_APP_SLUG defaults to "gittensory" (test/helpers/d1.ts)
+  // Explicit bare slug -- NOT the shared "loopover-orb" createTestEnv() default (test/helpers/d1.ts) -- so
+  // this prefix-match test can exercise multiple realistic suffix forms below without a double "-orb-orb"
+  // suffix artifact.
+  const env = createTestEnv({ GITHUB_APP_SLUG: "loopover" });
 
-  it("matches our own gittensory app bot logins by prefix", () => {
-    for (const login of ["gittensory[bot]", "gittensory-orb[bot]", "gittensory-review[bot]", "GITTENSORY[bot]", "gittensory", "gittensory-orb"]) {
+  it("matches our own loopover app bot logins by prefix", () => {
+    for (const login of ["loopover[bot]", "loopover-orb[bot]", "loopover-review[bot]", "LOOPOVER[bot]", "loopover", "loopover-orb"]) {
       expect(isOwnReviewThreadAuthor(env, login)).toBe(true);
     }
   });
 
-  it("does not match a third-party bot whose slug only ends in -gittensory[bot] (regression)", () => {
+  it("does not match a third-party bot whose slug only ends in -loopover[bot] (regression)", () => {
     // A `\b` boundary also fires after a hyphen, so the unanchored regex misclassified these external bots as
     // our own author and dropped their review-thread comments as self-authored non-blockers (fail-open).
-    for (const login of ["evil-gittensory[bot]", "x-gittensory[bot]", "not-gittensory", "gittensory-fork"]) {
+    for (const login of ["evil-loopover[bot]", "x-loopover[bot]", "not-loopover", "loopover-fork"]) {
       expect(isOwnReviewThreadAuthor(env, login)).toBe(false);
     }
   });
@@ -2680,7 +2683,7 @@ describe("isOwnReviewThreadAuthor", () => {
     expect(isOwnReviewThreadAuthor(renamed, "acme-review-orb[bot]")).toBe(true);
     expect(isOwnReviewThreadAuthor(renamed, "acme-review")).toBe(true);
     // The OLD slug no longer matches once an operator renames their App -- proves the literal is gone.
-    expect(isOwnReviewThreadAuthor(renamed, "gittensory[bot]")).toBe(false);
+    expect(isOwnReviewThreadAuthor(renamed, "loopover[bot]")).toBe(false);
   });
 
   it("a slug containing regex metacharacters is escaped, not interpreted (defensive)", () => {
@@ -2691,14 +2694,14 @@ describe("isOwnReviewThreadAuthor", () => {
 
   it("fails closed when GITHUB_APP_SLUG is blank (misconfiguration)", () => {
     const blank = createTestEnv({ GITHUB_APP_SLUG: "" });
-    expect(isOwnReviewThreadAuthor(blank, "gittensory[bot]")).toBe(false);
+    expect(isOwnReviewThreadAuthor(blank, "loopover[bot]")).toBe(false);
     expect(isOwnReviewThreadAuthor(blank, "")).toBe(false);
   });
 
   it("fails closed when GITHUB_APP_SLUG is unset (the retired review App was deleted)", () => {
     const unset = createTestEnv();
     delete (unset as Partial<Env>).GITHUB_APP_SLUG;
-    expect(isOwnReviewThreadAuthor(unset, "gittensory[bot]")).toBe(false);
+    expect(isOwnReviewThreadAuthor(unset, "loopover[bot]")).toBe(false);
     expect(isOwnReviewThreadAuthor(unset, "")).toBe(false);
   });
 });

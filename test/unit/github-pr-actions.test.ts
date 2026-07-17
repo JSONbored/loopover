@@ -568,9 +568,9 @@ describe("GitHub PR action primitives (#778)", () => {
       if (url.includes("/pulls/7/reviews") && !url.includes("/dismissals") && method === "GET") {
         return Response.json([
           { id: 1, state: "COMMENTED", user: { login: "human-reviewer" } },
-          { id: 2, state: "APPROVED", user: { login: "gittensory[bot]" } }, // an EARLIER bot approve
-          { id: 3, state: "CHANGES_REQUESTED", user: { login: "gittensory[bot]" } },
-          { id: 4, state: "APPROVED", user: { login: "gittensory[bot]" } }, // the LATEST bot approve — this one
+          { id: 2, state: "APPROVED", user: { login: "loopover-orb[bot]" } }, // an EARLIER bot approve
+          { id: 3, state: "CHANGES_REQUESTED", user: { login: "loopover-orb[bot]" } },
+          { id: 4, state: "APPROVED", user: { login: "loopover-orb[bot]" } }, // the LATEST bot approve — this one
         ]);
       }
       if (url.includes("/pulls/7/reviews/4/dismissals") && method === "PUT") {
@@ -586,9 +586,10 @@ describe("GitHub PR action primitives (#778)", () => {
   });
 
   it("dismisses the bot's approve review when GitHub returns a different login casing than GITHUB_APP_SLUG (#6614)", async () => {
-    // The regression: `Gittensory[bot]` vs the default GITHUB_APP_SLUG of `gittensory` matched nothing under
-    // the old case-sensitive ===, so this returned { dismissed: false } — a SILENT no-op, no error, leaving a
-    // stale bot approval standing. The human reviewer whose login differs only in case must still be ignored.
+    // The regression: `Loopover-Orb[bot]` vs the default GITHUB_APP_SLUG of `loopover-orb` matched nothing
+    // under the old case-sensitive ===, so this returned { dismissed: false } — a SILENT no-op, no error,
+    // leaving a stale bot approval standing. The human reviewer whose login differs only in case must still
+    // be ignored.
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -597,9 +598,9 @@ describe("GitHub PR action primitives (#778)", () => {
       if (url.includes("/pulls/11/reviews") && !url.includes("/dismissals") && method === "GET") {
         return Response.json([
           { id: 1, state: "APPROVED", user: { login: "Human-Reviewer" } },
-          { id: 2, state: "APPROVED", user: { login: "Gittensory[bot]" } }, // an EARLIER bot approve, mixed case
-          { id: 3, state: "CHANGES_REQUESTED", user: { login: "GITTENSORY[BOT]" } },
-          { id: 4, state: "APPROVED", user: { login: "GitTensory[Bot]" } }, // the LATEST bot approve — this one
+          { id: 2, state: "APPROVED", user: { login: "Loopover-Orb[bot]" } }, // an EARLIER bot approve, mixed case
+          { id: 3, state: "CHANGES_REQUESTED", user: { login: "LOOPOVER-ORB[BOT]" } },
+          { id: 4, state: "APPROVED", user: { login: "LoopOver-Orb[Bot]" } }, // the LATEST bot approve — this one
         ]);
       }
       if (url.includes("/pulls/11/reviews/4/dismissals") && method === "PUT") {
@@ -646,10 +647,10 @@ describe("GitHub PR action primitives (#778)", () => {
     // approve; the actual latest bot approve is review id 999 on page 2 — a single-page fetch would wrongly
     // dismiss the page-1 review (or miss the real latest one) instead.
     const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 1, state: "COMMENTED", user: { login: "human-reviewer" } }));
-    page1[0] = { id: 1, state: "APPROVED", user: { login: "gittensory[bot]" } };
+    page1[0] = { id: 1, state: "APPROVED", user: { login: "loopover-orb[bot]" } };
     const page2 = [
-      { id: 998, state: "CHANGES_REQUESTED", user: { login: "gittensory[bot]" } },
-      { id: 999, state: "APPROVED", user: { login: "gittensory[bot]" } },
+      { id: 998, state: "CHANGES_REQUESTED", user: { login: "loopover-orb[bot]" } },
+      { id: 999, state: "APPROVED", user: { login: "loopover-orb[bot]" } },
     ];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
@@ -692,7 +693,7 @@ describe("GitHub PR action primitives (#778)", () => {
       if (url.includes("/pulls/11/reviews") && !url.includes("/dismissals") && method === "GET") {
         getAttempts += 1;
         if (getAttempts === 1) return Response.json({ message: "Bad credentials" }, { status: 401 });
-        return Response.json([{ id: 5, state: "APPROVED", user: { login: "gittensory[bot]" } }]);
+        return Response.json([{ id: 5, state: "APPROVED", user: { login: "loopover-orb[bot]" } }]);
       }
       if (url.includes("/pulls/11/reviews/5/dismissals") && method === "PUT") {
         return Response.json({ id: 5, state: "DISMISSED" });

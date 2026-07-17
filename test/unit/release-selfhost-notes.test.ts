@@ -105,7 +105,7 @@ exit 1
           REF_NAME: "orb-v0.2.0",
           RELEASE_VERSION: "0.2.0",
           RELEASE_TAG: "orb-v0.2.0",
-          RELEASE_ID: "gittensory-orb@0.2.0",
+          RELEASE_ID: "loopover-orb@0.2.0",
           REPOSITORY_OWNER: "JSONbored",
           PRERELEASE: "false",
         },

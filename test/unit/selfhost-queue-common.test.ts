@@ -883,7 +883,7 @@ describe("self-host queue common helpers", () => {
         payload: { action: "edited", sender },
       });
     expect(
-      jobPriority(issueCommentEdit({ login: "gittensory-orb[bot]", type: "Bot" })),
+      jobPriority(issueCommentEdit({ login: "loopover-orb[bot]", type: "Bot" })),
     ).toBe(0);
     expect(
       jobPriority(issueCommentEdit({ login: "codecov[bot]", type: "User" })),

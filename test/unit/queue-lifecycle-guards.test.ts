@@ -348,7 +348,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     // Installed, but WITHOUT pull_requests: write — the distinction that matters. Mirrors the sibling guards'
     // own permission-denied fixtures (e.g. the self-close guard's at :2096).
@@ -390,7 +390,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await grantWriteInstallation(env);
 
@@ -425,7 +425,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
     // A maintainer legitimately reopened/re-approved the PR — or a queue retry replayed a stale payload — in
@@ -464,7 +464,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -503,7 +503,7 @@ describe("one-shot reopen prevention", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -533,7 +533,7 @@ describe("one-shot reopen prevention", () => {
       if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -569,7 +569,7 @@ describe("one-shot reopen prevention", () => {
       if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -601,7 +601,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) throw new Error("GitHub events API down");
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -630,7 +630,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -662,7 +662,7 @@ describe("one-shot reopen prevention", () => {
       }
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
@@ -683,7 +683,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
     vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "head_changed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "open" });
@@ -707,7 +707,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
@@ -735,7 +735,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await grantWriteInstallation(env);
 
@@ -771,7 +771,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
     // Simulates a DIFFERENT concurrent delivery for the same PR already in flight (e.g. the draft-dodge sibling
     // racing this reopen) — the lock key it would hold is pre-claimed here.
@@ -811,7 +811,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     // NO autonomy configured (observe-only / un-opted-in): the agent must take NO destructive action.
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-observe-only", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
@@ -830,7 +830,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await grantWriteInstallation(env);
     await repositoriesModule.setGlobalAgentFrozen(env, true); // emergency brake on
@@ -853,7 +853,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "maintainer" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", agentDryRun: true, autonomy: { merge: "auto", request_changes: "auto", close: "auto" } });
     await processJob(env, { type: "github-webhook", deliveryId: "reopen-dryrun", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false); // never closed
@@ -870,8 +870,8 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
-    await processJob(env, { type: "github-webhook", deliveryId: "bot-reopen", eventName: "pull_request", payload: reopenedPayload("gittensory[bot]") });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+    await processJob(env, { type: "github-webhook", deliveryId: "bot-reopen", eventName: "pull_request", payload: reopenedPayload("loopover-orb[bot]") });
     // No collaborator-permission lookup or reclose PATCH -- the bot-login short-circuit fires before either.
     expect(calls.some((c) => c.url.includes("/collaborators/"))).toBe(false);
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
@@ -885,7 +885,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory", ADMIN_GITHUB_LOGINS: "admin-user" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb", ADMIN_GITHUB_LOGINS: "admin-user" });
     await processJob(env, { type: "github-webhook", deliveryId: "admin-reopen", eventName: "pull_request", payload: reopenedPayload("admin-user") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
   });
@@ -900,7 +900,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await processJob(env, { type: "github-webhook", deliveryId: "unknown-closer", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
   });
@@ -932,7 +932,7 @@ describe("one-shot reopen prevention", () => {
       if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await grantWriteInstallation(env);
     await processJob(env, { type: "github-webhook", deliveryId: "window-evasion-reclose", eventName: "pull_request", payload: reopenedPayload("contributor") });
@@ -949,12 +949,12 @@ describe("one-shot reopen prevention", () => {
       calls.push({ url, method });
       if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
       if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
-      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "gittensory[bot]" } }, { event: "reopened", actor: { login: "contributor" } }]);
+      if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "loopover-orb[bot]" } }, { event: "reopened", actor: { login: "contributor" } }]);
       if (url.endsWith("/issues/42/comments")) return Response.json({ id: 99 }, { status: 201 });
       if (url.endsWith("/pulls/42") && method === "PATCH") return Response.json({ state: "closed" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto", close: "auto" } }); // opted into acting autonomy
     await grantWriteInstallation(env);
     await processJob(env, { type: "github-webhook", deliveryId: "bot-closer-reclose", eventName: "pull_request", payload: reopenedPayload("contributor") });
@@ -972,7 +972,7 @@ describe("one-shot reopen prevention", () => {
       if (url.endsWith("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await processJob(env, { type: "github-webhook", deliveryId: "self-close-reopen", eventName: "pull_request", payload: reopenedPayload("contributor") });
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
   });
@@ -987,7 +987,7 @@ describe("one-shot reopen prevention", () => {
       if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "contributor" } }]);
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await processJob(env, { type: "github-webhook", deliveryId: "perm-api-error", eventName: "pull_request", payload: reopenedPayload("contributor") });
     // permission API threw → null → non-maintainer reopener + non-maintainer closer → no reclose.
     expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(false);
@@ -1004,7 +1004,7 @@ describe("one-shot reopen prevention", () => {
       throw new Error("GitHub API unavailable");
     });
     vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 write error"));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await expect(
       processJob(env, { type: "github-webhook", deliveryId: "reopen-api-fail-safe", eventName: "pull_request", payload: reopenedPayload("contributor") }),
     ).resolves.toBeUndefined();
@@ -1028,7 +1028,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { merge: "auto", request_changes: "auto" } });
 
     await processJob(env, {
@@ -1059,7 +1059,7 @@ describe("one-shot reopen prevention", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await repositoriesModule.upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto_with_approval" } });
 
     await processJob(env, {
@@ -1141,7 +1141,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1163,7 +1163,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     // A maintainer merged/closed the PR — or a fresh commit resolved the gate failure — in the window between
@@ -1192,7 +1192,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
@@ -1213,7 +1213,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "closed" });
@@ -1236,7 +1236,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     // Installation grant is missing pull_requests: write (revoked or never consented) — issues: write is present,
     // so this isn't a blanket permission failure, just the specific scope this close needs.
@@ -1276,7 +1276,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     // No installations row pre-seeded. processGitHubWebhook auto-upserts one from the payload's bare
     // `installation: { id: 123 }` (no permissions field, as a real pull_request payload carries), so the
@@ -1304,7 +1304,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
     await upsertInstallation(env, {
       installation: {
@@ -1361,7 +1361,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     await repositoriesModule.setGlobalAgentFrozen(env, true);
@@ -1381,7 +1381,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { agentDryRun: true });
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     await processJob(env, { type: "github-webhook", deliveryId: "draft-dryrun", eventName: "pull_request", payload: draftPayload("contributor") });
@@ -1402,7 +1402,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     // Simulates a DIFFERENT concurrent delivery for the same PR already in flight (e.g. a check_suite completion
@@ -1432,7 +1432,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1458,7 +1458,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     // No gate block recorded — gate hasn't run yet.
 
@@ -1476,7 +1476,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     // Block exists but for an OLDER commit — contributor has pushed new code in draft.
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "old-sha-XYZ", blockerCodes: ["missing_linked_issue"] });
@@ -1496,7 +1496,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
     await markGateOutcomeOverridden(env, "JSONbored/gittensory", 42);
@@ -1515,7 +1515,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1534,7 +1534,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory", ADMIN_GITHUB_LOGINS: "admin-user" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb", ADMIN_GITHUB_LOGINS: "admin-user" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1553,7 +1553,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { agentPaused: true });
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1574,7 +1574,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { autonomy: null });
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1595,7 +1595,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     // empty blockerCodes → codes = "" → ternary takes the "" branch
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: [] });
@@ -1620,7 +1620,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       throw new Error("simulated network error"); // all GitHub calls throw
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1642,7 +1642,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1668,7 +1668,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1693,7 +1693,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     // Setup with a slash-free repo name
     await upsertRepositoryFromGitHub(env, { name: "noslash", full_name: "noslash", private: false, owner: { login: "" } }, 200);
     await upsertInstallation(env, {
@@ -1764,7 +1764,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { autonomy: { approve: "auto" } });
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1787,7 +1787,7 @@ describe("converted_to_draft gate-close (draft-dodge prevention)", () => {
       return new Response("not found", { status: 404 });
     });
 
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { autonomy: { close: "auto_with_approval" } });
     await recordGateBlockOutcome(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", blockerCodes: ["missing_linked_issue"] });
 
@@ -1914,7 +1914,7 @@ describe("converted_to_draft CI-cancel (#6670, resource-waste)", () => {
   it("cancels in-flight CI runs for the PR's head SHA when it is converted to draft", async () => {
     const seen = { cancelledIds: [] as number[], listedStatuses: [] as string[] };
     vi.stubGlobal("fetch", stubDraftCiCancelFetch(seen, { in_progress: [401], queued: [402] }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
 
     await processJob(env, { type: "github-webhook", deliveryId: "draft-convert-ci-cancel", eventName: "pull_request", payload: draftConvertPayload() });
@@ -1928,7 +1928,7 @@ describe("converted_to_draft CI-cancel (#6670, resource-waste)", () => {
   it("degrades gracefully when the cancel attempt fails — a genuine error is recorded, nothing throws", async () => {
     const seen = { cancelledIds: [] as number[], listedStatuses: [] as string[] };
     vi.stubGlobal("fetch", stubDraftCiCancelFetch(seen, { in_progress: [403] }, () => new Response(null, { status: 500 })));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
 
     await expect(
@@ -1942,7 +1942,7 @@ describe("converted_to_draft CI-cancel (#6670, resource-waste)", () => {
   it("does not attempt to cancel CI while the agent is paused — records a dry-run-shaped skip instead", async () => {
     const seen = { cancelledIds: [] as number[], listedStatuses: [] as string[] };
     vi.stubGlobal("fetch", stubDraftCiCancelFetch(seen, { in_progress: [404] }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { agentPaused: true });
 
     await processJob(env, { type: "github-webhook", deliveryId: "draft-convert-ci-cancel-paused", eventName: "pull_request", payload: draftConvertPayload() });
@@ -1957,7 +1957,7 @@ describe("converted_to_draft CI-cancel (#6670, resource-waste)", () => {
   it("swallows a failing audit write on the paused/dry-run skip path — the handler still completes without throwing", async () => {
     const seen = { cancelledIds: [] as number[], listedStatuses: [] as string[] };
     vi.stubGlobal("fetch", stubDraftCiCancelFetch(seen, { in_progress: [405] }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env, { agentPaused: true });
     const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
     const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
@@ -1975,7 +1975,7 @@ describe("converted_to_draft CI-cancel (#6670, resource-waste)", () => {
   it("swallows a failing audit write on the successful-cancel path — the handler still completes without throwing", async () => {
     const seen = { cancelledIds: [] as number[], listedStatuses: [] as string[] };
     vi.stubGlobal("fetch", stubDraftCiCancelFetch(seen, { in_progress: [406] }));
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     await setupRepo(env);
     const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
     const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
@@ -2058,7 +2058,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       // an actual reopen+re-close, letting a redelivery test assert the second delivery is a true no-op.
       if (url.includes("/issues/42/events")) {
         const priorPatches = calls.filter((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42")).length;
-        const closer = priorPatches >= 2 ? "gittensory[bot]" : "contributor";
+        const closer = priorPatches >= 2 ? "loopover-orb[bot]" : "contributor";
         return Response.json([{ event: "closed", actor: { login: closer } }]);
       }
       if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
@@ -2077,7 +2077,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("reopens then re-closes as the App, posts the explanation comment, applies the label, and records a review_evasion strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2098,7 +2098,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("reopens and re-closes when the live self-closed PR is already closed on the reviewed head", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2124,7 +2124,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("retries (via a thrown lock-contended error) when a concurrent delivery already holds the per-PR actuation lock", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await env.SELFHOST_TRANSIENT_CACHE?.set("pr-actuation-lock:jsonbored/gittensory#42", "1", 60);
@@ -2141,7 +2141,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when reviewEvasionProtection is explicitly off (#4011: the only respected opt-out)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off" });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2155,7 +2155,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when NO active review is tracked for this head (an ordinary close, nothing to evade)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       // No startActiveReviewTracking call at all.
 
@@ -2167,7 +2167,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (#self-close-post-review): re-closes a self-close AFTER the review already published, not just mid-computation -- the active-only window would have missed this, since a human reacting to a now-visible label necessarily acts after the pass already terminalized", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       // The review pass concludes and publishes -- exactly what happens right before a human could ever SEE
@@ -2185,7 +2185,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (#self-close-post-review): honors settings.autoCloseExemptLogins -- the shared allowlist the draft-conversion/contributor-cap/review-nag guards already use", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autoCloseExemptLogins: ["contributor"] });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       await repositoriesModule.terminalizeActiveReviewTracking(env, "JSONbored/gittensory", 42);
@@ -2200,7 +2200,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when a THIRD PARTY closed someone else's PR (not the author) — an ordinary maintainer close, not self-close evasion", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2212,7 +2212,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the closer is the repo owner", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2224,7 +2224,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the closer is an ADMIN_GITHUB_LOGINS fleet-operator", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory", ADMIN_GITHUB_LOGINS: "admin-user" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb", ADMIN_GITHUB_LOGINS: "admin-user" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2236,7 +2236,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the closer holds write/maintain/admin collaborator permission", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2248,7 +2248,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing for a protected automation author (e.g. dependabot[bot])", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2260,7 +2260,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { agentDryRun: true });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2278,7 +2278,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the agent is globally frozen", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.setGlobalAgentFrozen(env, true, "test");
@@ -2294,7 +2294,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when close autonomy is not acting (observe)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "observe" } });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2309,7 +2309,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION: denies live self-close enforcement when close autonomy requires approval", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2324,7 +2324,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when pull_requests: write is not granted", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
       await upsertInstallation(env, {
         installation: {
@@ -2351,7 +2351,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the closed live PR is not on the reviewed head", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "closed", expectedHeadSha: "abc123", liveHeadSha: "def456", liveState: "closed" });
@@ -2375,7 +2375,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (method === "PATCH" && url.endsWith("/pulls/42")) return new Response("server error", { status: 500 });
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2408,7 +2408,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         }
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2452,7 +2452,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/labels")) return Response.json([{ name: "review-evasion" }]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2473,7 +2473,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("global moderation disabled: the evasion close/label/comment still happen, but no moderation strike/label is recorded", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       // Global moderation config left at its default (disabled).
@@ -2491,7 +2491,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION: no duplicate strike or duplicate enforcement on a webhook redelivery/retry after the first enforcement already succeeded", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2513,7 +2513,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("a subsequent contributor reopen after the App's evasion close is re-closed by the EXISTING one-shot reopen guard", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2528,7 +2528,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         calls.push({ url, method });
         if (url.includes("/access_tokens")) return Response.json({ token: "t" });
         if (url.includes("/collaborators/contributor/permission")) return Response.json({ permission: "read" });
-        if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "gittensory[bot]" } }, { event: "reopened", actor: { login: "contributor" } }]);
+        if (url.includes("/issues/42/events")) return Response.json([{ event: "closed", actor: { login: "loopover-orb[bot]" } }, { event: "reopened", actor: { login: "contributor" } }]);
         if (method === "POST" && url.endsWith("/issues/42/comments")) return Response.json({ id: 2 }, { status: 201 });
         if (method === "PATCH" && url.endsWith("/pulls/42")) return Response.json({ state: "closed" });
         return new Response("not found", { status: 404 });
@@ -2548,7 +2548,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       // settings layer directly, confirming neither layer silently reintroduces the old off-by-default gap.
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -2563,7 +2563,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the webhook payload has no sender", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2578,7 +2578,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no author (a deleted-account PR)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2593,7 +2593,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no headSha", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2608,7 +2608,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the installation record is missing (uninstalled mid-flight)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       vi.spyOn(repositoriesModule, "getInstallation").mockResolvedValue(null);
@@ -2625,7 +2625,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       // Same write-time-coalescing note as the reviewEvasionProtection test above.
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -2656,7 +2656,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       // reviewEvasionLabel is a NOT NULL DB column (upsertRepositorySettings coalesces null -> the default at
@@ -2693,7 +2693,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -2709,7 +2709,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("closes as the App (no reopen needed), posts the explanation comment, applies the label, and records a review_evasion strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", authorLogin: "contributor", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2729,7 +2729,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("retries (via a thrown lock-contended error) when a concurrent delivery already holds the per-PR actuation lock", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       // Deliberately autonomy: {} (not {close: "auto"}) -- this repo's OUTER dispatch condition for the
       // SIBLING draft-dodge guard requires isAgentConfigured(settings.autonomy), so with no acting autonomy
       // class at all, draft-dodge's OWN lock-claim attempt is skipped entirely and this test genuinely
@@ -2751,7 +2751,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing for a draft conversion BEFORE any active review has started", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       // No startActiveReviewTracking call -- no review has ever run for this PR.
 
@@ -2763,7 +2763,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does NOT require a prior gate failure (unlike the draft-dodge guard) -- an active review alone is enough", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       // Deliberately NO recordGateBlockOutcome call -- the draft-dodge guard's own trigger condition is absent.
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
@@ -2780,7 +2780,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (#draft-evasion-post-review): closes a draft conversion AFTER the review already published, not just mid-computation -- the active-only window would have missed this, since a human reacting to a now-visible label necessarily acts after the pass already terminalized", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       // The review pass concludes and publishes -- exactly what happens right before a human could ever SEE
@@ -2797,7 +2797,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing for a draft conversion once the head has moved past the reviewed commit -- a fresh push earns a fresh shot", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       // The tracked review ran against an OLDER commit -- the payload's current headSha (abc123) has never
       // itself been reviewed.
@@ -2812,7 +2812,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (#draft-evasion-post-review): honors settings.autoCloseExemptLogins -- the shared allowlist the contributor-cap/review-nag guards already use", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autoCloseExemptLogins: ["contributor"] });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.terminalizeActiveReviewTracking(env, "JSONbored/gittensory", 42);
@@ -2827,7 +2827,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the author holds write collaborator permission", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2839,7 +2839,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (gate-flagged): does nothing when a THIRD PARTY converts someone else's PR to draft (not the author) -- an ordinary maintainer action, not self-evasion, must never be enforced against the author who didn't do it", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2856,7 +2856,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { agentDryRun: true });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2874,7 +2874,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the agent is globally frozen", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.setGlobalAgentFrozen(env, true, "test");
@@ -2890,7 +2890,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when close autonomy is not acting (observe)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "observe" } });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2905,7 +2905,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION: denies live draft-conversion enforcement when close autonomy requires approval", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -2920,7 +2920,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when pull_requests: write is not granted", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
       await upsertInstallation(env, {
         installation: {
@@ -2947,7 +2947,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the PR was converted back to ready_for_review before the close fires (requireDraft freshness)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
@@ -2971,7 +2971,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (method === "PATCH" && url.endsWith("/pulls/42")) return new Response("server error", { status: 500 });
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
@@ -2987,7 +2987,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("global moderation disabled: the evasion close/label/comment still happen, but no moderation strike is recorded", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -3003,7 +3003,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("STILL protects when reviewEvasionProtection is unset (undefined, not an explicit 'off') (#4011: default-ON)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3017,7 +3017,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the webhook payload has no sender", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -3032,7 +3032,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no author (a deleted-account PR)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -3047,7 +3047,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing for a protected automation author (e.g. dependabot[bot])", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -3059,7 +3059,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no headSha", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
 
@@ -3074,7 +3074,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the installation record is missing (uninstalled mid-flight)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       vi.spyOn(repositoriesModule, "getInstallation").mockResolvedValue(null);
@@ -3090,7 +3090,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("skips the courtesy comment when reviewEvasionComment is unset (defaults to true, but false is honored too)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3120,7 +3120,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3152,7 +3152,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "abc123", deliveryId: "review-start-1" });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3168,7 +3168,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing on the FIRST draft conversion, then closes on the SECOND -- independent of active-review/gate-block state", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
       // Deliberately NO startActiveReviewTracking / recordGateBlockOutcome call -- neither sibling guard's own
@@ -3195,7 +3195,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (#6165): honors settings.autoCloseExemptLogins -- the shared allowlist the two sibling review-evasion guards already use, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autoCloseExemptLogins: ["contributor"] });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
 
@@ -3211,7 +3211,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when reviewEvasionProtection is off, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off" });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-off-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3223,7 +3223,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("STILL enforces the repeated-cycle close when reviewEvasionProtection is unset (undefined, not an explicit 'off') (#4011: default-ON)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
       vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockResolvedValue({ ...baseSettings, reviewEvasionProtection: undefined });
@@ -3240,7 +3240,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (gate-flagged): does not enforce against a THIRD PARTY repeatedly converting someone else's PR to draft", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const payload = draftEvasionPayload("contributor");
       payload.sender = { login: "a-maintainer", type: "User" };
@@ -3254,7 +3254,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION (gate-flagged, gittensory-orb review): a maintainer's draft conversion must NOT count toward the author's own cycle -- the author's first-ever conversion is never enforced even after a prior third-party one", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const maintainerConversion = draftEvasionPayload("contributor");
       maintainerConversion.sender = { login: "a-maintainer", type: "User" };
@@ -3280,7 +3280,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing for a protected automation author (e.g. dependabot[bot]), even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-bot-1", eventName: "pull_request", payload: draftEvasionPayload("dependabot[bot]") });
@@ -3292,7 +3292,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no headSha, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const payload = draftEvasionPayload("contributor");
       payload.pull_request.head = null;
@@ -3306,7 +3306,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the author holds write collaborator permission, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-maintainer-1", eventName: "pull_request", payload: draftEvasionPayload("write-collaborator") });
@@ -3318,7 +3318,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when close autonomy is not acting (observe)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "observe" } });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-observe-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3335,7 +3335,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION: denies live repeated draft-cycling enforcement when close autonomy requires approval", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { autonomy: { close: "auto_with_approval" } });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-approval-required-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3352,7 +3352,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("dry-run: audits the would-be enforcement without mutating GitHub or recording a live strike", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { agentDryRun: true });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
 
@@ -3372,7 +3372,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the agent is paused for this repo", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { agentPaused: true });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-paused-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3389,7 +3389,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when pull_requests: write is not granted", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
       await upsertInstallation(env, {
         installation: {
@@ -3418,7 +3418,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the PR was converted back to ready_for_review before the close fires (requireDraft freshness)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-fresh-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       vi.mocked(fetchPullRequestFreshness).mockResolvedValueOnce({ status: "stale", reason: "no_longer_draft", expectedHeadSha: "abc123", liveHeadSha: "abc123", liveState: "open" });
@@ -3445,7 +3445,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("raw.githubusercontent.com") && url.includes("loopover.y")) return new Response("source: repo_file\n", { status: 200 });
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
 
@@ -3463,7 +3463,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("global moderation disabled: the close/label/comment still happen, but no moderation strike is recorded", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-mod-off-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3497,7 +3497,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("raw.githubusercontent.com") && url.includes("loopover.y")) return new Response("source: repo_file\n", { status: 200 });
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-third-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3514,7 +3514,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("REGRESSION: the first conversion returns before the repeated-cycle lock so a retry cannot double-count it", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       // Deliberately autonomy: {} -- draft-dodge's own outer dispatch condition (isAgentConfigured) is false, so
       // ITS lock claim never fires. The remaining sibling (review-evasion-active-review) has no settings gate at
       // its OWN lock claim, so it claims+releases the lock normally on every converted_to_draft delivery. THIS
@@ -3539,7 +3539,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the webhook payload has no sender, even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const payload = draftEvasionPayload("contributor");
 
@@ -3552,7 +3552,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the PR record has no author (a deleted-account PR), even after a repeated cycle", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       const payload = draftEvasionPayload("contributor");
       payload.pull_request.user = null;
@@ -3566,7 +3566,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("denies enforcement when the installation record is missing (uninstalled mid-flight)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-no-install-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       vi.spyOn(repositoriesModule, "getInstallation").mockResolvedValue(null);
@@ -3584,7 +3584,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("skips the courtesy comment when reviewEvasionComment is explicitly false", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionComment: false });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-false-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3597,7 +3597,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("posts the courtesy comment when reviewEvasionComment is unset (undefined, not just a stored default)", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-comment-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3627,7 +3627,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-null-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3659,7 +3659,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
         if (url.includes("/pulls/42/files")) return Response.json([]);
         return new Response("not found", { status: 404 });
       });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env);
       await processJob(env, { type: "github-webhook", deliveryId: "draft-cycle-label-unset-1", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
       const baseSettings = await repositorySettingsModule.resolveRepositorySettings(env, "JSONbored/gittensory");
@@ -3776,7 +3776,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when draftPrClosePolicy is off (the default) -- opening directly as a draft is unaffected", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off" }); // draftPrClosePolicy defaults to "off"
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-policy-off-opened", eventName: "pull_request", payload: draftOpenedPayload("contributor") });
@@ -3787,7 +3787,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("closes immediately when a PR is opened directly as a draft -- no prior review needed, unlike reviewEvasionProtection", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close" });
       // Deliberately no startActiveReviewTracking / recordGateBlockOutcome call -- unlike every reviewEvasionProtection
       // sibling, this policy fires on the very first draft, before any review has ever run.
@@ -3804,7 +3804,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("closes immediately when the author converts their own PR to draft", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close" });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-policy-converted", eventName: "pull_request", payload: draftEvasionPayload("contributor") });
@@ -3817,7 +3817,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does NOT record a moderation strike -- this is a blanket policy against ordinary draft usage, not a detected abuse pattern", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close" });
       await repositoriesModule.upsertGlobalModerationConfig(env, { enabled: true, rules: ["review_evasion"] });
 
@@ -3831,7 +3831,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("honors settings.autoCloseExemptLogins -- the shared allowlist the review-evasion family already uses", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close", autoCloseExemptLogins: ["contributor"] });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-policy-exempt", eventName: "pull_request", payload: draftOpenedPayload("contributor") });
@@ -3842,7 +3842,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when the author holds write collaborator permission", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close" });
 
       await processJob(env, { type: "github-webhook", deliveryId: "draft-policy-maintainer", eventName: "pull_request", payload: draftOpenedPayload("write-collaborator") });
@@ -3853,7 +3853,7 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
     it("does nothing when a THIRD PARTY converts someone else's PR to draft -- an ordinary maintainer action, not the author's own choice", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls, { collaboratorPermission: "write" });
-      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
       await setupEvasionRepo(env, { reviewEvasionProtection: "off", draftPrClosePolicy: "close" });
 
       const payload = draftEvasionPayload("contributor");
@@ -3964,13 +3964,13 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
       if (input.toString().includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const payload: any = {
       action: "created",
       installation: { id: 123 },
       repository: { id: 1, name: "gittensory", full_name: "JSONbored/gittensory", private: false, default_branch: "main", owner: { login: "JSONbored" } },
-      sender: { login: "gittensory[bot]", type: "Bot" },
-      comment: { id: 999, body: "@loopover help", user: { login: "gittensory[bot]", type: "Bot" } },
+      sender: { login: "loopover-orb[bot]", type: "Bot" },
+      comment: { id: 999, body: "@loopover help", user: { login: "loopover-orb[bot]", type: "Bot" } },
       issue: { id: 1, number: 77, title: "some issue", pull_request: { url: "https://api.github.com/repos/JSONbored/gittensory/pulls/77" } },
     };
     await expect(
@@ -3986,7 +3986,7 @@ describe("recordAgentCommandUsage (signal-snapshot fail-safe)", () => {
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
       return new Response("not found", { status: 404 });
     });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
     const payload: any = {
       action: "edited", // an edit re-fires issue_comment with a NEW delivery id — the handler must NOT re-answer
       installation: { id: 123 },

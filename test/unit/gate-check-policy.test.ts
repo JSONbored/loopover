@@ -768,7 +768,7 @@ describe("resolveLinkedIssueAuthorLogins", () => {
 
   it("falls back to a LIVE fetch for the author when the issue is not cached (#audit-3.11)", async () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "loopover-orb" });
     // Issue #50 is NOT in the local cache; a fresh GitHub fetch must still resolve its author so the
     // self-authored detection isn't silently voided by a cache miss.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -795,7 +795,7 @@ describe("resolveLinkedIssueAuthorLogins", () => {
 
   it("yields null for a cache-missed issue whose live fetch returns no facts (fail-safe)", async () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "loopover-orb" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("/access_tokens")) return Response.json({ token: "t" });
@@ -811,7 +811,7 @@ describe("resolveLinkedIssueAuthorLogins", () => {
 
   it("live-fetches only the cache-missed issues, keeping the cached authors (mixed list)", async () => {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "gittensory" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey.export({ type: "pkcs1", format: "pem" }).toString(), GITHUB_APP_SLUG: "loopover-orb" });
     await upsertRepositoryFromGitHub(env, { name: "repo", full_name: "owner/repo", private: false, owner: { login: "owner" } }, 1);
     await upsertIssueFromGitHub(env, "owner/repo", { number: 10, title: "Cached", body: "", state: "open", user: { login: "alice" }, labels: [], html_url: "https://github.com/owner/repo/issues/10", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

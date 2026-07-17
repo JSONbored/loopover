@@ -1544,7 +1544,7 @@ describe("queue processors", () => {
         if (url.includes("/issues/321/comments") && method === "GET") {
           // An existing PR-panel review comment: createOrUpdateAgentCommandComment would find + edit this for
           // any OTHER command's answer card, but chat must never reach (or touch) it.
-          return Response.json([{ id: 500, body: "<!-- gittensory-pr-panel:v1 -->\n\nExisting review verdict.", user: { login: "gittensory-orb[bot]", type: "Bot" } }]);
+          return Response.json([{ id: 500, body: "<!-- gittensory-pr-panel:v1 -->\n\nExisting review verdict.", user: { login: "loopover-orb[bot]", type: "Bot" } }]);
         }
         if (url.includes("/issues/comments/500") && method === "PATCH") {
           patchCalls.push(url);
@@ -5268,7 +5268,7 @@ describe("queue processors", () => {
           ...(opts.omitInstallation ? {} : { installation: { id: 123, account: { login: repoFullName.slice(0, slash), id: 1, type: "User" } } }),
           repository: { name: repoFullName.slice(slash + 1), full_name: repoFullName, private: false, owner: { login: repoFullName.slice(0, slash) } },
           issue: { number: prNumber, title: "Add retry to checkout", state: "open", user: { login: "contributor" }, ...(opts.omitPullRequest ? {} : { pull_request: {} }) },
-          comment: { id: commentId, body: opts.body ?? CHECKED_GENERATE_TESTS_PANEL, user: opts.commentUser ?? { login: "gittensory[bot]", type: "Bot" } },
+          comment: { id: commentId, body: opts.body ?? CHECKED_GENERATE_TESTS_PANEL, user: opts.commentUser ?? { login: "loopover-orb[bot]", type: "Bot" } },
           sender: { login: sender.login, type: sender.type ?? "User" },
         },
       } as unknown as Parameters<typeof processJob>[1];
@@ -5415,9 +5415,9 @@ describe("queue processors", () => {
       });
       await seedCheckboxPr(env, repoFullName, 6003, "checkbox-4589-bot-sha");
       const posted = { count: 0, body: "" };
-      stubCheckboxFetch(6003, "gittensory[bot]", "admin", posted);
+      stubCheckboxFetch(6003, "loopover-orb[bot]", "admin", posted);
 
-      await processJob(env, checkboxWebhook(repoFullName, 6003, 902, { login: "gittensory[bot]", type: "Bot" }));
+      await processJob(env, checkboxWebhook(repoFullName, 6003, 902, { login: "loopover-orb[bot]", type: "Bot" }));
 
       expect(posted.count).toBe(0);
       const skipped = await env.DB.prepare("select detail from audit_events where event_type = ?")
@@ -5675,7 +5675,7 @@ describe("queue processors", () => {
         // SAME row -- a stub that always returns [] on GET would make the code re-POST on every update
         // attempt instead of PATCHing, inflating posted.count for reasons unrelated to this test.
         if (url.includes(`/issues/6012/comments`) && method === "GET") {
-          return Response.json(posted.count > 0 ? [{ id: 60120, body: posted.body, user: { login: "gittensory[bot]", type: "Bot" } }] : []);
+          return Response.json(posted.count > 0 ? [{ id: 60120, body: posted.body, user: { login: "loopover-orb[bot]", type: "Bot" } }] : []);
         }
         if (url.includes(`/issues/6012/comments`) && method === "POST") {
           posted.count += 1;
@@ -5723,7 +5723,7 @@ describe("queue processors", () => {
           eventName: "issue_comment",
           payload: {
             action: "edited",
-            comment: { id: 999, body: CHECKED_GENERATE_TESTS_PANEL, user: { login: "gittensory[bot]", type: "Bot" } },
+            comment: { id: 999, body: CHECKED_GENERATE_TESTS_PANEL, user: { login: "loopover-orb[bot]", type: "Bot" } },
             sender: undefined,
           },
         } as unknown as Parameters<typeof processJob>[1]),

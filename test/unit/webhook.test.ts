@@ -409,8 +409,8 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
       repository: { full_name: "JSONbored/gittensory" },
       installation: { id: 1 },
       issue: { number: 1701, pull_request: {} },
-      comment: { id: 123, body: "<!-- gittensory-pr-panel:v1 -->", user: { login: "gittensory[bot]", type: "Bot" } },
-      sender: { login: "gittensory[bot]", type: "Bot" },
+      comment: { id: 123, body: "<!-- gittensory-pr-panel:v1 -->", user: { login: "loopover-orb[bot]", type: "Bot" } },
+      sender: { login: "loopover-orb[bot]", type: "Bot" },
     });
     const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
     const request = new Request("https://example.com/webhook", { method: "POST", body: rawBody });
@@ -442,7 +442,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
   });
 
   it("drops self-authored app CI completion webhooks before they add queue pressure", async () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
     let webhookSends = 0;
     env.WEBHOOKS = { send: async () => void (webhookSends += 1) } as unknown as Queue;
     const rawBody = JSON.stringify({
@@ -452,7 +452,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
       check_suite: {
         head_sha: "abc123",
         pull_requests: [],
-        app: { slug: "gittensory-orb" },
+        app: { slug: "loopover-orb" },
       },
     });
     const signature = await signWebhook(rawBody, env.GITHUB_WEBHOOK_SECRET);
@@ -484,7 +484,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
   });
 
   it("drops non-completed CI lifecycle webhooks before they add queue pressure", async () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
     let webhookSends = 0;
     env.WEBHOOKS = { send: async () => void (webhookSends += 1) } as unknown as Queue;
     const rawBody = JSON.stringify({
@@ -526,7 +526,7 @@ describe("github webhook queue isolation (#audit-webhook-queue)", () => {
   });
 
   it("keeps third-party CI completion webhooks queued for review finalization", async () => {
-    const env = createTestEnv({ GITHUB_APP_SLUG: "gittensory-orb" });
+    const env = createTestEnv({ GITHUB_APP_SLUG: "loopover-orb" });
     const sent: unknown[] = [];
     env.WEBHOOKS = { send: async (message: unknown) => void sent.push(message) } as unknown as Queue;
     const rawBody = JSON.stringify({

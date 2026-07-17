@@ -298,7 +298,7 @@ describe("createPgQueue (durable #977)", () => {
     m.fn.mockResolvedValueOnce({
       rows: [
         { id: "a", payload: JSON.stringify(msg("agent-regate-pr")), priority: 0 },
-        { id: "b", payload: JSON.stringify(webhook({ login: "gittensory-orb[bot]", type: "Bot" })), priority: 10 },
+        { id: "b", payload: JSON.stringify(webhook({ login: "loopover-orb[bot]", type: "Bot" })), priority: 10 },
         { id: "c", payload: JSON.stringify(msg("agent-regate-sweep")), priority: 0 },
       ],
       rowCount: 3,

@@ -161,7 +161,7 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
         merged_at: null,
         user: { login: "contributor", type: "User" },
       }),
-      sender: { login: "gittensory[bot]", type: "Bot" },
+      sender: { login: "loopover-orb[bot]", type: "Bot" },
     });
     expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({
       target_id: "owner/repo#44",
@@ -188,7 +188,7 @@ describe("recordPrOutcome — realized merge/close ground truth", () => {
         merged_at: null,
         user: { login: "contributor", type: "User" },
       }),
-      sender: { login: "gittensory[bot]", type: "Bot" },
+      sender: { login: "loopover-orb[bot]", type: "Bot" },
     });
     expect(fetchSpy).not.toHaveBeenCalled();
     expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({

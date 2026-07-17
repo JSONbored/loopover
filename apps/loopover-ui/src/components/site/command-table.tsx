@@ -1,3 +1,12 @@
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
 const DEFAULT_ROLE_SUMMARY: Record<string, string> = {
   help: "maintainer, collaborator, confirmed_miner (default policy)",
   ask: "maintainer, collaborator, confirmed_miner",
@@ -38,28 +47,30 @@ export function CommandTable({
     <>
       <h2>{title}</h2>
       <div className="not-prose overflow-x-auto">
-        <table className="w-full border-collapse text-token-sm">
-          <thead>
-            <tr className="border-hairline text-left text-token-xs text-muted-foreground">
-              <th className="py-2 pr-4 font-medium">Syntax</th>
-              <th className="py-2 pr-4 font-medium">Effect</th>
-              <th className="py-2 font-medium">Default roles</th>
-            </tr>
-          </thead>
-          <tbody className="divide-hairline">
+        <Table className="border-collapse text-token-sm">
+          <TableHeader>
+            <TableRow className="border-hairline text-left text-token-xs text-muted-foreground">
+              <TableHead className="py-2 pr-4 font-medium">Syntax</TableHead>
+              <TableHead className="py-2 pr-4 font-medium">Effect</TableHead>
+              <TableHead className="py-2 font-medium">Default roles</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody className="divide-hairline">
             {entries.map((entry) => (
-              <tr key={entry.id} className="align-top">
-                <td className="py-2 pr-4 font-mono text-token-xs whitespace-nowrap">
+              <TableRow key={entry.id} className="align-top">
+                <TableCell className="py-2 pr-4 font-mono text-token-xs whitespace-nowrap">
                   @loopover {entry.id}
-                </td>
-                <td className="py-2 pr-4 text-muted-foreground">{entry.description}</td>
-                <td className="py-2 text-muted-foreground">
+                </TableCell>
+                <TableCell className="py-2 pr-4 text-muted-foreground">
+                  {entry.description}
+                </TableCell>
+                <TableCell className="py-2 text-muted-foreground">
                   {DEFAULT_ROLE_SUMMARY[entry.id] ?? "see policy"}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </>
   );

@@ -2,6 +2,15 @@ import { BoundaryBadge, StatusPill } from "@/components/site/control-primitives"
 import { TableScroll } from "@/components/site/data-table";
 import { EmptyState } from "@/components/site/state-views";
 import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   QUALITY_BAND_TONE,
   type MaintainerTopContributor,
 } from "@/components/site/app-panels/contributor-quality-table-model";
@@ -32,42 +41,44 @@ export function ContributorQualityTable({
         />
       ) : (
         <TableScroll className="mt-4" label="Top contributors by quality band">
-          <table className="w-full min-w-[420px] whitespace-nowrap text-left text-token-sm">
-            <caption className="sr-only">
+          <Table className="min-w-[420px] whitespace-nowrap text-left text-token-sm">
+            <TableCaption className="sr-only">
               Contributors with their quality band and open pull request count.
-            </caption>
-            <thead>
-              <tr className="border-b-hairline font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
-                <th scope="col" className="py-2 pr-3 font-normal">
+            </TableCaption>
+            <TableHeader>
+              <TableRow className="border-b-hairline font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+                <TableHead scope="col" className="py-2 pr-3 font-normal">
                   Contributor
-                </th>
-                <th scope="col" className="py-2 pr-3 font-normal">
+                </TableHead>
+                <TableHead scope="col" className="py-2 pr-3 font-normal">
                   Band
-                </th>
-                <th scope="col" className="py-2 font-normal">
+                </TableHead>
+                <TableHead scope="col" className="py-2 font-normal">
                   Open PRs
-                </th>
-              </tr>
-            </thead>
-            <tbody>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {topContributors.map((contributor) => (
-                <tr
+                <TableRow
                   key={contributor.login}
                   className="border-b-hairline last:border-b-0 transition-colors hover:bg-muted/40"
                 >
-                  <td className="py-2 pr-3 font-medium text-foreground">{contributor.login}</td>
-                  <td className="py-2 pr-3">
+                  <TableCell className="py-2 pr-3 font-medium text-foreground">
+                    {contributor.login}
+                  </TableCell>
+                  <TableCell className="py-2 pr-3">
                     <StatusPill status={QUALITY_BAND_TONE[contributor.band] ?? "info"}>
                       {contributor.band}
                     </StatusPill>
-                  </td>
-                  <td className="py-2 font-mono text-token-xs text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="py-2 font-mono text-token-xs text-muted-foreground">
                     {contributor.openPrCount}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </TableScroll>
       )}
     </section>

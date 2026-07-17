@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { fetchLedgers, LEDGERS_API_PATH, type LedgersResult, type LedgersSummary } from "./lib/ledgers";
 import { type GovernorPauseState, type GovernorPauseStateResult } from "./lib/governor";
-import { LedgersPage, LedgersView } from "./routes/ledgers";
+import { GovernorControlSection, LedgersPage, LedgersView } from "./routes/ledgers";
 import { handleLedgersRequest, type LedgersApiDeps } from "../vite-ledgers-api";
 
 // Test-local fixture factories (were lib exports reachable only from tests; moved here per #6187).
@@ -355,6 +355,52 @@ describe("LedgersPage (#4855)", () => {
       await waitFor(() =>
         expect((screen.getByRole("button", { name: "Resume governor" }) as HTMLButtonElement).disabled).toBe(false),
       );
+    });
+
+    it("clears the typed pause reason once a pause succeeds, so it isn't left over for the next pause after a resume (#7079)", () => {
+      const unpaused: GovernorPauseStateResult = { ok: true, pauseState: defaultGovernorPauseState() };
+      const onPause = vi.fn();
+      const onResume = vi.fn();
+      const { rerender } = render(
+        <GovernorControlSection result={unpaused} pending={false} onPause={onPause} onResume={onResume} />,
+      );
+      fireEvent.change(screen.getByLabelText("Pause reason"), { target: { value: "flaky CI" } });
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("flaky CI");
+
+      // The pause goes in flight, then resolves paused.
+      rerender(<GovernorControlSection result={unpaused} pending onPause={onPause} onResume={onResume} />);
+      const paused: GovernorPauseStateResult = {
+        ok: true,
+        pauseState: { paused: true, reason: "flaky CI", pausedAt: "2026-07-13T12:30:00.000Z" },
+      };
+      rerender(<GovernorControlSection result={paused} pending={false} onPause={onPause} onResume={onResume} />);
+
+      // Resume goes in flight, then resolves unpaused -- the pause form reappears for the next pause attempt.
+      rerender(<GovernorControlSection result={paused} pending onPause={onPause} onResume={onResume} />);
+      rerender(<GovernorControlSection result={unpaused} pending={false} onPause={onPause} onResume={onResume} />);
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("");
+    });
+
+    it("preserves the typed pause reason after a failed pause attempt, so the user can retry without retyping (#7079)", () => {
+      const unpaused: GovernorPauseStateResult = { ok: true, pauseState: defaultGovernorPauseState() };
+      const onPause = vi.fn();
+      const onResume = vi.fn();
+      const { rerender } = render(
+        <GovernorControlSection result={unpaused} pending={false} onPause={onPause} onResume={onResume} />,
+      );
+      fireEvent.change(screen.getByLabelText("Pause reason"), { target: { value: "flaky CI" } });
+
+      // The pause goes in flight, then fails -- the form is replaced by the error state, but the reason typed
+      // before the failed attempt must survive underneath it.
+      rerender(<GovernorControlSection result={unpaused} pending onPause={onPause} onResume={onResume} />);
+      const failed: GovernorPauseStateResult = { ok: false, error: "local governor action API responded 500" };
+      rerender(<GovernorControlSection result={failed} pending={false} onPause={onPause} onResume={onResume} />);
+      expect(screen.queryByLabelText("Pause reason")).toBeNull();
+
+      // Once the pause form is visible again (e.g. the pause state re-resolves), the reason is still there for
+      // the user to retry without retyping it.
+      rerender(<GovernorControlSection result={unpaused} pending={false} onPause={onPause} onResume={onResume} />);
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("flaky CI");
     });
 
     it("renders an error message when the pause-state load fails, without breaking the ledgers section", async () => {

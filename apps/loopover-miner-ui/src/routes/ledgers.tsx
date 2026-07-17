@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bar, BarChart, Cell, XAxis, YAxis } from "recharts";
 
 import { Button } from "@loopover/ui-kit/components/button";
@@ -337,6 +337,17 @@ export function GovernorControlSection({
   // is passed through as `undefined` so it matches the CLI's own optional-flag behavior.
   const [reason, setReason] = useState("");
   const errorText = result !== null && !result.ok ? result.error : undefined;
+  // #7079: clear the typed reason once a pause actually succeeds, so it doesn't survive into the next pause
+  // form after a resume. Tracked via the pending->settled transition (rather than a `result` effect alone)
+  // so a failed pause -- which also updates `result`, just with `ok: false` -- leaves the reason untouched
+  // for the user to retry.
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !pending && result?.ok && result.pauseState.paused) {
+      setReason("");
+    }
+    wasPending.current = pending;
+  }, [pending, result]);
   return (
     <section className="grid gap-3">
       <h3 className="font-display text-token-base font-semibold">Governor control</h3>

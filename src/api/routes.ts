@@ -194,6 +194,7 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { evaluateEscalation } from "../loop-escalation";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
@@ -475,6 +476,15 @@ const validateFocusManifestSchema = z.object({
 
 // Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the loopover_check_slop_risk /
 // loopover_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
+// #6754: mirrors the loopover_evaluate_escalation MCP tool's input shape exactly (src/mcp/server.ts) so the
+// REST surface can never accept something the tool would reject, or vice versa.
+const evaluateEscalationSchema = z.object({
+  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
+  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
+  customerFlagged: z.boolean().optional(),
+  killRequested: z.boolean().optional(),
+});
+
 const slopRiskSchema = z.object({
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -3130,6 +3140,17 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6754: REST mirror of the loopover_evaluate_escalation MCP tool, bringing it to the same REST/CLI parity
+  // its same-tier sibling loopover_check_slop_risk (/v1/lint/slop-risk, directly above) already has. Both are
+  // pure, source-free evaluators over caller-supplied data, so this route delegates to the same
+  // `evaluateEscalation` the tool calls and adds no logic of its own -- it decides; the caller wires the action.
+  app.post("/v1/loop/evaluate-escalation", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = evaluateEscalationSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_evaluate_escalation_request", issues: parsed.error.issues }, 400);
+    return c.json(evaluateEscalation(parsed.data));
   });
 
   app.post("/v1/lint/issue-slop", async (c) => {

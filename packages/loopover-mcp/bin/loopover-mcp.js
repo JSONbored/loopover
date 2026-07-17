@@ -26,6 +26,8 @@ import {
   computeLocalScorerTokens,
 } from "@loopover/engine";
 import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "@loopover/engine/signals/slop";
+// #6754: the same pure evaluator the remote MCP tool + /v1/loop/evaluate-escalation both call.
+import { evaluateEscalation } from "@loopover/engine";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -531,6 +533,15 @@ const validateConfigShape = {
   source: z.enum(["repo_file", "api_record", "none"]).optional(),
 };
 
+// #6754: mirrors evaluateEscalationShape in src/mcp/server.ts exactly, so the local tool, the remote tool, and
+// the REST route all accept an identical payload.
+const evaluateEscalationShape = {
+  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
+  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
+  customerFlagged: z.boolean().optional(),
+  killRequested: z.boolean().optional(),
+};
+
 const checkSlopRiskShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -839,6 +850,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_slop_risk",
     category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
+  },
+  {
+    name: "loopover_evaluate_escalation",
+    category: "agent",
+    description:
+      "Decide whether a rented loop needs a human, and what action to take, from an already-computed run outcome, health tier, and operator/customer signals — the deterministic support/escalation-path logic. Source-free; returns shouldEscalate + action (none/notify/human_review/stop) + severity + reasons. It decides; the caller wires the action. Computed in-process; no API round-trip.",
   },
   {
     name: "loopover_check_issue_slop",
@@ -1392,6 +1409,18 @@ registerStdioTool(
   // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
   // round-trip, so slop-risk self-checks work fully offline.
   (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+);
+
+registerStdioTool(
+  "loopover_evaluate_escalation",
+  {
+    description: stdioToolDescription("loopover_evaluate_escalation"),
+    inputSchema: evaluateEscalationShape,
+  },
+  // Computed in-process from @loopover/engine (#6754) — the same pure evaluateEscalation the remote server
+  // (src/mcp/server.ts) and the /v1/loop/evaluate-escalation route both call, so all three surfaces return a
+  // byte-identical decision for identical input, and escalation checks work fully offline.
+  (input) => toolResult("LoopOver escalation decision.", evaluateEscalation(input)),
 );
 
 registerStdioTool(

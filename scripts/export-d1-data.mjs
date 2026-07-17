@@ -4,7 +4,7 @@
 // a manifest the self-host importer validates against. The data transformation lives in export-d1-core.mjs (pure,
 // unit-tested); this file is the thin IO wrapper.
 //
-//   node scripts/export-d1-data.mjs --db gittensory --output ./export [--remote] [--since-date 2026-06-01T00:00:00Z] [--since-column updated_at]
+//   node scripts/export-d1-data.mjs --db loopover --output ./export [--remote] [--since-date 2026-06-01T00:00:00Z] [--since-column updated_at]
 //
 // --remote reads the deployed D1 (default is the local miniflare DB). --since-date does an INCREMENTAL export
 // (rows whose --since-column is >= the date); omit it for a full export. NEVER pass a write command.

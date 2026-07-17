@@ -26,6 +26,8 @@ import {
   computeLocalScorerTokens,
 } from "@loopover/engine";
 import { buildSlopAssessment, SLOP_RUBRIC_MARKDOWN } from "@loopover/engine/signals/slop";
+// #6749: the same pure builder the remote MCP tool + /v1/lint/test-evidence both call.
+import { buildTestEvidenceReport } from "@loopover/engine/signals/test-evidence";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -532,6 +534,13 @@ const validateConfigShape = {
   source: z.enum(["repo_file", "api_record", "none"]).optional(),
 };
 
+// #6749: mirrors checkTestEvidenceShape in src/mcp/server.ts exactly.
+const checkTestEvidenceShape = {
+  changedPaths: z.array(z.string()).min(1),
+  testFiles: z.array(z.string()).optional(),
+  tests: z.string().optional(),
+};
+
 const checkSlopRiskShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -840,6 +849,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_slop_risk",
     category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
+  },
+  {
+    name: "loopover_check_test_evidence",
+    category: "review",
+    description:
+      "Classify whether a planned change's changed files carry enough test evidence, from path metadata alone (no source uploaded) — an agent-native coverage-gap self-check before opening a PR. Returns a coverage band (strong/adequate/weak/absent) plus actionable guidance. Computed in-process; no API round-trip.",
   },
   {
     name: "loopover_check_issue_slop",
@@ -1399,6 +1414,18 @@ registerStdioTool(
   // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
   // round-trip, so slop-risk self-checks work fully offline.
   (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+);
+
+registerStdioTool(
+  "loopover_check_test_evidence",
+  {
+    description: stdioToolDescription("loopover_check_test_evidence"),
+    inputSchema: checkTestEvidenceShape,
+  },
+  // Computed in-process from @loopover/engine (#6749) — the same buildTestEvidenceReport the remote server
+  // (src/mcp/server.ts) and the /v1/lint/test-evidence route both call, so all three surfaces return a
+  // byte-identical verdict and coverage self-checks work fully offline.
+  (input) => toolResult("LoopOver test-evidence check.", buildTestEvidenceReport(input)),
 );
 
 registerStdioTool(

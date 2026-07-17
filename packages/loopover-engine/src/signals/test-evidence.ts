@@ -125,3 +125,50 @@ export function classifyTestCoverage(changedPaths: string[]): TestCoverageClassi
 // spec for a framework this engine doesn't recognize.
 export const TEST_FRAMEWORKS = ["vitest", "jest", "pytest", "go-test", "rspec", "cargo-test"] as const;
 export type TestFramework = (typeof TEST_FRAMEWORKS)[number];
+
+/** The test-evidence report shape returned identically by the MCP tool, the REST route, and the CLI mirror. */
+export type TestEvidenceReport = {
+  classification: TestCoverageClassification;
+  changedFileCount: number;
+  codeFileCount: number;
+  testFileCount: number;
+  guidance: string[];
+};
+
+/**
+ * PURE: classify a planned change's test evidence from path metadata (plus optional free-text `tests` notes) and
+ * render actionable guidance. Extracted (#6749) so the remote MCP tool, `POST /v1/lint/test-evidence`, and the
+ * local CLI mirror all derive a byte-identical verdict from ONE implementation instead of three drifting copies.
+ */
+export function buildTestEvidenceReport(input: {
+  changedPaths: readonly string[];
+  testFiles?: readonly string[] | undefined;
+  tests?: string | undefined;
+}): TestEvidenceReport {
+  const allPaths = [...input.changedPaths, ...(input.testFiles ?? [])];
+  const codeFileCount = input.changedPaths.filter(isCodeFile).length;
+  let classification = classifyTestCoverage(allPaths);
+  let testFileCount = allPaths.filter(isTestPath).length;
+  // Credit free-text `tests` evidence (e.g. "ran `go test ./...` locally, no new file") the same way the
+  // sibling tools loopover_check_slop_risk / loopover_suggest_boundary_tests already do via
+  // hasLocalTestEvidence. Only ever LIFT an otherwise-"absent" verdict -- never make this more lenient than
+  // the path-based signal once real test-file evidence (weak/adequate/strong) already exists.
+  const creditedByFreeTextTests = classification === "absent" && hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles });
+  if (creditedByFreeTextTests) {
+    classification = "adequate";
+    testFileCount = Math.max(testFileCount, 1);
+  }
+  const guidance: string[] = [];
+  if (codeFileCount === 0) {
+    guidance.push("No hand-authored code files changed, so the missing-test-evidence signal does not apply (e.g. a docs- or config-only change).");
+  } else if (creditedByFreeTextTests) {
+    guidance.push("No test file was detected among the changed paths, but the free-text `tests` evidence you supplied is credited as test evidence (the same way check_slop_risk and suggest_boundary_tests treat it).");
+  } else if (classification === "absent") {
+    guidance.push("Changed code files carry no test evidence — add or update a test that exercises the change before opening the PR.");
+  } else if (classification === "strong") {
+    guidance.push("Test coverage looks strong for this change.");
+  } else {
+    guidance.push(`Test coverage is ${classification} for this change — adding another focused test would strengthen the evidence.`);
+  }
+  return { classification, changedFileCount: allPaths.length, codeFileCount, testFileCount, guidance };
+}

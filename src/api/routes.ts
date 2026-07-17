@@ -197,6 +197,7 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { buildTestEvidenceReport } from "../signals/test-evidence";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
@@ -478,6 +479,14 @@ const validateFocusManifestSchema = z.object({
 
 // Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the loopover_check_slop_risk /
 // loopover_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
+// #6749: mirrors checkTestEvidenceShape in src/mcp/server.ts exactly, so REST can never accept what the tool
+// would reject.
+const testEvidenceSchema = z.object({
+  changedPaths: z.array(z.string()).min(1),
+  testFiles: z.array(z.string()).optional(),
+  tests: z.string().optional(),
+});
+
 const slopRiskSchema = z.object({
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -3216,6 +3225,16 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6749: REST mirror of the loopover_check_test_evidence MCP tool, bringing it to the same parity its
+  // same-tier deterministic-lint sibling /v1/lint/slop-risk (directly above) already has. Delegates to the
+  // engine's buildTestEvidenceReport -- the same function the MCP tool and the CLI mirror call.
+  app.post("/v1/lint/test-evidence", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = testEvidenceSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_test_evidence_request", issues: parsed.error.issues }, 400);
+    return c.json(buildTestEvidenceReport(parsed.data));
   });
 
   app.post("/v1/lint/issue-slop", async (c) => {

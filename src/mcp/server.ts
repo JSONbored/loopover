@@ -156,7 +156,7 @@ import {
   buildTestGenSpec,
   type LocalWriteActionSpec,
 } from "./local-write-tools";
-import { classifyTestCoverage, hasLocalTestEvidence, isCodeFile, isTestPath, TEST_FRAMEWORKS } from "../signals/test-evidence";
+import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, isCodeFile, isTestPath, TEST_FRAMEWORKS } from "../signals/test-evidence";
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
@@ -3652,35 +3652,12 @@ export class LoopoverMcp {
 
   private async checkTestEvidence(input: z.infer<z.ZodObject<typeof checkTestEvidenceShape>>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_check_test_evidence");
-    const allPaths = [...input.changedPaths, ...(input.testFiles ?? [])];
-    const codeFileCount = input.changedPaths.filter(isCodeFile).length;
-    let classification = classifyTestCoverage(allPaths);
-    let testFileCount = allPaths.filter(isTestPath).length;
-    // Credit free-text `tests` evidence (e.g. "ran `go test ./...` locally, no new file") the same way the
-    // sibling tools loopover_check_slop_risk / loopover_suggest_boundary_tests already do via
-    // hasLocalTestEvidence. Only ever LIFT an otherwise-"absent" verdict -- never make this more lenient than
-    // the path-based signal once real test-file evidence (weak/adequate/strong) already exists.
-    const creditedByFreeTextTests =
-      classification === "absent" && hasLocalTestEvidence({ tests: input.tests, testFiles: input.testFiles });
-    if (creditedByFreeTextTests) {
-      classification = "adequate";
-      testFileCount = Math.max(testFileCount, 1);
-    }
-    const guidance: string[] = [];
-    if (codeFileCount === 0) {
-      guidance.push("No hand-authored code files changed, so the missing-test-evidence signal does not apply (e.g. a docs- or config-only change).");
-    } else if (creditedByFreeTextTests) {
-      guidance.push("No test file was detected among the changed paths, but the free-text `tests` evidence you supplied is credited as test evidence (the same way check_slop_risk and suggest_boundary_tests treat it).");
-    } else if (classification === "absent") {
-      guidance.push("Changed code files carry no test evidence — add or update a test that exercises the change before opening the PR.");
-    } else if (classification === "strong") {
-      guidance.push("Test coverage looks strong for this change.");
-    } else {
-      guidance.push(`Test coverage is ${classification} for this change — adding another focused test would strengthen the evidence.`);
-    }
+    // #6749: the classification/guidance logic now lives in the engine's buildTestEvidenceReport, shared with
+    // POST /v1/lint/test-evidence and the local CLI mirror so all three surfaces agree by construction.
+    const report = buildTestEvidenceReport(input);
     return {
-      summary: `Test evidence: ${classification}.`,
-      data: { classification, changedFileCount: allPaths.length, codeFileCount, testFileCount, guidance } as unknown as Record<string, unknown>,
+      summary: `Test evidence: ${report.classification}.`,
+      data: report as unknown as Record<string, unknown>,
     };
   }
 

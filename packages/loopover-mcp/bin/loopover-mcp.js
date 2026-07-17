@@ -4535,8 +4535,10 @@ function printHelp() {
   loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   loopover-mcp cache status|list|clear [--json]
   loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
+  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
   loopover-mcp decision-pack --login <github-login> [--json]
   loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
+  loopover-mcp contributor-profile [--login <github-login>] [--json]
   loopover-mcp monitor-open-prs --login <github-login> [--json]
   loopover-mcp pr-outcomes --login <github-login> [--limit N] [--json]
   loopover-mcp explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]

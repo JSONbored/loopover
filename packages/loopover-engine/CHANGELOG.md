@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.1](https://github.com/JSONbored/loopover/compare/engine-v3.2.0...engine-v3.2.1) (2026-07-17)
+
+
+### Fixes
+
+* **config:** recognize federatedIntelligence manifest block in lint and preview ([95ba59a](https://github.com/JSONbored/loopover/commit/95ba59aa2731dc3802ca90ea9326c9ca8f7e2916))
+* **config:** recognize federatedIntelligence manifest block in lint and preview ([1c80fb8](https://github.com/JSONbored/loopover/commit/1c80fb84b88c2ce4028e8435056025bfca4da914))
+
 ## [3.2.0](https://github.com/JSONbored/loopover/compare/engine-v3.1.1...engine-v3.2.0) (2026-07-17)
 
 

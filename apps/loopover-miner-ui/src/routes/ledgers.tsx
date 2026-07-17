@@ -1,9 +1,24 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { Bar, BarChart, Cell, XAxis, YAxis } from "recharts";
 
 import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@loopover/ui-kit/components/chart";
 import { Input } from "@loopover/ui-kit/components/input";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@loopover/ui-kit/components/pagination";
 import { Skeleton } from "@loopover/ui-kit/components/skeleton";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
@@ -12,6 +27,8 @@ import {
   CLAIM_STATUSES,
   fetchLedgers,
   type ClaimStatus,
+  type ClaimStatusCounts,
+  type EventFeedEntry,
   type LedgersResult,
   type LedgersSummary,
 } from "../lib/ledgers";
@@ -29,9 +46,12 @@ export const Route = createFileRoute("/ledgers")({
 // governor control section) are each replaced by the shared @loopover/ui-kit `StateBoundary`, with a
 // content-shaped `Skeleton` placeholder for the loading state so the layout doesn't jump when the poll resolves.
 // The two flows keep their OWN independent boundary — a governor-state fetch failure must not blank the ledger
-// summary, and vice-versa. Purely presentational: `lib/ledgers.ts`/`lib/governor.ts`, the two fetch loops, and
-// the pause/resume Button wiring are untouched; only the loading/error chrome and the governor-control layout
-// change.
+// summary, and vice-versa.
+//
+// #6832: claims status cards gain a ui-kit `ChartContainer` bar chart (so the bare numbers aren't the only
+// signal), and both event count-tables + the recent-events feed paginate client-side via the kit's `Pagination`
+// once they exceed PAGE_SIZE rows — matching the run-history restyle (#6510). Purely presentational:
+// `lib/ledgers.ts`/`lib/governor.ts`, the two fetch loops, and the pause/resume Button wiring stay untouched.
 //
 // The governor control section below is a SEPARATE fetch/action loop from the read-only ledger summary above
 // (#4857, the governor half): it reads/writes the governor's pause state via vite-governor-api.ts, the
@@ -50,32 +70,167 @@ const CLAIM_STATUS_TONE: Record<ClaimStatus, string> = {
   expired: "text-warning",
 };
 
-function CountTable({ counts, keyLabel }: { counts: Record<string, number>; keyLabel: string }) {
-  const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
+/** Rows per page once a count/feed table grows past this; below it the full table renders unpaginated. */
+const PAGE_SIZE = 20;
+
+const CLAIMS_CHART_CONFIG = {
+  count: { label: "Claims" },
+  active: { label: "Active", color: "var(--success)" },
+  released: { label: "Released", color: "var(--muted-foreground)" },
+  expired: { label: "Expired", color: "var(--warning)" },
+} satisfies ChartConfig;
+
+function TablePagination({
+  page,
+  pageCount,
+  onPageChange,
+}: {
+  page: number;
+  pageCount: number;
+  onPageChange: (next: number) => void;
+}) {
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{keyLabel}</TableHead>
-          <TableHead>Count</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {entries.map(([type, count]) => (
-          <TableRow key={type}>
-            <TableCell className="font-mono text-foreground">{type}</TableCell>
-            <TableCell>{count}</TableCell>
-          </TableRow>
+    <Pagination className="mt-4">
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious
+            href="#"
+            aria-disabled={page === 0}
+            onClick={(event) => {
+              event.preventDefault();
+              onPageChange(Math.max(0, page - 1));
+            }}
+          />
+        </PaginationItem>
+        {Array.from({ length: pageCount }).map((_, index) => (
+          <PaginationItem key={index}>
+            <PaginationLink
+              href="#"
+              isActive={index === page}
+              onClick={(event) => {
+                event.preventDefault();
+                onPageChange(index);
+              }}
+            >
+              {index + 1}
+            </PaginationLink>
+          </PaginationItem>
         ))}
-      </TableBody>
-    </Table>
+        <PaginationItem>
+          <PaginationNext
+            href="#"
+            aria-disabled={page >= pageCount - 1}
+            onClick={(event) => {
+              event.preventDefault();
+              onPageChange(Math.min(pageCount - 1, page + 1));
+            }}
+          />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
   );
 }
 
-/** Card+table-shaped loading placeholder for the ledger summary: mirrors the 3 status cards and the stacked
- *  count/feed tables below them, so the summary keeps its shape while the first fetch resolves. `role="status"`
- *  keeps the loading state announced to assistive tech (as the flat "Loading local ledgers…" text it replaces
- *  was). */
+function CountTable({ counts, keyLabel }: { counts: Record<string, number>; keyLabel: string }) {
+  const [page, setPage] = useState(0);
+  const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
+  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  const isPaginated = entries.length > PAGE_SIZE;
+  const safePage = Math.min(page, pageCount - 1);
+  const visible = isPaginated ? entries.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : entries;
+  return (
+    <div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{keyLabel}</TableHead>
+            <TableHead>Count</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visible.map(([type, count]) => (
+            <TableRow key={type}>
+              <TableCell className="font-mono text-foreground">{type}</TableCell>
+              <TableCell>{count}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+    </div>
+  );
+}
+
+function RecentEventsTable({ entries }: { entries: EventFeedEntry[] }) {
+  const [page, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  const isPaginated = entries.length > PAGE_SIZE;
+  const safePage = Math.min(page, pageCount - 1);
+  const visible = isPaginated ? entries.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : entries;
+  return (
+    <div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Event type</TableHead>
+            <TableHead>Repository</TableHead>
+            <TableHead>Recorded</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visible.map((entry, index) => (
+            <TableRow key={`${entry.eventType}-${entry.createdAt ?? index}`}>
+              <TableCell className="font-mono text-foreground">{entry.eventType}</TableCell>
+              <TableCell className="font-mono">{entry.repoFullName ?? "—"}</TableCell>
+              <TableCell>{entry.createdAt ?? "—"}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+    </div>
+  );
+}
+
+/** Horizontal bar chart of claim status counts — the chart.tsx adoption for the claims cards section (#6832).
+ *  Cards still show the exact numbers; the chart is the glanceable breakdown the bare `<dd>`s alone weren't. */
+function ClaimsStatusChart({ byStatus }: { byStatus: ClaimStatusCounts }) {
+  const data = CLAIM_STATUSES.map((status) => ({
+    status,
+    label: CLAIM_STATUS_LABELS[status],
+    count: byStatus[status],
+  }));
+  return (
+    <ChartContainer
+      config={CLAIMS_CHART_CONFIG}
+      className="aspect-auto h-40 w-full"
+      aria-label="Claims by status chart"
+    >
+      <BarChart data={data} layout="vertical" margin={{ left: 4, right: 12, top: 4, bottom: 4 }}>
+        <XAxis type="number" hide />
+        <YAxis
+          type="category"
+          dataKey="label"
+          width={72}
+          tickLine={false}
+          axisLine={false}
+          tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
+        />
+        <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+        <Bar dataKey="count" radius={4}>
+          {data.map((entry) => (
+            <Cell key={entry.status} fill={`var(--color-${entry.status})`} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ChartContainer>
+  );
+}
+
+/** Card+chart+table-shaped loading placeholder for the ledger summary: mirrors the 3 status cards, the claims
+ *  chart, and the stacked count/feed tables below them, so the summary keeps its shape while the first fetch
+ *  resolves. `role="status"` keeps the loading state announced to assistive tech (as the flat "Loading local
+ *  ledgers…" text it replaces was). */
 function LedgerSummarySkeleton() {
   return (
     <div className="grid gap-6" role="status" aria-label="Loading local ledgers">
@@ -91,6 +246,7 @@ function LedgerSummarySkeleton() {
             </Card>
           ))}
         </div>
+        <Skeleton className="h-40 w-full" />
       </section>
       {Array.from({ length: 2 }).map((_, index) => (
         <section key={index} className="grid gap-3">
@@ -138,6 +294,7 @@ function LedgersSummaryContent({ summary }: { summary: LedgersSummary }) {
             </Card>
           ))}
         </dl>
+        <ClaimsStatusChart byStatus={claims.byStatus} />
       </section>
 
       <section className="grid gap-3">
@@ -163,24 +320,7 @@ function LedgersSummaryContent({ summary }: { summary: LedgersSummary }) {
         {events.recent.length === 0 ? (
           <p className="text-token-sm text-muted-foreground">No event-ledger entries recorded.</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Event type</TableHead>
-                <TableHead>Repository</TableHead>
-                <TableHead>Recorded</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {events.recent.map((entry, index) => (
-                <TableRow key={`${entry.eventType}-${entry.createdAt ?? index}`}>
-                  <TableCell className="font-mono text-foreground">{entry.eventType}</TableCell>
-                  <TableCell className="font-mono">{entry.repoFullName ?? "—"}</TableCell>
-                  <TableCell>{entry.createdAt ?? "—"}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <RecentEventsTable entries={events.recent} />
         )}
       </section>
     </div>

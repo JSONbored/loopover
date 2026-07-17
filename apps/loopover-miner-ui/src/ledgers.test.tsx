@@ -87,6 +87,18 @@ describe("emptyLedgersSummary (#4855)", () => {
   });
 });
 
+function manyEventTypes(count: number): Record<string, number> {
+  return Object.fromEntries(Array.from({ length: count }, (_, index) => [`event_type_${index}`, count - index]));
+}
+
+function manyRecentEvents(count: number): LedgersSummary["events"]["recent"] {
+  return Array.from({ length: count }, (_, index) => ({
+    eventType: `event_type_${index}`,
+    repoFullName: index % 2 === 0 ? `acme/repo-${index}` : null,
+    createdAt: index % 3 === 0 ? null : `2026-07-10T06:${String(index).padStart(2, "0")}:00.000Z`,
+  }));
+}
+
 describe("LedgersView (#4855)", () => {
   it("renders claim status counts, the governor type table, the events-by-type table, and the recent-events feed", () => {
     render(<LedgersView result={{ ok: true, summary: fixtureSummary }} />);
@@ -99,6 +111,11 @@ describe("LedgersView (#4855)", () => {
     expect(screen.getAllByText("attempt_succeeded").length).toBe(2);
     expect(screen.getAllByText("attempt_started").length).toBe(2);
     expect(screen.getAllByText("acme/widgets").length).toBeGreaterThan(0);
+  });
+
+  it("renders a claims-by-status chart via the ui-kit ChartContainer (#6832)", () => {
+    render(<LedgersView result={{ ok: true, summary: fixtureSummary }} />);
+    expect(screen.getByLabelText("Claims by status chart")).toBeTruthy();
   });
 
   it("renders the fresh-install empty state when every ledger is empty", () => {
@@ -116,6 +133,86 @@ describe("LedgersView (#4855)", () => {
     render(<LedgersView result={null} />);
     expect(screen.getByRole("status", { name: /loading local ledgers/i })).toBeTruthy();
     expect(screen.queryByText("Loading local ledgers…")).toBeNull(); // the pre-#6512 sentence is gone
+  });
+
+  it("does not paginate count/feed tables at or below 20 rows (#6832)", () => {
+    // Only events-by-type + recent feed are populated (20 each) so type labels stay unique across tables.
+    const summary: LedgersSummary = {
+      claims: { total: 1, byStatus: { active: 1, released: 0, expired: 0 } },
+      events: {
+        total: 20,
+        byType: manyEventTypes(20),
+        recent: manyRecentEvents(20),
+      },
+      governor: { total: 0, byEventType: {} },
+    };
+    render(<LedgersView result={{ ok: true, summary }} />);
+    expect(screen.queryByRole("navigation", { name: /pagination/i })).toBeNull();
+    // Each type appears twice (count table + recent feed); both ends of the range must be visible.
+    expect(screen.getAllByText("event_type_0").length).toBe(2);
+    expect(screen.getAllByText("event_type_19").length).toBe(2);
+  });
+
+  it("paginates the events-by-type CountTable client-side above 20 rows (#6832)", () => {
+    const summary: LedgersSummary = {
+      claims: { total: 1, byStatus: { active: 1, released: 0, expired: 0 } },
+      events: {
+        total: 45,
+        byType: manyEventTypes(45),
+        recent: [],
+      },
+      governor: { total: 0, byEventType: {} },
+    };
+    render(<LedgersView result={{ ok: true, summary }} />);
+    expect(screen.getByRole("navigation", { name: /pagination/i })).toBeTruthy();
+    // Sorted descending by count: event_type_0 has the highest count and appears first.
+    expect(screen.getByText("event_type_0")).toBeTruthy();
+    expect(screen.queryByText("event_type_20")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "2" }));
+    expect(screen.getByText("event_type_20")).toBeTruthy();
+    expect(screen.queryByText("event_type_0")).toBeNull();
+  });
+
+  it("paginates the recent-events feed client-side above 20 rows, with null column fallbacks (#6832)", () => {
+    const summary: LedgersSummary = {
+      claims: { total: 1, byStatus: { active: 1, released: 0, expired: 0 } },
+      events: {
+        total: 45,
+        byType: { attempt_started: 45 },
+        recent: manyRecentEvents(45),
+      },
+      governor: { total: 0, byEventType: {} },
+    };
+    render(<LedgersView result={{ ok: true, summary }} />);
+    expect(screen.getByRole("navigation", { name: /pagination/i })).toBeTruthy();
+    expect(screen.getByText("event_type_0")).toBeTruthy();
+    expect(screen.queryByText("event_type_20")).toBeNull();
+    // Null repo/createdAt render as em-dashes (odd indices / multiples of 3 on page 1).
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("link", { name: "2" }));
+    expect(screen.getByText("event_type_20")).toBeTruthy();
+    expect(screen.queryByText("event_type_0")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "3" }));
+    expect(screen.getByText("event_type_40")).toBeTruthy();
+  });
+
+  it("paginates the governor-events CountTable independently of the events tables (#6832)", () => {
+    const summary: LedgersSummary = {
+      claims: { total: 1, byStatus: { active: 1, released: 0, expired: 0 } },
+      events: { total: 0, byType: {}, recent: [] },
+      governor: { total: 45, byEventType: manyEventTypes(45) },
+    };
+    render(<LedgersView result={{ ok: true, summary }} />);
+    expect(screen.getByRole("navigation", { name: /pagination/i })).toBeTruthy();
+    expect(screen.getByText("event_type_0")).toBeTruthy();
+    expect(screen.queryByText("event_type_20")).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "2" }));
+    expect(screen.getByText("event_type_20")).toBeTruthy();
+    // Previous / Next buttons also advance the page (covers both onClick arms).
+    fireEvent.click(screen.getByRole("link", { name: /go to previous page/i }));
+    expect(screen.getByText("event_type_0")).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: /go to next page/i }));
+    expect(screen.getByText("event_type_20")).toBeTruthy();
   });
 });
 

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
 
@@ -510,13 +510,38 @@ args = ["-y", "@loopover/mcp@latest", "--stdio"]`,
   },
 ];
 
-function ClientSetupTabs() {
+export function ClientSetupTabs() {
   const [active, setActive] = useState<ClientTabId>(() => {
     if (typeof window === "undefined") return "miners";
     return (window.localStorage.getItem("gt:install-tab") as ClientTabId) ?? "miners";
   });
   const [copied, setCopied] = useState(false);
   const current = CLIENT_TABS.find((t) => t.id === active) ?? CLIENT_TABS[0];
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  // ARIA APG tabs pattern (#6813): ArrowLeft/ArrowRight move (wrapping) and automatically activate the
+  // adjacent tab, Home/End jump to the first/last tab -- matching every other tabbed UI in this codebase
+  // (packages/loopover-ui-kit/src/components/tabs.tsx's Radix-backed Tabs). Roving tabindex below keeps
+  // only the active tab in the page's normal Tab order.
+  const focusTab = (id: ClientTabId) => {
+    setActive(id);
+    tabRefs.current.get(id)?.focus();
+  };
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      focusTab(CLIENT_TABS[(index + 1) % CLIENT_TABS.length]!.id);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      focusTab(CLIENT_TABS[(index - 1 + CLIENT_TABS.length) % CLIENT_TABS.length]!.id);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusTab(CLIENT_TABS[0]!.id);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusTab(CLIENT_TABS[CLIENT_TABS.length - 1]!.id);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -546,13 +571,19 @@ function ClientSetupTabs() {
         aria-label="Install snippets"
         className="flex flex-wrap gap-1 border-b border-border p-1.5"
       >
-        {CLIENT_TABS.map((t) => (
+        {CLIENT_TABS.map((t, index) => (
           <button
             key={t.id}
+            ref={(el) => {
+              if (el) tabRefs.current.set(t.id, el);
+              else tabRefs.current.delete(t.id);
+            }}
             type="button"
             role="tab"
             aria-selected={active === t.id}
+            tabIndex={active === t.id ? 0 : -1}
             onClick={() => setActive(t.id)}
+            onKeyDown={(event) => onTabKeyDown(event, index)}
             className={cn(
               "inline-flex items-center gap-1.5 whitespace-nowrap rounded-token px-2.5 py-1 text-token-xs font-medium transition-colors duration-150 focus-ring motion-reduce:transition-none",
               active === t.id

@@ -446,6 +446,27 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "owner/repo", agentPaused: body.agentPaused === true, ...(body.autonomy ? { autonomy: body.autonomy } : {}) }));
       return;
     }
+    // #6733 agent audit feed (read-only). Echoes the forwarded query so the CLI's pass-through is testable, and
+    // mirrors the route's two shapes: a repo-wide feed, or a ?pull=N-scoped one that also echoes `pullNumber`.
+    if (request.url?.startsWith("/v1/repos/owner/repo/agent/audit-feed") && request.method === "GET") {
+      const params = new URL(request.url, "http://localhost").searchParams;
+      const pull = params.get("pull");
+      const events = [
+        { id: "ae-1", createdAt: "2026-05-30T00:00:00.000Z", eventType: "github_app.merged", actor: "loopover", outcome: "success", detail: "merged #7" },
+        { id: "ae-2", createdAt: "2026-05-29T00:00:00.000Z", eventType: "github_app.review_evasion_closed", actor: "loopover", outcome: "denied", detail: null },
+      ];
+      const limit = params.get("limit");
+      const scoped = limit ? events.slice(0, Number(limit)) : events;
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          ...(pull ? { pullNumber: Number(pull) } : {}),
+          echoedQuery: { since: params.get("since"), limit, pull },
+          events: scoped,
+        }),
+      );
+      return;
+    }
     // #554 gate precision telemetry (read-only). Echoes ?windowDays so the CLI window pass-through is testable.
     if (request.url?.startsWith("/v1/repos/owner/repo/gate-precision") && request.method === "GET") {
       const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");

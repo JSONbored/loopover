@@ -125,7 +125,20 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "store-integrity:claim-ledger",
       "store-integrity:run-state",
       "store-integrity:plan-store",
+      "store-integrity:governor-state",
+      "store-integrity:attempt-log",
+      "store-integrity:replay-snapshot",
+      "store-integrity:worktree-allocator",
     ]);
+    // REGRESSION (#6768): doctor previously omitted these four durable local stores from the integrity sweep.
+    expect(checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining([
+        "store-integrity:governor-state",
+        "store-integrity:attempt-log",
+        "store-integrity:replay-snapshot",
+        "store-integrity:worktree-allocator",
+      ]),
+    );
     expect(runDoctor([], env, cwd)).toBe(0);
     expect(log).toHaveBeenCalled();
   });

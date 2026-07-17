@@ -24,6 +24,10 @@ const STORE_NAMES = [
   "claim-ledger",
   "run-state",
   "plan-store",
+  "governor-state",
+  "attempt-log",
+  "replay-snapshot",
+  "worktree-allocator",
 ];
 
 afterEach(() => {
@@ -32,11 +36,13 @@ afterEach(() => {
 });
 
 describe("loopover-miner migrate (#4871)", () => {
-  it("covers the exact same seven stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
+  it("covers the exact same eleven stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
     const env = tempEnv();
     const results = runMigrateChecks(env);
 
     expect(results.map((result) => result.name)).toEqual(STORE_NAMES);
+    // REGRESSION (#6768): these four durable stores were previously omitted from both migrate and doctor.
+    expect(STORE_NAMES).toEqual(expect.arrayContaining(["governor-state", "attempt-log", "replay-snapshot", "worktree-allocator"]));
     for (const result of results) {
       expect(result.ok).toBe(true);
       expect(result.status).toBe("skipped");

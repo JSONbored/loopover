@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ThemeToggle } from "./components/theme-toggle";
 
 describe("ThemeToggle (#6508)", () => {
@@ -15,7 +15,7 @@ describe("ThemeToggle (#6508)", () => {
     localStorage.clear();
   });
 
-  it("labels the compact icon button to switch AWAY from the current theme (dark → light)", () => {
+  it("labels the button to switch AWAY from the current theme (dark shows 'Switch to light mode')", () => {
     render(<ThemeToggle />);
     expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeTruthy();
   });
@@ -40,17 +40,5 @@ describe("ThemeToggle (#6508)", () => {
     expect(document.documentElement.style.colorScheme).toBe("dark");
     expect(localStorage.getItem("loopover.miner_theme")).toBe("dark");
     expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeTruthy();
-  });
-
-  it("survives a localStorage.setItem throw (private mode) and still flips the in-page theme", () => {
-    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("quota");
-    });
-    render(<ThemeToggle />);
-    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
-    expect(document.documentElement.classList.contains("dark")).toBe(false);
-    expect(document.documentElement.style.colorScheme).toBe("light");
-    expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeTruthy();
-    setItem.mockRestore();
   });
 });

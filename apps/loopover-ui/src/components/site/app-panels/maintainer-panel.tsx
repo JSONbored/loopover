@@ -2,17 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Bot,
-  Check,
   CheckCircle2,
   CircleSlash,
-  Copy,
   ListChecks,
   Play,
   RefreshCw,
   ShieldCheck,
   UserCheck,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import {
   DiffBlock,
@@ -718,19 +715,6 @@ export function PreviewResult({
   error: string | null;
   busy: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-
-  const onCopyComment = async (previewComment: string) => {
-    try {
-      await navigator.clipboard.writeText(previewComment);
-      setCopied(true);
-      toast.success("Comment preview copied", { description: "Paste it wherever you need it." });
-      setTimeout(() => setCopied(false), 1400);
-    } catch {
-      toast.error("Copy failed", { description: "Select the preview and copy manually." });
-    }
-  };
-
   if (error) {
     return (
       <div className="rounded-token border border-danger/30 bg-danger/[0.04] p-4 text-token-sm text-danger">
@@ -840,20 +824,7 @@ export function PreviewResult({
           <div className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
             Public comment preview
           </div>
-          <div className="flex items-center gap-2">
-            {preview.previewComment ? (
-              <button
-                type="button"
-                onClick={() => onCopyComment(preview.previewComment!)}
-                aria-label={copied ? "Comment preview copied" : "Copy comment preview"}
-                className="inline-flex h-6 items-center gap-1.5 rounded-token border border-border bg-transparent px-2 text-token-2xs text-muted-foreground transition-colors duration-150 hover:bg-accent hover:text-foreground focus-ring motion-reduce:transition-none"
-              >
-                {copied ? <Check className="size-3 text-mint" /> : <Copy className="size-3" />}
-                {copied ? "Copied" : "Copy"}
-              </button>
-            ) : null}
-            <StatusPill status="info">sanitized</StatusPill>
-          </div>
+          <StatusPill status="info">sanitized</StatusPill>
         </div>
         <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-[oklch(0.13_0.005_260)] p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
           {preview.previewComment ?? "No public comment would be posted for this scenario."}

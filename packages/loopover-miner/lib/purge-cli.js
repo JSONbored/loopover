@@ -18,6 +18,7 @@ import { initPredictionLedger, resolvePredictionLedgerDbPath } from "./predictio
 import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "./portfolio-queue.js";
 import { initRunStateStore, resolveRunStateDbPath } from "./run-state.js";
 import { resolveAttemptLogDbPath } from "./attempt-log.js";
+import { initPolicyVerdictCacheStore, resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
 import {
   CLAIM_LEDGER_PURGE_SPEC,
   EVENT_LEDGER_PURGE_SPEC,
@@ -25,6 +26,7 @@ import {
   PREDICTION_LEDGER_PURGE_SPEC,
   PORTFOLIO_QUEUE_PURGE_SPEC,
   RUN_STATE_PURGE_SPEC,
+  POLICY_VERDICT_CACHE_PURGE_SPEC,
   countStoreByRepo,
   describeError,
 } from "./store-maintenance.js";
@@ -42,6 +44,7 @@ const REAL_PURGE_TARGETS = [
   { name: "prediction-ledger", optionKey: "initPredictionLedger", opener: initPredictionLedger, resolveDbPath: resolvePredictionLedgerDbPath, spec: PREDICTION_LEDGER_PURGE_SPEC },
   { name: "portfolio-queue", optionKey: "initPortfolioQueueStore", opener: initPortfolioQueueStore, resolveDbPath: resolvePortfolioQueueDbPath, spec: PORTFOLIO_QUEUE_PURGE_SPEC },
   { name: "run-state", optionKey: "initRunStateStore", opener: initRunStateStore, resolveDbPath: resolveRunStateDbPath, spec: RUN_STATE_PURGE_SPEC },
+  { name: "policy-verdict-cache", optionKey: "initPolicyVerdictCacheStore", opener: initPolicyVerdictCacheStore, resolveDbPath: resolvePolicyVerdictCacheDbPath, spec: POLICY_VERDICT_CACHE_PURGE_SPEC },
 ];
 
 function parseRepoArg(value, usage) {

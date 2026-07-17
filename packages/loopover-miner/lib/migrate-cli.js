@@ -3,7 +3,7 @@
 // whatever command happens to touch it first -- this command instead lets an operator PROACTIVELY bring every
 // known store's EXISTING on-disk file up to date in one pass (e.g. right after upgrading, or before starting a
 // fleet), without needing to guess which command happens to touch which store first. Mirrors status.js's
-// storeIntegrityChecks [name, resolve*DbPath(env)] store list exactly (same eleven stores `doctor` already
+// storeIntegrityChecks [name, resolve*DbPath(env)] store list exactly (same twelve stores `doctor` already
 // covers, #6768), but actually OPENS each store (rather than a read-only integrity probe) so its real open/init
 // function's migration path runs for real. A store file that does not exist yet is skipped, not created --
 // "migrate" brings existing files up to date; it is not another way to bootstrap fresh state (that's `init`).
@@ -23,6 +23,7 @@ import { initAttemptLog, resolveAttemptLogDbPath } from "./attempt-log.js";
 import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "./replay-snapshot.js";
 import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "./worktree-allocator.js";
 import { initContributionProfileCache, resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
+import { initPolicyVerdictCacheStore, resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
 
 const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
@@ -39,6 +40,7 @@ const STORES = [
   { name: "replay-snapshot", resolveDbPath: resolveReplaySnapshotDbPath, open: openReplaySnapshotStore },
   { name: "worktree-allocator", resolveDbPath: resolveWorktreeAllocatorDbPath, open: (dbPath) => openWorktreeAllocator({ dbPath }) },
   { name: "contribution-profile", resolveDbPath: resolveContributionProfileCacheDbPath, open: initContributionProfileCache },
+  { name: "policy-verdict-cache", resolveDbPath: resolvePolicyVerdictCacheDbPath, open: initPolicyVerdictCacheStore },
 ];
 
 /** Read a store file's stamped schema version without ever creating it -- matches checkStoreIntegrity's

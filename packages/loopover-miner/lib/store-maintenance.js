@@ -34,8 +34,23 @@ export const GOVERNOR_LEDGER_PURGE_SPEC = { table: "governor_events", repoColumn
 export const PREDICTION_LEDGER_PURGE_SPEC = { table: "predictions", repoColumn: "repo_full_name" };
 export const PORTFOLIO_QUEUE_PURGE_SPEC = { table: "miner_portfolio_queue", repoColumn: "repo_full_name" };
 export const RUN_STATE_PURGE_SPEC = { table: "miner_run_state", repoColumn: "repo_full_name" };
+// Unlike the six specs above, policy-verdict-cache.js's repo_scope column is NOT a bare `owner/repo` value --
+// it's `${apiBaseUrl}::${repoFullName}` (policyVerdictCacheKey, opportunity-fanout.js), so one tenant's rows for
+// a repo can never be found by exact equality against repoFullName alone. `matchSuffix: true` tells
+// purgeStoreByRepo/countStoreByRepo below to match on the `::repoFullName` SUFFIX instead, catching every
+// tenant's cached verdict for that repo regardless of apiBaseUrl.
+export const POLICY_VERDICT_CACHE_PURGE_SPEC = { table: "policy_verdict_cache", repoColumn: "repo_scope", matchSuffix: true };
 
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Escape SQL LIKE metacharacters (`%`, `_`, and the escape char itself) in a caller-supplied value before it's
+ *  interpolated into a LIKE pattern, then wrap it as a `%::value` suffix match. Without this, a repoFullName
+ *  containing a literal `_` (a valid GitHub repo/owner character) would silently match extra rows via LIKE's
+ *  single-char wildcard. */
+function likeSuffixPattern(value) {
+  const escaped = value.replace(/[\\%_]/g, (char) => `\\${char}`);
+  return `%::${escaped}`;
+}
 
 /** A readable message for a caught value, whether or not it is an Error. */
 export function describeError(error) {
@@ -156,7 +171,7 @@ export function pruneLedgerByRetention(db, spec, policy, nowMs) {
  * `repoFullName` is caller-normalized (owner/repo) before reaching here; this function only guards the SQL
  * identifiers, matching `pruneLedgerByRetention`'s own defence-in-depth discipline.
  * @param {import("node:sqlite").DatabaseSync} db
- * @param {{ table: string, repoColumn: string }} spec
+ * @param {{ table: string, repoColumn: string, matchSuffix?: boolean }} spec
  * @param {string} repoFullName
  * @returns {number} rows deleted
  */
@@ -164,7 +179,9 @@ export function purgeStoreByRepo(db, spec, repoFullName) {
   for (const identifier of [spec.table, spec.repoColumn]) {
     if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
   }
-  const info = db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).run(repoFullName);
+  const info = spec.matchSuffix
+    ? db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.repoColumn} LIKE ? ESCAPE '\\'`).run(likeSuffixPattern(repoFullName))
+    : db.prepare(`DELETE FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).run(repoFullName);
   return Number(info.changes);
 }
 
@@ -172,7 +189,7 @@ export function purgeStoreByRepo(db, spec, repoFullName) {
  * Count rows for one repo in a store without deleting anything (#5564) — the read-only counterpart to
  * `purgeStoreByRepo`, used by `purge-cli.js --dry-run` to report what a real purge would remove.
  * @param {import("node:sqlite").DatabaseSync} db
- * @param {{ table: string, repoColumn: string }} spec
+ * @param {{ table: string, repoColumn: string, matchSuffix?: boolean }} spec
  * @param {string} repoFullName
  * @returns {number} matching row count
  */
@@ -180,6 +197,8 @@ export function countStoreByRepo(db, spec, repoFullName) {
   for (const identifier of [spec.table, spec.repoColumn]) {
     if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
   }
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).get(repoFullName);
+  const row = spec.matchSuffix
+    ? db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} LIKE ? ESCAPE '\\'`).get(likeSuffixPattern(repoFullName))
+    : db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).get(repoFullName);
   return Number(row.count);
 }

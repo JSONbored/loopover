@@ -8,6 +8,7 @@ import {
   EVENT_LEDGER_RETENTION_SPEC,
   LEDGER_RETENTION_DAYS_ENV,
   LEDGER_RETENTION_MAX_ROWS_ENV,
+  POLICY_VERDICT_CACHE_PURGE_SPEC,
   checkStoreIntegrity,
   classifyIntegrityRows,
   countStoreByRepo,
@@ -49,6 +50,19 @@ function seedPurgeTable(rows: Array<{ repoFullName: string }>): DatabaseSync {
 }
 function purgeTableRowCount(db: DatabaseSync): number {
   return Number((db.prepare("SELECT COUNT(*) AS n FROM miner_claims").get() as { n: number }).n);
+}
+
+// A minimal store matching POLICY_VERDICT_CACHE_PURGE_SPEC's shape: repo_scope is a COMPOSITE
+// `${apiBaseUrl}::${repoFullName}` key, not a bare repoFullName (policy-verdict-cache.js).
+function seedSuffixTable(rows: Array<{ repoScope: string }>): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE policy_verdict_cache (repo_scope TEXT PRIMARY KEY)");
+  const insert = db.prepare("INSERT INTO policy_verdict_cache (repo_scope) VALUES (?)");
+  for (const row of rows) insert.run(row.repoScope);
+  return db;
+}
+function suffixTableRowCount(db: DatabaseSync): number {
+  return Number((db.prepare("SELECT COUNT(*) AS n FROM policy_verdict_cache").get() as { n: number }).n);
 }
 
 describe("classifyIntegrityRows (#4834)", () => {
@@ -272,6 +286,42 @@ describe("purgeStoreByRepo (#5564)", () => {
     );
     db.close();
   });
+
+  it("REGRESSION (#6987): matchSuffix deletes every tenant's composite repo_scope row for a repo, leaving other repos untouched", () => {
+    const db = seedSuffixTable([
+      { repoScope: "https://api.example.com::acme/widgets" },
+      { repoScope: "https://api.other-tenant.com::acme/widgets" },
+      { repoScope: "https://api.example.com::acme/gadgets" },
+    ]);
+    expect(purgeStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/widgets")).toBe(2);
+    expect(suffixTableRowCount(db)).toBe(1);
+    const remaining = db.prepare("SELECT repo_scope FROM policy_verdict_cache").get() as { repo_scope: string };
+    expect(remaining.repo_scope).toBe("https://api.example.com::acme/gadgets");
+    db.close();
+  });
+
+  it("REGRESSION (#6987): matchSuffix does not false-positive-match a repo whose name is merely a SUFFIX of another repo's name", () => {
+    const db = seedSuffixTable([
+      { repoScope: "https://api.example.com::acme/widgets" },
+      { repoScope: "https://api.example.com::acme/super-widgets" },
+    ]);
+    // A naive `LIKE '%widgets'` (no explicit `::` delimiter) would wrongly match BOTH rows.
+    expect(purgeStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/widgets")).toBe(1);
+    expect(suffixTableRowCount(db)).toBe(1);
+    db.close();
+  });
+
+  it("REGRESSION (#6987): matchSuffix escapes LIKE metacharacters in repoFullName instead of treating them as wildcards", () => {
+    const db = seedSuffixTable([
+      { repoScope: "https://api.example.com::acme/wi_gets" }, // the literal repo this purge targets
+      { repoScope: "https://api.example.com::acme/widgets" }, // would wrongly match if `_` were an unescaped wildcard
+    ]);
+    expect(purgeStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/wi_gets")).toBe(1);
+    expect(suffixTableRowCount(db)).toBe(1);
+    const remaining = db.prepare("SELECT repo_scope FROM policy_verdict_cache").get() as { repo_scope: string };
+    expect(remaining.repo_scope).toBe("https://api.example.com::acme/widgets");
+    db.close();
+  });
 });
 
 describe("countStoreByRepo (#5564)", () => {
@@ -297,6 +347,17 @@ describe("countStoreByRepo (#5564)", () => {
     expect(() => countStoreByRepo(db, { table: "bad; DROP TABLE t", repoColumn: "repo_full_name" }, "acme/widgets")).toThrow(
       /unsafe SQL identifier/,
     );
+    db.close();
+  });
+
+  it("REGRESSION (#6987): matchSuffix counts every tenant's composite repo_scope row for a repo without deleting anything", () => {
+    const db = seedSuffixTable([
+      { repoScope: "https://api.example.com::acme/widgets" },
+      { repoScope: "https://api.other-tenant.com::acme/widgets" },
+      { repoScope: "https://api.example.com::acme/gadgets" },
+    ]);
+    expect(countStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/widgets")).toBe(2);
+    expect(suffixTableRowCount(db)).toBe(3); // nothing deleted
     db.close();
   });
 });

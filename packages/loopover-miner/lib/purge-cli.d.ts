@@ -4,6 +4,7 @@ import type { GovernorLedger } from "./governor-ledger.js";
 import type { PredictionLedger } from "./prediction-ledger.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
 import type { RunStateStore } from "./run-state.js";
+import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 
 export const ATTEMPT_LOG_NOT_PURGEABLE_NOTE: string;
 
@@ -37,6 +38,7 @@ export type PurgeCliOptions = {
   initPredictionLedger?: () => PredictionLedger;
   initPortfolioQueueStore?: () => PortfolioQueueStore;
   initRunStateStore?: () => RunStateStore;
+  initPolicyVerdictCacheStore?: () => PolicyVerdictCacheStore;
   resolveDbPaths?: Record<string, () => string>;
 };
 

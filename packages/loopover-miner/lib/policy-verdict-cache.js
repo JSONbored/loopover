@@ -1,5 +1,6 @@
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
+import { POLICY_VERDICT_CACHE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
 // Local cache of resolved AI-usage-policy verdicts (#4843). Even with #4842's conditional-GET doc cache, the small
 // but non-zero cost of resolving `resolveAiPolicyVerdict` from raw doc text was still paid on every discover run.
@@ -30,6 +31,14 @@ function normalizeRepoScope(repoScope) {
   const trimmed = repoScope.trim();
   if (!trimmed) throw new Error("invalid_policy_verdict_repo_scope");
   return trimmed;
+}
+
+function normalizeRepoFullName(repoFullName) {
+  if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
+  const trimmed = repoFullName.trim();
+  const [owner, repo, extra] = trimmed.split("/");
+  if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  return `${owner}/${repo}`;
 }
 
 function normalizeDecisiveDoc(decisiveDoc) {
@@ -98,6 +107,13 @@ export function initPolicyVerdictCacheStore(dbPath = resolvePolicyVerdictCacheDb
       const updatedAt = new Date().toISOString();
       putStatement.run(normalizedRepoScope, normalizedDecisiveDoc, normalizedEtag, serializedVerdict, updatedAt);
       return { repoScope: normalizedRepoScope, decisiveDoc: normalizedDecisiveDoc, etag: normalizedEtag, verdict, updatedAt };
+    },
+    // Explicit, operator-invoked right-to-be-forgotten purge (#5564, #6987) — never runs automatically. Matches
+    // on the `::repoFullName` SUFFIX of repo_scope (POLICY_VERDICT_CACHE_PURGE_SPEC's matchSuffix), since this
+    // store's key is `${apiBaseUrl}::${repoFullName}`, not a bare repoFullName -- an exact match would never
+    // find this repo's cached verdicts across however many tenant apiBaseUrls have resolved one.
+    purgeByRepo(repoFullName) {
+      return purgeStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, normalizeRepoFullName(repoFullName));
     },
     close() {
       db.close();

@@ -24,6 +24,10 @@ export type PolicyVerdictCacheStore = {
     etag: string,
     verdict: AiPolicyVerdict,
   ): PolicyVerdictCacheWrite;
+  /** Explicit, operator-invoked right-to-be-forgotten purge (#5564, #6987) -- deletes every tenant's cached
+   *  verdict for `repoFullName` (matched on repo_scope's `::repoFullName` suffix, since repo_scope is a
+   *  composite `${apiBaseUrl}::${repoFullName}` key, not a bare repoFullName). Returns the row count deleted. */
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 

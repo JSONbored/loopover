@@ -135,4 +135,23 @@ describe("loopover-miner policy-verdict cache store (#4843)", () => {
   it("throws on an empty explicit db path", () => {
     expect(() => initPolicyVerdictCacheStore("")).toThrow("invalid_policy_verdict_cache_db_path");
   });
+
+  it("REGRESSION (#6987): purgeByRepo deletes every tenant's cached verdict for a repo via the repo_scope suffix, leaving other repos untouched", () => {
+    const store = openStore();
+    store.put("https://api.example.com::acme/widgets", "AI-USAGE.md", '"v1"', VERDICT);
+    store.put("https://api.other-tenant.com::acme/widgets", "AI-USAGE.md", '"v2"', VERDICT);
+    store.put("https://api.example.com::acme/gadgets", "AI-USAGE.md", '"v3"', VERDICT);
+
+    expect(store.purgeByRepo("acme/widgets")).toBe(2);
+    expect(store.get("https://api.example.com::acme/widgets")).toBeNull();
+    expect(store.get("https://api.other-tenant.com::acme/widgets")).toBeNull();
+    expect(store.get("https://api.example.com::acme/gadgets")).not.toBeNull();
+  });
+
+  it("purgeByRepo returns 0 and rejects a malformed repoFullName the same way the other stores do", () => {
+    const store = openStore();
+    store.put("https://api.example.com::acme/widgets", "AI-USAGE.md", '"v1"', VERDICT);
+    expect(store.purgeByRepo("acme/other")).toBe(0);
+    expect(() => store.purgeByRepo("no-slash")).toThrow("invalid_repo_full_name");
+  });
 });

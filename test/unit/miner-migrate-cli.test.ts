@@ -30,6 +30,7 @@ const STORE_NAMES = [
   "replay-snapshot",
   "worktree-allocator",
   "contribution-profile",
+  "policy-verdict-cache",
 ];
 
 afterEach(() => {

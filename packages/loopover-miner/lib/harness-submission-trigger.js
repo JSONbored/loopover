@@ -7,16 +7,15 @@ import { evaluateHarnessSubmissionTrigger } from "@loopover/engine";
 // event -- regardless of outcome, so a paused-pending-human-review session leaves a full trail of why.
 //
 // NOT WIRED INTO ANY AUTOMATIC SCHEDULE: per this issue's own "manual owner sign-off on the wiring before this
-// ships to any default-on profile" deliverable. `prepareOpenPrSubmission` below is the call site up to the
-// cross-package boundary: on `allow: true` it shapes the exact input `buildOpenPrSpec` (root
-// `src/mcp/local-write-tools.ts`) needs -- but does not, and cannot, call that function itself, since the spec
-// builder lives in the private root `src/` tree, unreachable from this package (same cross-package-boundary
-// reason self-review-adapter.ts's slop injection exists). A real root-side/MCP call site (e.g. the existing
-// `loopover_open_pr` tool, src/mcp/server.ts) takes `openPrInput` from a `ready: true` result and passes it
-// to `buildOpenPrSpec` (or the equivalent tool call) to actually produce the runnable local-write spec. The
-// CLI/driver entrypoint that instantiates a real `CodingAgentDriver` and calls `runIterateLoop` end to end with
-// live credentials does not exist yet in this package -- that is separate, larger scope from this decision-to-
-// payload bridge.
+// ships to any default-on profile" deliverable. `prepareOpenPrSubmission` below is the gate→payload bridge:
+// on `allow: true` it shapes the exact input `buildOpenPrSpec` (`@loopover/engine`,
+// `packages/loopover-engine/src/miner/local-write-tools.ts`, re-exported from the engine public barrel) expects
+// as `openPrInput`. It deliberately does NOT call `buildOpenPrSpec` itself -- that stays the caller's job so
+// this module stays a decision-to-payload bridge. The in-package caller is `attempt-runner.js`, which imports
+// `buildOpenPrSpec` from `@loopover/engine` and runs it after a `ready: true` result (the pre-#5131/#5132
+// "unreachable from root `src/mcp/`" boundary no longer applies, but the layering still does: gate evaluate →
+// shape openPrInput here → build the runnable local-write spec in the driver). Equivalent MCP call sites
+// (e.g. `loopover_open_pr`) can likewise take `openPrInput` from a `ready: true` result.
 //
 // SESSION-SCOPED, NOT PER-REPO: the circuit breaker's own "pauses the run entirely" wording means the tally is
 // counted across EVERY repo's decisions this session, not scoped to one repo -- distinct from #2338's loop-
@@ -90,12 +89,13 @@ export function evaluateAndRecordHarnessSubmissionTrigger(candidate, deps) {
 
 /**
  * Bridge one completed handoff through the submission gate to a submission-READY payload -- the exact input
- * shape `buildOpenPrSpec` expects (repoFullName/base/head/title/body/draft). On `allow: true` returns
- * `{ ready: true, decision, event, openPrInput }`; otherwise `{ ready: false, decision, event }` -- the block
- * reasons are on `decision.reasons` and already on the ledger via the wrapped call either way. Does NOT call
- * `buildOpenPrSpec` itself (see this module's own doc comment for why it cannot) -- a real root-side/MCP call
- * site takes `openPrInput` from a `ready: true` result and passes it to that function or the equivalent
- * `loopover_open_pr` MCP tool.
+ * shape `buildOpenPrSpec` (`@loopover/engine`) expects (repoFullName/base/head/title/body/draft). On `allow:
+ * true` returns `{ ready: true, decision, event, openPrInput }`; otherwise `{ ready: false, decision, event }`
+ * -- the block reasons are on `decision.reasons` and already on the ledger via the wrapped call either way.
+ * Does NOT call `buildOpenPrSpec` itself: this stays a gate→payload bridge; `attempt-runner.js` (and MCP
+ * `loopover_open_pr` equivalents) take `openPrInput` from a `ready: true` result and call
+ * `buildOpenPrSpec`. The cross-package "unreachable from root src/" reason no longer applies (#5131/#5132
+ * moved the builder into `@loopover/engine`), but the deliberate non-call layering is still necessary.
  *
  * Fails closed (throws) on a malformed candidate, mirroring evaluateAndRecordHarnessSubmissionTrigger's own
  * validation -- a missing PR title/base is a caller bug that must never silently degrade into a garbage spec.

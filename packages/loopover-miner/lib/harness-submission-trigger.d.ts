@@ -45,7 +45,7 @@ export function countConsecutiveGateBlocks(eventLedger: HarnessSubmissionEventLe
 
 export function evaluateAndRecordHarnessSubmissionTrigger(candidate: HarnessSubmissionCandidateInput, deps: HarnessSubmissionDeps): HarnessSubmissionResult;
 
-/** The exact input shape buildOpenPrSpec (root src/mcp/local-write-tools.ts) expects. */
+/** The exact input shape buildOpenPrSpec (`@loopover/engine`) expects. */
 export type OpenPrInput = {
   repoFullName: string;
   base: string;

@@ -99,7 +99,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision", "onboarding-pack", "audit-feed"],
+  maintain: ["status", "queue", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -3044,6 +3044,8 @@ function printMaintainHelp() {
       `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
       `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
       "  precision [--window-days N]  Show gate false-positive telemetry (blocked-then-merged per gate type).",
+      "  outcome-calibration          Show slop-band merge rates and recommendation-outcome calibration.",
+      "             [--window-days N]  Bound the recommendation window (default: full history).",
       "  onboarding-pack [--refresh]  Preview the repo's contributor onboarding pack.",
       "  audit-feed [--since ISO]     Show the agent audit feed (who did what, when).",
       "             [--limit N]       Cap the events returned (1-200).",
@@ -3148,6 +3150,26 @@ async function maintainCli(args) {
       `Gate precision for ${repoFullName} (${window}): ${overall.blocked ?? 0} blocked, ${overall.blockedThenMerged ?? 0} blocked-then-merged, false-positive rate ${rate(overall.falsePositiveRate)}.`,
       ...(payload.perGateType ?? []).map(
         (type) => `- ${type.gateType}: ${type.blocked} blocked, ${type.blockedThenMerged} merged anyway${type.falsePositiveRate === null ? "" : ` (${Math.round(type.falsePositiveRate * 100)}% FP)`}`,
+      ),
+      ...(payload.signals ?? []),
+    ];
+    emit(payload, lines.join("\n"));
+    return;
+  }
+  if (subcommand === "outcome-calibration") {
+    // #6735 outcome calibration: read-only measurement of whether higher-slop bands merge less often and how
+    // agent recommendations panned out. Same --window-days handling the sibling precision command uses (a
+    // non-positive value omits ?windowDays, so the server reports full history).
+    const windowDays = Number(options.windowDays);
+    const query = windowDays > 0 ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    const payload = await apiGet(`${repoBase}/outcome-calibration${query}`);
+    const window = payload.windowDays ? `last ${payload.windowDays}d` : "all history";
+    const recommendations = payload.recommendations ?? {};
+    const rate = (value) => (value === null || value === undefined ? "n/a (below sample)" : `${Math.round(value * 100)}%`);
+    const lines = [
+      `Outcome calibration for ${repoFullName} (${window}): recommendations ${recommendations.positive ?? 0} positive, ${recommendations.negative ?? 0} negative, ${recommendations.pending ?? 0} pending (positive rate ${rate(recommendations.positiveRate)}).`,
+      ...(payload.slop ?? []).map(
+        (band) => `- ${band.band}: ${rate(band.mergeRate)} merge rate over ${band.sampleSize ?? 0} PR(s) (${band.merged ?? 0} merged, ${band.closed ?? 0} closed)`,
       ),
       ...(payload.signals ?? []),
     ];

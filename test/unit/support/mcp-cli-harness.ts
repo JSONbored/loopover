@@ -516,6 +516,23 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url?.startsWith("/v1/repos/owner/repo/outcome-calibration") && request.method === "GET") {
+      const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          windowDays: windowDays ? Number(windowDays) : null,
+          slop: [
+            { band: "clean", sampleSize: 12, merged: 9, closed: 3, mergeRate: 0.75 },
+            { band: "high", sampleSize: 4, merged: 1, closed: 3, mergeRate: 0.25 },
+          ],
+          recommendations: { total: 20, positive: 14, negative: 3, pending: 3, positiveRate: 0.82 },
+          signals: ["Higher-slop bands merge less often — the slop signal is tracking real outcomes."],
+        }),
+      );
+      return;
+    }
     const onboardingPackUrl = new URL(request.url ?? "/", "http://localhost");
     if (onboardingPackUrl.pathname === "/v1/repos/owner/repo/onboarding-pack/preview" && request.method === "GET") {
       const refresh = onboardingPackUrl.searchParams.get("refresh");

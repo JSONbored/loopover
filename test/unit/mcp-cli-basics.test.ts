@@ -221,7 +221,7 @@ describe("loopover-mcp CLI — basics", () => {
     expect(ps).toContain("[System.Management.Automation.CompletionResult]::new");
     expect(ps).toContain("$commands = @('login', 'logout'");
     expect(ps).toContain(
-      "'maintain' = @('status', 'queue', 'approve', 'reject', 'pause', 'resume', 'set-level', 'precision', 'onboarding-pack', 'audit-feed')",
+      "'maintain' = @('status', 'queue', 'approve', 'reject', 'pause', 'resume', 'set-level', 'precision', 'outcome-calibration', 'onboarding-pack', 'audit-feed')",
     );
   });
 

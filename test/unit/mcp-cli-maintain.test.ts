@@ -95,6 +95,24 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(scoped).toMatch(/Gate precision for owner\/repo \(last 30d\)/);
   });
 
+  it("outcome-calibration reports slop-band merge rates + recommendation outcomes (plain + json), passing the window through (#6735)", async () => {
+    const e = await env();
+    const out = await runAsync(["maintain", "outcome-calibration", "--repo", "owner/repo"], e);
+    expect(out).toMatch(/Outcome calibration for owner\/repo \(all history\): recommendations 14 positive, 3 negative, 3 pending \(positive rate 82%\)/);
+    expect(out).toMatch(/clean: 75% merge rate over 12 PR\(s\) \(9 merged, 3 closed\)/);
+    expect(out).toMatch(/high: 25% merge rate over 4 PR\(s\)/);
+    expect(out).toMatch(/Higher-slop bands merge less often/);
+    const json = JSON.parse(await runAsync(["maintain", "outcome-calibration", "--repo", "owner/repo", "--json"], e)) as {
+      recommendations: { positive: number; positiveRate: number };
+      slop: Array<{ band: string }>;
+    };
+    expect(json.recommendations).toMatchObject({ positive: 14, positiveRate: 0.82 });
+    expect(json.slop.map((band) => band.band)).toEqual(["clean", "high"]);
+    // --window-days bounds the recommendation window; the CLI forwards it as ?windowDays and reflects it.
+    const scoped = await runAsync(["maintain", "outcome-calibration", "--repo", "owner/repo", "--window-days", "30"], e);
+    expect(scoped).toMatch(/Outcome calibration for owner\/repo \(last 30d\)/);
+  });
+
   it("onboarding-pack mirrors the session-gated API payload and forwards refresh", async () => {
     const requests: string[] = [];
     const e = await env((request) => requests.push(request.url ?? ""));

@@ -304,6 +304,25 @@ export async function startFixtureServer(
       );
       return;
     }
+    const notificationsMatch = /^\/v1\/contributors\/([^/]+)\/notifications$/.exec(new URL(request.url ?? "/", "http://localhost").pathname);
+    if (notificationsMatch && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          login: decodeURIComponent(notificationsMatch[1]!),
+          unreadCount: 1,
+          notifications: [
+            { id: "notif-1", eventType: "pull_request_changes_requested", repoFullName: "owner/repo", pullNumber: 7, title: "Changes requested on owner/repo#7", body: "x", deeplink: "https://github.com/owner/repo/pull/7", status: "delivered", createdAt: "2026-05-30T00:00:00.000Z" },
+          ],
+        }),
+      );
+      return;
+    }
+    const notificationsReadMatch = /^\/v1\/contributors\/([^/]+)\/notifications\/read$/.exec(new URL(request.url ?? "/", "http://localhost").pathname);
+    if (notificationsReadMatch && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as { ids?: string[] };
+      response.end(JSON.stringify({ login: decodeURIComponent(notificationsReadMatch[1]!), marked: body.ids ? body.ids.length : 1 }));
+      return;
+    }
     if (request.url === "/v1/contributors/JSONbored/open-pr-monitor" && request.method === "GET") {
       response.end(JSON.stringify({ ...openPrMonitorFixture(), ...(options.openPrMonitor ?? {}) }));
       return;

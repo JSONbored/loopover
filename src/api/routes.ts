@@ -77,6 +77,10 @@ import {
   listIssueSignalSample,
   listAgentRunsForActor,
   listDigestSubscriptionsForLogin,
+  listNotificationDeliveriesForRecipient,
+  markNotificationDeliveriesRead,
+  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
+  MAX_NOTIFICATION_MARK_READ_IDS,
   listProductUsageDailyRollups,
   listOpenPullRequests,
   listPrVisibilitySkipAuditEvents,
@@ -131,6 +135,7 @@ import { getRepositoryCollaboratorPermission } from "../github/app";
 import type { LoopOverFooterEnv } from "../github/footer";
 import { contributorRepoStatsFromGittensor, fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { fetchPublicContributorProfile, fetchPublicRepoStats } from "../github/public";
+import { buildNotificationFeed } from "../notifications/service";
 import {
   buildPublicAgentCommandComment,
   buildMaintainerQueueDigest,
@@ -517,6 +522,12 @@ const intakeIdeaSchema = z.object({
 
 // #6752: mirrors buildResultsPayloadShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so the
 // REST surface can never accept an input the MCP tool would reject, or vice versa.
+// #6745: mirrors markNotificationsReadShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so
+// the REST surface can never accept an input the MCP tool would reject, or vice versa.
+const markNotificationsReadSchema = z.object({
+  ids: z.array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH)).max(MAX_NOTIFICATION_MARK_READ_IDS).optional(),
+});
+
 const resultsPayloadSchema = z.object({
   repoFullName: z.string().min(1),
   prNumber: z.number().int().nullable().optional(),
@@ -3307,6 +3318,28 @@ export function createApp() {
     const unauthorized = await requireContributorAccess(c, login);
     if (unauthorized) return unauthorized;
     return c.json(await buildContributorOpenPrMonitor(c.env, login));
+  });
+
+  // #6745: REST mirror of the loopover_list_notifications MCP tool (src/mcp/server.ts), same
+  // requireContributorAccess self-scoping as the profile/decision-pack routes above.
+  app.get("/v1/contributors/:login/notifications", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const deliveries = await listNotificationDeliveriesForRecipient(c.env, login, { channel: "badge", limit: 50 });
+    return c.json(buildNotificationFeed(login, deliveries));
+  });
+
+  // #6745: REST mirror of the loopover_mark_notifications_read MCP tool (src/mcp/server.ts), same
+  // requireContributorAccess self-scoping. Omitting `ids` clears every delivered notification.
+  app.post("/v1/contributors/:login/notifications/read", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const parsed = markNotificationsReadSchema.safeParse((await c.req.json().catch(() => ({}))) ?? {});
+    if (!parsed.success) return c.json({ error: "invalid_notifications_read_request", issues: parsed.error.issues }, 400);
+    const marked = await markNotificationDeliveriesRead(c.env, login, parsed.data.ids);
+    return c.json({ login: login.toLowerCase(), marked });
   });
 
   app.get("/v1/contributors/:login/repos/:owner/:repo/decision", async (c) => {

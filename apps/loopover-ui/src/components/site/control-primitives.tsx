@@ -120,7 +120,7 @@ export function DiffBlock({
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-token border border-border bg-[oklch(0.13_0.005_260)] font-mono text-[12px]",
+        "overflow-hidden rounded-token border border-border bg-surface-code font-mono text-[12px]",
         className,
       )}
     >

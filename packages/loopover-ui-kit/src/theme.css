@@ -89,6 +89,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-code: var(--surface-code);
   --color-mint: var(--mint);
   --color-mint-soft: var(--mint-soft);
   --color-aurora: var(--aurora);
@@ -111,6 +112,9 @@
   --background: oklch(0.985 0.004 110);
   --surface: oklch(0.972 0.005 110);
   --surface-2: oklch(0.955 0.006 110);
+  /* Always-dark code surface (terminal/diff/try-it blocks) — intentionally not redefined in .dark,
+     so it renders identically in both themes instead of drifting with --surface. */
+  --surface-code: oklch(0.13 0.005 260);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.18 0.01 110);
   --popover: oklch(1 0 0);

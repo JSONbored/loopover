@@ -250,7 +250,7 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
             onChange={(e) => setBody(e.target.value)}
             rows={6}
             spellCheck={false}
-            className="w-full rounded-token border border-border bg-[oklch(0.13_0.005_260)] p-3 font-mono text-[12px] text-foreground focus:border-mint/40 focus:outline-none"
+            className="w-full rounded-token border border-border bg-surface-code p-3 font-mono text-[12px] text-foreground focus:border-mint/40 focus:outline-none"
           />
         </div>
       )}
@@ -338,7 +338,7 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
               </span>
             </div>
           </div>
-          <pre className="scrollbar-none max-h-80 overflow-auto bg-[oklch(0.13_0.005_260)] p-3 font-mono text-[12px] leading-token-relaxed text-foreground/90">
+          <pre className="scrollbar-none max-h-80 overflow-auto bg-surface-code p-3 font-mono text-[12px] leading-token-relaxed text-foreground/90">
             <code>{result.body}</code>
           </pre>
         </div>

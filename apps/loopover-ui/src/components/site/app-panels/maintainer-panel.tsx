@@ -855,7 +855,7 @@ export function PreviewResult({
             <StatusPill status="info">sanitized</StatusPill>
           </div>
         </div>
-        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-[oklch(0.13_0.005_260)] p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
+        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-token border border-border bg-surface-code p-3 font-mono text-token-xs leading-token-relaxed text-foreground/90">
           {preview.previewComment ?? "No public comment would be posted for this scenario."}
         </pre>
       </div>

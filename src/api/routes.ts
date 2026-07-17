@@ -194,8 +194,6 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
-import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
-import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,

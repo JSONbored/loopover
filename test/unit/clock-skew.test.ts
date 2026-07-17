@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clockSkewSecondsSample, recordClockSkewFromResponse, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
+import { clockSkewSampleAgeSeconds, clockSkewSecondsSample, recordClockSkewFromResponse, resetClockSkewForTest } from "../../src/selfhost/clock-skew";
 
 beforeEach(() => resetClockSkewForTest());
 afterEach(() => vi.useRealTimers());
@@ -50,5 +50,28 @@ describe("clock-skew", () => {
     expect(clockSkewSecondsSample()).not.toBe(0);
     resetClockSkewForTest();
     expect(clockSkewSecondsSample()).toBe(0);
+  });
+});
+
+describe("clock-skew sample age (#7000)", () => {
+  it("reports the -1 never-sampled sentinel before any sample is recorded", () => {
+    expect(clockSkewSampleAgeSeconds()).toBe(-1);
+  });
+
+  it("reports the most recent sample's age and grows as time passes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T12:05:00.000Z"));
+    recordClockSkewFromResponse(new Response(null, { headers: { date: "Mon, 06 Jul 2026 12:00:00 GMT" } }));
+    expect(clockSkewSampleAgeSeconds()).toBe(0); // observed just now
+
+    vi.setSystemTime(new Date("2026-07-06T12:05:45.000Z"));
+    expect(clockSkewSampleAgeSeconds()).toBe(45); // 45s since the last sample
+  });
+
+  it("resetClockSkewForTest restores the age to the -1 never-sampled sentinel", () => {
+    recordClockSkewFromResponse(new Response(null, { headers: { date: new Date(Date.now() - 60_000).toUTCString() } }));
+    expect(clockSkewSampleAgeSeconds()).not.toBe(-1);
+    resetClockSkewForTest();
+    expect(clockSkewSampleAgeSeconds()).toBe(-1);
   });
 });

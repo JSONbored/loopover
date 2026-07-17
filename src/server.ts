@@ -57,7 +57,7 @@ import {
   sqliteBackupAdvisory,
   type ReadinessProbe,
 } from "./selfhost/health";
-import { clockSkewSecondsSample } from "./selfhost/clock-skew";
+import { clockSkewSecondsSample, clockSkewSampleAgeSeconds } from "./selfhost/clock-skew";
 import { d1DatabaseSizeBytesSample, d1SignalSnapshotsRowsPerKeySample, d1TableRowCountSamples, isD1SizeProbeEnabled, runD1SizeProbe } from "./selfhost/d1-size-probe";
 import { gauge, gaugeVector, incr, observe, renderMetrics, setSelfHostedMetricsMode } from "./selfhost/metrics";
 import { runSelfHostMigrations } from "./selfhost/migrate";
@@ -828,6 +828,7 @@ async function main(): Promise<void> {
   // from "no signal on this platform" (see host-pressure.ts).
   gauge("loopover_host_load_avg1_per_core", async () => (await maintenancePressure()).hostLoadAvg1PerCore ?? -1);
   gauge("loopover_clock_skew_seconds", () => clockSkewSecondsSample());
+  gauge("loopover_clock_skew_sample_age_seconds", () => clockSkewSampleAgeSeconds());
   // D1 size/row-count observability probe (#3810): opt-in Cloudflare Management API poll for the shared
   // cloud D1's file size and monitored-table row counts. Always registered (byte-identical -1/empty samples
   // when the probe is disabled or has never completed) so the metric names/HELP/TYPE lines are present on

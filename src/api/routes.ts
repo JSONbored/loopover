@@ -197,6 +197,7 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildTestEvidenceReport } from "../signals/test-evidence";
 import { evaluateEscalation } from "../loop-escalation";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
@@ -495,6 +496,25 @@ const testEvidenceSchema = z.object({
   changedPaths: z.array(z.string().min(1).max(400)).max(2000),
   testFiles: z.array(z.string().min(1).max(400)).max(2000).optional(),
   tests: z.array(z.string().max(400)).max(2000).optional(),
+});
+
+// #6750: mirrors suggestBoundaryTestsShape in src/mcp/server.ts VERBATIM (same bounds, same .strict()
+// objects, same optionality) so the REST surface can never accept an input the MCP tool would reject.
+const boundaryTestsSchema = z.object({
+  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
+  boundaryTouches: z
+    .array(
+      z
+        .object({
+          path: z.string().min(1).max(400),
+          kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]),
+        })
+        .strict(),
+    )
+    .max(20)
+    .optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
 });
 
 const slopRiskSchema = z.object({
@@ -3235,6 +3255,21 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6750: REST mirror of the loopover_suggest_boundary_tests MCP tool, bringing it to the same parity its
+  // same-tier advisory-lint sibling /v1/lint/slop-risk (directly above) already has. Reproduces the tool's
+  // handler exactly: keep only touches whose path is actually in the changed set, build the finding, and build
+  // the spec only when the finding fired. Advisory-only -- never blocks, never writes, and returns criteria/
+  // hints only (never generated test code), so the review/execution boundary stays intact.
+  app.post("/v1/lint/boundary-tests", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = boundaryTestsSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_boundary_tests_request", issues: parsed.error.issues }, 400);
+    const changedPaths = new Set(parsed.data.changedFiles.map((file) => file.path));
+    const touches = (parsed.data.boundaryTouches ?? []).filter((touch) => changedPaths.has(touch.path));
+    const finding = buildBoundaryTestGenerationFinding({ touches, tests: parsed.data.tests, testFiles: parsed.data.testFiles });
+    return c.json({ finding, spec: finding ? buildBoundaryTestGenerationSpec(touches) : null });
   });
 
   // #6749: REST mirror of the loopover_check_test_evidence MCP tool, bringing it to the same parity its

@@ -53,14 +53,14 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
   });
   afterEach(disconnect);
 
-  it("lists exactly 66 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
+  it("lists exactly 67 loopover_ tools and zero gittensory_-prefixed aliases", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
     const primary = names.filter((n) => n.startsWith("loopover_"));
     const legacy = names.filter((n) => n.startsWith("gittensory_"));
-    expect(primary.length).toBe(66);
+    expect(primary.length).toBe(67);
     expect(legacy.length).toBe(0);
-    expect(names.length).toBe(66);
+    expect(names.length).toBe(67);
   });
 
   it("no loopover_ tool's description carries a stale deprecation notice", async () => {
@@ -70,11 +70,11 @@ describe("MCP legacy alias retirement (#4777) — discovery invariants", () => {
     }
   });
 
-  it("`loopover-mcp tools --json` reports the same 66-tool count the live server registers", async () => {
+  it("`loopover-mcp tools --json` reports the same 67-tool count the live server registers", async () => {
     const { tools } = await client.listTools();
     const payload = JSON.parse(run(["tools", "--json"])) as { count: number; tools: Array<{ name: string }> };
     expect(payload.count).toBe(tools.length);
-    expect(payload.count).toBe(66);
+    expect(payload.count).toBe(67);
     expect([...payload.tools.map((t) => t.name)].sort()).toEqual([...tools.map((t) => t.name)].sort());
   });
 });

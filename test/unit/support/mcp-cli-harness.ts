@@ -539,6 +539,16 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ generatedAt: "2026-05-30T00:00:00.000Z", limit: 20, hasMore: false, items: [{ prNumber: 7, reason: "duplicate", remediation: "link the canonical PR" }] }));
       return;
     }
+    // #6750: the boundary-tests lint mirror proxies here; echo a fired finding + spec.
+    if (request.url === "/v1/lint/boundary-tests" && request.method === "POST") {
+      response.end(
+        JSON.stringify({
+          finding: { code: "boundary_test_generation", severity: "advisory", summary: "Boundary-condition code changed without test evidence." },
+          spec: { action: "scaffold_boundary_tests", hints: ["Cover the empty and one-element cases."], boundary: "Your agent scaffolds the tests; loopover never writes code." },
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/pulls/7/reviewability" && request.method === "GET") {
       response.end(
         JSON.stringify({

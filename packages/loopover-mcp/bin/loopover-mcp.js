@@ -552,6 +552,17 @@ const checkTestEvidenceShape = {
   tests: z.array(z.string().max(400)).max(2000).optional(),
 };
 
+// #6750: mirrors suggestBoundaryTestsShape in src/mcp/server.ts VERBATIM.
+const suggestBoundaryTestsShape = {
+  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
+  boundaryTouches: z
+    .array(z.object({ path: z.string().min(1).max(400), kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]) }).strict())
+    .max(20)
+    .optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+};
+
 const checkSlopRiskShape = {
   changedFiles: z
     .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
@@ -860,6 +871,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_check_slop_risk",
     category: "review",
     description: "Assess the deterministic slop risk of a planned change from local diff metadata (paths + line counts) + the PR description — an agent-native, source-free quality self-check. Returns slopRisk (0-100), band, findings, and the rubric. Computed in-process; no repo data and no API round-trip.",
+  },
+  {
+    name: "loopover_suggest_boundary_tests",
+    category: "review",
+    description:
+      "Boundary-safe test-generation suggestion: evaluate locally precomputed boundary-touch metadata (path + pattern kind only; no patch/source text) with no test evidence in the diff, and return a LOCAL-execution action spec (criteria/hints only — never generated test code) for your OWN agent to scaffold tests with. Advisory-only; never blocks, never writes.",
   },
   {
     name: "loopover_check_test_evidence",
@@ -1431,6 +1448,19 @@ registerStdioTool(
   // call (src/mcp/server.ts) and the /v1/lint/slop-risk route's `{ ...assessment, rubric }` shape with no API
   // round-trip, so slop-risk self-checks work fully offline.
   (input) => toolResult("LoopOver slop-risk self-check.", { ...buildSlopAssessment(input), rubric: SLOP_RUBRIC_MARKDOWN }),
+);
+
+// #6750: CLI mirror of the remote server's loopover_suggest_boundary_tests. Unlike its check_slop_risk sibling
+// this one PROXIES rather than computing in-process: the builders live app-side (src/signals/
+// boundary-test-generation.ts, which depends on the app's AdvisoryFinding type), not in @loopover/engine, so
+// POST /v1/lint/boundary-tests stays the single source of truth for the filtering + finding/spec logic.
+registerStdioTool(
+  "loopover_suggest_boundary_tests",
+  {
+    description: stdioToolDescription("loopover_suggest_boundary_tests"),
+    inputSchema: suggestBoundaryTestsShape,
+  },
+  async (input) => toolResult("LoopOver boundary-test suggestion.", await apiPost("/v1/lint/boundary-tests", input)),
 );
 
 registerStdioTool(

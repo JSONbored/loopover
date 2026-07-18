@@ -114,3 +114,59 @@ describe("OperatorDashboard AI cost by tenant (#4916)", () => {
     expect(screen.getByText("$2.00")).toBeTruthy();
   });
 });
+
+describe("OperatorDashboard storage by tenant (#4890)", () => {
+  function mockDashboard(
+    storageRowCountByTenant?: Array<{ installationId: string; rowCount: number }>,
+  ) {
+    useApiResource.mockImplementation((path: string) => {
+      if (path === "/v1/app/operator-dashboard") {
+        return {
+          status: "ready",
+          data: {
+            metrics: [{ label: "Installs", value: "12", delta: "+2" }],
+            noiseReduction: [],
+            weeklyReport: [],
+            storageRowCountByTenant,
+          },
+          error: null,
+          loadedAt: "2026-07-17T00:00:00.000Z",
+          reload: () => {},
+        };
+      }
+      return {
+        status: "error",
+        data: null,
+        error: "unavailable in this test",
+        errorKind: "unknown",
+        loadedAt: null,
+        reload: () => {},
+      };
+    });
+  }
+
+  it("renders no section at all when storageRowCountByTenant is absent (self-host, the common case)", () => {
+    mockDashboard(undefined);
+    render(<OperatorDashboard />);
+    expect(screen.queryByText("Storage by tenant")).toBeNull();
+  });
+
+  it("renders no section when storageRowCountByTenant is an empty list", () => {
+    mockDashboard([]);
+    render(<OperatorDashboard />);
+    expect(screen.queryByText("Storage by tenant")).toBeNull();
+  });
+
+  it("renders each tenant's formatted row count, highest-count-first as the backend already ordered them", () => {
+    mockDashboard([
+      { installationId: "inst-2", rowCount: 3000 },
+      { installationId: "inst-1", rowCount: 2 },
+    ]);
+    render(<OperatorDashboard />);
+    expect(screen.getByText("Storage by tenant")).toBeTruthy();
+    expect(screen.getByText("inst-2")).toBeTruthy();
+    expect(screen.getByText("3,000 rows")).toBeTruthy();
+    expect(screen.getByText("inst-1")).toBeTruthy();
+    expect(screen.getByText("2 rows")).toBeTruthy();
+  });
+});

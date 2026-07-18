@@ -35,6 +35,7 @@ type OperatorDashboardResponse = {
   };
   upstreamDrift?: { status?: string } | null;
   aiCostByTenant?: Array<{ installationId: string; totalCostUsd: number }>;
+  storageRowCountByTenant?: Array<{ installationId: string; rowCount: number }>;
 };
 
 type FleetMetrics = {
@@ -53,6 +54,7 @@ type FleetMetrics = {
 
 const formatPct = (v: number | null): string => (v === null ? "—" : `${Math.round(v * 100)}%`);
 const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+const countFmt = new Intl.NumberFormat("en-US");
 const formatMs = (v: number | null): string =>
   v === null
     ? "—"
@@ -502,6 +504,31 @@ export function OperatorDashboard() {
                     </span>
                     <span className="font-mono text-token-sm text-foreground">
                       {usdFmt.format(tenant.totalCostUsd)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {data.storageRowCountByTenant && data.storageRowCountByTenant.length > 0 ? (
+            <section className="rounded-token border border-border bg-transparent p-5">
+              <h2 className="font-display text-token-lg font-semibold">Storage by tenant</h2>
+              <p className="mt-1 text-token-xs text-muted-foreground">
+                AI-usage row count per tenant, highest first — the account-wide D1 storage cap has
+                its own alert; this is the per-tenant dimension that alert doesn't have. Empty for
+                self-host.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {data.storageRowCountByTenant.map((tenant) => (
+                  <li
+                    key={tenant.installationId}
+                    className="flex items-center justify-between gap-4 border-b-hairline pb-2 last:border-b-0 last:pb-0"
+                  >
+                    <span className="font-mono text-token-xs text-foreground/90">
+                      {tenant.installationId}
+                    </span>
+                    <span className="font-mono text-token-sm text-foreground">
+                      {countFmt.format(tenant.rowCount)} rows
                     </span>
                   </li>
                 ))}

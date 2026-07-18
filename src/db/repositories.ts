@@ -3645,6 +3645,29 @@ export async function listAiCostByTenantSince(env: Env, sinceIso: string): Promi
   return rows.map((row) => ({ installationId: row.installationId ?? "", totalCostUsd: Number(row.total) }));
 }
 
+export type RowCountByTenant = { installationId: string; rowCount: number };
+
+/** #4890 (re-scoped): per-installation row-count breakdown of `ai_usage_events` for the operator dashboard --
+ *  the account-wide D1 storage cap already has alerting (src/selfhost/d1-size-probe.ts,
+ *  LoopoverD1DatabaseSizeWarning/Critical), but that's table-level only, with no way to attribute usage to a
+ *  specific tenant. `ai_usage_events` is the one high-growth table with a clean installationId column today
+ *  (see the sibling per-tenant AI-cost breakdown above); row count is a plain, honest proxy for a tenant's
+ *  storage footprint here since D1 has no per-row-group byte-size query surface. Same GROUP BY shape as
+ *  listAiCostByTenantSince -- one query rather than N per-tenant calls, ordered highest-count-first so the
+ *  dashboard never needs its own client-side sort. */
+export async function listRowCountByTenantSince(env: Env, sinceIso: string): Promise<RowCountByTenant[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ installationId: aiUsageEvents.installationId, rowCount: sql<number>`count(*)` })
+    .from(aiUsageEvents)
+    .where(and(isNotNull(aiUsageEvents.installationId), gte(aiUsageEvents.createdAt, sinceIso)))
+    .groupBy(aiUsageEvents.installationId)
+    .orderBy(desc(sql`count(*)`));
+  /* v8 ignore next -- installationId is the GROUP BY key under an isNotNull filter; D1 cannot return a null
+   *  group here, so the fallback only guards the driver's own typing, not a real runtime path. */
+  return rows.map((row) => ({ installationId: row.installationId ?? "", rowCount: Number(row.rowCount) }));
+}
+
 /** Spend-attempt statuses `countByokAiEventsForRepoSince`/`sumByokAiUsageForRepoSince` count: a real request
  *  reached the provider, whether or not it returned something usable ("ok") or genuinely failed ("error" --
  *  timeout/http_error/exception, see e.g. queue/processors.ts's recordVisualVisionUsage). Deliberately an

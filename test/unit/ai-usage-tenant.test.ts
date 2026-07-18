@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listAiCostByTenantSince, recordAiUsageEvent, sumAiCostForTenantSince } from "../../src/db/repositories";
+import { listAiCostByTenantSince, listRowCountByTenantSince, recordAiUsageEvent, sumAiCostForTenantSince } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 // #7176: ai_usage_events gained a nullable installation_id tenant column for centralized hosted billing, plus a
@@ -96,5 +96,43 @@ describe("listAiCostByTenantSince (#4916): fleet-wide per-tenant breakdown for t
   it("returns an empty list, not an error, when there are no hosted rows at all (the self-host default)", async () => {
     const env = createTestEnv();
     expect(await listAiCostByTenantSince(env, "2026-07-10T00:00:00.000Z")).toEqual([]);
+  });
+});
+
+describe("listRowCountByTenantSince (#4890): per-tenant storage breakdown for the operator dashboard", () => {
+  it("groups by tenant, counts correctly, and orders highest-count-first", async () => {
+    const env = createTestEnv();
+    const since = "2026-07-10T00:00:00.000Z";
+    await seedCostEvent(env, "inst-1", 1.25, "2026-07-11T00:00:00.000Z");
+    await seedCostEvent(env, "inst-1", 0.75, "2026-07-12T00:00:00.000Z"); // inst-1: 2 rows
+    await seedCostEvent(env, "inst-2", 4.0, "2026-07-13T00:00:00.000Z");
+    await seedCostEvent(env, "inst-2", 4.0, "2026-07-13T00:00:00.000Z");
+    await seedCostEvent(env, "inst-2", 4.0, "2026-07-13T00:00:00.000Z"); // inst-2: 3 rows (highest)
+    await seedCostEvent(env, "inst-3", 0.5, "2026-07-13T00:00:00.000Z"); // inst-3: 1 row (lowest)
+
+    const rows = await listRowCountByTenantSince(env, since);
+
+    expect(rows).toEqual([
+      { installationId: "inst-2", rowCount: 3 },
+      { installationId: "inst-1", rowCount: 2 },
+      { installationId: "inst-3", rowCount: 1 },
+    ]);
+  });
+
+  it("excludes self-host rows (null installation_id) and rows outside the time window", async () => {
+    const env = createTestEnv();
+    const since = "2026-07-10T00:00:00.000Z";
+    await seedCostEvent(env, "inst-1", 2.0, "2026-07-11T00:00:00.000Z"); // in window
+    await seedCostEvent(env, "inst-1", 9.0, "2026-07-01T00:00:00.000Z"); // before the window
+    await seedCostEvent(env, null, 5.0, "2026-07-11T00:00:00.000Z"); // self-host, must never appear
+
+    const rows = await listRowCountByTenantSince(env, since);
+
+    expect(rows).toEqual([{ installationId: "inst-1", rowCount: 1 }]);
+  });
+
+  it("returns an empty list, not an error, when there are no hosted rows at all (the self-host default)", async () => {
+    const env = createTestEnv();
+    expect(await listRowCountByTenantSince(env, "2026-07-10T00:00:00.000Z")).toEqual([]);
   });
 });

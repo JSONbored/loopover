@@ -11,9 +11,11 @@ import {
   listLatestGitHubRateLimitObservations,
   listProductUsageDailyRollups,
   listRepositories,
+  listRowCountByTenantSince,
   summarizeMcpCompatibilityAdoption,
   summarizeProductUsageEvents,
   type AiCostByTenant,
+  type RowCountByTenant,
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import type {
@@ -96,6 +98,10 @@ export type OperatorDashboardPayload = {
   // operator (no installation-scoped ai_usage_events rows exist there) -- this surfaces the #7176/#7183 ledger
   // data that had no dashboard consumer until now.
   aiCostByTenant: AiCostByTenant[];
+  // #4890 (re-scoped): per-tenant row-count breakdown of ai_usage_events, highest-count-first. The account-wide
+  // D1 storage cap already has alerting (src/selfhost/d1-size-probe.ts); this is the per-installation dimension
+  // that alerting doesn't have. Same self-host-always-empty caveat as aiCostByTenant above.
+  storageRowCountByTenant: RowCountByTenant[];
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -133,6 +139,7 @@ export async function buildOperatorDashboardPayload(
     slopCalibration,
     findingAcceptance,
     aiCostByTenant,
+    storageRowCountByTenant,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -162,6 +169,8 @@ export async function buildOperatorDashboardPayload(
     computeFindingAcceptance(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #4916: per-tenant AI cost breakdown, same window as the rest of the usage metrics above.
     listAiCostByTenantSince(env, usageSince),
+    // #4890 (re-scoped): per-tenant row-count breakdown, same window as the rest of the usage metrics above.
+    listRowCountByTenantSince(env, usageSince),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -281,6 +290,7 @@ export async function buildOperatorDashboardPayload(
     slopCalibration,
     acceptance,
     aiCostByTenant,
+    storageRowCountByTenant,
   };
 }
 

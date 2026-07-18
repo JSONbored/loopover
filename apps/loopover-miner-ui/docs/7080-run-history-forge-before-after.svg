@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360" role="img" aria-label="Run history before and after forge column">
+  <rect width="980" height="360" fill="#1a1d21"/>
+  <text x="230" y="32" text-anchor="middle" fill="#9aa3ad" font-family="ui-monospace, monospace" font-size="13">BEFORE  duplicate keys</text>
+  <text x="750" y="32" text-anchor="middle" fill="#9aa3ad" font-family="ui-monospace, monospace" font-size="13">AFTER (#7080)</text>
+  <rect x="30" y="50" width="400" height="280" rx="8" fill="#23272c" stroke="#3a4149"/>
+  <rect x="550" y="50" width="400" height="280" rx="8" fill="#23272c" stroke="#3a4149"/>
+  <text x="48" y="78" fill="#8b949e" font-family="ui-monospace, monospace" font-size="12">Repository · State · Updated</text>
+  <text x="48" y="118" fill="#e6edf3" font-family="ui-monospace, monospace" font-size="13">acme/widgets   preparing</text>
+  <text x="48" y="150" fill="#6b7280" font-family="system-ui, sans-serif" font-size="12">second forge row dropped / conflated</text>
+  <text x="568" y="78" fill="#8b949e" font-family="ui-monospace, monospace" font-size="12">Repository · Forge · State · Updated</text>
+  <text x="568" y="118" fill="#e6edf3" font-family="ui-monospace, monospace" font-size="13">acme/widgets</text>
+  <text x="700" y="118" fill="#79c0ff" font-family="ui-monospace, monospace" font-size="12">api.github.com</text>
+  <text x="568" y="148" fill="#e6edf3" font-family="ui-monospace, monospace" font-size="13">acme/widgets</text>
+  <text x="700" y="148" fill="#79c0ff" font-family="ui-monospace, monospace" font-size="12">github.example.corp</text>
+  <text x="568" y="190" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">both forge hosts visible and keyed</text>
+</svg>

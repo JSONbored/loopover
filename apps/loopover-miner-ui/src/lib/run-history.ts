@@ -7,6 +7,8 @@ export const RUN_STATE_API_PATH = "/api/run-state";
 
 /** One `miner_run_state` row as served by the local API — mirrors `run-state.js`'s row shape. */
 export type RunStateRow = {
+  /** Forge API origin; part of the store's primary key alongside `repoFullName` (#7080). */
+  apiBaseUrl: string;
   repoFullName: string;
   state: "idle" | "discovering" | "planning" | "preparing";
   updatedAt: string;
@@ -18,10 +20,26 @@ function isRunStateRow(value: unknown): value is RunStateRow {
   if (typeof value !== "object" || value === null) return false;
   const row = value as Record<string, unknown>;
   return (
+    typeof row.apiBaseUrl === "string" &&
     typeof row.repoFullName === "string" &&
     typeof row.updatedAt === "string" &&
     (row.state === "idle" || row.state === "discovering" || row.state === "planning" || row.state === "preparing")
   );
+}
+
+/** Host label for the Forge column — prefers URL hostname, falls back to the raw apiBaseUrl. (#7080) */
+export function forgeHostLabel(apiBaseUrl: string): string {
+  try {
+    const host = new URL(apiBaseUrl).host;
+    return host || apiBaseUrl;
+  } catch {
+    return apiBaseUrl;
+  }
+}
+
+/** Stable React key / identity for a run-state row across forge hosts. (#7080) */
+export function runStateRowKey(row: Pick<RunStateRow, "apiBaseUrl" | "repoFullName">): string {
+  return `${row.apiBaseUrl}\0${row.repoFullName}`;
 }
 
 /** Fetch the local run-state rows. Failures (server down, malformed payload) surface as a typed error result —

@@ -16,20 +16,22 @@ import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
 import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
-import { fetchRunStates, type RunHistoryResult, type RunStateRow } from "../lib/run-history";
+import { fetchRunStates, forgeHostLabel, runStateRowKey, type RunHistoryResult, type RunStateRow } from "../lib/run-history";
 
 export const Route = createFileRoute("/run-history")({
   component: RunHistoryPage,
 });
 
-// Read-only run-history table (#4305): one row per repo from the local `miner_run_state` store (repo, state,
-// last-updated), served by the dev server's local API. No writes, no new state.
+// Read-only run-history table (#4305): one row per (forge, repo) from the local `miner_run_state` store,
+// served by the dev server's local API. No writes, no new state.
 //
 // #6510: the hand-rolled loading/error/empty `<p>` branches are replaced by the shared @loopover/ui-kit
 // `StateBoundary`, with a content-shaped `Skeleton` table for the loading state (so the layout doesn't jump when
 // the poll resolves), and the table paginates client-side once it exceeds PAGE_SIZE rows via the kit's
-// `Pagination`. Purely presentational — `lib/run-history.ts`'s fetch/poll is untouched, and the
-// Repository/State/Last-updated columns + data shown are unchanged.
+// `Pagination`. Purely presentational — `lib/run-history.ts`'s fetch/poll is untouched.
+//
+// #7080: rows are keyed and labeled by (apiBaseUrl, repoFullName) so the same owner/repo on two forge hosts
+// never collides or looks identical.
 
 const STATE_BADGE_VARIANT: Record<RunStateRow["state"], "secondary" | "outline"> = {
   idle: "secondary",
@@ -41,7 +43,7 @@ const STATE_BADGE_VARIANT: Record<RunStateRow["state"], "secondary" | "outline">
 /** Rows per page once the run-state table grows past this; below it the full table renders unpaginated. */
 const PAGE_SIZE = 20;
 
-const TABLE_COLUMNS = ["Repository", "State", "Last updated"] as const;
+const TABLE_COLUMNS = ["Repository", "Forge", "State", "Last updated"] as const;
 
 function RunHistoryTableHeader() {
   return (
@@ -70,6 +72,9 @@ function RunHistorySkeleton({ rows = 5 }: { rows?: number }) {
                 <Skeleton className="h-4 w-48" />
               </TableCell>
               <TableCell>
+                <Skeleton className="h-4 w-36" />
+              </TableCell>
+              <TableCell>
                 <Skeleton className="h-5 w-20" />
               </TableCell>
               <TableCell>
@@ -89,8 +94,9 @@ function RunStateTable({ rows }: { rows: RunStateRow[] }) {
       <RunHistoryTableHeader />
       <TableBody>
         {rows.map((row) => (
-          <TableRow key={row.repoFullName}>
+          <TableRow key={runStateRowKey(row)}>
             <TableCell className="font-mono text-foreground">{row.repoFullName}</TableCell>
+            <TableCell className="font-mono text-muted-foreground">{forgeHostLabel(row.apiBaseUrl)}</TableCell>
             <TableCell>
               <Badge variant={STATE_BADGE_VARIANT[row.state]}>{row.state}</Badge>
             </TableCell>

@@ -1,16 +1,34 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchRunStates, RUN_STATE_API_PATH, type RunHistoryResult, type RunStateRow } from "./lib/run-history";
+import {
+  fetchRunStates,
+  forgeHostLabel,
+  RUN_STATE_API_PATH,
+  runStateRowKey,
+  type RunHistoryResult,
+  type RunStateRow,
+} from "./lib/run-history";
 import { RunHistoryPage, RunHistoryView } from "./routes/run-history";
 
 const fixtureRows: RunStateRow[] = [
-  { repoFullName: "acme/widgets", state: "preparing", updatedAt: "2026-07-10T06:00:00.000Z" },
-  { repoFullName: "acme/gadgets", state: "idle", updatedAt: "2026-07-10T05:00:00.000Z" },
+  {
+    apiBaseUrl: "https://api.github.com",
+    repoFullName: "acme/widgets",
+    state: "preparing",
+    updatedAt: "2026-07-10T06:00:00.000Z",
+  },
+  {
+    apiBaseUrl: "https://api.github.com",
+    repoFullName: "acme/gadgets",
+    state: "idle",
+    updatedAt: "2026-07-10T05:00:00.000Z",
+  },
 ];
 
 function manyRows(count: number): RunStateRow[] {
   return Array.from({ length: count }, (_, index) => ({
+    apiBaseUrl: "https://api.github.com",
     repoFullName: `acme/repo-${index}`,
     state: "idle" as const,
     updatedAt: "2026-07-10T05:00:00.000Z",
@@ -18,14 +36,38 @@ function manyRows(count: number): RunStateRow[] {
 }
 
 describe("RunHistoryView (#4305, redesigned #6510)", () => {
-  it("renders one table row per run-state fixture row with repo, state badge, and last-updated", () => {
+  it("renders one table row per run-state fixture row with repo, forge, state badge, and last-updated", () => {
     render(<RunHistoryView result={{ ok: true, rows: fixtureRows }} />);
     expect(screen.getByRole("columnheader", { name: "Repository" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Forge" })).toBeTruthy();
     expect(screen.getByText("acme/widgets")).toBeTruthy();
+    expect(screen.getAllByText("api.github.com")).toHaveLength(2);
     expect(screen.getByText("preparing")).toBeTruthy();
     expect(screen.getByText("acme/gadgets")).toBeTruthy();
     expect(screen.getByText("2026-07-10T05:00:00.000Z")).toBeTruthy();
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 fixture rows
+  });
+
+  it("REGRESSION (#7080): same repoFullName on two forge hosts renders as two distinct, labeled rows", () => {
+    const colliding: RunStateRow[] = [
+      {
+        apiBaseUrl: "https://api.github.com",
+        repoFullName: "acme/widgets",
+        state: "preparing",
+        updatedAt: "2026-07-10T06:00:00.000Z",
+      },
+      {
+        apiBaseUrl: "https://github.example.corp/api/v3",
+        repoFullName: "acme/widgets",
+        state: "idle",
+        updatedAt: "2026-07-10T05:00:00.000Z",
+      },
+    ];
+    render(<RunHistoryView result={{ ok: true, rows: colliding }} />);
+    expect(screen.getAllByText("acme/widgets")).toHaveLength(2);
+    expect(screen.getByText("api.github.com")).toBeTruthy();
+    expect(screen.getByText("github.example.corp")).toBeTruthy();
+    expect(screen.getAllByRole("row")).toHaveLength(3); // header + both forge rows
   });
 
   it("renders a content-shaped loading skeleton (role=status), not the old flat loading text (#6510)", () => {
@@ -122,7 +164,15 @@ describe("fetchRunStates (#4305)", () => {
     ).toMatchObject({ ok: false });
     expect(
       await fetchRunStates(async () =>
-        jsonResponse(200, { rows: [{ repoFullName: "a/b", state: "warp", updatedAt: "t" }] }),
+        jsonResponse(200, {
+          rows: [{ apiBaseUrl: "https://api.github.com", repoFullName: "a/b", state: "warp", updatedAt: "t" }],
+        }),
+      ),
+    ).toMatchObject({ ok: false });
+    // #7080: rows missing apiBaseUrl are rejected so the UI never silently drops forge identity.
+    expect(
+      await fetchRunStates(async () =>
+        jsonResponse(200, { rows: [{ repoFullName: "a/b", state: "idle", updatedAt: "t" }] }),
       ),
     ).toMatchObject({ ok: false });
   });
@@ -132,5 +182,16 @@ describe("fetchRunStates (#4305)", () => {
       throw new Error("connection refused");
     });
     expect(result).toEqual({ ok: false, error: "connection refused" });
+  });
+});
+
+describe("forgeHostLabel / runStateRowKey (#7080)", () => {
+  it("extracts the URL host and builds a composite row key", () => {
+    expect(forgeHostLabel("https://api.github.com")).toBe("api.github.com");
+    expect(forgeHostLabel("https://github.example.corp/api/v3")).toBe("github.example.corp");
+    expect(forgeHostLabel("not-a-url")).toBe("not-a-url");
+    expect(
+      runStateRowKey({ apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets" }),
+    ).toBe("https://api.github.com\0acme/widgets");
   });
 });

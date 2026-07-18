@@ -104,6 +104,11 @@ export function createD1Adapter(driver) {
 /**
  * Build a SqliteDriver from a node:sqlite DatabaseSync.
  * A statement with zero result columns is a WRITE; otherwise a READ.
+ *
+ * LIMITATION (#7175 follow-up): `INSERT/UPDATE/DELETE … RETURNING` statements report result columns, so
+ * this heuristic would treat them as reads and drop `changes`/`lastInsertRowid`. claim-ledger and other
+ * RETURNING callers must not migrate onto `driver.query` until the heuristic is sharpened (e.g. statement
+ * class detection) or those stores use `createD1Adapter`/`run` exclusively.
  * @param {{ prepare: (sql: string) => { columns: () => unknown[]; all: (...p: unknown[]) => unknown[]; run: (...p: unknown[]) => { changes: number | bigint; lastInsertRowid: number | bigint } }; exec: (sql: string) => void }} db
  * @returns {SqliteDriver}
  */

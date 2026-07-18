@@ -181,11 +181,21 @@ describe("handleOrbIngest() health ping (#4933)", () => {
     expect((await instanceRow(db, "h2"))?.healthy).toBe(0);
   });
 
-  it("a malformed health object (not an object / ok not boolean) is treated as absent", async () => {
+  it("a present-but-malformed health field (not an object / ok not boolean / null) is rejected", async () => {
     const db = makeDb();
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "h3", events: [], health: "bad" }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "h4", events: [], health: { ok: "yes" } }), db)).toEqual({ error: "invalid_payload" });
     expect(await handleOrbIngest(JSON.stringify({ instance_id: "h5", events: [], health: null }), db)).toEqual({ error: "invalid_payload" });
+  });
+
+  it("#7210: a malformed health field is rejected even when real outcome events also ride along, persisting neither", async () => {
+    const db = makeDb();
+    const result = await handleOrbIngest(JSON.stringify({ instance_id: "h9", events: [ev({ pr_hash: "h9-p" })], health: { ok: "nope" } }), db);
+    expect(result).toEqual({ error: "invalid_payload" });
+    // The whole payload is rejected: neither the event row nor the instance row is written.
+    const signal = await (db as unknown as TestD1Database).prepare("SELECT COUNT(*) AS n FROM orb_signals WHERE pr_hash=?").bind("h9-p").first<{ n: number }>();
+    expect(signal?.n).toBe(0);
+    expect(await instanceRow(db, "h9")).toBeNull();
   });
 
   it("an outcome-only ingest (no health field) never overwrites a previously-reported health status", async () => {

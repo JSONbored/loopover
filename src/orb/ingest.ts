@@ -93,10 +93,19 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
   }
 
   const { instance_id, events, health } = payload as OrbIngestPayload;
+  // #7210: a `health` key that IS present must always be well-formed ({ ok: boolean }), whether or not
+  // real outcome events also ride along in the same payload. A malformed health field is a sender-side
+  // bug we surface (reject the whole payload) rather than silently coerce to "absent" -- consistent with
+  // how every other field in this handler validates. An ABSENT health key (an older self-host build that
+  // doesn't send this field yet) stays fine and falls through as healthy = null, exactly as before.
+  const healthValid = typeof health === "object" && health !== null && typeof health.ok === "boolean";
+  if (health !== undefined && !healthValid) {
+    return { error: "invalid_payload" };
+  }
   // #4933: an empty batch is only valid when it's carrying a health-only ping (the hourly export still
   // has to report health even in a tick with nothing new to export) -- a truly empty, health-less payload
   // stays rejected exactly as before.
-  const healthy = typeof health === "object" && health !== null && typeof health.ok === "boolean" ? (health.ok ? 1 : 0) : null;
+  const healthy = health === undefined ? null : health.ok ? 1 : 0;
   if (!instance_id || instance_id.length > MAX_INSTANCE_ID_CHARS || (events.length === 0 && healthy === null)) {
     return { error: "invalid_payload" };
   }

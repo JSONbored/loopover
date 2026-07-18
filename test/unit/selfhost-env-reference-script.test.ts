@@ -161,3 +161,17 @@ describe("gen-selfhost-env-reference (#2081)", () => {
     expect(readFileSync(outputAbs, "utf8")).toBe(generated);
   });
 });
+
+describe("AI review-pipeline self-host env vars (#6993)", () => {
+  it("scans the AI review source roots so their self-host AI_* vars are collected", () => {
+    // Against the REAL repo with the default (now-extended) source roots: the four AI review-pipeline knobs are
+    // read in src/services/ai-review.ts etc., not under src/selfhost, so they only surface once those roots are
+    // scanned. Before #6993 none of these appeared in the generated reference.
+    const byName = new Map(collectSelfHostEnvVars({}).map((row) => [row.name, row.firstReference]));
+    for (const name of ["AI_SUMMARIES_ENABLED", "AI_PUBLIC_COMMENTS_ENABLED", "AI_MAX_OUTPUT_TOKENS", "AI_BYOK_DAILY_REPO_LIMIT"]) {
+      expect(byName.has(name), name).toBe(true);
+    }
+    // AI_MAX_OUTPUT_TOKENS is read only in ai-review.ts, so its first reference proves the new root is the source.
+    expect(byName.get("AI_MAX_OUTPUT_TOKENS")).toBe("src/services/ai-review.ts");
+  });
+});

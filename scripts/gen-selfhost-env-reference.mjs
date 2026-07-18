@@ -10,6 +10,12 @@ export const DEFAULT_SOURCE_ROOTS = [
   "src/server.ts",
   "src/services/notify-discord.ts",
   "src/services/notify-pagerduty.ts",
+  // The AI review pipeline reads self-host AI_* knobs (AI_SUMMARIES_ENABLED, AI_PUBLIC_COMMENTS_ENABLED,
+  // AI_MAX_OUTPUT_TOKENS, AI_BYOK_DAILY_REPO_LIMIT) here, not under src/selfhost, so they were absent from the
+  // generated reference despite being declared self-host vars in env.d.ts (#6993).
+  "src/services/ai-review.ts",
+  "src/queue/ai-review-orchestration.ts",
+  "src/queue/processors.ts",
   "scripts/build-selfhost.mjs",
   "scripts/migrate-selfhost-sqlite-to-postgres.ts",
   "scripts/smoke-observability-traces.mjs",

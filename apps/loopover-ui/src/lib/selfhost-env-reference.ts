@@ -6,6 +6,10 @@ export type SelfHostEnvReferenceRow = {
 
 export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
+    name: "ADMIN_GITHUB_LOGINS",
+    firstReference: "src/queue/processors.ts",
+  },
+  {
     name: "AI_ADVISORY",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -22,8 +26,16 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "AI_BYOK_DAILY_REPO_LIMIT",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
     name: "AI_COMBINE",
     firstReference: "src/selfhost/ai.ts",
+  },
+  {
+    name: "AI_DAILY_NEURON_BUDGET",
+    firstReference: "src/services/ai-review.ts",
   },
   {
     name: "AI_DUAL_REVIEW",
@@ -42,12 +54,36 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "AI_GATEWAY_ID",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
+    name: "AI_MAX_OUTPUT_TOKENS",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
     name: "AI_ON_MERGE",
     firstReference: "src/selfhost/ai.ts",
   },
   {
     name: "AI_PROVIDER",
     firstReference: "src/selfhost/ai-config.ts",
+  },
+  {
+    name: "AI_PUBLIC_COMMENTS_ENABLED",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
+    name: "AI_REVIEW_PLAN",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
+    name: "AI_SUMMARIES_ENABLED",
+    firstReference: "src/services/ai-review.ts",
+  },
+  {
+    name: "AI_VISION",
+    firstReference: "src/queue/processors.ts",
   },
   {
     name: "AI_VISION_API_KEY",
@@ -134,6 +170,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT",
+    firstReference: "src/queue/processors.ts",
+  },
+  {
+    name: "CONTRIBUTOR_EVIDENCE_BATCH_SIZE",
+    firstReference: "src/queue/processors.ts",
+  },
+  {
     name: "CRON_INTERVAL_MS",
     firstReference: "src/server.ts",
   },
@@ -178,6 +222,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/orb-collector.ts",
   },
   {
+    name: "GITHUB_APP_SLUG",
+    firstReference: "src/queue/processors.ts",
+  },
+  {
     name: "GITHUB_CACHE_TTL_SECONDS",
     firstReference: "src/server.ts",
   },
@@ -194,6 +242,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/installation-concurrency-admission.ts",
   },
   {
+    name: "GITHUB_PUBLIC_TOKEN",
+    firstReference: "src/queue/ai-review-orchestration.ts",
+  },
+  {
     name: "HOME",
     firstReference: "src/selfhost/ai.ts",
   },
@@ -208,6 +260,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   {
     name: "LOOPOVER_REPO_CONFIG_DIR",
     firstReference: "src/server.ts",
+  },
+  {
+    name: "LOOPOVER_REVIEW_CONTINUOUS",
+    firstReference: "src/queue/processors.ts",
   },
   {
     name: "LOOPOVER_VERSION",
@@ -486,17 +542,26 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
 export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| Name | First reference |",
   "| --- | --- |",
+  "| `ADMIN_GITHUB_LOGINS` | `src/queue/processors.ts` |",
   "| `AI_ADVISORY` | `src/selfhost/ai.ts` |",
   "| `AI_ADVISORY_API_KEY` | `src/server.ts` |",
   "| `AI_ADVISORY_BASE_URL` | `src/server.ts` |",
   "| `AI_ADVISORY_MODEL` | `src/server.ts` |",
+  "| `AI_BYOK_DAILY_REPO_LIMIT` | `src/services/ai-review.ts` |",
   "| `AI_COMBINE` | `src/selfhost/ai.ts` |",
+  "| `AI_DAILY_NEURON_BUDGET` | `src/services/ai-review.ts` |",
   "| `AI_DUAL_REVIEW` | `src/selfhost/ai.ts` |",
   "| `AI_EMBED_API_KEY` | `src/server.ts` |",
   "| `AI_EMBED_BASE_URL` | `src/server.ts` |",
   "| `AI_EMBED_MODEL` | `src/selfhost/ai.ts` |",
+  "| `AI_GATEWAY_ID` | `src/services/ai-review.ts` |",
+  "| `AI_MAX_OUTPUT_TOKENS` | `src/services/ai-review.ts` |",
   "| `AI_ON_MERGE` | `src/selfhost/ai.ts` |",
   "| `AI_PROVIDER` | `src/selfhost/ai-config.ts` |",
+  "| `AI_PUBLIC_COMMENTS_ENABLED` | `src/services/ai-review.ts` |",
+  "| `AI_REVIEW_PLAN` | `src/services/ai-review.ts` |",
+  "| `AI_SUMMARIES_ENABLED` | `src/services/ai-review.ts` |",
+  "| `AI_VISION` | `src/queue/processors.ts` |",
   "| `AI_VISION_API_KEY` | `src/server.ts` |",
   "| `AI_VISION_BASE_URL` | `src/server.ts` |",
   "| `AI_VISION_MODEL` | `src/server.ts` |",
@@ -518,6 +583,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `CODEX_AI_TIMEOUT_MS` | `src/selfhost/ai.ts` |",
   "| `CODEX_HOME` | `src/selfhost/ai.ts` |",
   "| `CONFIG_DIR_EMPTY_ACKNOWLEDGED` | `src/server.ts` |",
+  "| `CONTRIBUTOR_CAP_CANCEL_CI_DEFAULT` | `src/queue/processors.ts` |",
+  "| `CONTRIBUTOR_EVIDENCE_BATCH_SIZE` | `src/queue/processors.ts` |",
   "| `CRON_INTERVAL_MS` | `src/server.ts` |",
   "| `DATABASE_PATH` | `src/server.ts` |",
   "| `DATABASE_URL` | `src/selfhost/preflight.ts` |",
@@ -529,14 +596,17 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `FOREGROUND_LIVENESS_MAX_RELEASE_PER_SWEEP` | `src/selfhost/foreground-liveness.ts` |",
   "| `GITHUB_APP_ID` | `src/selfhost/orb-collector.ts` |",
   "| `GITHUB_APP_PRIVATE_KEY` | `src/selfhost/orb-collector.ts` |",
+  "| `GITHUB_APP_SLUG` | `src/queue/processors.ts` |",
   "| `GITHUB_CACHE_TTL_SECONDS` | `src/server.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_DEFER_MS` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_ENABLED` | `src/selfhost/installation-concurrency-admission.ts` |",
   "| `GITHUB_INSTALLATION_CONCURRENCY_LIMIT` | `src/selfhost/installation-concurrency-admission.ts` |",
+  "| `GITHUB_PUBLIC_TOKEN` | `src/queue/ai-review-orchestration.ts` |",
   "| `HOME` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",
+  "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",
   "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts` |",
   "| `MAINTENANCE_ADMISSION_DRAIN_AGE_MS` | `src/selfhost/maintenance-admission.ts` |",

@@ -375,8 +375,8 @@ services:
     # qdrant-vectorize.ts) plus a firewall rule. SSH-forward the port for remote dashboard access. This
     # matches the in-network-only posture of Prometheus/Loki/Alertmanager above.
     ports:
-      - "127.0.0.1:6333:6333" # REST API + Web UI (localhost only)
-      - "127.0.0.1:6334:6334" # gRPC (localhost only)
+      - "127.0.0.1:${QDRANT_HTTP_PORT:-6333}:6333" # REST API + Web UI (localhost only)
+      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334" # gRPC (localhost only)
     volumes:
       - qdrant-data:/qdrant/storage
     deploy:
@@ -702,7 +702,7 @@ services:
     <<: *default-logging
     profiles: ["workflows"]
     ports:
-      - "5678:5678"
+      - "${N8N_PORT:-5678}:5678"
     volumes:
       - n8n-data:/home/node/.n8n
     environment:
@@ -740,8 +740,8 @@ services:
     <<: *default-logging
     profiles: ["storage"]
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     environment:
@@ -848,7 +848,7 @@ services:
       reporting-exporter:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -1118,7 +1118,10 @@ services:
     restart: unless-stopped
     <<: *default-logging
     profiles: ["tailscale"]
-    hostname: loopover
+    # Set TAILSCALE_HOSTNAME in .env when running a second named instance on the same tailnet --
+    # network_mode: host below means this collides on the tailnet's OWN hostname namespace regardless
+    # of COMPOSE_PROJECT_NAME, since the container never joins the Compose-managed default network.
+    hostname: ${TAILSCALE_HOSTNAME:-loopover}
     cap_add:
       - NET_ADMIN
       - SYS_MODULE

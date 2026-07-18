@@ -59,7 +59,7 @@ describe("docker-compose.yml — workflows + storage profiles (#1219)", () => {
   it("gates n8n behind --profile workflows with basic-auth env and a runtime password check", () => {
     expect(n8n.image).toBe("n8nio/n8n:2.31.0");
     expect(n8n.profiles).toEqual(["workflows"]);
-    expect(n8n.ports).toEqual(["5678:5678"]);
+    expect(n8n.ports).toEqual(["${N8N_PORT:-5678}:5678"]);
     expect(n8n.volumes).toEqual(["n8n-data:/home/node/.n8n"]);
 
     const env = record(n8n.environment);
@@ -103,7 +103,7 @@ describe("docker-compose.yml — workflows + storage profiles (#1219)", () => {
   it("gates MinIO behind --profile storage on the S3 API and console ports", () => {
     expect(minio.image).toBe("minio/minio:RELEASE.2025-09-07T16-13-09Z");
     expect(minio.profiles).toEqual(["storage"]);
-    expect(minio.ports).toEqual(["9000:9000", "9001:9001"]);
+    expect(minio.ports).toEqual(["${MINIO_API_PORT:-9000}:9000", "${MINIO_CONSOLE_PORT:-9001}:9001"]);
     expect(minio.volumes).toEqual(["minio-data:/data"]);
     expect(minio.command).toContain("server");
     expect(minio.command).toContain("--console-address");

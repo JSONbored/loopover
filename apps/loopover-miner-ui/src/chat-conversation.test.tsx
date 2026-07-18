@@ -75,4 +75,24 @@ describe("ChatConversation (#6518)", () => {
     await waitFor(() => expect(screen.getByText(/Couldn't load the conversation/i)).toBeTruthy());
     expect(sendButton().disabled).toBe(false);
   });
+
+  it("REGRESSION (#7078): shows the typing indicator after submit until the first streamed chunk, then clears it", async () => {
+    const gate = deferred();
+    const streamChatImpl = async function* (_messages: ChatWireMessage[]) {
+      // Hold the stream open with no text so the pre-first-chunk composing window is observable.
+      await gate.promise;
+      yield "Hello";
+    };
+    render(<ChatConversation streamChatImpl={streamChatImpl} />);
+    ask("what is stuck?");
+
+    await waitFor(() => expect(screen.getByRole("status", { name: /is typing/i })).toBeTruthy());
+    expect(screen.getByText("what is stuck?")).toBeTruthy();
+    expect(sendButton().disabled).toBe(true);
+
+    gate.resolve();
+
+    await waitFor(() => expect(screen.getByText("Hello")).toBeTruthy());
+    expect(screen.queryByRole("status", { name: /is typing/i })).toBeNull();
+  });
 });

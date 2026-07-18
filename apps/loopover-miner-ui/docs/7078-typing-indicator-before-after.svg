@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-label="Before and after typing indicator">
+  <rect width="960" height="420" fill="#1a1d21"/>
+  <text x="240" y="36" text-anchor="middle" fill="#9aa3ad" font-family="ui-monospace, monospace" font-size="14">BEFORE (#7078)</text>
+  <text x="720" y="36" text-anchor="middle" fill="#9aa3ad" font-family="ui-monospace, monospace" font-size="14">AFTER</text>
+  <rect x="40" y="56" width="400" height="300" rx="8" fill="#23272c" stroke="#3a4149"/>
+  <rect x="520" y="56" width="400" height="300" rx="8" fill="#23272c" stroke="#3a4149"/>
+  <rect x="64" y="88" width="220" height="44" rx="6" fill="#2f6fed"/>
+  <text x="76" y="115" fill="#fff" font-family="system-ui, sans-serif" font-size="14">what is stuck?</text>
+  <text x="64" y="180" fill="#6b7280" font-family="system-ui, sans-serif" font-size="13">no activity signal</text>
+  <rect x="64" y="300" width="352" height="36" rx="6" fill="#2a2f35" stroke="#3a4149"/>
+  <text x="76" y="323" fill="#6b7280" font-family="system-ui, sans-serif" font-size="12">composer disabled&</text>
+  <rect x="544" y="88" width="220" height="44" rx="6" fill="#2f6fed"/>
+  <text x="556" y="115" fill="#fff" font-family="system-ui, sans-serif" font-size="14">what is stuck?</text>
+  <rect x="544" y="160" width="200" height="36" rx="6" fill="#2a2f35"/>
+  <text x="556" y="183" fill="#c5cdd6" font-family="system-ui, sans-serif" font-size="13">Assistant is typing&</text>
+  <circle cx="760" cy="178" r="3" fill="#8b949e"/>
+  <circle cx="770" cy="178" r="3" fill="#8b949e"/>
+  <circle cx="780" cy="178" r="3" fill="#8b949e"/>
+  <rect x="544" y="300" width="352" height="36" rx="6" fill="#2a2f35" stroke="#3a4149"/>
+  <text x="556" y="323" fill="#6b7280" font-family="system-ui, sans-serif" font-size="12">composer disabled&</text>
+</svg>

@@ -25,6 +25,9 @@ export function ChatConversation({ streamChatImpl = streamChat }: { streamChatIm
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeSource, setActiveSource] = useState<ChunkSource | null>(null);
   const [streaming, setStreaming] = useState(false);
+  // #7078: true from submit until the first SSE text chunk — drives MessageList's TypingIndicator so the
+  // pre-first-token round-trip isn't a silent gap. Cleared on first chunk, stream completion, or error.
+  const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
   const [errored, setErrored] = useState(false);
   const idCounter = useRef(0);
   const nextId = () => `m${(idCounter.current += 1)}`;
@@ -44,6 +47,7 @@ export function ChatConversation({ streamChatImpl = streamChat }: { streamChatIm
 
       setMessages((prev) => [...prev, userMessage]);
       setErrored(false);
+      setAwaitingFirstChunk(true);
       setStreaming(true);
 
       // This source both feeds the live StreamingText render AND, on natural completion, commits the finished
@@ -54,8 +58,14 @@ export function ChatConversation({ streamChatImpl = streamChat }: { streamChatIm
       const source: ChunkSource = () =>
         (async function* () {
           let answer = "";
+          let sawFirstChunk = false;
           try {
             for await (const delta of streamChatImpl(history)) {
+              if (!sawFirstChunk) {
+                sawFirstChunk = true;
+                // Drop the typing indicator before StreamingText paints real content — they must not overlap.
+                setAwaitingFirstChunk(false);
+              }
               answer += delta;
               yield delta;
             }
@@ -72,6 +82,7 @@ export function ChatConversation({ streamChatImpl = streamChat }: { streamChatIm
           } catch {
             setErrored(true);
           } finally {
+            setAwaitingFirstChunk(false);
             setStreaming(false);
             setActiveSource(null);
           }
@@ -88,7 +99,7 @@ export function ChatConversation({ streamChatImpl = streamChat }: { streamChatIm
     <div className="flex h-full flex-col gap-2 p-4">
       <p className="font-mono text-token-xs uppercase tracking-[0.2em] text-primary">Chat</p>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <MessageList messages={messages} isError={errored} />
+        <MessageList messages={messages} isError={errored} composing={streaming && awaitingFirstChunk} />
         {streaming && activeSource ? (
           <div className="flex gap-3 px-3 pt-4" data-testid="chat-streaming-response">
             <Avatar className="size-8 shrink-0">

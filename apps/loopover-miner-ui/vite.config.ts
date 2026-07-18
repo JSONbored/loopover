@@ -7,6 +7,7 @@ import tsconfigPaths from "vite-tsconfig-paths";
 import { attemptApiPlugin } from "./vite-attempt-api";
 import { authPlugin } from "./vite-auth";
 import { chatApiPlugin } from "./vite-chat-api";
+import { chatDiscoverAttemptActionsPlugin } from "./vite-chat-discover-attempt-actions";
 import { chatGovernorActionsPlugin } from "./vite-chat-governor-actions";
 import { discoverApiPlugin } from "./vite-discover-api";
 import { governorApiPlugin } from "./vite-governor-api";
@@ -27,6 +28,7 @@ export default defineConfig({
     authPlugin(),
     chatApiPlugin(),
     chatGovernorActionsPlugin(),
+    chatDiscoverAttemptActionsPlugin(),
     runStateApiPlugin(),
     portfolioQueueApiPlugin(),
     portfolioQueueActionsApiPlugin(),

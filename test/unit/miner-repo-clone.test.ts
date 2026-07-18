@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ensureRepoCloned, resolveRepoCloneBaseDir, resolveRepoCloneDir } from "../../packages/loopover-miner/lib/repo-clone.js";
+import { acquireRepoCloneLock, ensureRepoCloned, isRepoCloneLockStale, parseRepoCloneLock, resolveRepoCloneBaseDir, resolveRepoCloneDir } from "../../packages/loopover-miner/lib/repo-clone.js";
 
 const roots: string[] = [];
 
@@ -307,4 +307,272 @@ describe("ensureRepoCloned per-repo concurrency guard (#6762)", () => {
     expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("checkout", "boom-checkout") })).error).toBe("boom-checkout");
     expect((await ensureRepoCloned("acme/widgets", { cloneBaseDir, runGit: failOn("reset", "boom-reset") })).error).toBe("boom-reset");
   });
+});
+
+type LockFs = {
+  open: (path: string) => number;
+  write: (fd: number, data: string) => void;
+  close: (fd: number) => void;
+  read: (path: string) => string;
+  unlink: (path: string) => void;
+};
+
+/** A filesystem error carrying a `.code`, as Node's fs throws (EEXIST / ENOENT / EPERM / ...). */
+function codedError(code: string, message = code): NodeJS.ErrnoException {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
+
+describe("parseRepoCloneLock / isRepoCloneLockStale (#7084)", () => {
+  it("parses a well-formed lock payload, keeping a finite pid", () => {
+    expect(parseRepoCloneLock(JSON.stringify({ acquiredAtMs: 42, pid: 1234 }))).toEqual({ acquiredAtMs: 42, pid: 1234 });
+  });
+
+  it("keeps the timestamp but nulls a missing/non-numeric pid", () => {
+    expect(parseRepoCloneLock(JSON.stringify({ acquiredAtMs: 42 }))).toEqual({ acquiredAtMs: 42, pid: null });
+    expect(parseRepoCloneLock(JSON.stringify({ acquiredAtMs: 42, pid: "nope" }))).toEqual({ acquiredAtMs: 42, pid: null });
+  });
+
+  it("returns null when the timestamp is absent/non-finite or the JSON is corrupt", () => {
+    expect(parseRepoCloneLock(JSON.stringify({ pid: 1 }))).toBeNull();
+    expect(parseRepoCloneLock("{ not json")).toBeNull();
+  });
+
+  it("treats a null (unparseable/vanished) lock as always stale", () => {
+    expect(isRepoCloneLockStale(null, 1000, 500)).toBe(true);
+  });
+
+  it("treats a parseable lock as stale only once it is older than staleMs", () => {
+    expect(isRepoCloneLockStale({ acquiredAtMs: 0 }, 1000, 500)).toBe(true);
+    expect(isRepoCloneLockStale({ acquiredAtMs: 600 }, 1000, 500)).toBe(false);
+  });
+});
+
+describe("acquireRepoCloneLock (#7084)", () => {
+  it("acquires immediately when the lockfile does not yet exist, writing an owner record", () => {
+    // Real fs against a temp path: proves the happy path creates the file and the release removes it.
+    const root = tempRoot("loopover-miner-repo-clone-lock-fresh-");
+    const lockPath = join(root, "repo.clone.lock");
+    return acquireRepoCloneLock(lockPath).then((release) => {
+      const held = parseRepoCloneLock(readFileSync(lockPath, "utf8"));
+      expect(held?.pid).toBe(process.pid);
+      expect(existsSync(lockPath)).toBe(true);
+      release();
+      expect(existsSync(lockPath)).toBe(false);
+    });
+  });
+
+  it("rethrows an open error that is not EEXIST", async () => {
+    const fs: LockFs = { open: () => { throw codedError("EACCES", "denied"); }, write: () => {}, close: () => {}, read: () => "", unlink: () => {} };
+    await expect(acquireRepoCloneLock("/whatever.lock", { fs })).rejects.toThrow("denied");
+  });
+
+  it("reclaims a stale lock (age > staleMs) then acquires; release is idempotent", async () => {
+    let opens = 0;
+    let closes = 0;
+    const unlinked: string[] = [];
+    const fs: LockFs = {
+      open: () => {
+        opens += 1;
+        if (opens === 1) throw codedError("EEXIST");
+        return 7;
+      },
+      write: () => {},
+      close: () => {
+        closes += 1;
+      },
+      read: () => JSON.stringify({ pid: 999, acquiredAtMs: 0 }),
+      unlink: (path) => {
+        unlinked.push(path);
+      },
+    };
+    const release = await acquireRepoCloneLock("/x.clone.lock", { fs, now: () => 1_000_000, staleMs: 100 });
+    // The stale lock was removed before the second open succeeded.
+    expect(unlinked).toEqual(["/x.clone.lock"]);
+    release();
+    release(); // idempotent: the guard short-circuits, so close/unlink run exactly once.
+    expect(closes).toBe(1);
+    expect(unlinked).toEqual(["/x.clone.lock", "/x.clone.lock"]);
+  });
+
+  it("waits (sleeps) while a fresh lock is held, then acquires once it is gone", async () => {
+    let opens = 0;
+    let sleeps = 0;
+    const fs: LockFs = {
+      open: () => {
+        opens += 1;
+        if (opens <= 2) throw codedError("EEXIST");
+        return 9;
+      },
+      write: () => {},
+      close: () => {},
+      read: () => JSON.stringify({ pid: 1, acquiredAtMs: 100 }),
+      unlink: () => {},
+    };
+    const release = await acquireRepoCloneLock("/held.clone.lock", {
+      fs,
+      now: () => 100, // never advances past the deadline, so the loop keeps waiting rather than timing out
+      timeoutMs: 10_000,
+      staleMs: 10_000,
+      pollMs: 5,
+      sleep: async () => {
+        sleeps += 1;
+      },
+    });
+    expect(sleeps).toBe(2);
+    release();
+  });
+
+  it("fails closed with repo_clone_lock_timeout when a fresh lock outlives the deadline", async () => {
+    const fs: LockFs = {
+      open: () => {
+        throw codedError("EEXIST");
+      },
+      write: () => {},
+      close: () => {},
+      read: () => JSON.stringify({ pid: 1, acquiredAtMs: 0 }),
+      unlink: () => {},
+    };
+    // timeoutMs 0 => deadline == start; the not-stale lock is never reclaimable, so the first pass throws.
+    await expect(acquireRepoCloneLock("/busy.clone.lock", { fs, now: () => 0, timeoutMs: 0, staleMs: 10_000_000 })).rejects.toThrow("repo_clone_lock_timeout");
+  });
+
+  it("treats a lock whose content vanished mid-check (read throws) as reclaimable", async () => {
+    let opens = 0;
+    const unlinked: string[] = [];
+    const fs: LockFs = {
+      open: () => {
+        opens += 1;
+        if (opens === 1) throw codedError("EEXIST");
+        return 4;
+      },
+      write: () => {},
+      close: () => {},
+      read: () => {
+        throw codedError("ENOENT", "gone");
+      },
+      unlink: (path) => {
+        unlinked.push(path);
+      },
+    };
+    const release = await acquireRepoCloneLock("/vanished.clone.lock", { fs });
+    expect(unlinked).toEqual(["/vanished.clone.lock"]);
+    release();
+  });
+
+  it("ignores ENOENT from the reclaim unlink (another waiter won the race)", async () => {
+    let opens = 0;
+    const fs: LockFs = {
+      open: () => {
+        opens += 1;
+        if (opens === 1) throw codedError("EEXIST");
+        return 2;
+      },
+      write: () => {},
+      close: () => {},
+      read: () => JSON.stringify({ acquiredAtMs: 0 }),
+      unlink: () => {
+        throw codedError("ENOENT");
+      },
+    };
+    const release = await acquireRepoCloneLock("/raced.clone.lock", { fs, now: () => 10_000, staleMs: 1 });
+    expect(typeof release).toBe("function");
+    release();
+  });
+
+  it("surfaces a non-ENOENT unlink error while reclaiming a stale lock", async () => {
+    const fs: LockFs = {
+      open: () => {
+        throw codedError("EEXIST");
+      },
+      write: () => {},
+      close: () => {},
+      read: () => "corrupt-not-json", // unparseable => stale => reclaim attempt => unlink throws EPERM
+      unlink: () => {
+        throw codedError("EPERM", "operation not permitted");
+      },
+    };
+    await expect(acquireRepoCloneLock("/wedged.clone.lock", { fs, staleMs: 0 })).rejects.toThrow("operation not permitted");
+  });
+});
+
+describe("ensureRepoCloned cross-process lock (#7084)", () => {
+  it("REGRESSION: a real on-disk lock blocks a second independent acquirer until the first releases", async () => {
+    // The two acquirers share NOTHING but the lockfile itself -- exactly the fleet-mode "sibling containers on a
+    // shared volume" model the in-process Map cannot serialize. The second must not acquire while the first holds.
+    const root = tempRoot("loopover-miner-repo-clone-xproc-");
+    const lockPath = join(root, "repo.clone.lock");
+    const first = await acquireRepoCloneLock(lockPath);
+
+    let secondAcquired = false;
+    const secondPromise = acquireRepoCloneLock(lockPath, { pollMs: 5 }).then((release) => {
+      secondAcquired = true;
+      return release;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(secondAcquired).toBe(false); // still blocked on the real lockfile
+
+    first(); // first process releases
+    const secondRelease = await secondPromise;
+    expect(secondAcquired).toBe(true);
+    secondRelease();
+  }, 60000);
+
+  it("returns ok:false with repo_clone_lock_timeout (not a throw) when the cross-process lock can't be taken", async () => {
+    // A lock held by a live foreign process that never releases: ensureRepoCloned must fail closed via the
+    // { ok:false, error } contract so attempt-worktree.js can mark the attempt failed rather than crash.
+    const root = tempRoot("loopover-miner-repo-clone-locktimeout-");
+    const cloneBaseDir = join(root, "cache");
+    const heldFs: LockFs = {
+      open: () => {
+        throw codedError("EEXIST");
+      },
+      write: () => {},
+      close: () => {},
+      read: () => JSON.stringify({ pid: 1, acquiredAtMs: 0 }),
+      unlink: () => {},
+    };
+    const result = await ensureRepoCloned("acme/widgets", {
+      cloneBaseDir,
+      remoteUrl: "unused",
+      lock: { fs: heldFs, now: () => 0, timeoutMs: 0, staleMs: 10_000_000 },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("repo_clone_lock_timeout");
+    expect(result.repoPath).toBe(join(cloneBaseDir, "acme", "widgets"));
+  });
+
+  it("stringifies a non-Error lock failure into the error field", async () => {
+    // The lock fs throws a bare string (not an Error); the { ok:false } contract still surfaces it as a string.
+    const root = tempRoot("loopover-miner-repo-clone-locknonerror-");
+    const cloneBaseDir = join(root, "cache");
+    const nonErrorFs: LockFs = {
+      open: () => {
+        throw "lock-subsystem-exploded"; // eslint-disable-line no-throw-literal
+      },
+      write: () => {},
+      close: () => {},
+      read: () => "",
+      unlink: () => {},
+    };
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", lock: { fs: nonErrorFs } });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("lock-subsystem-exploded");
+  });
+
+  it("proceeds past a stale orphaned clone lock left by a crashed process", async () => {
+    // A lockfile with an ancient timestamp simulates a process that died mid-clone; a subsequent call must
+    // reclaim it and clone rather than wedging forever.
+    const root = tempRoot("loopover-miner-repo-clone-staleclone-");
+    const originPath = initOriginRepo(root);
+    const cloneBaseDir = join(root, "cache");
+    mkdirSync(join(cloneBaseDir, "acme"), { recursive: true });
+    writeFileSync(join(cloneBaseDir, "acme", "widgets.clone.lock"), JSON.stringify({ pid: 999999, acquiredAtMs: 0 }));
+
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: originPath, lock: { staleMs: 1 } });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(join(result.repoPath, "README.md"), "utf8")).toBe("hello\n");
+  }, 60000);
 });

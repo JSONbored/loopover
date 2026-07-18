@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { registerCleanupResource } from "./process-lifecycle.js";
 
 // Per-repo base-clone cache (#5132, Wave 3.5 follow-up). packages/loopover-engine/src/miner/
 // worktree-allocator.ts's real `addWorktree` primitive (git worktree add -b <branch> <path> <baseBranch>)
@@ -103,16 +104,162 @@ async function withRepoCloneLock(repoPath, fn) {
   }
 }
 
+// Cross-process serialization for ensureRepoCloned (#7084). The in-process `repoCloneLocks` Map above only
+// serializes calls inside ONE Node process's event loop. DEPLOYMENT.md documents "fleet mode" -- multiple
+// container processes sharing the SAME bind-mounted clone volume -- and claim-ledger.js already treats
+// "two sibling miner processes racing the same repo" as a real concurrency model. Two fleet workers hitting
+// the same repoPath each start with their own empty Map, so #6762's guard does nothing between them: both can
+// run `git checkout`/`reset --hard` on the shared working tree at once and corrupt it / trip .git/index.lock.
+// An OS-level exclusive lockfile (`open(path, 'wx')` -- an atomic create-or-fail) closes that gap: it is
+// visible across processes because the filesystem, not process memory, arbitrates it. The lock records the
+// acquiring process's wall-clock so a lock left behind by a crashed process self-expires after `staleMs`
+// (mirroring worktree-allocator.js's age-based orphan reclaim), and it is registered as a cleanup resource so
+// process-lifecycle.js's SIGINT/SIGTERM handler removes it on a clean exit (mirroring local-store.js).
+const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_LOCK_STALE_MS = 15 * 60_000;
+const DEFAULT_LOCK_POLL_MS = 250;
+
+function defaultLockSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Real filesystem primitives behind the lock, grouped so tests can inject a deterministic double instead of
+// racing real timing. `open` uses the "wx" flag (O_CREAT | O_EXCL): it throws EEXIST when the file already
+// exists, which is exactly the atomic "someone else holds the lock" signal.
+const defaultLockFs = {
+  open: (path) => openSync(path, "wx"),
+  write: (fd, data) => writeSync(fd, data),
+  close: (fd) => closeSync(fd),
+  read: (path) => readFileSync(path, "utf8"),
+  unlink: (path) => unlinkSync(path),
+};
+
+/**
+ * Parse a lockfile's JSON payload back into `{ acquiredAtMs, pid }`, or null when the content is missing,
+ * corrupt, or lacks a finite timestamp (all of which mean "no trustworthy owner", so the caller treats it as
+ * reclaimable). Exported so the staleness decision is unit-testable without touching the filesystem.
+ *
+ * @param {string} raw
+ * @returns {{ acquiredAtMs: number, pid: number | null } | null}
+ */
+export function parseRepoCloneLock(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    const acquiredAtMs = Number(parsed?.acquiredAtMs);
+    if (!Number.isFinite(acquiredAtMs)) return null;
+    return { acquiredAtMs, pid: Number.isFinite(Number(parsed?.pid)) ? Number(parsed.pid) : null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide whether an existing lock may be reclaimed: an unparseable lock (crash mid-write, corruption) is always
+ * reclaimable, and a parseable one is reclaimable once it is older than `staleMs` -- the self-expiry that stops
+ * a crashed holder from wedging every future attempt against that repo forever.
+ *
+ * @param {{ acquiredAtMs: number } | null} info
+ * @param {number} nowMs
+ * @param {number} staleMs
+ * @returns {boolean}
+ */
+export function isRepoCloneLockStale(info, nowMs, staleMs) {
+  if (info === null) return true;
+  return nowMs - info.acquiredAtMs > staleMs;
+}
+
+function readExistingLock(fs, lockPath) {
+  try {
+    return parseRepoCloneLock(fs.read(lockPath));
+  } catch {
+    // The holder released between our failed `open` and this `read` (TOCTOU): the lock is gone, so it is
+    // trivially reclaimable -- fall through to the unlink (a no-op) and retry the `open`.
+    return null;
+  }
+}
+
+function forceUnlinkLock(fs, lockPath) {
+  try {
+    fs.unlink(lockPath);
+  } catch (error) {
+    // Another waiter reclaimed the same stale lock first; that is the outcome we wanted, so ignore ENOENT and
+    // surface anything else (e.g. EPERM) rather than looping on an unremovable lock.
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+function createLockRelease(fs, lockPath, fd) {
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    unregister();
+    fs.close(fd);
+    forceUnlinkLock(fs, lockPath);
+  };
+  // Registered so process-lifecycle.js's SIGINT/SIGTERM/crash handler drops the lockfile on a clean shutdown
+  // instead of leaving it for `staleMs` to expire; `release` unregisters itself so the happy path never
+  // double-frees.
+  const unregister = registerCleanupResource(release);
+  return release;
+}
+
+/**
+ * Take an OS-level exclusive lock on `lockPath`, blocking (bounded by `timeoutMs`) until a holder in ANOTHER
+ * process releases it, reclaiming a stale/orphaned lock left by a crashed process, and failing closed with a
+ * `repo_clone_lock_timeout` error if it cannot be acquired in time. Returns an idempotent release function.
+ * Every dependency (`fs`, `now`, `sleep`, the timeouts) is injectable so all branches are deterministically
+ * testable without real cross-process timing.
+ *
+ * @param {string} lockPath
+ * @param {{
+ *   timeoutMs?: number, staleMs?: number, pollMs?: number, now?: () => number, sleep?: (ms: number) => Promise<void>,
+ *   fs?: { open: (path: string) => number, write: (fd: number, data: string) => void, close: (fd: number) => void, read: (path: string) => string, unlink: (path: string) => void },
+ * }} [options]
+ * @returns {Promise<() => void>}
+ */
+export async function acquireRepoCloneLock(lockPath, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_LOCK_TIMEOUT_MS;
+  const staleMs = Number.isFinite(options.staleMs) ? options.staleMs : DEFAULT_LOCK_STALE_MS;
+  const pollMs = Number.isFinite(options.pollMs) ? options.pollMs : DEFAULT_LOCK_POLL_MS;
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const sleep = typeof options.sleep === "function" ? options.sleep : defaultLockSleep;
+  const fs = options.fs ?? defaultLockFs;
+
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    let fd;
+    try {
+      fd = fs.open(lockPath);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
+    if (fd !== undefined) {
+      fs.write(fd, JSON.stringify({ pid: process.pid, acquiredAtMs: now() }));
+      return createLockRelease(fs, lockPath, fd);
+    }
+    if (isRepoCloneLockStale(readExistingLock(fs, lockPath), now(), staleMs)) {
+      forceUnlinkLock(fs, lockPath);
+      continue;
+    }
+    if (now() >= deadline) throw new Error("repo_clone_lock_timeout");
+    await sleep(pollMs);
+  }
+}
+
 /**
  * Serialize the git mutations of {@link ensureRepoClonedUnlocked} per resolved repo path so concurrent
- * same-repo attempts never race the shared base clone (#6762), while different repos still run in parallel.
- * Resolves the same `repoPath` the unlocked step computes and uses it as the mutex key; throws (before
- * locking) on a malformed `repoFullName`, matching the prior behaviour.
+ * same-repo attempts never race the shared base clone -- both WITHIN one Node process (the in-process
+ * `repoCloneLocks` Map, #6762) and ACROSS separate OS processes such as fleet-mode's sibling containers (an
+ * OS-level exclusive lockfile, #7084), while different repos still run fully in parallel. Resolves the same
+ * `repoPath` the unlocked step computes and uses it as both the mutex key and the lockfile location; throws
+ * (before locking) on a malformed `repoFullName`, matching the prior behaviour.
  *
  * @param {string} repoFullName
  * @param {{
  *   baseBranch?: string, cloneBaseDir?: string, env?: Record<string, string | undefined>, timeoutMs?: number,
  *   remoteUrl?: string, runGit?: (args: string[], cwd: string, timeoutMs: number) => Promise<{ ok: boolean, stdout: string, stderr: string }>,
+ *   lock?: { timeoutMs?: number, staleMs?: number, pollMs?: number, now?: () => number, sleep?: (ms: number) => Promise<void>, fs?: object },
  * }} [options]
  * @returns {Promise<{ ok: boolean, repoPath: string, error?: string }>}
  */
@@ -120,7 +267,26 @@ export async function ensureRepoCloned(repoFullName, options = {}) {
   const target = normalizeRepoFullName(repoFullName);
   const cloneBaseDir = typeof options.cloneBaseDir === "string" && options.cloneBaseDir.trim() ? options.cloneBaseDir.trim() : resolveRepoCloneBaseDir(options.env);
   const repoPath = join(cloneBaseDir, target.owner, target.repo);
-  return withRepoCloneLock(repoPath, () => ensureRepoClonedUnlocked(repoFullName, options));
+  const lockPath = `${repoPath}.clone.lock`;
+  return withRepoCloneLock(repoPath, async () => {
+    // The lockfile lives beside the clone, so its parent (cloneBaseDir/owner) must exist before `open` runs --
+    // on a first-ever clone that directory hasn't been created yet.
+    mkdirSync(join(cloneBaseDir, target.owner), { recursive: true, mode: 0o700 });
+    let releaseLock;
+    try {
+      releaseLock = await acquireRepoCloneLock(lockPath, options.lock ?? {});
+    } catch (error) {
+      // A lock-acquire failure (timeout on a busy lock, or an fs error taking it) is an operational failure,
+      // not a programmer error: surface it via the same { ok:false, error } contract as a git failure so the
+      // caller (attempt-worktree.js) fails the attempt closed instead of throwing an unhandled rejection.
+      return { ok: false, repoPath, error: error instanceof Error ? error.message : String(error) };
+    }
+    try {
+      return await ensureRepoClonedUnlocked(repoFullName, options);
+    } finally {
+      releaseLock();
+    }
+  });
 }
 
 /**

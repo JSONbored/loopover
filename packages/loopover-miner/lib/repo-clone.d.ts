@@ -12,6 +12,29 @@ export type EnsureRepoClonedResult = { ok: boolean; repoPath: string; error?: st
 
 export type RunGitFn = (args: string[], cwd: string, timeoutMs: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
+export function parseRepoCloneLock(raw: string): { acquiredAtMs: number; pid: number | null } | null;
+
+export function isRepoCloneLockStale(info: { acquiredAtMs: number } | null, nowMs: number, staleMs: number): boolean;
+
+export type RepoCloneLockFs = {
+  open: (path: string) => number;
+  write: (fd: number, data: string) => void;
+  close: (fd: number) => void;
+  read: (path: string) => string;
+  unlink: (path: string) => void;
+};
+
+export type RepoCloneLockOptions = {
+  timeoutMs?: number;
+  staleMs?: number;
+  pollMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  fs?: RepoCloneLockFs;
+};
+
+export function acquireRepoCloneLock(lockPath: string, options?: RepoCloneLockOptions): Promise<() => void>;
+
 export function ensureRepoCloned(
   repoFullName: string,
   options?: {
@@ -21,5 +44,6 @@ export function ensureRepoCloned(
     timeoutMs?: number;
     remoteUrl?: string;
     runGit?: RunGitFn;
+    lock?: RepoCloneLockOptions;
   },
 ): Promise<EnsureRepoClonedResult>;

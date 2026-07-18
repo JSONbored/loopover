@@ -3,11 +3,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { registerCleanupResource } from "./process-lifecycle.js";
+import { createD1Adapter, nodeSqliteDriver } from "./store-db-adapter.js";
 
 // Shared path-resolution + DB-open boilerplate for the package's local SQLite stores (#4272). This is a DRY pass
 // only, not a merge: run-state.js, claim-ledger.js, portfolio-queue.js, and event-ledger.js each keep their own
 // `.sqlite3` file, table, and env var — this module just extracts the ~15 lines each hand-duplicated
 // (env-var/config-dir/XDG path resolution, mkdirSync(0o700) + chmodSync(0o600), and `PRAGMA busy_timeout`).
+//
+// #7175 part 1 adds `openLocalStoreAdapter`: same open path, then wraps the handle as SqliteDriver + D1 adapter
+// so stores can migrate onto the shared seam without changing self-host's node:sqlite default.
 
 /**
  * Resolve a local store's DB path from, in order: an explicit env var, `LOOPOVER_MINER_CONFIG_DIR`,
@@ -59,4 +63,21 @@ export function openLocalStoreDb(resolvedPath, options = {}) {
     return originalClose();
   };
   return db;
+}
+
+/**
+ * Open a local store through the #7175 SqliteDriver / D1 adapter seam.
+ * Returns the underlying DatabaseSync (for schema migrations / purge helpers that still take it),
+ * the sync SqliteDriver (preferred for store CRUD until a store goes fully async), and the async D1
+ * adapter (same surface ORB uses — ready for a later createPgAdapter swap).
+ *
+ * @param {string} resolvedPath
+ * @param {{ busyTimeoutMs?: number }} [options]
+ * @returns {{ db: import("node:sqlite").DatabaseSync, driver: import("./store-db-adapter.js").SqliteDriver, d1: ReturnType<typeof createD1Adapter> }}
+ */
+export function openLocalStoreAdapter(resolvedPath, options = {}) {
+  const db = openLocalStoreDb(resolvedPath, options);
+  const driver = nodeSqliteDriver(db);
+  const d1 = createD1Adapter(driver);
+  return { db, driver, d1 };
 }

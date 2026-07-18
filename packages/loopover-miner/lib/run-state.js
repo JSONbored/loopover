@@ -1,5 +1,5 @@
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
-import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { RUN_STATE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
@@ -80,10 +80,14 @@ function addTenantIdColumn(db) {
 /**
  * Opens the 100% local/client-side miner run-state store. The database only lives on this machine;
  * this module never uploads, syncs, or phones home with its contents. (#2289, #5563)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema migrations / purge still use the underlying DatabaseSync until those helpers are migrated.
+ * Public API stays synchronous so loop/CLI/MCP callers need no async cascade in this part-1 slice.
  */
 export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
   const resolvedPath = normalizeDbPath(dbPath);
-  const db = openLocalStoreDb(resolvedPath);
+  const { db, driver } = openLocalStoreAdapter(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS miner_run_state (
       repo_full_name TEXT PRIMARY KEY,
@@ -94,24 +98,25 @@ export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
   // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations.
   applySchemaMigrations(db, [addApiBaseUrlScope, addTenantIdColumn]);
 
-  const getStatement = db.prepare(
-    "SELECT state FROM miner_run_state WHERE api_base_url = ? AND repo_full_name = ?",
-  );
-  const setStatement = db.prepare(`
+  const getSql = "SELECT state FROM miner_run_state WHERE api_base_url = ? AND repo_full_name = ?";
+  const setSql = `
     INSERT INTO miner_run_state (api_base_url, repo_full_name, state, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(api_base_url, repo_full_name) DO UPDATE SET
       state = excluded.state,
       updated_at = excluded.updated_at
-  `);
-  const listStatement = db.prepare(
-    "SELECT api_base_url, repo_full_name, state, updated_at FROM miner_run_state ORDER BY repo_full_name",
-  );
+  `;
+  const listSql =
+    "SELECT api_base_url, repo_full_name, state, updated_at FROM miner_run_state ORDER BY repo_full_name";
 
   return {
     dbPath: resolvedPath,
     getRunState(repoFullName, apiBaseUrl) {
-      const row = getStatement.get(normalizeApiBaseUrl(apiBaseUrl), normalizeRepoFullName(repoFullName));
+      const { rows } = driver.query(getSql, [
+        normalizeApiBaseUrl(apiBaseUrl),
+        normalizeRepoFullName(repoFullName),
+      ]);
+      const row = rows[0];
       return runStateSet.has(row?.state) ? row.state : null;
     },
     setRunState(repoFullName, state, apiBaseUrl) {
@@ -119,13 +124,14 @@ export function initRunStateStore(dbPath = resolveRunStateDbPath()) {
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedState = normalizeRunState(state);
       const updatedAt = new Date().toISOString();
-      setStatement.run(normalizedForge, normalizedRepo, normalizedState, updatedAt);
+      driver.query(setSql, [normalizedForge, normalizedRepo, normalizedState, updatedAt]);
       return { apiBaseUrl: normalizedForge, repoFullName: normalizedRepo, state: normalizedState, updatedAt };
     },
     /** Every repo with a recorded run state, across the whole store — the per-repo discover/plan/prepare
      *  signal a "run portfolio" view folds alongside managed PR rows (#4279). */
     listRunStates() {
-      return listStatement.all()
+      const { rows } = driver.query(listSql, []);
+      return rows
         .filter((row) => runStateSet.has(row.state))
         .map((row) => ({
           apiBaseUrl: row.api_base_url,

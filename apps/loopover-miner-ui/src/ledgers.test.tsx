@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { fetchLedgers, LEDGERS_API_PATH, type LedgersResult, type LedgersSummary } from "./lib/ledgers";
 import { type GovernorPauseState, type GovernorPauseStateResult } from "./lib/governor";
-import { LedgersPage, LedgersView } from "./routes/ledgers";
+import { GovernorControlSection, LedgersPage, LedgersView } from "./routes/ledgers";
 import { handleLedgersRequest, type LedgersApiDeps } from "../vite-ledgers-api";
 
 // Test-local fixture factories (were lib exports reachable only from tests; moved here per #6187).
@@ -355,6 +355,55 @@ describe("LedgersPage (#4855)", () => {
       await waitFor(() =>
         expect((screen.getByRole("button", { name: "Resume governor" }) as HTMLButtonElement).disabled).toBe(false),
       );
+    });
+
+    it("clears the pause reason after a successful pause so a later resume -> pause starts blank (#7079)", async () => {
+      const pauseGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: { paused: true, reason: "investigating flaky test", pausedAt: "2026-07-13T12:30:00.000Z" },
+      }));
+      const resumeGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: defaultGovernorPauseState(),
+      }));
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseStateDefault}
+          pauseGovernorAction={pauseGovernorAction}
+          resumeGovernorAction={resumeGovernorAction}
+        />,
+      );
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+      fireEvent.change(screen.getByLabelText("Pause reason"), { target: { value: "investigating flaky test" } });
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole("button", { name: "Resume governor" }));
+      await waitFor(() => expect(screen.getByText("Not paused")).toBeTruthy());
+      // The reason input reappears blank, not pre-filled with the previous pause's text.
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("");
+    });
+
+    it("keeps the typed reason after a FAILED pause so it can be retried without retyping (#7079)", () => {
+      const notPaused: GovernorPauseStateResult = { ok: true, pauseState: defaultGovernorPauseState() };
+      const { rerender } = render(
+        <GovernorControlSection result={notPaused} pending={false} onPause={vi.fn()} onResume={vi.fn()} />,
+      );
+      fireEvent.change(screen.getByLabelText("Pause reason"), { target: { value: "retry me" } });
+
+      // A failed pause surfaces the error branch (result.ok false, never a paused transition) — no reset.
+      rerender(
+        <GovernorControlSection
+          result={{ ok: false, error: "connection refused" }}
+          pending={false}
+          onPause={vi.fn()}
+          onResume={vi.fn()}
+        />,
+      );
+      // Once a not-paused state is readable again, the operator's typed reason is still there to retry.
+      rerender(<GovernorControlSection result={notPaused} pending={false} onPause={vi.fn()} onResume={vi.fn()} />);
+      expect((screen.getByLabelText("Pause reason") as HTMLInputElement).value).toBe("retry me");
     });
 
     it("renders an error message when the pause-state load fails, without breaking the ledgers section", async () => {

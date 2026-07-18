@@ -60,3 +60,57 @@ describe("OperatorDashboard loading skeleton (#6816)", () => {
     expect(container.querySelectorAll(".animate-pulse").length).toBe(0);
   });
 });
+
+describe("OperatorDashboard AI cost by tenant (#4916)", () => {
+  function mockDashboard(aiCostByTenant?: Array<{ installationId: string; totalCostUsd: number }>) {
+    useApiResource.mockImplementation((path: string) => {
+      if (path === "/v1/app/operator-dashboard") {
+        return {
+          status: "ready",
+          data: {
+            metrics: [{ label: "Installs", value: "12", delta: "+2" }],
+            noiseReduction: [],
+            weeklyReport: [],
+            aiCostByTenant,
+          },
+          error: null,
+          loadedAt: "2026-07-17T00:00:00.000Z",
+          reload: () => {},
+        };
+      }
+      return {
+        status: "error",
+        data: null,
+        error: "unavailable in this test",
+        errorKind: "unknown",
+        loadedAt: null,
+        reload: () => {},
+      };
+    });
+  }
+
+  it("renders no section at all when aiCostByTenant is absent (self-host, the common case)", () => {
+    mockDashboard(undefined);
+    render(<OperatorDashboard />);
+    expect(screen.queryByText("AI cost by tenant")).toBeNull();
+  });
+
+  it("renders no section when aiCostByTenant is an empty list", () => {
+    mockDashboard([]);
+    render(<OperatorDashboard />);
+    expect(screen.queryByText("AI cost by tenant")).toBeNull();
+  });
+
+  it("renders each tenant's formatted cost, highest-cost-first as the backend already ordered them", () => {
+    mockDashboard([
+      { installationId: "inst-2", totalCostUsd: 4 },
+      { installationId: "inst-1", totalCostUsd: 2 },
+    ]);
+    render(<OperatorDashboard />);
+    expect(screen.getByText("AI cost by tenant")).toBeTruthy();
+    expect(screen.getByText("inst-2")).toBeTruthy();
+    expect(screen.getByText("$4.00")).toBeTruthy();
+    expect(screen.getByText("inst-1")).toBeTruthy();
+    expect(screen.getByText("$2.00")).toBeTruthy();
+  });
+});

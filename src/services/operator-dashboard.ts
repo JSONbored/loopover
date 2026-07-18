@@ -4,6 +4,7 @@ import {
   getCommandUsefulnessSummary,
   getLatestScoringModelSnapshot,
   getProductUsageRollupStatus,
+  listAiCostByTenantSince,
   listAllPullRequests,
   listInstallationHealth,
   listInstallations,
@@ -12,6 +13,7 @@ import {
   listRepositories,
   summarizeMcpCompatibilityAdoption,
   summarizeProductUsageEvents,
+  type AiCostByTenant,
 } from "../db/repositories";
 import { getLatestRegistrySnapshot } from "../registry/sync";
 import type {
@@ -90,6 +92,10 @@ export type OperatorDashboardPayload = {
   // Finding acceptance rate (#1967): share of gate-flagged (hold|close) PRs later merged, reshaped to the
   // AcceptanceRateCard's field names. Fails safe to an empty aggregate (rate: null) on any read error.
   acceptance: OperatorDashboardFindingAcceptance;
+  // #4916: per-tenant AI cost breakdown for hosted deployments, highest-cost-first. Always [] for a self-host
+  // operator (no installation-scoped ai_usage_events rows exist there) -- this surfaces the #7176/#7183 ledger
+  // data that had no dashboard consumer until now.
+  aiCostByTenant: AiCostByTenant[];
 };
 
 const USAGE_WINDOW_DAYS = 7;
@@ -126,6 +132,7 @@ export async function buildOperatorDashboardPayload(
     agentHealth,
     slopCalibration,
     findingAcceptance,
+    aiCostByTenant,
   ] = await Promise.all([
     listRepositories(env),
     listInstallations(env),
@@ -153,6 +160,8 @@ export async function buildOperatorDashboardPayload(
     // #1967: reuse the existing finding-acceptance aggregate (no new compute); fails safe to an empty
     // aggregate on any read error.
     computeFindingAcceptance(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
+    // #4916: per-tenant AI cost breakdown, same window as the rest of the usage metrics above.
+    listAiCostByTenantSince(env, usageSince),
   ]);
   const weeklyValueReport = buildWeeklyValueReport({
     generatedAt: nowIso(),
@@ -271,6 +280,7 @@ export async function buildOperatorDashboardPayload(
     agentHealth,
     slopCalibration,
     acceptance,
+    aiCostByTenant,
   };
 }
 

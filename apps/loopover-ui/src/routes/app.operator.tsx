@@ -34,6 +34,7 @@ type OperatorDashboardResponse = {
     metrics: Array<{ id: string; label: string; value: number; detail: string }>;
   };
   upstreamDrift?: { status?: string } | null;
+  aiCostByTenant?: Array<{ installationId: string; totalCostUsd: number }>;
 };
 
 type FleetMetrics = {
@@ -51,6 +52,7 @@ type FleetMetrics = {
 };
 
 const formatPct = (v: number | null): string => (v === null ? "—" : `${Math.round(v * 100)}%`);
+const usdFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const formatMs = (v: number | null): string =>
   v === null
     ? "—"
@@ -482,6 +484,30 @@ export function OperatorDashboard() {
               ) : null}
             </div>
           </section>
+          {data.aiCostByTenant && data.aiCostByTenant.length > 0 ? (
+            <section className="rounded-token border border-border bg-transparent p-5">
+              <h2 className="font-display text-token-lg font-semibold">AI cost by tenant</h2>
+              <p className="mt-1 text-token-xs text-muted-foreground">
+                Hosted-deployment AI spend, highest-cost tenant first. Empty for self-host — this
+                only populates once an installation carries hosted AI-usage records.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {data.aiCostByTenant.map((tenant) => (
+                  <li
+                    key={tenant.installationId}
+                    className="flex items-center justify-between gap-4 border-b-hairline pb-2 last:border-b-0 last:pb-0"
+                  >
+                    <span className="font-mono text-token-xs text-foreground/90">
+                      {tenant.installationId}
+                    </span>
+                    <span className="font-mono text-token-sm text-foreground">
+                      {usdFmt.format(tenant.totalCostUsd)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <DeadLetterQueuePanel />
           <NotificationReadinessCard />
         </div>

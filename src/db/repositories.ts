@@ -1,5 +1,5 @@
 import { parsePullRequestTargetKey } from "@loopover/engine";
-import { and, asc, desc, eq, gte, inArray, not, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   activeReviewTracking,
@@ -3619,6 +3619,27 @@ export async function sumAiCostForTenantSince(env: Env, installationId: string, 
     .where(and(eq(aiUsageEvents.installationId, installationId), gte(aiUsageEvents.createdAt, sinceIso)));
   /* v8 ignore next -- SQL aggregate sum always returns one row; fallback protects D1 driver anomalies. */
   return Number(row?.total ?? 0);
+}
+
+export type AiCostByTenant = { installationId: string; totalCostUsd: number };
+
+/** #4916: fleet-wide, per-tenant AI cost breakdown for the operator dashboard — "who is costing what", not just
+ *  one tenant's own total (sumAiCostForTenantSince above). One GROUP BY query rather than N per-tenant calls.
+ *  Self-host rows (installation_id IS NULL) are excluded by construction, matching sumAiCostForTenantSince's own
+ *  hosted-only scope; the ai_usage_events_installation_created_idx index this shares with that function covers
+ *  both the equality/range lookup there and the grouped scan here. Ordered highest-cost-first so the dashboard
+ *  never needs its own client-side sort. */
+export async function listAiCostByTenantSince(env: Env, sinceIso: string): Promise<AiCostByTenant[]> {
+  const db = getDb(env.DB);
+  const rows = await db
+    .select({ installationId: aiUsageEvents.installationId, total: sql<number>`coalesce(sum(${aiUsageEvents.costUsd}), 0)` })
+    .from(aiUsageEvents)
+    .where(and(isNotNull(aiUsageEvents.installationId), gte(aiUsageEvents.createdAt, sinceIso)))
+    .groupBy(aiUsageEvents.installationId)
+    .orderBy(desc(sql`coalesce(sum(${aiUsageEvents.costUsd}), 0)`));
+  /* v8 ignore next -- installationId is the GROUP BY key under an isNotNull filter; D1 cannot return a null
+   *  group here, so the fallback only guards the driver's own typing, not a real runtime path. */
+  return rows.map((row) => ({ installationId: row.installationId ?? "", totalCostUsd: Number(row.total) }));
 }
 
 /** Spend-attempt statuses `countByokAiEventsForRepoSince`/`sumByokAiUsageForRepoSince` count: a real request

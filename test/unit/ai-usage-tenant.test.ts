@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recordAiUsageEvent, sumAiCostForTenantSince } from "../../src/db/repositories";
+import { listAiCostByTenantSince, recordAiUsageEvent, sumAiCostForTenantSince } from "../../src/db/repositories";
 import { createTestEnv } from "../helpers/d1";
 
 // #7176: ai_usage_events gained a nullable installation_id tenant column for centralized hosted billing, plus a
@@ -16,6 +16,14 @@ const base = {
 async function installationOf(env: Env, id: string): Promise<string | null> {
   const row = await env.DB.prepare("SELECT installation_id FROM ai_usage_events WHERE id = ?").bind(id).first<{ installation_id: string | null }>();
   return row?.installation_id ?? null;
+}
+
+/** Insert one ai_usage_events row and backdate it, so time-window filters (sinceIso) are actually exercised
+ *  instead of every row landing at "now". Shared by the per-tenant sum tests and the fleet-wide breakdown tests
+ *  below, which seed the identical fixture shape. */
+async function seedCostEvent(env: Env, installationId: string | null, costUsd: number, createdAt: string): Promise<void> {
+  await recordAiUsageEvent(env, { ...base, costUsd, installationId });
+  await env.DB.prepare("UPDATE ai_usage_events SET created_at = ? WHERE created_at = (SELECT max(created_at) FROM ai_usage_events)").bind(createdAt).run();
 }
 
 describe("ai_usage_events tenant column + billing aggregate (#7176)", () => {
@@ -42,20 +50,51 @@ describe("ai_usage_events tenant column + billing aggregate (#7176)", () => {
     const env = createTestEnv();
     // Two events for inst-1 after the window, one before it, one for inst-2, one self-host (null tenant).
     const since = "2026-07-10T00:00:00.000Z";
-    const seed = async (installationId: string | null, costUsd: number, createdAt: string) => {
-      await recordAiUsageEvent(env, { ...base, costUsd, installationId });
-      // Backdate the just-inserted row (recordAiUsageEvent stamps nowIso()), so the window filter is exercised.
-      await env.DB.prepare("UPDATE ai_usage_events SET created_at = ? WHERE created_at = (SELECT max(created_at) FROM ai_usage_events)").bind(createdAt).run();
-    };
-    await seed("inst-1", 1.25, "2026-07-11T00:00:00.000Z");
-    await seed("inst-1", 0.75, "2026-07-12T00:00:00.000Z");
-    await seed("inst-1", 9.0, "2026-07-01T00:00:00.000Z"); // before the window
-    await seed("inst-2", 4.0, "2026-07-13T00:00:00.000Z"); // different tenant
-    await seed(null, 3.0, "2026-07-14T00:00:00.000Z"); // self-host, null tenant
+    await seedCostEvent(env, "inst-1", 1.25, "2026-07-11T00:00:00.000Z");
+    await seedCostEvent(env, "inst-1", 0.75, "2026-07-12T00:00:00.000Z");
+    await seedCostEvent(env, "inst-1", 9.0, "2026-07-01T00:00:00.000Z"); // before the window
+    await seedCostEvent(env, "inst-2", 4.0, "2026-07-13T00:00:00.000Z"); // different tenant
+    await seedCostEvent(env, null, 3.0, "2026-07-14T00:00:00.000Z"); // self-host, null tenant
 
     expect(await sumAiCostForTenantSince(env, "inst-1", since)).toBeCloseTo(2.0, 5);
     expect(await sumAiCostForTenantSince(env, "inst-2", since)).toBeCloseTo(4.0, 5);
     // A tenant with no rows sums to 0, not an error.
     expect(await sumAiCostForTenantSince(env, "inst-none", since)).toBe(0);
+  });
+});
+
+describe("listAiCostByTenantSince (#4916): fleet-wide per-tenant breakdown for the operator dashboard", () => {
+  it("groups by tenant, sums correctly, and orders highest-cost-first", async () => {
+    const env = createTestEnv();
+    const since = "2026-07-10T00:00:00.000Z";
+    await seedCostEvent(env, "inst-1", 1.25, "2026-07-11T00:00:00.000Z");
+    await seedCostEvent(env, "inst-1", 0.75, "2026-07-12T00:00:00.000Z"); // inst-1 total: 2.0
+    await seedCostEvent(env, "inst-2", 4.0, "2026-07-13T00:00:00.000Z"); // inst-2 total: 4.0 (highest)
+    await seedCostEvent(env, "inst-3", 0.5, "2026-07-13T00:00:00.000Z"); // inst-3 total: 0.5 (lowest)
+
+    const rows = await listAiCostByTenantSince(env, since);
+
+    expect(rows).toEqual([
+      { installationId: "inst-2", totalCostUsd: 4.0 },
+      { installationId: "inst-1", totalCostUsd: 2.0 },
+      { installationId: "inst-3", totalCostUsd: 0.5 },
+    ]);
+  });
+
+  it("excludes self-host rows (null installation_id) and rows outside the time window", async () => {
+    const env = createTestEnv();
+    const since = "2026-07-10T00:00:00.000Z";
+    await seedCostEvent(env, "inst-1", 2.0, "2026-07-11T00:00:00.000Z"); // in window
+    await seedCostEvent(env, "inst-1", 9.0, "2026-07-01T00:00:00.000Z"); // before the window
+    await seedCostEvent(env, null, 5.0, "2026-07-11T00:00:00.000Z"); // self-host, must never appear
+
+    const rows = await listAiCostByTenantSince(env, since);
+
+    expect(rows).toEqual([{ installationId: "inst-1", totalCostUsd: 2.0 }]);
+  });
+
+  it("returns an empty list, not an error, when there are no hosted rows at all (the self-host default)", async () => {
+    const env = createTestEnv();
+    expect(await listAiCostByTenantSince(env, "2026-07-10T00:00:00.000Z")).toEqual([]);
   });
 });

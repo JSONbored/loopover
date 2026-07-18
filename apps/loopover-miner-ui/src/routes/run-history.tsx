@@ -16,7 +16,13 @@ import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
 import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
-import { fetchRunStates, forgeHostLabel, runStateRowKey, type RunHistoryResult, type RunStateRow } from "../lib/run-history";
+import {
+  fetchRunStates,
+  forgeHostLabel,
+  runStateRowKey,
+  type RunHistoryResult,
+  type RunStateRow,
+} from "../lib/run-history";
 
 export const Route = createFileRoute("/run-history")({
   component: RunHistoryPage,

@@ -190,8 +190,8 @@ describe("forgeHostLabel / runStateRowKey (#7080)", () => {
     expect(forgeHostLabel("https://api.github.com")).toBe("api.github.com");
     expect(forgeHostLabel("https://github.example.corp/api/v3")).toBe("github.example.corp");
     expect(forgeHostLabel("not-a-url")).toBe("not-a-url");
-    expect(
-      runStateRowKey({ apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets" }),
-    ).toBe("https://api.github.com\0acme/widgets");
+    expect(runStateRowKey({ apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets" })).toBe(
+      "https://api.github.com\0acme/widgets",
+    );
   });
 });

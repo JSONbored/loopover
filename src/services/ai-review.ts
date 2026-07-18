@@ -1115,6 +1115,10 @@ async function runWorkersOpinion(
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
           return { review: parsed };
         }
+        if (text.includes(INCOHERENT_DIFF_ASSESSMENT)) {
+          diagnostics.push({ model, attempt, status: "incoherent_diff", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
+          return { review: null };
+        }
         const hasJsonObject = Boolean(extractLastJsonObject(text));
         const trimmedText = text.trim();
         const status = trimmedText ? "unparseable_output" : "empty_output";

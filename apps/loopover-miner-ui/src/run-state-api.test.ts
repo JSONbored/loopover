@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { handleRunStateRequest, type RunStateApiDeps } from "../vite-run-state-api";
 
-const rows = [{ repoFullName: "acme/widgets", state: "idle", updatedAt: "2026-07-10T06:00:00.000Z" }];
+const rows = [
+  {
+    apiBaseUrl: "https://api.github.com",
+    repoFullName: "acme/widgets",
+    state: "idle",
+    updatedAt: "2026-07-10T06:00:00.000Z",
+  },
+];
 
 function deps(overrides: Partial<RunStateApiDeps> = {}): RunStateApiDeps {
   return {

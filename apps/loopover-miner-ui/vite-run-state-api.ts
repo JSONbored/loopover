@@ -12,7 +12,9 @@ import type { Plugin } from "vite";
 
 type RunStateModule = {
   resolveRunStateDbPath: () => string;
-  listRunStates: () => Array<{ repoFullName: string; state: string; updatedAt: string }>;
+  // #7080: include apiBaseUrl — listRunStates already returns it so same owner/repo on different forge hosts
+  // stay distinct end-to-end (the UI used to drop the field at this type boundary).
+  listRunStates: () => Array<{ apiBaseUrl: string; repoFullName: string; state: string; updatedAt: string }>;
 };
 
 export type RunStateApiDeps = {

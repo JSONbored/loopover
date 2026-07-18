@@ -9,8 +9,18 @@ import { IndexPage, OverviewView } from "./routes/index";
 const runsOk: RunHistoryResult = {
   ok: true,
   rows: [
-    { repoFullName: "acme/widgets", state: "discovering", updatedAt: "2026-07-10T06:00:00.000Z" },
-    { repoFullName: "acme/gadgets", state: "idle", updatedAt: "2026-07-10T05:00:00.000Z" },
+    {
+      apiBaseUrl: "https://api.github.com",
+      repoFullName: "acme/widgets",
+      state: "discovering",
+      updatedAt: "2026-07-10T06:00:00.000Z",
+    },
+    {
+      apiBaseUrl: "https://api.github.com",
+      repoFullName: "acme/gadgets",
+      state: "idle",
+      updatedAt: "2026-07-10T05:00:00.000Z",
+    },
   ],
 };
 const portfolioOk: PortfolioQueueResult = {

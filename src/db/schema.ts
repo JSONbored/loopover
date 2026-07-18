@@ -1241,6 +1241,10 @@ export const productUsageEvents = sqliteTable(
     latencyMs: integer("latency_ms"),
     clientName: text("client_name"),
     clientVersion: text("client_version"),
+    // #4918: optional per-event cost, nullable -- most product actions have no direct cost. Distinct from
+    // ai_usage_events.costUsd (the detailed, authoritative AI-spend ledger); this is a lightweight summary
+    // figure for the broader, cross-surface usage stream.
+    costUsd: real("cost_usd"),
     metadataJson: text("metadata_json").notNull().default("{}"),
     occurredAt: text("occurred_at").notNull().$defaultFn(() => nowIso()),
   },

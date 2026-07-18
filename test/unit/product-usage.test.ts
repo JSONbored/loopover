@@ -1189,4 +1189,55 @@ describe("product usage events", () => {
       retention: expect.arrayContaining([expect.objectContaining({ window: "previous_30_days", capped: true, activeActors: 1, retainedActors: 0 })]),
     });
   });
+
+  // #4918: an optional per-event cost dimension, distinct from ai_usage_events.costUsd's detailed AI-spend
+  // ledger -- a lightweight summary figure any surface can attach when it knows one.
+  it("records an optional per-event cost", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    const recorded = await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "billable_action",
+      outcome: "success",
+      costUsd: 1.5,
+    });
+
+    expect(recorded.costUsd).toBe(1.5);
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toMatchObject({ costUsd: 1.5 });
+  });
+
+  it("defaults cost to null when not supplied (byte-identical to before #4918)", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    const recorded = await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "free_action",
+      outcome: "success",
+    });
+
+    expect(recorded.costUsd).toBeNull();
+    const [row] = await listProductUsageEvents(env);
+    expect(row).toMatchObject({ costUsd: null });
+  });
+
+  it("clamps a negative cost to 0 (mirrors normalizeProductUsageLatency's own floor) and nulls a non-finite one", async () => {
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "fixed-test-salt" });
+
+    const negative = await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "bad_cost_negative",
+      outcome: "success",
+      costUsd: -3,
+    });
+    const nonFinite = await recordProductUsageEvent(env, {
+      surface: "api",
+      eventName: "bad_cost_non_finite",
+      outcome: "success",
+      costUsd: Number.NaN,
+    });
+
+    expect(negative.costUsd).toBe(0);
+    expect(nonFinite.costUsd).toBeNull();
+  });
 });

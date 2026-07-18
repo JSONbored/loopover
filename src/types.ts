@@ -2449,6 +2449,8 @@ export type ProductUsageEventRecord = {
   latencyMs?: number | null | undefined;
   clientName?: string | null | undefined;
   clientVersion?: string | null | undefined;
+  // #4918: optional per-event cost (USD). Null for the vast majority of non-billable product actions.
+  costUsd?: number | null | undefined;
   metadata: Record<string, JsonValue>;
   occurredAt: string;
 };

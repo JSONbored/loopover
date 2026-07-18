@@ -2212,6 +2212,7 @@ export async function recordProductUsageEvent(
     latencyMs?: number | null | undefined;
     clientName?: string | null | undefined;
     clientVersion?: string | null | undefined;
+    costUsd?: number | null | undefined;
     metadata?: Record<string, unknown> | null | undefined;
     occurredAt?: string | null | undefined;
   },
@@ -2238,6 +2239,7 @@ export async function recordProductUsageEvent(
     latencyMs: normalizeProductUsageLatency(event.latencyMs),
     clientName: redactProductUsageActor(boundedProductUsageField(event.clientName, 80), actorRedactor),
     clientVersion: redactProductUsageActor(boundedProductUsageField(event.clientVersion, 80), actorRedactor),
+    costUsd: normalizeProductUsageCostUsd(event.costUsd),
     metadata: sanitizedMetadata,
     occurredAt: event.occurredAt ?? nowIso(),
   };
@@ -2255,6 +2257,7 @@ export async function recordProductUsageEvent(
     latencyMs: record.latencyMs ?? null,
     clientName: record.clientName ?? null,
     clientVersion: record.clientVersion ?? null,
+    costUsd: record.costUsd ?? null,
     metadataJson: jsonString(record.metadata),
     occurredAt: record.occurredAt,
   });
@@ -6936,6 +6939,7 @@ function toProductUsageEventRecord(row: typeof productUsageEvents.$inferSelect):
     latencyMs: row.latencyMs,
     clientName: row.clientName,
     clientVersion: row.clientVersion,
+    costUsd: row.costUsd,
     metadata: parseJson<Record<string, JsonValue>>(row.metadataJson, {}),
     occurredAt: row.occurredAt,
   };
@@ -6987,6 +6991,13 @@ function normalizeProductUsageDailyRollupStatus(status: unknown): ProductUsageDa
 
 function normalizeProductUsageLatency(latencyMs: unknown): number | null {
   return typeof latencyMs === "number" && Number.isFinite(latencyMs) ? Math.max(0, Math.round(latencyMs)) : null;
+}
+
+/** #4918: same defensive shape as normalizeProductUsageLatency -- a non-number/non-finite value (caller error,
+ *  not a real amount) degrades to null (no cost recorded), while a negative number floors to 0 rather than
+ *  persisting a nonsense negative cost. */
+function normalizeProductUsageCostUsd(costUsd: unknown): number | null {
+  return typeof costUsd === "number" && Number.isFinite(costUsd) ? Math.max(0, costUsd) : null;
 }
 
 async function hashProductUsageIdentifier(env: Env, kind: "actor" | "session", value: unknown): Promise<string | null> {

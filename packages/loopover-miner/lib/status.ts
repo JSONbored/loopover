@@ -370,7 +370,8 @@ function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCh
     ["plan-store", resolvePlanStoreDbPath(env)],
     ["governor-state", resolveGovernorStateDbPath(env)],
     ["attempt-log", resolveAttemptLogDbPath(env)],
-    ["replay-snapshot", resolveReplaySnapshotDbPath(env)],
+    // replay-snapshot's .d.ts still types env as ProcessEnv (not yet migrated); cast is lossless.
+    ["replay-snapshot", resolveReplaySnapshotDbPath(env as NodeJS.ProcessEnv)],
     ["worktree-allocator", resolveWorktreeAllocatorDbPath(env)],
     ["contribution-profile", resolveContributionProfileCacheDbPath(env)],
     ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath(env)],
@@ -415,7 +416,8 @@ function nonEmptyEnv(value: unknown): boolean {
  *  re-verified as still valid/unexpired -- only an actual attempt (or resolveGitHubToken itself) discovers
  *  that. Reports presence only; no token value is ever included in the detail. */
 export function checkGitHubTokenPresent(env: Record<string, string | undefined> = process.env): DoctorCheck {
-  const present = hasGitHubTokenSource(env);
+  // hasGitHubTokenSource's .d.ts still types env as ProcessEnv; cast is lossless.
+  const present = hasGitHubTokenSource(env as NodeJS.ProcessEnv);
   return {
     name: "github-token",
     ok: present,

@@ -149,7 +149,7 @@ describe("loopover-miner manage status (#2325)", () => {
     expect(() =>
       collectManageStatus({
         portfolioQueue: { listQueue: () => [] },
-      } as Parameters<typeof collectManageStatus>[0]),
+      } as unknown as Parameters<typeof collectManageStatus>[0]),
     ).toThrow("invalid_event_ledger");
     expect(
       indexLatestManageUpdates([

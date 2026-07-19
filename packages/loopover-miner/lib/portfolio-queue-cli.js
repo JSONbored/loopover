@@ -202,6 +202,9 @@ export function renderQueueTable(entries) {
   const header = [
     "repo".padEnd(24),
     "identifier".padEnd(16),
+    // #7225: surface the host so a reader of the plain-text table can supply the `--api-base-url` a follow-up
+    // done/release/requeue needs to disambiguate two rows sharing a repo+identifier across forge hosts.
+    "host".padEnd(30),
     "status".padEnd(12),
     "pri".padStart(4),
     "enqueued-at".padEnd(24),
@@ -210,6 +213,7 @@ export function renderQueueTable(entries) {
     [
       entry.repoFullName.padEnd(24),
       entry.identifier.padEnd(16),
+      display(entry.apiBaseUrl).padEnd(30),
       entry.status.padEnd(12),
       display(entry.priority).padStart(4),
       display(entry.enqueuedAt).padEnd(24),

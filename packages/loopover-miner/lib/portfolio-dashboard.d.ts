@@ -1,4 +1,5 @@
 export interface PortfolioRepoSummary {
+  apiBaseUrl: string;
   repoFullName: string;
   byStatus: { queued: number; in_progress: number; done: number };
   total: number;

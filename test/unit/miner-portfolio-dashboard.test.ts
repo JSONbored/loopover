@@ -35,9 +35,29 @@ describe("collectPortfolioDashboard (#4287)", () => {
     expect(summary.total).toBe(7);
     expect(summary.byStatus).toEqual({ queued: 5, in_progress: 1, done: 1 });
     expect(summary.repos.map((r) => r.repoFullName)).toEqual(["", "acme/a", "acme/b"]); // sorted
-    expect(summary.repos.find((r) => r.repoFullName === "acme/a")).toEqual({ repoFullName: "acme/a", byStatus: { queued: 2, in_progress: 0, done: 1 }, total: 3 });
+    expect(summary.repos.find((r) => r.repoFullName === "acme/a")).toEqual({ apiBaseUrl: "", repoFullName: "acme/a", byStatus: { queued: 2, in_progress: 0, done: 1 }, total: 3 });
     // oldest queued is acme/a's 2026-07-01 → 9 days before NOW
     expect(summary.oldestQueuedAgeMs).toBe(9 * 24 * 60 * 60 * 1000);
+  });
+
+  it("keeps two forge hosts sharing a repo name as distinct, non-merged per-repo entries (#7225)", () => {
+    const summary = collectPortfolioDashboard(
+      {
+        portfolioQueue: mockQueue([
+          { apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", status: "queued", enqueuedAt: "2026-07-01T00:00:00.000Z" },
+          { apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", status: "queued", enqueuedAt: "2026-07-02T00:00:00.000Z" },
+          { apiBaseUrl: "https://ghe.example.com/api/v3", repoFullName: "acme/widgets", status: "done", enqueuedAt: "2026-07-03T00:00:00.000Z" },
+        ]),
+      },
+      { nowMs: NOW },
+    );
+    // Same repoFullName across two hosts → two entries, tie-broken by apiBaseUrl (github.com before ghe.example.com).
+    expect(summary.repos).toEqual([
+      { apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", byStatus: { queued: 2, in_progress: 0, done: 0 }, total: 2 },
+      { apiBaseUrl: "https://ghe.example.com/api/v3", repoFullName: "acme/widgets", byStatus: { queued: 0, in_progress: 0, done: 1 }, total: 1 },
+    ]);
+    // The two hosts' backlogs stay independent instead of collapsing into one { queued: 2, done: 1, total: 3 } entry.
+    expect(summary.total).toBe(3);
   });
 
   it("reports a null oldest-queued age when no clock is supplied, and when nothing is queued", () => {
@@ -56,12 +76,27 @@ describe("renderPortfolioDashboardTable (#4287)", () => {
   });
 
   it("renders totals, per-repo rows, and the oldest-queued age when present", () => {
-    const withAge = renderPortfolioDashboardTable({ total: 2, byStatus: { queued: 2, in_progress: 0, done: 0 }, repos: [{ repoFullName: "acme/a", byStatus: { queued: 2, in_progress: 0, done: 0 }, total: 2 }], oldestQueuedAgeMs: 3_600_000 });
+    const withAge = renderPortfolioDashboardTable({ total: 2, byStatus: { queued: 2, in_progress: 0, done: 0 }, repos: [{ apiBaseUrl: "https://api.github.com", repoFullName: "acme/a", byStatus: { queued: 2, in_progress: 0, done: 0 }, total: 2 }], oldestQueuedAgeMs: 3_600_000 });
     expect(withAge).toContain("total: 2");
     expect(withAge).toContain("oldest-queued: 60m");
     expect(withAge).toContain("acme/a");
-    const noAge = renderPortfolioDashboardTable({ total: 1, byStatus: { queued: 0, in_progress: 1, done: 0 }, repos: [{ repoFullName: "acme/a", byStatus: { queued: 0, in_progress: 1, done: 0 }, total: 1 }], oldestQueuedAgeMs: null });
+    const noAge = renderPortfolioDashboardTable({ total: 1, byStatus: { queued: 0, in_progress: 1, done: 0 }, repos: [{ apiBaseUrl: "https://api.github.com", repoFullName: "acme/a", byStatus: { queued: 0, in_progress: 1, done: 0 }, total: 1 }], oldestQueuedAgeMs: null });
     expect(noAge).not.toContain("oldest-queued");
+  });
+
+  it("shows a host column so two same-named repos on different forge hosts are distinguishable (#7225)", () => {
+    const table = renderPortfolioDashboardTable({
+      total: 2,
+      byStatus: { queued: 2, in_progress: 0, done: 0 },
+      repos: [
+        { apiBaseUrl: "https://api.github.com", repoFullName: "acme/widgets", byStatus: { queued: 1, in_progress: 0, done: 0 }, total: 1 },
+        { apiBaseUrl: "https://ghe.example.com/api/v3", repoFullName: "acme/widgets", byStatus: { queued: 1, in_progress: 0, done: 0 }, total: 1 },
+      ],
+      oldestQueuedAgeMs: null,
+    });
+    expect(table).toContain("host");
+    expect(table).toContain("https://api.github.com");
+    expect(table).toContain("https://ghe.example.com/api/v3");
   });
 });
 

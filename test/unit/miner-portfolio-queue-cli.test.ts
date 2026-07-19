@@ -78,6 +78,32 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     expect(renderQueueTable(entries)).toContain("issue:7");
   });
 
+  it("renderQueueTable distinguishes two same-repo/identifier rows on different forge hosts (#7225)", () => {
+    const entries: QueueEntry[] = [
+      {
+        apiBaseUrl: "https://api.github.com",
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        status: "queued",
+        priority: 10,
+        enqueuedAt: "2026-07-04T12:00:00.000Z",
+      },
+      {
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        status: "in_progress",
+        priority: 10,
+        enqueuedAt: "2026-07-04T12:00:00.000Z",
+      },
+    ];
+    const table = renderQueueTable(entries);
+    // Both rows share repo+identifier, so only the host column tells them apart for a `--api-base-url` follow-up.
+    expect(table).toContain("host");
+    expect(table).toContain("https://api.github.com");
+    expect(table).toContain("https://ghe.example.com/api/v3");
+  });
+
   it("runQueueList prints table and JSON output", () => {
     const portfolioQueue = tempQueueStore();
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 10 });

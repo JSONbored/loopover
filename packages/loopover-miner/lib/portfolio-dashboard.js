@@ -36,12 +36,17 @@ export function collectPortfolioDashboard(sources, options = {}) {
     const status = entry?.status;
     if (!QUEUE_STATUS_KEYS.includes(status)) continue;
     const repoFullName = typeof entry.repoFullName === "string" ? entry.repoFullName : "";
+    // #7225: key per-repo backlogs by (apiBaseUrl, repoFullName) so two forge hosts sharing a repo name keep
+    // independent counts instead of silently merging. The composite map key uses "\n" — never valid in either
+    // component — so distinct (host, repo) pairs can never collide.
+    const apiBaseUrl = typeof entry.apiBaseUrl === "string" ? entry.apiBaseUrl : "";
     total += 1;
     byStatus[status] += 1;
-    let repo = perRepo.get(repoFullName);
+    const key = `${apiBaseUrl}\n${repoFullName}`;
+    let repo = perRepo.get(key);
     if (!repo) {
-      repo = { repoFullName, byStatus: emptyCounts(), total: 0 };
-      perRepo.set(repoFullName, repo);
+      repo = { apiBaseUrl, repoFullName, byStatus: emptyCounts(), total: 0 };
+      perRepo.set(key, repo);
     }
     repo.byStatus[status] += 1;
     repo.total += 1;
@@ -51,7 +56,9 @@ export function collectPortfolioDashboard(sources, options = {}) {
     }
   }
 
-  const repos = [...perRepo.values()].sort((left, right) => left.repoFullName.localeCompare(right.repoFullName));
+  const repos = [...perRepo.values()].sort(
+    (left, right) => left.repoFullName.localeCompare(right.repoFullName) || left.apiBaseUrl.localeCompare(right.apiBaseUrl),
+  );
   const oldestQueuedAgeMs = nowMs !== null && oldestQueuedMs !== null ? Math.max(0, nowMs - oldestQueuedMs) : null;
   return { total, byStatus, repos, oldestQueuedAgeMs };
 }
@@ -60,10 +67,11 @@ export function collectPortfolioDashboard(sources, options = {}) {
 export function renderPortfolioDashboardTable(summary) {
   if (!summary || summary.total === 0) return "portfolio queue is empty";
   const age = summary.oldestQueuedAgeMs !== null ? `  oldest-queued: ${Math.round(summary.oldestQueuedAgeMs / 60000)}m` : "";
-  const header = ["repo".padEnd(28), "queued".padStart(7), "in_prog".padStart(8), "done".padStart(6), "total".padStart(6)].join(" ");
+  const header = ["repo".padEnd(28), "host".padEnd(30), "queued".padStart(7), "in_prog".padStart(8), "done".padStart(6), "total".padStart(6)].join(" ");
   const lines = summary.repos.map((repo) =>
     [
       repo.repoFullName.padEnd(28),
+      String(repo.apiBaseUrl).padEnd(30),
       String(repo.byStatus.queued).padStart(7),
       String(repo.byStatus.in_progress).padStart(8),
       String(repo.byStatus.done).padStart(6),

@@ -51,6 +51,18 @@ describe("extractSubmittedSourceUrls", () => {
     const urls = extractSubmittedSourceUrls(mdx({ downloadUrl: "/downloads/skills/foo.zip" }));
     expect(urls).toHaveLength(0);
   });
+
+  it("reads snake_case source fields (e.g. the canonical source_url), matching urlFields (#7250)", () => {
+    // Before #7250, sourceUrlFields listed only the camelCase names, so a legitimately-aliased snake_case field
+    // was invisible to the source-evidence gate even though duplicates.ts (which reads urlFields) saw it.
+    const pairs = extractSubmittedSourceUrls(mdx({ source_url: "https://github.com/acme/y" })).map((u) => `${u.field}:${u.url}`);
+    expect(pairs).toContain("source_url:https://github.com/acme/y");
+    // Every snake_case alias urlFields carries is now recognized here too.
+    for (const field of ["docs_url", "download_url", "github_url", "package_url", "repo_url", "repository_url", "source_url", "website_url"]) {
+      expect(AWESOME_CLAUDE_CONTENT_SPEC.sourceUrlFields).toContain(field);
+      expect(AWESOME_CLAUDE_CONTENT_SPEC.urlFields.has(field)).toBe(true);
+    }
+  });
 });
 
 describe("checkSubmittedSourceEvidence", () => {

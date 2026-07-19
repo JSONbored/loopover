@@ -106,6 +106,17 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
     "repositoryUrl",
     "sourceUrl",
     "websiteUrl",
+    // snake_case aliases, matching urlFields one-for-one (#7250): source-evidence.ts read only the camelCase
+    // names, so an entry using a legitimately-listed snake_case key (e.g. the canonical `source_url`) was visible
+    // to duplicates.ts but invisible to the source-evidence gate.
+    "docs_url",
+    "download_url",
+    "github_url",
+    "package_url",
+    "repo_url",
+    "repository_url",
+    "source_url",
+    "website_url",
   ],
   sourceUrlListFields: new Set(["sourceUrls", "retrievalSources"]),
   distributionSourceFields: new Set(["downloadUrl", "packageUrl"]),

@@ -216,6 +216,11 @@ describe("loopover-miner status/doctor (#2288)", () => {
     expect(readExpectedEnginePackageVersion()).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("compareInstalledEngineVersion treats an unparseable version on either side as behind (-1)", () => {
+    expect(compareInstalledEngineVersion("not-semver", "0.2.0")).toBe(-1);
+    expect(compareInstalledEngineVersion("1.0.0", "also-bad")).toBe(-1);
+  });
+
   it("buildEngineVersionSkewCheck skips when expected version is unavailable", () => {
     const skewCheck = buildEngineVersionSkewCheck(
       () => "0.2.0",
@@ -246,6 +251,12 @@ describe("loopover-miner status/doctor (#2288)", () => {
     expect(readExpectedEnginePackageVersionFromPaths(join(root, "missing.json"), join(root, "missing-pin"))).toBeNull();
     writeFileSync(join(root, "broken.json"), "not-json");
     expect(readExpectedEnginePackageVersionFromPaths(join(root, "broken.json"), pinFile)).toBeNull();
+    // A valid package.json with no `version` field falls through the `?? null`.
+    writeFileSync(join(root, "no-version.json"), JSON.stringify({ name: "x" }));
+    expect(readExpectedEnginePackageVersionFromPaths(join(root, "no-version.json"), pinFile)).toBeNull();
+    // An empty/whitespace pin file falls through the `pinned || null`.
+    writeFileSync(join(root, "empty-pin"), "  \n");
+    expect(readExpectedEnginePackageVersionFromPaths(join(root, "missing.json"), join(root, "empty-pin"))).toBeNull();
   });
 
   it("readInstalledEnginePackageVersionFromPaths falls back to the workspace engine package", () => {
@@ -261,6 +272,17 @@ describe("loopover-miner status/doctor (#2288)", () => {
     mkdirSync(join(root, "installed"), { recursive: true });
     writeFileSync(installedPkg, JSON.stringify({ version: "0.2.1" }));
     expect(readInstalledEnginePackageVersionFromPaths(join(root, "installed", "index.js"), workspacePkg)).toBe("0.2.1");
+
+    // A workspace package.json present but missing its `version` field falls through the `?? null`.
+    writeFileSync(workspacePkg, JSON.stringify({ name: "x" }));
+    expect(readInstalledEnginePackageVersionFromPaths("/missing/entry", workspacePkg)).toBeNull();
+
+    // A resolved-entry package.json present but with no `version` skips (the `if (version)` guard is false) and
+    // falls through to the (here-missing) workspace fallback.
+    const noVersionInstalled = join(root, "installed2", "package.json");
+    mkdirSync(join(root, "installed2"), { recursive: true });
+    writeFileSync(noVersionInstalled, JSON.stringify({ name: "x" }));
+    expect(readInstalledEnginePackageVersionFromPaths(join(root, "installed2", "index.js"), join(root, "missing.json"))).toBeNull();
   });
 
   it("runDoctor supports --json output", () => {
@@ -398,6 +420,15 @@ describe("loopover-miner status/doctor (#2288)", () => {
       expect(String(log.mock.calls[0]?.[0])).toContain(
         "driver: codex-cli (CLI present: yes, model env: MINER_CODING_AGENT_CODEX_MODEL)",
       );
+    });
+
+    it("renders the driver line for a provider with no CLI to check (n/a, no model) and one whose CLI is absent (no)", () => {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      runStatus([], { LOOPOVER_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "noop" }, tempRoot());
+      expect(String(log.mock.calls[0]?.[0])).toContain("driver: noop (CLI present: n/a)");
+      log.mockClear();
+      runStatus([], { LOOPOVER_MINER_CONFIG_DIR: "/s", MINER_CODING_AGENT_PROVIDER: "codex-cli", PATH: "" }, tempRoot());
+      expect(String(log.mock.calls[0]?.[0])).toContain("driver: codex-cli (CLI present: no");
     });
 
     it("invariant: no env-var VALUE or secret-shaped string ever appears in status --json output across provider permutations", () => {

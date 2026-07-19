@@ -144,6 +144,27 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
     expect((capturedHeaders as Record<string, string>).authorization).toBe("Bearer secret-token");
   });
 
+  it("returns null for a non-string repoFullName", async () => {
+    expect(await fetchLiveIssueSnapshot(123 as unknown as string, 7, { fetchImpl: graphqlResponse({}) })).toBeNull();
+  });
+
+  it("treats a non-string githubToken as no token, sending no authorization header", async () => {
+    let capturedHeaders: HeadersInit | undefined;
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      capturedHeaders = init.headers;
+      return { ok: true, status: 200, json: async () => ({ data: { repository: { issue: { state: "OPEN", closedByPullRequestsReferences: { nodes: [] } } } } }) } as Response;
+    };
+    await fetchLiveIssueSnapshot("acme/widgets", 7, { githubToken: 123 as unknown as string, fetchImpl });
+    expect((capturedHeaders as Record<string, string>).authorization).toBeUndefined();
+  });
+
+  it("treats an open issue with no closedByPullRequestsReferences connection as having no referencing PRs", async () => {
+    const snapshot = await fetchLiveIssueSnapshot("acme/widgets", 7, {
+      fetchImpl: graphqlResponse({ data: { repository: { issue: { state: "OPEN" } } } }),
+    });
+    expect(snapshot).toEqual({ state: "open", referencingPrs: [] });
+  });
+
   it("respects a custom graphqlUrl override", async () => {
     let capturedUrl: string | undefined;
     await fetchLiveIssueSnapshot("acme/widgets", 7, {

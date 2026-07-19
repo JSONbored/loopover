@@ -312,4 +312,60 @@ describe("loopover-miner manage status (#2325)", () => {
     expect(runManageStatus(["acme/widgets"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner manage status [--json]");
   });
+
+  it("parseManagedPrIdentifier rejects a non-string identifier and a non-positive PR number", () => {
+    expect(parseManagedPrIdentifier(42 as unknown as string)).toBeNull();
+    expect(parseManagedPrIdentifier("pr:0")).toBeNull();
+  });
+
+  it("indexLatestManageUpdates skips non-array input, wrong-typed events, and events with a blank repo", () => {
+    type Events = Parameters<typeof indexLatestManageUpdates>[0];
+    expect(indexLatestManageUpdates(null as unknown as Events).size).toBe(0);
+    const events = [
+      { type: "other_event", repoFullName: "acme/widgets", payload: { prNumber: 1 } },
+      { type: MANAGE_PR_UPDATE_EVENT, repoFullName: "  ", payload: { prNumber: 1 } },
+      { type: MANAGE_PR_UPDATE_EVENT, repoFullName: "acme/widgets", payload: [] },
+    ] as unknown as Events;
+    expect(indexLatestManageUpdates(events).size).toBe(0);
+  });
+
+  it("normalizes optional snapshot fields: null/non-string/blank become null, a real string is trimmed", () => {
+    const events = [
+      {
+        type: MANAGE_PR_UPDATE_EVENT,
+        repoFullName: "acme/widgets",
+        payload: { prNumber: 3, branch: null, ciState: 42, gateVerdict: "   ", outcome: "  ready  " },
+      },
+    ] as unknown as Parameters<typeof indexLatestManageUpdates>[0];
+    expect(indexLatestManageUpdates(events).get("acme/widgets:3")).toEqual({
+      repoFullName: "acme/widgets",
+      prNumber: 3,
+      branch: null,
+      ciState: null,
+      gateVerdict: null,
+      outcome: "ready",
+      lastPolledAt: null,
+    });
+  });
+
+  it("collectManageStatus rejects a missing/invalid portfolio queue or event ledger", () => {
+    type Sources = Parameters<typeof collectManageStatus>[0];
+    expect(() => collectManageStatus({ eventLedger: { readEvents: () => [] } } as unknown as Sources)).toThrow("invalid_portfolio_queue");
+    expect(() => collectManageStatus({ portfolioQueue: { listQueue: () => [] }, eventLedger: {} } as unknown as Sources)).toThrow("invalid_event_ledger");
+  });
+
+  it("runs with real default stores under a temp state dir when no init overrides are supplied", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-status-real-"));
+    roots.push(root);
+    const prev = process.env.LOOPOVER_MINER_CONFIG_DIR;
+    process.env.LOOPOVER_MINER_CONFIG_DIR = root;
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(runManageStatus(["--json"])).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.LOOPOVER_MINER_CONFIG_DIR;
+      else process.env.LOOPOVER_MINER_CONFIG_DIR = prev;
+    }
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).rows).toEqual([]);
+  });
 });

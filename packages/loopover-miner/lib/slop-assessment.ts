@@ -1,4 +1,5 @@
-import { buildSlopAssessment } from "@loopover/engine";
+import { buildSlopAssessment, type SlopAssessment, type SlopAssessmentInput } from "@loopover/engine";
+
 // Production runSlopAssessment binding (#5133, Wave 3.5 follow-up to #2334). `attempt-runner.js`'s
 // `deps.runSlopAssessment` (via #2333's iterate-loop -> self-review-adapter's `SelfReviewAdapterDeps`) had
 // no production implementation anywhere in this package -- only the test double in
@@ -9,7 +10,7 @@ import { buildSlopAssessment } from "@loopover/engine";
 // a real binding could be a direct pass-through with no mapping logic once the deterministic scorer itself
 // became portable -- which #5133 did (`src/signals/slop.ts`'s PR-side scorer is now extracted to
 // `packages/loopover-engine/src/signals/slop.ts`, byte-parity-verified against the live gate's own copy).
-export function runSlopAssessment(input) {
-    return buildSlopAssessment(input);
+
+export function runSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
+  return buildSlopAssessment(input);
 }
-//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoic2xvcC1hc3Nlc3NtZW50LmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsic2xvcC1hc3Nlc3NtZW50LnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBLE9BQU8sRUFBRSxtQkFBbUIsRUFBaUQsTUFBTSxrQkFBa0IsQ0FBQztBQUV0RyxtR0FBbUc7QUFDbkcsMkdBQTJHO0FBQzNHLG1GQUFtRjtBQUNuRixrSEFBa0g7QUFDbEgsOEdBQThHO0FBQzlHLHNHQUFzRztBQUN0RywrR0FBK0c7QUFDL0csMkdBQTJHO0FBQzNHLGlHQUFpRztBQUNqRywwR0FBMEc7QUFFMUcsTUFBTSxVQUFVLGlCQUFpQixDQUFDLEtBQTBCO0lBQzFELE9BQU8sbUJBQW1CLENBQUMsS0FBSyxDQUFDLENBQUM7QUFDcEMsQ0FBQyJ9

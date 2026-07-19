@@ -1,3 +1,2 @@
-import type { SlopAssessment, SlopAssessmentInput } from "@loopover/engine";
-
-export function runSlopAssessment(input: SlopAssessmentInput): SlopAssessment;
+import { type SlopAssessment, type SlopAssessmentInput } from "@loopover/engine";
+export declare function runSlopAssessment(input: SlopAssessmentInput): SlopAssessment;

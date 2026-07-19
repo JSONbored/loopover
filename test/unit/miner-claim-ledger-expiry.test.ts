@@ -136,3 +136,19 @@ describe("loopover-miner claim ledger expiry (#2316)", () => {
     expect(active).toEqual([expect.objectContaining({ apiBaseUrl: "https://api.github.com" })]);
   });
 });
+
+describe("claim-ledger-expiry edge-branch coverage (#7302)", () => {
+  it("findExpiredClaims skips a claim whose claimedAt is unparseable", () => {
+    const nowMs = Date.parse("2026-12-01T00:00:00.000Z");
+    expect(findExpiredClaims([claim({ claimedAt: "not-a-date" })], nowMs, 1000)).toEqual([]);
+  });
+
+  it("sweepExpiredClaims drops a claim whose store.expireClaim returns null", () => {
+    const nowMs = Date.parse("2026-12-01T00:00:00.000Z");
+    const store = {
+      listClaims: () => [claim({ claimedAt: "2020-01-01T00:00:00.000Z" })],
+      expireClaim: () => null,
+    };
+    expect(sweepExpiredClaims(store, nowMs, 1000)).toEqual([]);
+  });
+});

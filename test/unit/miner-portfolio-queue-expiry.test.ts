@@ -217,3 +217,12 @@ describe("PortfolioQueueManager stuck-lease reclaim wiring (#4827)", () => {
     expect(reclaimed[0]?.status).toBe("queued");
   });
 });
+
+describe("portfolio-queue-expiry edge-branch coverage (#7302)", () => {
+  it("sweepStuckItems drops an item whose store.reclaimStuckItem returns null", () => {
+    const stuck = { status: "in_progress", leasedAt: "2020-01-01T00:00:00.000Z", repoFullName: "o/a", identifier: "1", apiBaseUrl: "https://api.github.com" } as unknown as QueueLeaseEntry;
+    const nowMs = Date.parse("2026-12-01T00:00:00.000Z");
+    const store = { listInProgress: () => [stuck], reclaimStuckItem: () => null };
+    expect(sweepStuckItems(store, nowMs, 1000)).toEqual([]);
+  });
+});

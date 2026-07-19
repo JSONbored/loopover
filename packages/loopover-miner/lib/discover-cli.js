@@ -15,6 +15,7 @@ import { extractContributionProfile } from "./contribution-profile-extract.js";
 import { initContributionProfileCache } from "./contribution-profile-cache.js";
 import { filterCandidatesByProfiles } from "./contribution-profile-filter.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { isDiscoveryPlaneEnabled, queryDiscoveryIndex, recordDiscoveryTelemetry } from "./discovery-index-client.js";
 
 const DISCOVER_USAGE =
   "Usage: loopover-miner discover <owner/repo> [<owner/repo>...] | --search <query> [--dry-run] [--json] [--api-base-url <url>] [--token-env <VAR>]";
@@ -34,6 +35,35 @@ export function sanitizeDiscoverDisplayText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, MAX_DISCOVER_TITLE_DISPLAY_LENGTH);
+}
+
+function dedupeKey(repoFullName, issueNumber) {
+  return `${repoFullName.toLowerCase()}#${issueNumber}`;
+}
+
+/**
+ * Supplements `fanOut.issues` with hosted discovery-index results for the same scope (#7168) -- a complete
+ * no-op (returns `fanOut` unchanged) unless the plane is enabled, so a run with the flag unset behaves exactly
+ * as before this feature existed. Local results always win on a duplicate issue (the discovery-index candidate
+ * is dropped, not merged over it) -- this instance's own live fan-out is more current than a cached shared
+ * index entry. Discovery-index candidates lack `assignees` (not part of the public contract), so they're
+ * annotated with an empty array to match opportunity-fanout.js's own candidate shape; contribution-profile-
+ * filter.js's assignee-exclusion rule treats that identically to "no assignees on this issue".
+ */
+async function supplementWithDiscoveryIndex(fanOut, queryScope, options) {
+  const env = options.env ?? process.env;
+  if (!isDiscoveryPlaneEnabled(env)) return fanOut;
+  const queryIndex = options.queryDiscoveryIndex ?? queryDiscoveryIndex;
+  const response = await queryIndex(queryScope, { env });
+  recordDiscoveryTelemetry("discover_query", response.candidates.length > 0 ? "supplemented" : "empty", { env });
+  if (response.candidates.length === 0) return fanOut;
+
+  const seen = new Set(fanOut.issues.map((issue) => dedupeKey(issue.repoFullName, issue.issueNumber)));
+  const supplemented = response.candidates
+    .filter((candidate) => !seen.has(dedupeKey(candidate.repoFullName, candidate.issueNumber)))
+    .map((candidate) => ({ ...candidate, assignees: [] }));
+  if (supplemented.length === 0) return fanOut;
+  return { ...fanOut, issues: [...fanOut.issues, ...supplemented] };
 }
 
 function parseRepoTarget(value) {
@@ -211,6 +241,12 @@ export async function runDiscover(args, options = {}) {
   // Eligibility filtering (#6798): resolve each candidate repo's ContributionProfile and drop candidates the
   // repo's own conventions would reject, BEFORE ranking. Safe by default -- see resolveContributionProfilesForDiscover.
   const resolveProfiles = options.resolveContributionProfiles ?? resolveContributionProfilesForDiscover;
+  // Same scope this run already asks GitHub about (#7168) -- the discovery-index supplement, when enabled,
+  // asks the shared hosted index about the identical targets/search rather than a different query entirely.
+  const discoveryQueryScope =
+    parsed.search !== null
+      ? { repos: [], orgs: [], searchTerms: [parsed.search] }
+      : { repos: parsed.targets.map((target) => `${target.owner}/${target.repo}`), orgs: [], searchTerms: [] };
 
   // #4847: fetch + rank are read-only GitHub GETs and pure local computation, so a dry run still does them for
   // real (that's the useful "what would this discover?" output) -- but it never opens any local store (portfolio
@@ -220,10 +256,11 @@ export async function runDiscover(args, options = {}) {
   if (parsed.dryRun) {
     const fanOutOptions = { apiBaseUrl, forge: options.forge, policyDocCache: null, policyVerdictCache: null };
     try {
-      const fanOut =
+      let fanOut =
         parsed.search !== null
           ? await searchTargets(parsed.search, githubToken, fanOutOptions)
           : await fetchTargets(parsed.targets, githubToken, fanOutOptions);
+      fanOut = await supplementWithDiscoveryIndex(fanOut, discoveryQueryScope, options);
       // #6798: same eligibility filter as the real path, so a dry run shows the exact candidate set a real run
       // would enqueue (and the same excluded set), rather than an unfiltered preview.
       const repoFullNames = [...new Set(fanOut.issues.map((issue) => issue.repoFullName))];
@@ -322,10 +359,11 @@ export async function runDiscover(args, options = {}) {
   const fanOutOptions = { apiBaseUrl, forge: options.forge, policyDocCache, policyVerdictCache };
 
   try {
-    const fanOut =
+    let fanOut =
       parsed.search !== null
         ? await searchTargets(parsed.search, githubToken, fanOutOptions)
         : await fetchTargets(parsed.targets, githubToken, fanOutOptions);
+    fanOut = await supplementWithDiscoveryIndex(fanOut, discoveryQueryScope, options);
 
     // Eligibility filter (#6798): drop candidates a target repo's own conventions would reject, before ranking.
     // A repo with no trustworthy eligibility profile keeps every candidate (filterCandidatesByProfiles' safe

@@ -1841,3 +1841,97 @@ describe("runAttempt: maxConcurrentClaims enforcement (#6056)", () => {
     expect(claimWithinCapSpy).toHaveBeenCalledWith("acme/widgets", 7, expect.stringMatching(/^attempt:/), undefined, 1);
   });
 });
+
+describe("runAttempt: hosted soft-claim submission (#7168)", () => {
+  it("never calls submitSoftClaim when the discovery plane is disabled (default)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const submitSoftClaimSpy = vi.fn().mockResolvedValue({ sent: false });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      submitSoftClaim: submitSoftClaimSpy,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }),
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(submitSoftClaimSpy).not.toHaveBeenCalled();
+  });
+
+  it("submits a claim soft-claim at work-start and a paired release soft-claim at work-end when the plane is enabled", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const submitSoftClaimSpy = vi.fn().mockResolvedValue({ sent: true });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      submitSoftClaim: submitSoftClaimSpy,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }),
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(submitSoftClaimSpy).toHaveBeenCalledTimes(2);
+
+    const [claimCall, releaseCall] = submitSoftClaimSpy.mock.calls;
+    expect(claimCall![0]).toMatchObject({ repoFullName: "acme/widgets", issueNumber: 7, status: "active" });
+    expect(claimCall![1]).toMatchObject({ env: expect.objectContaining({ LOOPOVER_MINER_DISCOVERY_PLANE: "true" }) });
+
+    expect(releaseCall![0]).toMatchObject({ repoFullName: "acme/widgets", issueNumber: 7, status: "released" });
+  });
+
+  it("does not submit a release soft-claim when the claim point was never reached (blocked_max_concurrent_claims)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    claimLedger.claimIssue("acme/widgets", 99, "other-attempt");
+    const submitSoftClaimSpy = vi.fn().mockResolvedValue({ sent: true });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      submitSoftClaim: submitSoftClaimSpy,
+      ...readyPipelineOptions(),
+    });
+
+    expect(exitCode).toBe(11);
+    expect(submitSoftClaimSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the real discovery-index-client submitSoftClaim when no override is injected (still a no-op without a configured URL)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      // Plane enabled, but LOOPOVER_MINER_DISCOVERY_INDEX_URL deliberately unset -- the real (non-injected)
+      // submitSoftClaim degrades to its own no-op without ever attempting a network call.
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }),
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+  });
+});

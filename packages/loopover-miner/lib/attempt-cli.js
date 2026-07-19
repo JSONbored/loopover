@@ -40,6 +40,7 @@ import { getAttemptHistory } from "./portfolio-queue.js";
 import { loadReputationHistory, recordOwnSubmission } from "./governor-state.js";
 import { runMinerAttempt } from "./attempt-runner.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
+import { isDiscoveryPlaneEnabled, submitSoftClaim } from "./discovery-index-client.js";
 
 const ATTEMPT_USAGE =
   "Usage: loopover-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--json]";
@@ -210,6 +211,7 @@ export async function runAttempt(args, options = {}) {
   let allocation = null;
   let worktreeResult = null;
   let claimedIssue = false;
+  let claimRecord = null;
 
   try {
     allocator = (options.openWorktreeAllocator ?? openWorktreeAllocator)();
@@ -517,8 +519,19 @@ export async function runAttempt(args, options = {}) {
       return 11;
     }
 
-    const claimRecord = claimResult.claim;
+    claimRecord = claimResult.claim;
     claimedIssue = true;
+    // Hosted soft-claim coordination (#7168), opt-in via LOOPOVER_MINER_DISCOVERY_PLANE -- gated HERE at the
+    // call site (not left to submitSoftClaim's own internal check alone) so a disabled plane costs zero calls,
+    // matching discover-cli.js's supplementWithDiscoveryIndex gating; a caller-injected options.submitSoftClaim
+    // (tests, or a future programmatic caller) can't accidentally bypass the opt-in this way either. Awaited
+    // (not fire-and-forget) so a sibling instance racing the same issue is genuinely less likely to start
+    // duplicate work in the window before this attempt's claim reaches the shared index -- the whole point of
+    // coordinating BEFORE work begins, not after.
+    if (isDiscoveryPlaneEnabled(env)) {
+      const submitClaim = options.submitSoftClaim ?? submitSoftClaim;
+      await submitClaim(claimRecord, { env });
+    }
 
     const runAttemptPipeline = options.runMinerAttempt ?? runMinerAttempt;
     let result;
@@ -701,6 +714,13 @@ export async function runAttempt(args, options = {}) {
     // unexpected throw) releases the soft-claim -- a claim that outlives its own attempt process would
     // wrongly tell a sibling miner this issue is still in flight.
     if (claimedIssue && claimLedger) claimLedger.releaseClaim(parsed.repoFullName, parsed.issueNumber);
+    // Paired hosted release (#7168): same call-site opt-in gate as the claim submission above. Only fires when
+    // the initial claim submission actually ran (claimRecord is only set once claimedIssue is), so a run that
+    // never reached the claim point (e.g. blocked_max_concurrent_claims) has nothing to release remotely.
+    if (claimedIssue && claimRecord && isDiscoveryPlaneEnabled(env)) {
+      const submitClaim = options.submitSoftClaim ?? submitSoftClaim;
+      await submitClaim({ ...claimRecord, status: "released" }, { env });
+    }
     if (allocation && allocator) allocator.release(attemptId);
     allocator?.close();
     claimLedger?.close();

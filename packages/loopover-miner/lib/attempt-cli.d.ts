@@ -15,6 +15,7 @@ import type { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import type { ClaimConflictResult, resolveClaimConflict } from "./claim-conflict-resolver.js";
 import type { recordOwnSubmission } from "./governor-state.js";
 import type { getAttemptHistory } from "./portfolio-queue.js";
+import type { submitSoftClaim } from "./discovery-index-client.js";
 
 type CommonAttemptResultFields = {
   repoFullName: string;
@@ -96,6 +97,9 @@ export type RunAttemptOptions = {
   resolveClaimConflict?: typeof resolveClaimConflict;
   recordOwnSubmission?: typeof recordOwnSubmission;
   getAttemptHistory?: typeof getAttemptHistory;
+  /** Hosted soft-claim coordination at work-start/work-end, when the plane is enabled (#7168). Defaults to
+   *  discovery-index-client.js's own submitSoftClaim. */
+  submitSoftClaim?: typeof submitSoftClaim;
   /** Invoked with the real structured result at every return point, in addition to (never instead of) the
    *  plain exit-code return -- the loop orchestrator's real hook into what actually happened. */
   onResult?: (result: AttemptCliResult) => void;

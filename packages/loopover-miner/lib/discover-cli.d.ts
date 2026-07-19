@@ -15,6 +15,7 @@ import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { EnqueueRankedDiscoverySummary } from "./portfolio-discovery.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
 import type { RankedCandidatesStore } from "./ranked-candidates.js";
+import type { queryDiscoveryIndex } from "./discovery-index-client.js";
 
 export type ParsedDiscoverArgs =
   | {
@@ -62,6 +63,8 @@ export type DiscoverResult = {
 };
 
 export type RunDiscoverOptions = {
+  /** Read for the discovery-index opt-in gate (#7168) -- defaults to `process.env`. */
+  env?: Record<string, string | undefined>;
   githubToken?: string;
   apiBaseUrl?: string;
   /** Per-tenant credential env var name (#4784); defaults to GITHUB_TOKEN. Overridden by a `--token-env` flag. */
@@ -94,6 +97,9 @@ export type RunDiscoverOptions = {
     rankedIssues: RankedCandidateIssue[],
     options: { queueStore: PortfolioQueueStore },
   ) => EnqueueRankedDiscoverySummary;
+  /** Supplements the local fan-out with hosted discovery-index results for the same scope, when the plane is
+   *  enabled (#7168). Defaults to discovery-index-client.js's own queryDiscoveryIndex. */
+  queryDiscoveryIndex?: typeof queryDiscoveryIndex;
   /** Invoked with the real structured result at each success return point (dry-run and full-run), in addition
    *  to (never instead of) the plain exit-code return -- mirrors `RunAttemptOptions.onResult`. Never fires on a
    *  parse-error/unexpected-error `reportCliFailure` branch, matching runAttempt's own asymmetry (#6522). */

@@ -1587,3 +1587,163 @@ describe("runDiscover onResult hook (#6522)", () => {
     });
   });
 });
+
+describe("discovery-index supplementation (#7168)", () => {
+  it("never calls the discovery-index client when the plane is disabled (default), matching pre-#7168 behavior exactly", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => {
+      throw new Error("must not be called when the plane is disabled");
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: {},
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(queryDiscoveryIndex).not.toHaveBeenCalled();
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.fanOutCount).toBe(1);
+  });
+
+  it("supplements local results with deduped discovery-index candidates when enabled", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [
+        // #1 duplicates the local candidate -- local must win, this must not appear twice.
+        { owner: "acme", repo: "widgets", repoFullName: "acme/widgets", issueNumber: 1, title: "Stale duplicate", labels: [], commentsCount: 0, createdAt: null, updatedAt: null, htmlUrl: null, aiPolicyAllowed: true, aiPolicySource: "none" as const },
+        // #2 is genuinely new -- must be supplemented in.
+        { owner: "acme", repo: "widgets", repoFullName: "acme/widgets", issueNumber: 2, title: "From the shared index", labels: ["help wanted"], commentsCount: 0, createdAt: null, updatedAt: null, htmlUrl: null, aiPolicyAllowed: true, aiPolicySource: "none" as const },
+      ],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(queryDiscoveryIndex).toHaveBeenCalledWith({ repos: ["acme/widgets"], orgs: [], searchTerms: [] }, expect.objectContaining({}));
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.fanOutCount).toBe(2);
+    const titles = payload.ranked.map((entry: { issueNumber: number; title: string }) => [entry.issueNumber, entry.title]);
+    expect(titles).toEqual([
+      [1, "Local candidate"],
+      [2, "From the shared index"],
+    ]);
+  });
+
+  it("uses the --search term as the discovery-index scope in search mode", async () => {
+    const portfolioQueue = tempQueueStore();
+    const searchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({ contractVersion: 1, candidates: [], nextCursor: null }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await runDiscover(["--search", "label:bug", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      searchCandidateIssuesWithSummary,
+      queryDiscoveryIndex,
+    });
+
+    expect(queryDiscoveryIndex).toHaveBeenCalledWith({ repos: [], orgs: [], searchTerms: ["label:bug"] }, expect.objectContaining({}));
+  });
+
+  it("returns fanOut unchanged when every discovery-index candidate is a duplicate of a local result", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [
+        { owner: "acme", repo: "widgets", repoFullName: "acme/widgets", issueNumber: 1, title: "Stale duplicate", labels: [], commentsCount: 0, createdAt: null, updatedAt: null, htmlUrl: null, aiPolicyAllowed: true, aiPolicySource: "none" as const },
+      ],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.fanOutCount).toBe(1);
+    expect(payload.ranked.map((entry: { title: string }) => entry.title)).toEqual(["Local candidate"]);
+  });
+
+  it("falls back to the real discovery-index client when no override is injected (still a no-op without a configured URL)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      // Plane enabled, but LOOPOVER_MINER_DISCOVERY_INDEX_URL deliberately unset -- the real (non-injected)
+      // queryDiscoveryIndex degrades to its own no-op without ever attempting a network call.
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.fanOutCount).toBe(1);
+  });
+});

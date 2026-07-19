@@ -207,4 +207,13 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 
 ## Optional hosted discovery plane (opt-in)
 
-The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/loopover/issues/4309), placeholder until [#4300](https://github.com/JSONbored/loopover/issues/4300) / [#4301](https://github.com/JSONbored/loopover/issues/4301) / [#4302](https://github.com/JSONbored/loopover/issues/4302) ship).
+The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly, via `lib/discovery-index-client.js` ([#7168](https://github.com/JSONbored/loopover/issues/7168), wired against the hosted server from [#7164](https://github.com/JSONbored/loopover/issues/7164)/[#7166](https://github.com/JSONbored/loopover/issues/7166)):
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `LOOPOVER_MINER_DISCOVERY_PLANE` | `lib/discovery-index-client.js` | Master opt-in (truthy string, off by default). No hosted discovery-index traffic or telemetry unless set. |
+| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `lib/discovery-index-client.js` | Base URL of the hosted discovery-index service. Required for the plane to do anything once enabled. |
+| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `lib/discovery-index-client.js` | Optional bearer secret for the hosted endpoint, if it requires one. |
+| `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `lib/discovery-index-client.js` | Second, independent opt-in for anonymized operational telemetry — can stay off while the plane itself is queried/claimed against. |
+
+See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the full invariant list (metadata-only, no compensation signals, credentials stay local).

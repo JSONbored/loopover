@@ -132,6 +132,10 @@ describe("detectRepoStack — Node (#4785)", () => {
     expect(detect({ "package.json": null })).toMatchObject({ detected: true, language: "javascript" });
   });
 
+  it("degrades safely on a package.json that is valid JSON but not an object (e.g. a bare null)", () => {
+    expect(detect({ "package.json": "null" })).toMatchObject({ detected: true, language: "javascript", buildCommand: null });
+  });
+
   it("treats a non-string readFileSync result as no content", () => {
     const result = detectRepoStack(ROOT, {
       existsSync: (path: string) => path === join(ROOT, "package.json"),

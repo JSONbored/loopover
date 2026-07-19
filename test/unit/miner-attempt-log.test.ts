@@ -174,6 +174,13 @@ describe("loopover-miner attempt log (#4294)", () => {
     expect(() => log.exportAttemptLogJsonl("  ")).toThrow(/invalid_attempt_id/);
   });
 
+  it("rejects an undefined attemptId from an untyped export caller instead of exporting everything", () => {
+    const log = tempAttemptLog();
+    expect(() => log.exportAttemptLogJsonl(undefined as unknown as string)).toThrow(
+      /invalid_attempt_id/,
+    );
+  });
+
   it("rejects a payload JSON would not round-trip verbatim, and accepts a nested JSON-safe one", () => {
     const log = tempAttemptLog();
     expect(() =>
@@ -208,6 +215,34 @@ describe("loopover-miner attempt log (#4294)", () => {
     raw.prepare("UPDATE attempt_log_events SET payload_json = ? WHERE id = 1").run("{bad");
     raw.close();
     expect(() => log.readAttemptLogEvents()).toThrow("corrupted_attempt_log_row");
+  });
+
+  it("rejects a payload blob that is valid JSON but not an object, distinct from unparseable JSON", () => {
+    const log = tempAttemptLog();
+    log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
+    const raw = new DatabaseSync(log.dbPath);
+    raw.prepare("UPDATE attempt_log_events SET payload_json = ? WHERE id = 1").run("[1,2,3]");
+    raw.close();
+    expect(() => log.readAttemptLogEvents()).toThrow("corrupted_attempt_log_row");
+  });
+
+  it("REGRESSION: rolls the transaction back if the insert throws, leaving prior rows unchanged", () => {
+    const log = tempAttemptLog();
+    log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
+
+    // Drops a column out from under the already-prepared INSERT statement, forcing node:sqlite to throw INSIDE
+    // appendAttemptLogEvent's try block (after BEGIN IMMEDIATE) -- exercising the ROLLBACK path (#4294's
+    // append-only invariant must not leave a stranded transaction or a partial row on a mid-insert failure).
+    const raw = new DatabaseSync(log.dbPath);
+    raw.exec("ALTER TABLE attempt_log_events DROP COLUMN mode");
+    raw.close();
+
+    expect(() => log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent })).toThrow();
+
+    // Rolled back: still just the one row from before the schema was broken, not a partial second insert.
+    const raw2 = new DatabaseSync(log.dbPath);
+    expect(raw2.prepare("SELECT COUNT(*) AS count FROM attempt_log_events").get()).toEqual({ count: 1 });
+    raw2.close();
   });
 
   it("uses the default singleton helpers and closes cleanly", () => {

@@ -3,4 +3,4 @@
 // deny-hooks.ts) by #5667 so the review stack and the miner share one copy. No behavior change — the evaluator is
 // pure (no IO, no globals, no Date/random).
 export { DEFAULT_DENY_RULES, evaluateDenyHooks } from "@loopover/engine";
-//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZGVueS1ob29rcy5qcyIsInNvdXJjZVJvb3QiOiIiLCJzb3VyY2VzIjpbImRlbnktaG9va3MudHMiXSwibmFtZXMiOltdLCJtYXBwaW5ncyI6IkFBQUEsK0dBQStHO0FBQy9HLHlHQUF5RztBQUN6RyxrSEFBa0g7QUFDbEgsNENBQTRDO0FBQzVDLE9BQU8sRUFBRSxrQkFBa0IsRUFBRSxpQkFBaUIsRUFBRSxNQUFNLGtCQUFrQixDQUFDIn0=
+export type { DenyRule, DenyVerdict, ProposedToolCall } from "@loopover/engine";

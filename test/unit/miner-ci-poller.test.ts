@@ -432,4 +432,139 @@ describe("miner CI check-run poller (#2323)", () => {
     expect(timeoutSpy.mock.calls.every(([ms]) => ms === 2500)).toBe(true);
     timeoutSpy.mockRestore();
   });
+
+  it("treats a whitespace-only apiBaseUrl the same as omitted, defaulting to the standard GitHub API host", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://api.github.com/repos/acme/widgets/pulls/42") return prResponse("head-sha");
+      if (url === "https://api.github.com/repos/acme/widgets/commits/head-sha/check-runs?per_page=100&page=1") {
+        return checksResponse([checkRun("validate", "completed", "success")]);
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await expect(
+      pollCheckRuns("acme/widgets", 42, { apiBaseUrl: "   ", fetchFn }),
+    ).resolves.toMatchObject({ conclusion: "success" });
+  });
+
+  it("falls back to the real global fetch and a real timer-based backoff when both are omitted", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/repos/acme/widgets/pulls/99")) return prResponse("head-sha");
+      if (url.endsWith("/repos/acme/widgets/commits/head-sha/check-runs?per_page=100&page=1")) {
+        const checkRunAttempts = fetchFn.mock.calls.filter(([request]) => String(request).includes("/check-runs")).length;
+        return checkRunAttempts >= 2
+          ? checksResponse([checkRun("validate", "completed", "success")])
+          : checksResponse([checkRun("validate", "queued")]);
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    try {
+      const result = await pollCheckRuns("acme/widgets", 99, {
+        apiBaseUrl: API,
+        maxAttempts: 2,
+        minIntervalMs: 1,
+        maxIntervalMs: 1,
+      });
+      expect(result).toMatchObject({ conclusion: "success", attempts: 2 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("treats an unrecognized completed conclusion as pending (defensive default for a future GitHub value)", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(prResponse())
+      .mockResolvedValueOnce(checksResponse([checkRun("validate", "completed", "some_future_conclusion")]));
+
+    await expect(
+      pollCheckRuns("acme/widgets", 20, { apiBaseUrl: API, fetchFn, maxAttempts: 1 }),
+    ).resolves.toMatchObject({
+      conclusion: "pending",
+      checks: [{ name: "validate", conclusion: "pending" }],
+    });
+  });
+
+  it("treats a non-object check-run entry as a safely-defaulted pending check instead of crashing", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(prResponse())
+      .mockResolvedValueOnce(jsonResponse({ total_count: 1, check_runs: [null] }));
+
+    await expect(
+      pollCheckRuns("acme/widgets", 21, { apiBaseUrl: API, fetchFn, maxAttempts: 1 }),
+    ).resolves.toMatchObject({
+      conclusion: "pending",
+      checks: [
+        {
+          name: "",
+          status: "unknown",
+          conclusion: "pending",
+          detailsUrl: null,
+          startedAt: null,
+          completedAt: null,
+        },
+      ],
+    });
+  });
+
+  it("ignores a missing or invalid total_count and paginates by the link header alone", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/repos/acme/widgets/pulls/22")) return prResponse("link-only-sha");
+      if (url.endsWith("/repos/acme/widgets/commits/link-only-sha/check-runs?per_page=100&page=1")) {
+        return jsonResponse(
+          { total_count: -1, check_runs: [checkRun("first", "completed", "success")] },
+          {
+            headers: {
+              link: `<${API}/repos/acme/widgets/commits/link-only-sha/check-runs?per_page=100&page=2>; rel="next"`,
+            },
+          },
+        );
+      }
+      if (url.endsWith("/repos/acme/widgets/commits/link-only-sha/check-runs?per_page=100&page=2")) {
+        return jsonResponse({ check_runs: [checkRun("second", "completed", "success")] });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await pollCheckRuns("acme/widgets", 22, { apiBaseUrl: API, fetchFn, maxAttempts: 1 });
+    expect(result.checks.map((check) => check.name)).toEqual(["first", "second"]);
+  });
+
+  it("surfaces a GitHub error using only the status code when the payload carries no usable message", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({}, { status: 401 }));
+
+    await expect(
+      pollCheckRuns("acme/widgets", 23, { apiBaseUrl: API, fetchFn, maxAttempts: 1 }),
+    ).rejects.toMatchObject({ code: "github_401", message: "github_401", githubMessage: null });
+  });
+
+  it("throws when a page unexpectedly returns zero check runs despite pagination still being expected", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/repos/acme/widgets/pulls/24")) return prResponse("incomplete-sha");
+      if (url.endsWith("/repos/acme/widgets/commits/incomplete-sha/check-runs?per_page=100&page=1")) {
+        return jsonResponse({ total_count: 5, check_runs: [] });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await expect(
+      pollCheckRuns("acme/widgets", 24, { apiBaseUrl: API, fetchFn, maxAttempts: 1 }),
+    ).rejects.toThrow("github_check_runs_pagination_incomplete");
+  });
+
+  it("rejects a non-string repoFullName from an untyped caller instead of crashing on .split", async () => {
+    const fetchFn = vi.fn();
+
+    await expect(
+      pollCheckRuns(42 as unknown as string, 1, { apiBaseUrl: API, fetchFn }),
+    ).rejects.toThrow("invalid_repo_full_name");
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
 });

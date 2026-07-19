@@ -33,7 +33,7 @@ const LABEL_PATTERN_NEVER_MATCHES = /^(?!)$/;
 // change-guardrail.ts (there `*` stops at `/` and `?` is literal): labels are flat strings, so `*` matches any
 // run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
 // pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
-function labelPatternToRegExp(pattern: string): RegExp {
+export function labelPatternToRegExp(pattern: string): RegExp {
   const cached = labelPatternRegExpCache.get(pattern);
   if (cached !== undefined) {
     // Refresh recency on hit so the cache behaves as an LRU: the most-recently-matched patterns

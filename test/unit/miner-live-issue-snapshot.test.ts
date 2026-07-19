@@ -15,6 +15,7 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
     expect(await fetchLiveIssueSnapshot("not-a-repo", 1, { fetchImpl: graphqlResponse({}) })).toBeNull();
     expect(await fetchLiveIssueSnapshot("acme/widgets", 0, { fetchImpl: graphqlResponse({}) })).toBeNull();
     expect(await fetchLiveIssueSnapshot("acme/widgets", -1, { fetchImpl: graphqlResponse({}) })).toBeNull();
+    expect(await fetchLiveIssueSnapshot(42 as unknown as string, 1, { fetchImpl: graphqlResponse({}) })).toBeNull();
   });
 
   it("builds an open-issue snapshot with normalized, deduplicated-shape referencing PRs from GraphQL nodes", async () => {
@@ -65,6 +66,20 @@ describe("fetchLiveIssueSnapshot (#5132)", () => {
       }),
     });
     expect(snapshot).toEqual({ state: "closed", referencingPrs: [] });
+  });
+
+  it("uses the ambient fetch when no override is supplied, tolerates non-string tokens, and treats a missing connection as empty", async () => {
+    const fetchStub = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { repository: { issue: { state: "OPEN" } } } }),
+    });
+    vi.stubGlobal("fetch", fetchStub);
+
+    await expect(
+      fetchLiveIssueSnapshot("acme/widgets", 7, { githubToken: 42 as unknown as string }),
+    ).resolves.toEqual({ state: "open", referencingPrs: [] });
+    expect((fetchStub.mock.calls[0]?.[1] as RequestInit).headers).not.toHaveProperty("authorization");
   });
 
   it("returns null when the HTTP response is not ok", async () => {

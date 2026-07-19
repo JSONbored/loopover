@@ -240,6 +240,20 @@ describe("runDeviceFlowAuthorization (#5682)", () => {
     expect(onCode).toHaveBeenCalledWith(expect.objectContaining({ deviceCode: "dc1", userCode: "WXYZ-9876" }));
   });
 
+  it("forwards an explicit scope and injected clock while retaining the default sleep", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ device_code: "dc1", user_code: "WXYZ-9876", verification_uri: "https://github.com/login/device", interval: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "gho_scoped" }));
+    const now = vi.fn(() => 0);
+
+    await expect(
+      runDeviceFlowAuthorization({ clientId: "c", scope: "read:user", fetchFn, now, onCode: vi.fn() }),
+    ).resolves.toEqual({ accessToken: "gho_scoped", scope: "" });
+    expect(String((fetchFn.mock.calls[0]?.[1] as RequestInit).body)).toContain("scope=read%3Auser");
+    expect(now).toHaveBeenCalled();
+  });
+
   it("propagates a requestDeviceCode failure without ever calling onCode", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({}, false, 500));
     const onCode = vi.fn();

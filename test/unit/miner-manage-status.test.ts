@@ -47,6 +47,7 @@ afterEach(() => {
   closeDefaultEventLedger();
   closeDefaultRunStateStore();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -54,6 +55,8 @@ describe("loopover-miner manage status (#2325)", () => {
   it("parses and formats managed PR identifiers", () => {
     expect(parseManagedPrIdentifier("pr:42")).toBe(42);
     expect(parseManagedPrIdentifier("issue:42")).toBeNull();
+    expect(parseManagedPrIdentifier(42)).toBeNull();
+    expect(parseManagedPrIdentifier("pr:0")).toBeNull();
     expect(formatManagedPrIdentifier(42)).toBe("pr:42");
     expect(() => formatManagedPrIdentifier(0)).toThrow("invalid_pr_number");
   });
@@ -139,6 +142,42 @@ describe("loopover-miner manage status (#2325)", () => {
       payload: { prNumber: 0, branch: "bad" },
     });
     expect(indexLatestManageUpdates(eventLedger.readEvents()).size).toBe(0);
+  });
+
+  it("rejects malformed sources and ignores every malformed event shape", () => {
+    expect(() => collectManageStatus({} as Parameters<typeof collectManageStatus>[0])).toThrow("invalid_portfolio_queue");
+    expect(() =>
+      collectManageStatus({
+        portfolioQueue: { listQueue: () => [] },
+      } as Parameters<typeof collectManageStatus>[0]),
+    ).toThrow("invalid_event_ledger");
+    expect(
+      indexLatestManageUpdates([
+        null,
+        { type: "other" },
+        { type: MANAGE_PR_UPDATE_EVENT, repoFullName: " ", payload: { prNumber: 1 } },
+        { type: MANAGE_PR_UPDATE_EVENT, repoFullName: "acme/widgets", payload: [] },
+        { type: MANAGE_PR_UPDATE_EVENT, repoFullName: "acme/widgets", payload: { prNumber: 1.5 } },
+        {
+          type: MANAGE_PR_UPDATE_EVENT,
+          repoFullName: "acme/widgets",
+          payload: { prNumber: 1, branch: 9, ciState: "", gateVerdict: "  ", outcome: null, lastPolledAt: undefined },
+        },
+      ] as unknown as Parameters<typeof indexLatestManageUpdates>[0]),
+    ).toEqual(
+      new Map([
+        ["acme/widgets:1", {
+          repoFullName: "acme/widgets",
+          prNumber: 1,
+          branch: null,
+          ciState: null,
+          gateVerdict: null,
+          outcome: null,
+          lastPolledAt: null,
+        }],
+      ]),
+    );
+    expect(indexLatestManageUpdates(null as unknown as Parameters<typeof indexLatestManageUpdates>[0])).toEqual(new Map());
   });
 
   it("renders numeric queue priority in the table output", () => {
@@ -273,6 +312,16 @@ describe("loopover-miner manage status (#2325)", () => {
       expect.objectContaining({ repoFullName: "acme/discovering-only", runState: "discovering", prCount: 0 }),
       expect.objectContaining({ repoFullName: "acme/widgets", runState: "planning", prCount: 1 }),
     ]);
+  });
+
+  it("opens and closes its default stores when no test doubles are supplied", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-status-defaults-"));
+    roots.push(root);
+    vi.stubEnv("LOOPOVER_MINER_CONFIG_DIR", root);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runManageStatus([])).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain("no managed pull requests");
   });
 
   it("reports a clean CLI failure (honoring --json) when collecting status throws, instead of an unhandled throw (#7236)", () => {

@@ -447,6 +447,19 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(observed.findings.some((f) => f.code === "missing_linked_issue")).toBe(true);
   });
 
+  it("REGRESSION (#7252): a Kotlin-script-only change counts as code so it trips missing_test_evidence like the canonical matcher", () => {
+    // build.gradle.kts is hand-authored source; the predicted-gate engine's old local isCodeFile copy
+    // lacked the `kts` extension the canonical test-evidence matcher has, so a .kts-only PR skipped the
+    // missing-test-evidence preflight. Single-sourcing on isCodeFile widens the predicted gate to match.
+    const ktsOnly = buildPreflightResult(
+      { repoFullName: REPO.fullName, title: "Bump Gradle plugin", body: "Closes #7", linkedIssues: [7], changedFiles: ["build.gradle.kts"] },
+      REPO,
+      [],
+      [],
+    );
+    expect(ktsOnly.findings.some((f) => f.code === "missing_test_evidence")).toBe(true);
+  });
+
   it("REGRESSION (#6628): predicted preflight honors a clear no-issue rationale like the live gate", () => {
     const docsOnly = buildPreflightResult(
       { repoFullName: REPO.fullName, title: "docs-only: fix typo", body: "", linkedIssues: [] },

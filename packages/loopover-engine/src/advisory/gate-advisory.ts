@@ -69,9 +69,11 @@ export type GateCheckPolicy = {
   slopGateMode?: GateRuleMode | undefined;
   slopGateMinScore?: number | null | undefined;
   slopRisk?: number | null | undefined;
-  /** Master "merge-readiness" composite (#551). When set (advisory/block) it OVERRIDES all four sub-gates —
-   *  linked-issue, duplicate, quality/readiness, slop — to its mode, so a maintainer flips ONE switch instead
-   *  of four and the review-agent check stays the single required check. `off` = sub-gates use their own modes. */
+  /** Master "merge-readiness" composite (#551). When set (advisory/block) it OVERRIDES three sub-gates —
+   *  linked-issue, duplicate, slop — to its mode, so a maintainer flips ONE switch instead of three and the
+   *  review-agent check stays the single required check. Quality/readiness is deliberately NOT part of this
+   *  composite (`buildQualityGateWarning` can only ever produce an advisory warning, never a blocker) — it
+   *  always stays advisory-only regardless of this field's mode. `off` = sub-gates use their own modes. */
   mergeReadinessGateMode?: GateRuleMode | undefined;
   /** Focus-manifest policy gate (#555). When `block`, linked-issue/test policy findings become hard blockers.
    *  Path-based manual-review holds are configured only with `settings.hardGuardrailGlobs`.

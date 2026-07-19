@@ -558,6 +558,19 @@ describe("merge-readiness composite gate (#551)", () => {
     expect(result.blockers).toEqual([]);
     expect(result.warnings.map((finding) => finding.code)).toEqual(["readiness_score_below_threshold"]);
   });
+
+  it("also escalates slop (the third documented sub-gate) into a hard blocker (#7242)", () => {
+    // Completes this describe block's coverage of the mergeReadinessGateMode doc comment's three escalated
+    // sub-gates: linked-issue (above) and duplicate ("lists each unmet sub-gate condition" below) already
+    // have dedicated tests; slop did not.
+    const eff = resolveEffectiveSettings(settings({ slopGateMode: "advisory", mergeReadinessGateMode: "block" }), parseFocusManifest(null));
+    const result = evaluateGateCheck(
+      { ...missingIssueAdvisory(), findings: [] },
+      { ...gateCheckPolicy(eff, null, true), slopRisk: 90, slopGateMinScore: 60 },
+    );
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((finding) => finding.code)).toContain("slop_risk_above_threshold");
+  });
 });
 
 describe("author-history blockers stay unsoftened (#552/#2266/#2411)", () => {

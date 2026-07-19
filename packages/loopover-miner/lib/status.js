@@ -27,6 +27,7 @@ import { resolveReplaySnapshotDbPath } from "./replay-snapshot.js";
 import { resolveWorktreeAllocatorDbPath } from "./worktree-allocator.js";
 import { resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
 import { resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
+import { resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
@@ -320,6 +321,7 @@ function storeIntegrityChecks(env) {
     ["worktree-allocator", resolveWorktreeAllocatorDbPath(env)],
     ["contribution-profile", resolveContributionProfileCacheDbPath(env)],
     ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath(env)],
+    ["policy-doc-cache", resolvePolicyDocCacheDbPath(env)],
   ];
   return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
 }

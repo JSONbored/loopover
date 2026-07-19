@@ -24,6 +24,7 @@ import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "./replay-s
 import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "./worktree-allocator.js";
 import { initContributionProfileCache, resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
 import { initPolicyVerdictCacheStore, resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
+import { initPolicyDocCacheStore, resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
 
 const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
@@ -41,6 +42,7 @@ const STORES = [
   { name: "worktree-allocator", resolveDbPath: resolveWorktreeAllocatorDbPath, open: (dbPath) => openWorktreeAllocator({ dbPath }) },
   { name: "contribution-profile", resolveDbPath: resolveContributionProfileCacheDbPath, open: initContributionProfileCache },
   { name: "policy-verdict-cache", resolveDbPath: resolvePolicyVerdictCacheDbPath, open: initPolicyVerdictCacheStore },
+  { name: "policy-doc-cache", resolveDbPath: resolvePolicyDocCacheDbPath, open: initPolicyDocCacheStore },
 ];
 
 /** Read a store file's stamped schema version without ever creating it -- matches checkStoreIntegrity's

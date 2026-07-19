@@ -139,6 +139,7 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "store-integrity:worktree-allocator",
       "store-integrity:contribution-profile",
       "store-integrity:policy-verdict-cache",
+      "store-integrity:policy-doc-cache",
     ]);
     // REGRESSION (#6768): doctor previously omitted these four durable local stores from the integrity sweep.
     expect(checks.map((check) => check.name)).toEqual(

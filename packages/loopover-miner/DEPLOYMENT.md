@@ -217,3 +217,13 @@ The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb flee
 | `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `lib/discovery-index-client.js` | Second, independent opt-in for anonymized operational telemetry — can stay off while the plane itself is queried/claimed against. |
 
 See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the full invariant list (metadata-only, no compensation signals, credentials stay local).
+
+## Optional hosted control plane — tenant admin (opt-in)
+
+The `loopover-miner tenant` command group (create/list/destroy) provisions hosted tenant instances against the ORB+AMS hosting control-plane's provisioning API ([#7275](https://github.com/JSONbored/loopover/issues/7275)). It is **off by default** and completely inert unless opted in; unlike the discovery plane, these are deliberate **admin actions that fail loud** (a disabled/unconfigured/unreachable/error condition exits non-zero rather than degrading silently), via `lib/tenant-client.js`:
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `LOOPOVER_MINER_CONTROL_PLANE` | `lib/tenant-client.js` | Master opt-in (truthy string, off by default). No tenant admin traffic is possible unless set. |
+| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `lib/tenant-client.js` | Base URL of the hosted control-plane provisioning API. Required once the plane is enabled. |
+| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.js` | Bearer admin credential for the provisioning API — distinct from any tenant's own per-instance secrets. Required once the plane is enabled. |

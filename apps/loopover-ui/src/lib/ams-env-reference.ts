@@ -47,6 +47,21 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     defaultValue: null,
   },
   {
+    name: "LOOPOVER_MINER_CONTROL_PLANE",
+    firstReference: "lib/tenant-client.js",
+    defaultValue: "",
+  },
+  {
+    name: "LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN",
+    firstReference: "lib/tenant-client.js",
+    defaultValue: "",
+  },
+  {
+    name: "LOOPOVER_MINER_CONTROL_PLANE_URL",
+    firstReference: "lib/tenant-client.js",
+    defaultValue: "",
+  },
+  {
     name: "LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB",
     firstReference: "lib/deny-hook-synthesis.js",
     defaultValue: "",
@@ -213,6 +228,9 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_CLAIM_LEDGER_DB` | `lib/claim-ledger.js` | (none) |",
   '| `LOOPOVER_MINER_CONFIG_DIR` | `lib/deny-hook-synthesis.js` | `""` |',
   "| `LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB` | `lib/contribution-profile-cache.js` | (none) |",
+  '| `LOOPOVER_MINER_CONTROL_PLANE` | `lib/tenant-client.js` | `""` |',
+  '| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.js` | `""` |',
+  '| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `lib/tenant-client.js` | `""` |',
   '| `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` | `lib/deny-hook-synthesis.js` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `lib/discovery-index-client.js` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_PLANE` | `lib/discovery-index-client.js` | `""` |',

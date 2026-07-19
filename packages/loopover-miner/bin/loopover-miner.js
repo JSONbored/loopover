@@ -18,6 +18,7 @@ import { runClaimCli } from "../lib/claim-ledger-cli.js";
 import { runPurge } from "../lib/purge-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runOrbExportCli } from "../lib/orb-export.js";
+import { runTenantCli } from "../lib/tenant-cli.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
 import { runStateCli } from "../lib/run-state-cli.js";
@@ -116,6 +117,13 @@ if (cliArgs[0] === "queue") {
 
 if (cliArgs[0] === "orb" && cliArgs[1] === "export") {
   process.exit(await runOrbExportCli(cliArgs.slice(2)));
+}
+
+// `tenant` (#7275) talks to the hosting control-plane's provisioning API — a deliberate, Bearer-authed admin
+// action that is inert unless LOOPOVER_MINER_CONTROL_PLANE is set. Grouped with `orb export` above (also a
+// network command) rather than the strictly-local commands; it fails loud on any control-plane error.
+if (cliArgs[0] === "tenant") {
+  process.exit(await runTenantCli(cliArgs[1], cliArgs.slice(2)));
 }
 
 if (cliArgs[0] === "claim") {

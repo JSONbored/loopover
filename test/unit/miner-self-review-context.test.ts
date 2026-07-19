@@ -126,6 +126,213 @@ describe("fetchSelfReviewContext (#5145)", () => {
     await expect(fetchSelfReviewContext("not-a-repo")).rejects.toThrow("invalid_repo_full_name");
   });
 
+  it("rejects a non-string repoFullName, without calling fetch", async () => {
+    const fetchImpl = vi.fn();
+    await expect(fetchSelfReviewContext(42 as unknown as string, { fetchImpl: fetchImpl as never })).rejects.toThrow("invalid_repo_full_name");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("falls back to every default option (apiBaseUrl/rawContentBaseUrl/gittensorApiBase/perPage/maxPages/contributorLogin/requestTimeoutMs/liveGateProbeTimeoutMs) when omitted", async () => {
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () => jsonResponse([]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: null,
+    });
+    expect(result.repo?.fullName).toBe("acme/widgets");
+    expect(result.issues).toEqual([]);
+    expect(result.pullRequests).toEqual([]);
+  });
+
+  it("uses a custom apiBaseUrl/rawContentBaseUrl/gittensorApiBase when provided", async () => {
+    const requests: string[] = [];
+    const fetchImpl = async (url: string) => {
+      requests.push(url);
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.example.internal")) return jsonResponse(null, 404);
+      if (url.includes("gittensor.example.internal")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      apiBaseUrl: "https://ghe.example.internal/api/v3",
+      rawContentBaseUrl: "https://raw.example.internal",
+      gittensorApiBase: "https://gittensor.example.internal",
+      contributorLogin: "miner-bot",
+      loopoverAuth: null,
+    });
+    expect(requests.some((url) => url.startsWith("https://ghe.example.internal/api/v3/"))).toBe(true);
+    expect(requests.some((url) => url.startsWith("https://raw.example.internal/"))).toBe(true);
+    expect(requests.some((url) => url.startsWith("https://gittensor.example.internal/"))).toBe(true);
+  });
+
+  it("defaults fetchImpl to the real global fetch when omitted", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(null, 404) as unknown as Response);
+    try {
+      const result = await fetchSelfReviewContext("acme/widgets", { loopoverAuth: null });
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(result.repo).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("treats whitespace-only apiBaseUrl/rawContentBaseUrl/gittensorApiBase as absent and falls back to the default", async () => {
+    const requests: string[] = [];
+    const fetchImpl = async (url: string) => {
+      requests.push(url);
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      apiBaseUrl: "   ",
+      rawContentBaseUrl: "   ",
+      gittensorApiBase: "   ",
+      contributorLogin: "miner-bot",
+      loopoverAuth: null,
+    });
+    expect(requests.some((url) => url.startsWith("https://api.github.com/"))).toBe(true);
+    expect(requests.some((url) => url.startsWith("https://raw.githubusercontent.com/"))).toBe(true);
+    expect(requests.some((url) => url.startsWith("https://api.gittensor.io/"))).toBe(true);
+  });
+
+  it("resolves the ORB probe apiUrl from the loopover-mcp session when loopoverAuth omits its own apiUrl", async () => {
+    const requests: string[] = [];
+    const fetchImpl = async (url: string) => {
+      requests.push(url);
+      if (url.includes("/live-gate-thresholds")) return jsonResponse({ confidence_floor: 0.9, scope_cap_files: null, scope_cap_lines: null });
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    // No env session on disk here, so resolveLoopoverBackendSession(env) returns null -- exercising the
+    // hardcoded "https://api.loopover.ai" fallback alongside options.loopoverAuth.apiUrl being omitted.
+    await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: { sessionToken: "mcp-test-token" },
+      env: { LOOPOVER_CONFIG_DIR: "/nonexistent-loopover-config-dir" },
+    });
+    expect(requests.some((url) => url.startsWith("https://api.loopover.ai/v1/repos/acme/widgets/live-gate-thresholds"))).toBe(true);
+  });
+
+  it("stops paginating when maxPages is not a positive integer (falls back to the default page cap)", async () => {
+    let pageCount = 0;
+    const fetchImpl = async (url: string) => {
+      if (url.includes("/repos/acme/widgets/issues")) {
+        pageCount += 1;
+        return jsonResponse([issuePayload({ number: pageCount })]);
+      }
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      maxPages: 0,
+      perPage: 1,
+      loopoverAuth: null,
+    });
+    // Each 1-issue page exactly fills perPage:1, so it's never a "short" page -- pagination keeps going until
+    // the invalid maxPages:0 falls back to the real default (10), proven by getting exactly 10 issues back
+    // rather than looping forever or stopping at 0.
+    expect(result.issues).toHaveLength(10);
+  });
+
+  it("minimal repo payload: falls back to the target owner/repo, false, and null for every optional GitHub field", async () => {
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () => jsonResponse([]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse({}),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.repo).toEqual({
+      fullName: "acme/widgets",
+      owner: "acme",
+      name: "widgets",
+      installationId: undefined,
+      isInstalled: false,
+      isRegistered: false,
+      isPrivate: false,
+      htmlUrl: null,
+      defaultBranch: null,
+      registryConfig: null,
+    });
+  });
+
+  it("minimal issue/PR payloads: falls back to '', null, and [] for every optional field, without a labels array", async () => {
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () => jsonResponse([{ number: 7, title: "Bare issue", state: "open" }]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([{ number: 42, title: "Bare PR", state: "open" }]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.issues[0]).toEqual({
+      repoFullName: "acme/widgets",
+      number: 7,
+      title: "Bare issue",
+      state: "open",
+      authorLogin: null,
+      authorAssociation: null,
+      htmlUrl: null,
+      body: "",
+      createdAt: null,
+      updatedAt: null,
+      closedAt: null,
+      labels: [],
+      linkedPrs: [],
+    });
+    expect(result.pullRequests[0]).toEqual({
+      repoFullName: "acme/widgets",
+      number: 42,
+      title: "Bare PR",
+      state: "open",
+      authorLogin: null,
+      authorAssociation: null,
+      headSha: null,
+      headRef: null,
+      baseRef: null,
+      htmlUrl: null,
+      mergedAt: null,
+      isDraft: null,
+      mergeableState: null,
+      reviewDecision: null,
+      body: "",
+      createdAt: null,
+      updatedAt: null,
+      closedAt: null,
+      labels: [],
+      linkedIssues: [],
+    });
+  });
+
   it("builds a full context from live GitHub data: repo, issues, pull requests, manifest, contributor, duplicate cluster", async () => {
     // The PR title is deliberately unrelated to the issue title -- buildCollisionReport's pairwise term-
     // overlap clustering would otherwise ALSO cluster this pair (e.g. two titles both mentioning "retry"/
@@ -647,6 +854,16 @@ describe("live gate thresholds probe (#6487)", () => {
       scope_cap_lines: null,
     });
     expect(notLoosened.gate.readinessMinScore).toBe(70);
+
+    // No fields/manifest at all: applyLiveGateThresholdsToManifest returns the input manifest unchanged.
+    expect(applyLiveGateThresholdsToManifest(base, null)).toBe(base);
+    expect(applyLiveGateThresholdsToManifest(null as never, { confidence_floor: 0.9, scope_cap_files: null, scope_cap_lines: null })).toBeNull();
+
+    // No readiness gate configured at all (readinessMinScore is null, not a number): the confidence_floor
+    // overlay has nothing to compare against, so it leaves readinessMinScore untouched (still null).
+    const noReadinessGate = parseFocusManifestContent(null, "repo_file");
+    const stillNull = applyLiveGateThresholdsToManifest(noReadinessGate, { confidence_floor: 0.9, scope_cap_files: null, scope_cap_lines: null });
+    expect(stillNull.gate.readinessMinScore).toBeNull();
   });
 
   it("uses live ORB thresholds when the probe returns 200", async () => {

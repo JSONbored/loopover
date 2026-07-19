@@ -18,7 +18,7 @@ type PackageJson = {
   publishConfig: { access: string };
   dependencies: Record<string, string>;
   engines: { node: string };
-  scripts: { build: string };
+  scripts: { build: string; "build:tsc": string; "build:verify": string };
 };
 
 function readPackageJson(root: string): PackageJson {
@@ -41,7 +41,22 @@ describe("loopover-miner package skeleton (#2287)", () => {
     expect(miner.dependencies["@loopover/engine"]).toBeDefined();
     expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2}$/);
     expect(miner.files).toEqual(expect.arrayContaining(["bin", "lib"]));
-    expect(miner.scripts.build.startsWith("tsc -p tsconfig.json && node --check bin/loopover-miner.js")).toBe(true);
+    // build is split into build:tsc (the real tsc compile, cacheable-by-turbo-but-not-turbo-restorable
+    // since its output is committed to git alongside hand-written siblings tsc never touches) and
+    // build:verify (a glob-driven node --check pass over every bin/lib .js file, replacing a previously
+    // hand-listed ~119-file chain here that had to be kept in sync by hand).
+    expect(miner.scripts.build).toBe("npm run build:tsc && npm run build:verify");
+    expect(miner.scripts["build:tsc"]).toBe("tsc -p tsconfig.json");
+    expect(miner.scripts["build:verify"]).toBe("node scripts/check-syntax.mjs");
+  });
+
+  it("build:verify's syntax check actually covers the CLI bin entry points, not just lib/", () => {
+    // The pre-split build script explicitly node --check'd bin/loopover-miner.js and
+    // bin/loopover-miner-mcp.js by name; the glob-driven replacement must still reach them.
+    const result = spawnSync("node", ["scripts/check-syntax.mjs"], { cwd: minerRoot, encoding: "utf8" });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("node --check passed for all");
+    expect(result.stdout).toMatch(/passed for all \d+ files in bin\/ and lib\//);
   });
 
   it("starts the CLI bin with a node shebang", () => {

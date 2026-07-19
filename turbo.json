@@ -1,0 +1,113 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "//#typecheck": {
+      "dependsOn": ["@loopover/engine#build"],
+      // Root tsconfig.json's own "include" list, plus the config files that change what it does.
+      // Without this, an unscoped root task defaults to hashing the ENTIRE repository (every doc,
+      // workflow file, README, etc.) as its input set -- confirmed via `turbo run typecheck --dry=json`
+      // during development, which is effectively "never cache-hits in practice" while looking configured.
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scripts/check-engine-parity.ts",
+        "worker-configuration.d.ts",
+        "vitest.config.ts",
+        "vitest.workers.config.ts",
+        "drizzle.config.ts",
+        "tsconfig.json",
+        "package.json",
+        "package-lock.json"
+      ],
+      "outputs": []
+    },
+    "@loopover/engine#build": {
+      "outputs": ["dist/**"]
+    },
+    "@loopover/ui-kit#build": {
+      "outputs": ["dist/**"]
+    },
+    "@loopover/ui-kit#typecheck": {
+      "outputs": []
+    },
+    "@loopover/discovery-index#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@loopover/ui#typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/worker-configuration.d.ts",
+        "$TURBO_ROOT$/src/env.d.ts"
+      ],
+      "outputs": []
+    },
+    "@loopover/ui#lint": {
+      "outputs": []
+    },
+    "@loopover/ui#build": {
+      "dependsOn": ["^build", "@loopover/extension#build", "@loopover/miner-extension#build"],
+      "outputs": ["dist/**"]
+    },
+    "@loopover/ui-miner#typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@loopover/ui-miner#lint": {
+      "outputs": []
+    },
+    "@loopover/ui-miner#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@loopover/extension#lint": {
+      "outputs": []
+    },
+    "@loopover/extension#typecheck": {
+      "outputs": []
+    },
+    // NOT declaring outputs here would be wrong, not just uncached: confirmed empirically (rm -rf'd
+    // apps/loopover-ui/public/downloads/loopover-extension.zip, ran `turbo run build --filter=@loopover/ui`
+    // against a warm cache, the zip never came back -- a cache HIT replays logs but restores nothing when
+    // no outputs are declared). This build's real output crosses a package boundary
+    // (apps/loopover-ui/public/downloads/loopover-extension.zip, written by scripts/build-extension.mjs),
+    // and Turborepo's docs are silent on whether cross-package "outputs" globs are honored on restore --
+    // rather than rely on undocumented behavior, this task is never cached at all, so it always actually
+    // executes (cheap, a handful of files) whenever something depends on it. That's what actually closes
+    // the "@loopover/ui#build might silently ship without the extension zip" gap this graph edge exists
+    // to fix -- caching this task and getting the restore wrong would be worse than not caching it.
+    "@loopover/extension#build": {
+      "cache": false
+    },
+    "@loopover/miner-extension#lint": {
+      "outputs": []
+    },
+    "@loopover/miner-extension#typecheck": {
+      "outputs": []
+    },
+    // No cross-package writes here (unlike @loopover/extension#build above) -- but keep the same
+    // never-cached treatment for consistency with its sibling, since both are cheap and this avoids two
+    // different caching policies for what's otherwise the same shape of package.
+    "@loopover/miner-extension#build": {
+      "cache": false
+    },
+    "@loopover/mcp#build": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@loopover/miner#build:tsc": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "@loopover/miner#build:verify": {
+      "dependsOn": ["@loopover/miner#build:tsc"],
+      "inputs": ["bin/**/*.js", "lib/**/*.js"],
+      "outputs": []
+    },
+    "@loopover/miner#build": {
+      "dependsOn": ["@loopover/miner#build:tsc", "@loopover/miner#build:verify"],
+      "cache": false
+    }
+  }
+}

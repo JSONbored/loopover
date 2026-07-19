@@ -137,6 +137,7 @@ describe("loopover_miner_get_portfolio_dashboard (#5155)", () => {
     expect(summary.byStatus).toEqual({ queued: 2, in_progress: 1, done: 1 });
     expect(summary.repos.map((repo: { repoFullName: string }) => repo.repoFullName)).toEqual(["acme/api", "acme/web"]);
     expect(summary.repos[0]).toEqual({
+      apiBaseUrl: "",
       repoFullName: "acme/api",
       byStatus: { queued: 1, in_progress: 1, done: 0 },
       total: 2,

@@ -191,18 +191,29 @@ export function ChatConversation({
     <div className="flex h-full flex-col gap-2 p-4">
       <p className="font-mono text-token-xs uppercase tracking-[0.2em] text-primary">Chat</p>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <MessageList messages={messages} composing={streaming && awaitingFirstChunk} />
-        {streaming && activeSource ? (
-          <div className="flex gap-3 px-3 pt-4" data-testid="chat-streaming-response">
-            <Avatar className="size-8 shrink-0">
-              <AvatarFallback>{ASSISTANT_NAME.slice(0, 2).toUpperCase()}</AvatarFallback>
-            </Avatar>
-            <StreamingText
-              source={activeSource}
-              className="min-w-0 whitespace-pre-wrap break-words rounded-token-sm bg-muted px-3 py-2 text-token-sm text-foreground"
-            />
-          </div>
-        ) : null}
+        {/*
+          #7229: the live streaming render goes through MessageList's `footer` so it sits INSIDE the same
+          scrollable viewport as the committed messages (still outside the #7081 aria-live `<ol>`). That lets
+          MessageList's auto-follow keep the accumulating answer pinned to the bottom as tokens arrive, the
+          same way it follows a newly-committed message.
+        */}
+        <MessageList
+          messages={messages}
+          composing={streaming && awaitingFirstChunk}
+          footer={
+            streaming && activeSource ? (
+              <div className="flex gap-3 px-3 pt-4" data-testid="chat-streaming-response">
+                <Avatar className="size-8 shrink-0">
+                  <AvatarFallback>{ASSISTANT_NAME.slice(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <StreamingText
+                  source={activeSource}
+                  className="min-w-0 whitespace-pre-wrap break-words rounded-token-sm bg-muted px-3 py-2 text-token-sm text-foreground"
+                />
+              </div>
+            ) : null
+          }
+        />
       </div>
       <ChatComposer onSubmit={handleSubmit} disabled={streaming} />
     </div>

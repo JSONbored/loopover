@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MessageList } from "./components/chat/message-list";
 import { MessageBubble } from "./components/chat/message-bubble";
@@ -83,6 +83,68 @@ describe("MessageList (#7081) — message list is a polite live region for compl
     render(<MessageList messages={emptyConversation} isLoading />);
     expect(screen.getByText(/Loading conversation/i)).toBeTruthy();
     expect(screen.queryByRole("list")).toBeNull();
+  });
+});
+
+describe("MessageList (#7229) — auto-follow the newest content", () => {
+  const line = (id: string, content: string): ChatMessage => ({
+    id,
+    role: "assistant",
+    content,
+    timestamp: "2026-07-16T08:00:00.000Z",
+  });
+
+  // jsdom does not lay out; scrollHeight/clientHeight default to 0. Fake an overflowing viewport so the
+  // scroll-position side effect is observable (scrollTop is a real writable/readable property in jsdom).
+  function fakeOverflow(viewport: HTMLElement, scrollHeight = 1000, clientHeight = 200): void {
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: scrollHeight });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: clientHeight });
+  }
+
+  const viewportOf = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")!;
+
+  it("scrolls to the bottom when a new message is committed and the reader is at the bottom", async () => {
+    const initial = [line("a1", "one"), line("a2", "two")];
+    const { container, rerender } = render(<MessageList messages={initial} />);
+    const viewport = viewportOf(container);
+    fakeOverflow(viewport);
+
+    rerender(<MessageList messages={[...initial, line("a3", "three")]} />);
+
+    await waitFor(() => expect(viewport.scrollTop).toBe(1000));
+  });
+
+  it("leaves the scroll position alone when the reader has scrolled up (#7229)", async () => {
+    const initial = [line("a1", "one"), line("a2", "two")];
+    const { container, rerender } = render(<MessageList messages={initial} />);
+    const viewport = viewportOf(container);
+    fakeOverflow(viewport);
+
+    // The operator scrolls up to re-read history: a following message must not yank them back down.
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+
+    rerender(<MessageList messages={[...initial, line("a3", "three")]} />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  it("follows a growing footer (the live streaming render) while pinned to the bottom", async () => {
+    const initial = [line("a1", "one")];
+    const { container, rerender } = render(<MessageList messages={initial} />);
+    const viewport = viewportOf(container);
+    fakeOverflow(viewport);
+
+    // A streaming footer whose text keeps growing is the second trigger the same follow mechanism covers.
+    rerender(<MessageList messages={initial} footer={<p data-testid="stream">partial</p>} />);
+    await waitFor(() => expect(viewport.scrollTop).toBe(1000));
+
+    viewport.scrollTop = 0;
+    rerender(<MessageList messages={initial} footer={<p data-testid="stream">partial answer</p>} />);
+    await waitFor(() => expect(viewport.scrollTop).toBe(1000));
+    expect(screen.getByTestId("stream").textContent).toBe("partial answer");
   });
 });
 

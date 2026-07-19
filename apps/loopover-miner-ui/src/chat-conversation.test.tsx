@@ -193,4 +193,32 @@ describe("ChatConversation (#6518)", () => {
     expect(handlePortfolioQueueChatCommandImpl).not.toHaveBeenCalled();
     expect(seen[0]).toEqual([{ role: "user", content: "what is stuck?" }]);
   });
+
+  it("REGRESSION (#7229): auto-scrolls the viewport as streamed chunks accumulate, unless scrolled up", async () => {
+    const gate = deferred();
+    const streamChatImpl = async function* (_messages: ChatWireMessage[]) {
+      yield "Hel";
+      await gate.promise;
+      yield "lo";
+    };
+    const { container } = render(<ChatConversation streamChatImpl={streamChatImpl} />);
+    const viewport = container.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]")!;
+    // jsdom does not lay out; fake an overflowing viewport so the scroll side effect is observable.
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 200 });
+
+    ask("hi");
+
+    // The first streamed chunk paints StreamingText inside the viewport footer -> the follow pins to bottom.
+    await waitFor(() => expect(screen.getByText("Hel")).toBeTruthy());
+    await waitFor(() => expect(viewport.scrollTop).toBe(1000));
+
+    // The operator scrolls up mid-stream: the remaining chunks (and the committed answer) must not yank down.
+    viewport.scrollTop = 0;
+    viewport.dispatchEvent(new Event("scroll"));
+    gate.resolve();
+
+    await waitFor(() => expect(screen.getByText("Hello")).toBeTruthy());
+    expect(viewport.scrollTop).toBe(0);
+  });
 });

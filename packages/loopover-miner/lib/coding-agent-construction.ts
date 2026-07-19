@@ -32,7 +32,13 @@ import {
 export function createRealCliSubprocessSpawn(): CliSubprocessSpawnFn {
   return (cmd, args, opts) =>
     new Promise((resolve) => {
-      const child = nodeSpawn(cmd, args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"] });
+      // `CliSubprocessSpawnFn` uses `Record<string, string | undefined>` + `readonly string[]`; Node's spawn
+      // overloads want `ProcessEnv` + a mutable `string[]`. The cast is local and lossless (same keys/values).
+      const child = nodeSpawn(cmd, [...args], {
+        cwd: opts.cwd,
+        env: opts.env as NodeJS.ProcessEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       let stdout = "";
       let stderr = "";
       // Unlike src/selfhost/ai.ts's defaultSpawn (a fixed ~120s default, genuinely untestable without a real

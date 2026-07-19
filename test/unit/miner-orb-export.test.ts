@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ORB_EXPORT_ENABLED_BY_DEFAULT,
   DEFAULT_AMS_COLLECTOR_URL,
+  DEFAULT_ORB_EXPORT_TIMEOUT_MS,
   amsInstanceId,
   buildAnonymizedOrbBatch,
   collectOrbExportBatch,
@@ -230,5 +231,26 @@ describe("sendAmsExportBatch (#5681)", () => {
     const result = await sendAmsExportBatch({ batch, secret: "s".repeat(64), fetchFn });
     expect(result.sent).toBe(0);
     expect(result.error).toBeTruthy();
+  });
+
+  it("bounds the request with an AbortSignal.timeout (default 10s), honoring an explicit timeoutMs (#7237)", async () => {
+    expect(DEFAULT_ORB_EXPORT_TIMEOUT_MS).toBe(10_000);
+
+    const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    await sendAmsExportBatch({ batch, secret: "s".repeat(64), fetchFn }); // no timeoutMs -> default applies
+    const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+
+    fetchFn.mockClear();
+    await sendAmsExportBatch({ batch, secret: "s".repeat(64), fetchFn, timeoutMs: 250 }); // explicit override
+    const [, override] = fetchFn.mock.calls[0] as [string, RequestInit];
+    expect(override.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("catches an aborted (timed-out) request via the existing catch, without throwing (#7237)", async () => {
+    const fetchFn = vi.fn().mockRejectedValue(new DOMException("The operation was aborted.", "TimeoutError"));
+    const result = await sendAmsExportBatch({ batch, secret: "s".repeat(64), fetchFn });
+    expect(result.sent).toBe(0);
+    expect(result.error).toContain("aborted");
   });
 });

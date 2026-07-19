@@ -53,6 +53,8 @@ export function latestClosedAt(batch: OrbExportRow[]): string | null;
 
 export const DEFAULT_AMS_COLLECTOR_URL: string;
 
+export const DEFAULT_ORB_EXPORT_TIMEOUT_MS: number;
+
 export function resolveAmsCollectorUrl(env?: Record<string, string | undefined>): string;
 
 export function sendAmsExportBatch(options: {
@@ -61,6 +63,7 @@ export function sendAmsExportBatch(options: {
   collectorUrl?: string;
   collectorToken?: string | undefined;
   fetchFn?: typeof fetch;
+  timeoutMs?: number;
 }): Promise<AmsExportSendResult>;
 
 export type ParsedOrbExportArgs = { json: boolean; enable: boolean; send: boolean; dryRun: boolean } | { error: string };

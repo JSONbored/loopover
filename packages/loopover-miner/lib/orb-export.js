@@ -177,7 +177,18 @@ export function resolveAmsCollectorUrl(env = process.env) {
  * response, `{ sent: 0, error }` otherwise — a network failure or non-2xx never throws, matching this module's
  * fail-open posture (a telemetry hiccup must never break the miner's real work).
  */
-export async function sendAmsExportBatch({ batch, secret, collectorUrl = resolveAmsCollectorUrl(), collectorToken, fetchFn = fetch }) {
+// Bound a single AMS-collector POST so a hung/black-holed collector can't stall the export indefinitely (#7237).
+// 10s matches this package's other default request timeouts (live-issue-snapshot.js / opportunity-fanout.js).
+export const DEFAULT_ORB_EXPORT_TIMEOUT_MS = 10_000;
+
+export async function sendAmsExportBatch({
+  batch,
+  secret,
+  collectorUrl = resolveAmsCollectorUrl(),
+  collectorToken,
+  fetchFn = fetch,
+  timeoutMs = DEFAULT_ORB_EXPORT_TIMEOUT_MS,
+}) {
   if (!Array.isArray(batch) || batch.length === 0) return { sent: 0 };
   const instanceId = amsInstanceId(secret);
   const body = JSON.stringify({ instanceId, events: batch });
@@ -192,6 +203,7 @@ export async function sendAmsExportBatch({ batch, secret, collectorUrl = resolve
         ...(collectorToken ? { authorization: `Bearer ${collectorToken}` } : {}),
       },
       body,
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return { sent: 0, error: `http_${res.status}` };
   } catch (error) {

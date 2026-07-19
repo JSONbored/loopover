@@ -9,10 +9,15 @@
 // Usage: node scripts/gittensor-impact-card.mjs <owner/repo> <out-file.svg>
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const WEEKS = 12;
+// Bounds every outbound fetch in this script so a hung api.gittensor.io/gittensor.io connection can't block
+// the README-card regeneration job indefinitely -- matches the AbortSignal.timeout discipline every other
+// external-fetch script in this repo already follows (src/github/client.ts's GITHUB_FETCH_TIMEOUT_MS,
+// scripts/check-mcp-release-due.mjs's GITHUB_REQUEST_TIMEOUT_MS, etc.), which this script had been missing.
+export const GITTENSOR_IMPACT_CARD_FETCH_TIMEOUT_MS = 10_000;
 const THEME = {
   cardBg: "#0e100d",
   fg: "#f3f6f3",
@@ -47,12 +52,20 @@ function escapeXml(value) {
     .replace(/'/g, "&#x27;");
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url, {
+export async function fetchJson(url, fetchImpl = fetch) {
+  const res = await fetchImpl(url, {
     headers: { "User-Agent": "gittensor-impact-card/1.0" },
+    signal: AbortSignal.timeout(GITTENSOR_IMPACT_CARD_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`fetch failed: ${url} (${res.status})`);
   return res.json();
+}
+
+export async function fetchGtLogoSvg(fetchImpl = fetch) {
+  const res = await fetchImpl("https://gittensor.io/gt-logo.svg", {
+    signal: AbortSignal.timeout(GITTENSOR_IMPACT_CARD_FETCH_TIMEOUT_MS),
+  });
+  return res.text();
 }
 
 function bucketWeekly(prs, now) {
@@ -214,7 +227,7 @@ async function main() {
   const [impact, prs, gtLogoSvg] = await Promise.all([
     fetchJson(`https://api.gittensor.io/repos/${encoded}/impact`),
     fetchJson(`https://api.gittensor.io/repos/${encoded}/prs`),
-    fetch("https://gittensor.io/gt-logo.svg").then((r) => r.text()),
+    fetchGtLogoSvg(),
   ]);
   const buckets = bucketWeekly(prs, new Date());
   const gtLogoB64 = Buffer.from(gtLogoSvg).toString("base64");
@@ -227,7 +240,13 @@ async function main() {
   console.log(`Wrote ${outFile} (${svg.length} bytes)`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run only when invoked directly as a CLI script, not when imported (e.g. by this file's own unit tests
+// for fetchJson/fetchGtLogoSvg) -- matches every other CLI script's entrypoint guard in this repo (e.g.
+// scripts/check-mcp-release-due.mjs).
+const entrypointPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (import.meta.url === pathToFileURL(entrypointPath).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

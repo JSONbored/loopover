@@ -181,3 +181,4 @@ export function evaluateDenyHooks(toolCall: ProposedToolCall, rules: DenyRule[] 
   }
   return { allowed: true };
 }
+// engine-exclusion-live-verification-temporary

@@ -149,8 +149,8 @@ export type RunAttemptOptions = {
 const ATTEMPT_USAGE =
   "Usage: loopover-miner attempt <owner/repo> <issue#> --miner-login <login> [--base <branch>] [--live] [--dry-run] [--json]";
 
-function parseRepoTarget(value: unknown): string | null {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+function parseRepoTarget(value: string): string | null {
+  const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
   if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
@@ -207,7 +207,7 @@ export function parseAttemptArgs(args: string[]): ParsedAttemptArgs {
   }
 
   if (positional.length !== 2) return { error: ATTEMPT_USAGE };
-  const repoFullName = parseRepoTarget(positional[0]);
+  const repoFullName = parseRepoTarget(positional[0]!);
   if (!repoFullName) return { error: `Repository must be in owner/repo form: ${positional[0]}` };
   const issueNumber = Number(positional[1]);
   if (!Number.isInteger(issueNumber) || issueNumber < 1) {

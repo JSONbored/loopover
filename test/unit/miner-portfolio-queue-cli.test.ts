@@ -12,6 +12,7 @@ import {
   parseQueueNextArgs,
   parseQueueReleaseArgs,
   parseQueueRequeueArgs,
+  parseQueueClaimBatchArgs,
   renderPortfolioQueueMetrics,
   renderQueueTable,
   runQueueCli,
@@ -21,6 +22,7 @@ import {
   runQueueNext,
   runQueueRelease,
   runQueueRequeue,
+  runQueueClaimBatch,
   selectNextEligibleTarget,
 } from "../../packages/loopover-miner/lib/portfolio-queue-cli.js";
 import type { QueueEntry } from "../../packages/loopover-miner/lib/portfolio-queue.d.ts";
@@ -60,6 +62,18 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     expect(parseQueueDoneArgs(["acme/widgets"])).toEqual({
       error: expect.stringContaining("Usage: loopover-miner queue done"),
     });
+    expect(parseQueueDoneArgs(["", "issue:1"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner queue done"),
+    });
+  });
+
+  it("REGRESSION: parseQueueListArgs rejects a missing --repo value, a dashed follow-on, and positionals", () => {
+    expect(parseQueueListArgs(["--repo"])).toEqual({ error: expect.stringContaining("Usage:") });
+    expect(parseQueueListArgs(["--repo", "--json"])).toEqual({ error: expect.stringContaining("Usage:") });
+    expect(parseQueueListArgs(["extra"])).toEqual({ error: expect.stringContaining("Usage:") });
+    expect(parseQueueListArgs(["--repo", "notarepo"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
   });
 
   it("renderQueueTable formats numeric priority and empty output", () => {
@@ -76,6 +90,19 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     expect(renderQueueTable([])).toBe("no portfolio queue entries");
     expect(renderQueueTable(entries)).toContain("    42");
     expect(renderQueueTable(entries)).toContain("issue:7");
+    // Nullish host/priority render as "-" (display() null/undefined arm).
+    expect(
+      renderQueueTable([
+        {
+          apiBaseUrl: null as unknown as string,
+          repoFullName: "acme/widgets",
+          identifier: "issue:8",
+          status: "queued",
+          priority: null as unknown as number,
+          enqueuedAt: null as unknown as string,
+        },
+      ]),
+    ).toContain("-");
   });
 
   it("renderQueueTable distinguishes two same-repo/identifier rows on different forge hosts (#7225)", () => {
@@ -411,6 +438,10 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     expect(runQueueList(["--verbose"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown queue subcommand");
     error.mockClear();
+    // Undefined subcommand hits the `subcommand ?? ""` display arm.
+    expect(runQueueCli(undefined, [])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Unknown queue subcommand:");
+    error.mockClear();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     expect(runQueueCli("peek", ["--json"])).toBe(2);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
@@ -418,6 +449,154 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
       error: expect.stringContaining("Unknown queue subcommand"),
     });
     expect(error).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: runQueueList opens the default store when initPortfolioQueue is omitted", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runQueueList(["--json"])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ entries: expect.any(Array) });
+  });
+
+  it("REGRESSION: runQueueCli dispatches the dashboard subcommand", async () => {
+    const dashboardModule = await import("../../packages/loopover-miner/lib/portfolio-dashboard.js");
+    const spy = vi.spyOn(dashboardModule, "runPortfolioDashboard").mockReturnValue(0);
+    expect(runQueueCli("dashboard", ["--json"])).toBe(0);
+    expect(spy).toHaveBeenCalledWith(["--json"], expect.any(Object));
+    spy.mockRestore();
+  });
+
+  it("REGRESSION: list/next/done fail-safe (exit 2) when the store throws", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const throwingStore = {
+      listQueue() {
+        throw new Error("db_locked");
+      },
+      dequeueNext() {
+        throw new Error("db_locked");
+      },
+      markDone() {
+        throw new Error("db_locked");
+      },
+      close() {},
+    } as unknown as ReturnType<typeof initPortfolioQueueStore>;
+
+    expect(runQueueList([], { initPortfolioQueue: () => throwingStore })).toBe(2);
+    expect(runQueueNext([], { initPortfolioQueue: () => throwingStore })).toBe(2);
+    expect(runQueueDone(["acme/widgets", "issue:1"], { initPortfolioQueue: () => throwingStore })).toBe(2);
+    expect(error).toHaveBeenCalledWith("db_locked");
+  });
+
+  it("REGRESSION: next/done/claim-batch surface parse errors before touching the store", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const initPortfolioQueue = vi.fn();
+    const initPortfolioQueueManager = vi.fn();
+
+    expect(runQueueNext(["--bogus"], { initPortfolioQueue })).toBe(2);
+    expect(initPortfolioQueue).not.toHaveBeenCalled();
+    expect(String(error.mock.calls[0]?.[0])).toContain("Unknown option");
+
+    error.mockClear();
+    expect(runQueueDone(["only-one"], { initPortfolioQueue })).toBe(2);
+    expect(initPortfolioQueue).not.toHaveBeenCalled();
+    expect(String(error.mock.calls[0]?.[0])).toContain("queue done");
+
+    error.mockClear();
+    expect(parseQueueClaimBatchArgs(["--global-wip"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+    expect(runQueueClaimBatch(["--bogus"], { initPortfolioQueueManager })).toBe(2);
+    expect(initPortfolioQueueManager).not.toHaveBeenCalled();
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage:");
+  });
+
+  it("REGRESSION: parseQueueClaimBatchArgs and runQueueClaimBatch cover dry-run, caps, and store paths", async () => {
+    expect(parseQueueClaimBatchArgs(["--json", "--dry-run", "--global-wip", "3", "--per-repo-wip", "2"])).toEqual({
+      json: true,
+      dryRun: true,
+      globalWipCap: 3,
+      perRepoWipCap: 2,
+    });
+    expect(parseQueueClaimBatchArgs(["--per-repo-wip", "4"])).toEqual({
+      json: false,
+      dryRun: false,
+      globalWipCap: 1,
+      perRepoWipCap: 4,
+    });
+    expect(parseQueueClaimBatchArgs(["--global-wip", "-1"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runQueueClaimBatch(["--dry-run", "--json"])).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      outcome: "dry_run",
+      globalWipCap: 1,
+      perRepoWipCap: 1,
+    });
+    log.mockClear();
+    expect(runQueueClaimBatch(["--dry-run", "--global-wip", "2", "--per-repo-wip", "2"])).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain("DRY RUN: would claim a batch");
+
+    const claimedEntries = [
+      {
+        apiBaseUrl: "https://api.github.com",
+        repoFullName: "acme/widgets",
+        identifier: "issue:1",
+        status: "in_progress",
+        priority: 1,
+        enqueuedAt: "2026-07-04T12:00:00.000Z",
+      },
+    ];
+    const manager = {
+      claimNextBatch: vi.fn().mockReturnValueOnce(claimedEntries).mockReturnValueOnce([]),
+      close: vi.fn(),
+    };
+    const initPortfolioQueueManager = vi.fn().mockReturnValue(manager);
+
+    log.mockClear();
+    expect(
+      runQueueClaimBatch(["--json", "--global-wip", "2"], { initPortfolioQueueManager }),
+    ).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ claimed: claimedEntries });
+
+    log.mockClear();
+    manager.claimNextBatch.mockReset().mockReturnValue(claimedEntries);
+    expect(runQueueClaimBatch(["--global-wip", "2"], { initPortfolioQueueManager })).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("issue:1");
+
+    log.mockClear();
+    manager.claimNextBatch.mockReturnValue([]);
+    expect(runQueueClaimBatch([], { initPortfolioQueueManager })).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toBe("none");
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const throwingManager = {
+      claimNextBatch() {
+        throw new Error("db_locked");
+      },
+      close: vi.fn(),
+    };
+    expect(
+      runQueueClaimBatch([], { initPortfolioQueueManager: () => throwingManager as never }),
+    ).toBe(2);
+    expect(error).toHaveBeenCalledWith("db_locked");
+
+    // Default manager factory path (ownsManager=true) still closes after a successful claim.
+    const ownedManager = {
+      claimNextBatch: vi.fn().mockReturnValue([]),
+      close: vi.fn(),
+    };
+    const pqManagerModule = await import("../../packages/loopover-miner/lib/portfolio-queue-manager.js");
+    const initSpy = vi.spyOn(pqManagerModule, "initPortfolioQueueManager").mockReturnValue(ownedManager as never);
+    try {
+      log.mockClear();
+      expect(runQueueClaimBatch([])).toBe(0);
+      expect(String(log.mock.calls.at(-1)?.[0])).toBe("none");
+      expect(ownedManager.close).toHaveBeenCalled();
+    } finally {
+      initSpy.mockRestore();
+    }
+    expect(runQueueCli("claim-batch", ["--dry-run", "--json"], { initPortfolioQueueManager })).toBe(0);
   });
 
   describe("renderPortfolioQueueMetrics() / runQueueMetrics (#5186)", () => {

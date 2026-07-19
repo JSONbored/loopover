@@ -14,6 +14,14 @@ import { initPortfolioQueueStore } from "../../packages/loopover-miner/lib/portf
 import { initRunStateStore } from "../../packages/loopover-miner/lib/run-state.js";
 import { openGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "../../packages/loopover-engine/src/index";
+import * as governorStateModule from "../../packages/loopover-miner/lib/governor-state.js";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger.js";
+import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger.js";
+import * as portfolioQueueModule from "../../packages/loopover-miner/lib/portfolio-queue.js";
+import * as runStateModule from "../../packages/loopover-miner/lib/run-state.js";
+import * as discoverCliModule from "../../packages/loopover-miner/lib/discover-cli.js";
+import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy.js";
+import * as killSwitchModule from "../../packages/loopover-miner/lib/governor-kill-switch.js";
 
 const roots: string[] = [];
 // Fresh, separate connections opened AFTER a runLoop call to inspect real persisted state -- runLoop's own
@@ -155,6 +163,52 @@ describe("parseLoopArgs (#5135)", () => {
   it("rejects an unknown flag", () => {
     expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--bogus"])).toEqual({
       error: "Unknown option: --bogus",
+    });
+  });
+
+  it("rejects flags that are missing their values", () => {
+    expect(parseLoopArgs(["acme/widgets", "--search"])).toEqual({ error: expect.stringContaining("Usage:") });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login"])).toEqual({ error: expect.stringContaining("Usage:") });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--base"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--max-cycles"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--cycle-delay-ms"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login", "--json"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+    expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--base", "--json"])).toEqual({
+      error: expect.stringContaining("Usage:"),
+    });
+  });
+
+  it("REGRESSION: stringifies a non-Error thrown while parsing numeric flags", () => {
+    const originalNumber = globalThis.Number;
+    // Force normalizeOptionalPositiveInt's Number() call to throw a non-Error so the catch's String(error) arm runs.
+    // eslint-disable-next-line no-global-assign, @typescript-eslint/no-explicit-any
+    (globalThis as any).Number = (value: unknown) => {
+      if (value === "777") throw "not_an_error_object";
+      return originalNumber(value as never);
+    };
+    try {
+      expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--max-cycles", "777"])).toEqual({
+        error: "not_an_error_object",
+      });
+      expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--cycle-delay-ms", "777"])).toEqual({
+        error: "not_an_error_object",
+      });
+    } finally {
+      globalThis.Number = originalNumber;
+    }
+  });
+
+  it("REGRESSION: rejects a three-segment repo target", () => {
+    expect(parseLoopArgs(["acme/widgets/extra", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: acme/widgets/extra",
     });
   });
 });
@@ -1082,5 +1136,353 @@ describe("runLoop (#5135)", () => {
     const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(printed.haltReason).toBe("paused");
     expect(printed.cycles.at(-1)).toEqual({ cycle: 1, outcome: "halted", reason: "paused" });
+  });
+
+  it("short-circuits on bad args before opening governor state", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const openGovernorStateSpy = vi.fn();
+
+    const exitCode = await runLoop(["--miner-login", "alice"], {
+      openGovernorState: openGovernorStateSpy,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(openGovernorStateSpy).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
+  });
+
+  it("REGRESSION: reentry_declined halts and the human summary prints Loop finished", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_abandon",
+        abandonReason: "no_progress",
+        totalTurnsUsed: 1,
+        totalCostUsd: 0,
+      });
+      return 0;
+    });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "3"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      attemptLoopReentry: () => ({
+        decision: { reenter: false, reasons: ["non_convergence"] },
+        dequeued: null,
+      }),
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).toHaveBeenCalledTimes(1);
+    const printed = String(log.mock.calls[0]?.[0]);
+    expect(printed).toContain("Loop finished");
+    expect(printed).toContain("reentry_declined:non_convergence");
+  });
+
+  it("REGRESSION: threads options.apiBaseUrl into discover when set, and omits it when unset", async () => {
+    const withUrl = tempStores();
+    const withoutUrl = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runDiscoverWith = vi.fn(async (_args: string[], opts?: Record<string, unknown>) => {
+      // Invoke the callback so coverage counts the `initPortfolioQueue: () => portfolioQueue` line.
+      if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
+      return 0;
+    });
+    const runDiscoverWithout = vi.fn(async (_args: string[], opts?: Record<string, unknown>) => {
+      if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
+      return 0;
+    });
+
+    await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {
+      openGovernorState: () => withUrl.governorState,
+      initEventLedger: () => withUrl.eventLedger,
+      initGovernorLedger: () => withUrl.governorLedger,
+      initPortfolioQueue: () => withUrl.portfolioQueue,
+      initRunStateStore: () => withUrl.runState,
+      runDiscover: runDiscoverWith,
+      githubToken: "explicit-token",
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+      ...readyLoopOptions(),
+    });
+    expect(runDiscoverWith).toHaveBeenCalledWith(
+      ["acme/widgets"],
+      expect.objectContaining({
+        githubToken: "explicit-token",
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      }),
+    );
+
+    await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {
+      openGovernorState: () => withoutUrl.governorState,
+      initEventLedger: () => withoutUrl.eventLedger,
+      initGovernorLedger: () => withoutUrl.governorLedger,
+      initPortfolioQueue: () => withoutUrl.portfolioQueue,
+      initRunStateStore: () => withoutUrl.runState,
+      runDiscover: runDiscoverWithout,
+      githubToken: "explicit-token",
+      ...readyLoopOptions(),
+    });
+    const discoverOpts = runDiscoverWithout.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(discoverOpts).toMatchObject({ githubToken: "explicit-token" });
+    expect(discoverOpts).not.toHaveProperty("apiBaseUrl");
+  });
+
+  it("REGRESSION: threads options.apiBaseUrl into CI/PR pollers on a submitted cycle", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-api",
+        submissionMode: "observe",
+        totalTurnsUsed: 1,
+        totalCostUsd: 0,
+        iterationsUsed: 1,
+        execResult: {
+          action: "open_pr",
+          stdout: "https://github.com/acme/widgets/pull/99\n",
+          stderr: "",
+          code: 0,
+          timedOut: false,
+        },
+      });
+      return 0;
+    });
+    const pollCheckRunsSpy = vi.fn().mockResolvedValue({
+      conclusion: "success",
+      checks: [],
+      headSha: "abc",
+      attempts: 1,
+    });
+    const pollPrDispositionSpy = vi.fn().mockResolvedValue({
+      state: "open",
+      merged: false,
+      closedAt: null,
+      attempts: 1,
+    });
+
+    await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      pollCheckRuns: pollCheckRunsSpy,
+      pollPrDisposition: pollPrDispositionSpy,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+      githubToken: "explicit-token",
+      attemptLoopReentry: () => ({
+        decision: { reenter: false, reasons: ["done"] },
+        dequeued: null,
+      }),
+      ...readyLoopOptions(),
+    });
+
+    expect(pollCheckRunsSpy).toHaveBeenCalledWith(
+      "acme/widgets",
+      99,
+      expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" }),
+    );
+    expect(pollPrDispositionSpy).toHaveBeenCalledWith(
+      "acme/widgets",
+      99,
+      expect.objectContaining({ apiBaseUrl: "https://ghe.example.com/api/v3" }),
+    );
+  });
+
+  it("REGRESSION: resolves githubToken from resolveGitHubToken when options.githubToken is omitted", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runDiscover = vi.fn(async (_args: string[], opts?: Record<string, unknown>) => {
+      if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
+      return 0;
+    });
+    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution.js");
+    const resolveSpy = vi.spyOn(tokenModule, "resolveGitHubToken").mockResolvedValue("resolved-from-session");
+    try {
+      await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {
+        openGovernorState: () => governorState,
+        initEventLedger: () => eventLedger,
+        initGovernorLedger: () => governorLedger,
+        initPortfolioQueue: () => portfolioQueue,
+        initRunStateStore: () => runState,
+        runDiscover,
+        env: {},
+        ...readyLoopOptions(),
+      });
+      expect(resolveSpy).toHaveBeenCalled();
+      expect(runDiscover.mock.calls[0]?.[1]).toMatchObject({ githubToken: "resolved-from-session" });
+    } finally {
+      resolveSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION: falls back to an empty githubToken when resolution returns null", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runDiscover = vi.fn(async (_args: string[], opts?: Record<string, unknown>) => {
+      if (typeof opts?.initPortfolioQueue === "function") (opts.initPortfolioQueue as () => unknown)();
+      return 0;
+    });
+    const tokenModule = await import("../../packages/loopover-miner/lib/github-token-resolution.js");
+    const resolveSpy = vi.spyOn(tokenModule, "resolveGitHubToken").mockResolvedValue(null);
+    try {
+      await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "0", "--json"], {
+        openGovernorState: () => governorState,
+        initEventLedger: () => eventLedger,
+        initGovernorLedger: () => governorLedger,
+        initPortfolioQueue: () => portfolioQueue,
+        initRunStateStore: () => runState,
+        runDiscover,
+        env: {},
+        ...readyLoopOptions(),
+      });
+      expect(runDiscover.mock.calls[0]?.[1]).toMatchObject({ githubToken: "" });
+    } finally {
+      resolveSpy.mockRestore();
+    }
+  });
+
+  it("#4847: --dry-run with repo targets prints a human-readable message by default", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--dry-run"]);
+    expect(exitCode).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain(
+      "DRY RUN: would run an autonomous loop against acme/widgets for alice",
+    );
+  });
+
+  it("REGRESSION: --live, missing onResult, sparse amsPolicy, and --search discovery paths", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const runAttemptSpy = vi.fn(async () => 0); // never calls onResult → attempt_error
+    const runDiscoverSpy = vi.fn(async () => 0);
+
+    const exitCode = await runLoop(
+      ["--search", "label:bug", "--miner-login", "alice", "--live", "--max-cycles", "1", "--json"],
+      {
+        openGovernorState: () => governorState,
+        initEventLedger: () => eventLedger,
+        initGovernorLedger: () => governorLedger,
+        initPortfolioQueue: () => portfolioQueue,
+        initRunStateStore: () => runState,
+        runDiscover: runDiscoverSpy,
+        runAttempt: runAttemptSpy,
+        ...readyLoopOptions({
+          resolveAmsPolicy: async () => ({
+            // Explicit undefined (not merely absent keys) so both ?? DEFAULT arms are taken.
+            spec: { capLimits: undefined, convergenceThresholds: undefined },
+            source: "default",
+            warnings: [],
+          }),
+        }),
+        attemptLoopReentry: () => ({
+          decision: { reenter: false, reasons: ["attempt_error"] },
+          dequeued: null,
+        }),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(runDiscoverSpy).toHaveBeenCalledWith(["--search", "label:bug"], expect.any(Object));
+    expect(runAttemptSpy).toHaveBeenCalledWith(expect.arrayContaining(["--live"]), expect.any(Object));
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.cycles[0]).toMatchObject({ attemptOutcome: "attempt_error" });
+  });
+
+  it("REGRESSION: exercises module-level defaults when store/discover injectables are omitted", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    // Prime queue items so the loop sleeps between cycles via the real default sleepFn.
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:8" });
+
+    vi.spyOn(governorStateModule, "openGovernorState").mockReturnValue(governorState);
+    vi.spyOn(eventLedgerModule, "initEventLedger").mockReturnValue(eventLedger);
+    vi.spyOn(governorLedgerModule, "initGovernorLedger").mockReturnValue(governorLedger);
+    vi.spyOn(portfolioQueueModule, "initPortfolioQueueStore").mockReturnValue(portfolioQueue);
+    vi.spyOn(runStateModule, "initRunStateStore").mockReturnValue(runState);
+    vi.spyOn(discoverCliModule, "runDiscover").mockResolvedValue(0);
+    vi.spyOn(amsPolicyModule, "resolveAmsPolicy").mockResolvedValue({
+      spec: DEFAULT_AMS_POLICY_SPEC,
+      source: "default",
+      warnings: [],
+    });
+    vi.spyOn(killSwitchModule, "checkMinerKillSwitch").mockReturnValue({
+      scope: "none",
+      active: false,
+    });
+
+    const exitCode = await runLoop(
+      ["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json", "--cycle-delay-ms", "0"],
+      {
+        runAttempt: async (_args, options) => {
+          (options?.onResult as ((r: unknown) => void) | undefined)?.({
+            outcome: "attempt_abandon",
+            abandonReason: "no_progress",
+            totalTurnsUsed: 0,
+            totalCostUsd: 0,
+          });
+          return 0;
+        },
+        githubToken: "tok",
+        attemptLoopReentry: () => ({
+          decision: { reenter: true, reasons: [] },
+          dequeued: portfolioQueue.dequeueNext(),
+        }),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(governorStateModule.openGovernorState).toHaveBeenCalled();
+    expect(eventLedgerModule.initEventLedger).toHaveBeenCalled();
+    expect(discoverCliModule.runDiscover).toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a non-string queue identifier is treated as malformed and skipped", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1" });
+    const originalDequeue = portfolioQueue.dequeueNext.bind(portfolioQueue);
+    portfolioQueue.dequeueNext = () => {
+      const entry = originalDequeue();
+      if (!entry) return entry;
+      return { ...entry, identifier: 123 as unknown as string };
+    };
+    vi.spyOn(portfolioQueue, "markDone").mockReturnValue(null);
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: vi.fn(),
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.cycles.some((c: { outcome: string }) => c.outcome === "skipped_malformed_identifier")).toBe(
+      true,
+    );
   });
 });

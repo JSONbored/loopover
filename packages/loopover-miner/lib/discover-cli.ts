@@ -188,8 +188,8 @@ async function supplementWithDiscoveryIndex(
   return { ...fanOut, issues: [...fanOut.issues, ...supplemented] };
 }
 
-function parseRepoTarget(value: unknown): FanoutTarget | null {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+function parseRepoTarget(value: string): FanoutTarget | null {
+  const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
   return { owner, repo };

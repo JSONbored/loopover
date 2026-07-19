@@ -90,6 +90,12 @@ describe("loopover-miner governor pause/resume/status CLI (#4851)", () => {
     expect(await runGovernorResume([], { openGovernorState: () => governorState })).toBe(0);
     expect(String(log.mock.calls[0]?.[0])).toBe("governor is not paused");
     expect(governorState.loadPauseState()).toEqual({ paused: false, reason: null, pausedAt: null });
+
+    // Pause again so the --json success arm of resume is exercised (not only the error/--dry-run paths).
+    governorState.savePauseState({ paused: true, reason: "again" });
+    log.mockClear();
+    expect(await runGovernorResume(["--json"], { openGovernorState: () => governorState })).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ paused: false, reason: null });
   });
 
   it("pauses with no reason and renders the plain-text form", async () => {

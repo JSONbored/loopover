@@ -112,8 +112,8 @@ const LOOP_USAGE =
 const DEFAULT_CYCLE_DELAY_MS = 60_000;
 const ISSUE_IDENTIFIER_PATTERN = /^issue:(\d+)$/;
 
-function parseRepoTarget(value: unknown): string | null {
-  const trimmed = typeof value === "string" ? value.trim() : "";
+function parseRepoTarget(value: string): string | null {
+  const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
   return `${owner}/${repo}`;
@@ -192,7 +192,7 @@ export function parseLoopArgs(args: string[]): ParsedLoopArgs {
       try {
         options.maxCycles = normalizeOptionalPositiveInt(value, "--max-cycles");
       } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
+        return { error: describeCliError(error) };
       }
       index += 1;
       continue;
@@ -203,7 +203,7 @@ export function parseLoopArgs(args: string[]): ParsedLoopArgs {
       try {
         options.cycleDelayMs = normalizeOptionalPositiveInt(value, "--cycle-delay-ms");
       } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
+        return { error: describeCliError(error) };
       }
       index += 1;
       continue;
@@ -240,6 +240,10 @@ function parseIssueNumberFromIdentifier(identifier: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function defaultSleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 /**
  * Run one full discover -> claim -> attempt -> observe -> reenter cycle repeatedly until a kill-switch trips,
  * the run-loop boundary gate halts (non-convergence or a real budget/turn/elapsed cap), re-entry is declined,
@@ -255,7 +259,7 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
   const loopArgs = parsed;
 
   const env = options.env ?? process.env;
-  const sleepFn = options.sleepFn ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const sleepFn = options.sleepFn ?? defaultSleep;
   const nowMsFn = () => options.nowMs ?? Date.now();
   const sessionStartMs = nowMsFn();
 
@@ -425,17 +429,20 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
         claimedEntry.apiBaseUrl,
       );
 
+      // RunLoopOptions.resolveAmsPolicy types spec as Record<string, unknown>; fall back when fields are absent.
+      const limits =
+        (amsPolicy.spec.capLimits as typeof DEFAULT_AMS_POLICY_SPEC.capLimits | undefined) ??
+        DEFAULT_AMS_POLICY_SPEC.capLimits;
+      const convergenceThresholds =
+        (amsPolicy.spec.convergenceThresholds as typeof DEFAULT_AMS_POLICY_SPEC.convergenceThresholds | undefined) ??
+        DEFAULT_AMS_POLICY_SPEC.convergenceThresholds;
       const boundary = evaluateBoundaryGateFn(
         {
           runHalted: false,
           usage,
-          // RunLoopOptions.resolveAmsPolicy types spec as Record<string, unknown> (pre-existing .d.ts);
-          // real resolveAmsPolicy returns AmsPolicySpec — cast preserves runtime fallback behavior.
-          limits: (amsPolicy.spec.capLimits as typeof DEFAULT_AMS_POLICY_SPEC.capLimits | undefined) ?? DEFAULT_AMS_POLICY_SPEC.capLimits,
+          limits,
           convergence: convergenceInput,
-          convergenceThresholds:
-            (amsPolicy.spec.convergenceThresholds as typeof DEFAULT_AMS_POLICY_SPEC.convergenceThresholds | undefined) ??
-            DEFAULT_AMS_POLICY_SPEC.convergenceThresholds,
+          convergenceThresholds,
           inFlightItem: { repoFullName: claimedEntry.repoFullName, identifier: claimedEntry.identifier },
           // Echoes claimed.apiBaseUrl (#5563), NOT the callback's own repoFullName/identifier alone -- two forge
           // hosts can share an in-flight item with the same repo name+identifier.
@@ -633,11 +640,12 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
       }
     }
 
+    // After the max-cycles release block above, haltReason is always set on a clean exit.
     const summary = { haltReason, cyclesRun: cycles.length, cycles };
     if (parsed.json) {
       console.log(JSON.stringify(summary, null, 2));
     } else {
-      console.log(`Loop finished after ${cycles.length} cycle(s): ${haltReason ?? "unknown"}.`);
+      console.log(`Loop finished after ${cycles.length} cycle(s): ${haltReason}.`);
     }
     return 0;
   } catch (error) {

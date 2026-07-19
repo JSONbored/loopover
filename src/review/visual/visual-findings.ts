@@ -22,6 +22,14 @@ import type { CaptureRoute } from "./capture";
  *  from `isConfiguredGateBlocker`'s allowlist (src/rules/advisory.ts) — see this file's header. */
 export const VISUAL_REGRESSION_FINDING_CODE = "visual_regression_finding";
 
+/** The advisory finding code an "unrelated" (pre-existing, out-of-scope) visual observation is published
+ *  under (`review.visual.bugAnalysis`) — rides the identical strictly-advisory contract as
+ *  {@link VISUAL_REGRESSION_FINDING_CODE} (this file's header), also deliberately absent from
+ *  `isConfiguredGateBlocker`'s allowlist. Distinct from the regression code so the unified comment / any
+ *  future automation can tell "this PR broke something" apart from "this PR's screenshots happen to show a
+ *  pre-existing problem" — the latter is never this PR's fault and should never read like a blocker. */
+export const VISUAL_UNRELATED_ISSUE_FINDING_CODE = "visual_unrelated_issue_finding";
+
 /** Bound on how many routes a single review ever sends to vision, independent of how many the capture
  *  pipeline rendered — a vision call is the most expensive AI request this codebase makes per-route (an
  *  image attachment, not just text), so an unbounded capture set must never translate into unbounded spend. */
@@ -84,9 +92,15 @@ export function evaluateVisualVisionGate(input: {
   return { run: true, routes };
 }
 
-/** One vision observation the model reported for a specific route — both fields already public-safe (see
- *  {@link parseVisualVisionResponse}). */
-export type VisualVisionFinding = { path: string; body: string };
+/** One vision observation the model reported for a specific route — `path`/`body` already public-safe (see
+ *  {@link parseVisualVisionResponse}). `category` is only ever populated when the caller used
+ *  {@link VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT} (`review.visual.bugAnalysis`) — the default prompt
+ *  ({@link VISUAL_VISION_SYSTEM_PROMPT}) never asks the model for one, so it's absent (parsed as
+ *  `"regression"`, {@link buildVisualRegressionFindings}'s default) for every repo that hasn't opted in,
+ *  byte-identical to pre-bugAnalysis behavior. `"regression"` = a defect this PR's own change introduced;
+ *  `"unrelated"` = a pre-existing problem visible in either screenshot that has nothing to do with this PR's
+ *  stated change. */
+export type VisualVisionFinding = { path: string; body: string; category?: "regression" | "unrelated" };
 
 /** Cap on findings kept from a single vision response — mirrors `composeAdvisoryNotes`'s selectivity so a
  *  verbose model can't pad the comment with a long list of minor observations. */
@@ -110,10 +124,51 @@ export function buildVisualVisionUserPrompt(routes: readonly { path: string }[])
   return `Route(s) under review:\n${paths}\n\nEach route's images are attached in before, after order.`;
 }
 
+/** `review.visual.bugAnalysis`'s enhanced vision prompt — same before/after image contract as
+ *  {@link VISUAL_VISION_SYSTEM_PROMPT}, but PR-intent-aware and dual-category: it reports a genuine defect
+ *  the PR's OWN change introduced ("regression") separately from a pre-existing problem the screenshots
+ *  happen to reveal that has nothing to do with the PR's stated intent ("unrelated") — e.g. broken styling on
+ *  a neighboring component the diff never touches. This is deliberately a SEPARATE prompt from the default,
+ *  not a superset toggle on it: a repo that hasn't opted in must see byte-identical model behavior, and this
+ *  prompt's added PR-context/category instructions are exactly the kind of thing that could otherwise subtly
+ *  shift a model's existing regression-detection behavior even when the caller never intended a change. */
+export const VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT = [
+  "You are reviewing a BEFORE (production) vs AFTER (this pull request's preview deploy) screenshot pair for the same route,",
+  "with the pull request's own stated title/description as context for what this change is supposed to do.",
+  'Respond with ONLY a JSON object of this exact shape (no prose, no code fence): {"findings": [{"path": string, "body": string, "category": "regression" | "unrelated"}]}.',
+  'Report a "regression" finding ONLY for a genuine, visually-confirmable defect that this PR\'s OWN change introduced —',
+  "broken layout, overlapping/clipped/unstyled content, a missing or misplaced element, unreadable contrast, or obvious",
+  'placeholder content. Report an "unrelated" finding for a genuine visual problem you can see in EITHER screenshot that has',
+  "nothing to do with the PR's stated change — a pre-existing bug on the same page the diff never touches. Judge relatedness",
+  "against the stated title/description, not against which pixels happen to differ. Do NOT report a color/spacing/copy change",
+  "that still looks like a normal, intentional part of the stated change. Each body is ONE sentence, specific to what you SEE.",
+  "Return an empty findings array when the AFTER screenshot looks like a legitimate, correctly-rendered page with nothing",
+  "else visibly wrong. Never mention rewards, payouts, wallets, hotkeys, coldkeys, or trust scores.",
+].join(" ");
+
+/** Build the user-turn text for {@link VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT} — same route-listing contract as
+ *  {@link buildVisualVisionUserPrompt}, plus the PR's own stated title/description (when available) so the
+ *  model can judge whether an observation is in- or out-of-scope. A null/blank title AND body still produces
+ *  a valid prompt (the model falls back to judging purely from what it sees) — this is a best-effort context
+ *  addition, not a hard requirement. */
+export function buildVisualBugAnalysisUserPrompt(routes: readonly { path: string }[], pr: { title?: string | null | undefined; body?: string | null | undefined }): string {
+  const paths = routes.map((route) => `- ${route.path}`).join("\n");
+  const title = pr.title?.trim();
+  const body = pr.body?.trim();
+  const prContext =
+    title || body
+      ? `Pull request's stated change:\n${title ? `Title: ${title}\n` : ""}${body ? `Description: ${body.slice(0, 2000)}\n` : ""}\n`
+      : "";
+  return `${prContext}Route(s) under review:\n${paths}\n\nEach route's images are attached in before, after order.`;
+}
+
 /** Parse the model's structured vision response into public-safe findings, dropping anything unparseable, a
  *  blank path/body, or a body that trips the public/private boundary (`toPublicSafe`). Bounded to
  *  {@link MAX_VISUAL_FINDINGS}. Never throws — an unparseable response degrades to `[]`, the same fail-safe
- *  convention `parseModelReview` uses. */
+ *  convention `parseModelReview` uses. `category` is parsed permissively: absent/unrecognized ⇒ undefined
+ *  (treated as `"regression"` by every caller, e.g. {@link buildVisualRegressionFindings}) — the default
+ *  prompt never asks for one, so this keeps that path byte-identical while still accepting a valid category
+ *  from the bug-analysis prompt. */
 export function parseVisualVisionResponse(text: string): VisualVisionFinding[] {
   const raw = extractLastJsonObject(text);
   if (!raw) return [];
@@ -134,22 +189,36 @@ export function parseVisualVisionResponse(text: string): VisualVisionFinding[] {
     const rawBody = typeof record.body === "string" ? record.body : "";
     const body = toPublicSafe(rawBody);
     if (!path || !body) continue;
-    out.push({ path, body });
+    const category = record.category === "regression" || record.category === "unrelated" ? record.category : undefined;
+    out.push(category ? { path, body, category } : { path, body });
   }
   return out;
 }
 
-/** Build the ADVISORY-ONLY findings for the unified comment (#4111) — one per vision observation, feeding the
- *  SAME `advisory.findings` pipeline `ai_consensus_defect`/`ai_review_split` already ride (see this file's
- *  header for why `visual_regression_finding` can never become a blocker). `severity: "warning"` is required,
- *  not incidental — `evaluateGateCheckCore` (src/rules/advisory.ts) only carries `"warning"`-severity findings
- *  into `gate.warnings` at all, so anything else would silently vanish from the rendered comment. */
+/** Build the ADVISORY-ONLY findings for the unified comment (#4111 / `review.visual.bugAnalysis`) — one per
+ *  vision observation, feeding the SAME `advisory.findings` pipeline `ai_consensus_defect`/`ai_review_split`
+ *  already ride (see this file's header for why neither finding code can ever become a blocker).
+ *  `severity: "warning"` is required, not incidental — `evaluateGateCheckCore` (src/rules/advisory.ts) only
+ *  carries `"warning"`-severity findings into `gate.warnings` at all, so anything else would silently vanish
+ *  from the rendered comment. An `"unrelated"`-category finding (only ever produced by
+ *  {@link VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT}) gets its own code + a distinct message suggesting the observer
+ *  open a separate issue, since it is — by construction — not this PR's fault and must never read like one. */
 export function buildVisualRegressionFindings(findings: readonly VisualVisionFinding[]): AdvisoryFinding[] {
-  return findings.map((finding) => ({
-    code: VISUAL_REGRESSION_FINDING_CODE,
-    severity: "warning",
-    title: `Possible visual regression: ${finding.path}`,
-    detail: finding.body,
-    action: "Advisory only — verify against the Visual preview screenshots before deciding.",
-  }));
+  return findings.map((finding) =>
+    finding.category === "unrelated"
+      ? {
+          code: VISUAL_UNRELATED_ISSUE_FINDING_CODE,
+          severity: "warning",
+          title: `Possible unrelated visual issue: ${finding.path}`,
+          detail: finding.body,
+          action: "Advisory only — this doesn't look related to this PR's stated change. Consider opening a new issue to track it separately.",
+        }
+      : {
+          code: VISUAL_REGRESSION_FINDING_CODE,
+          severity: "warning",
+          title: `Possible visual regression: ${finding.path}`,
+          detail: finding.body,
+          action: "Advisory only — verify against the Visual preview screenshots before deciding.",
+        },
+  );
 }

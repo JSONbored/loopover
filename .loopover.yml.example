@@ -704,6 +704,15 @@ review:
 #     # dispatch, byte-identical to today). Not needed for loopover-ui / metagraphed, which already have
 #     # their own preview-deploy pipeline. (#4112, part of the #3607 visual-capture convergence epic)
 #     actions_fallback: false
+#     # PR-intent-aware vision analysis + out-of-scope issue flagging. When true, the SAME before/after
+#     # vision call above (gated on pixel-diff + reputation + a vision-capable provider, see
+#     # evaluateVisualVisionGate) uses an enhanced prompt that also sees this PR's own stated title/
+#     # description, and separates a genuine defect THIS PR introduced ("regression", rendered exactly as
+#     # today) from a pre-existing problem the screenshots happen to reveal that has nothing to do with the
+#     # PR's stated change ("unrelated" — its own advisory finding, suggesting a NEW issue be opened for it
+#     # rather than reading like something this PR broke). Never a gate blocker either way. Bool. Default:
+#     # false (the original regression-only prompt, no PR context sent, byte-identical to pre-bugAnalysis).
+#     bug_analysis: false
 #   # Maintainer overrides for the public review-panel CONTENT (not what loopover measures). The
 #   # Gittensor attribution + register link is always appended to the footer regardless; maintainer text
 #   # failing the public-safe filter is dropped, never published.

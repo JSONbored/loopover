@@ -24,7 +24,7 @@ import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory
 import type { PublicPrPanelSignalRow } from "../signals/engine";
 import { formatManifestValidationNotice } from "../signals/focus-manifest";
 import type { CaptureRoute } from "./visual/capture";
-import { VISUAL_REGRESSION_FINDING_CODE } from "./visual/visual-findings";
+import { VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "./visual/visual-findings";
 // Single-source the panel marker from its canonical home (the upsert reads it there); re-export so existing
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
 // verbatim or `createOrUpdatePrIntelligenceComment` posts a DUPLICATE instead of updating in place.
@@ -247,12 +247,12 @@ export function buildDualReviewNotes(args: {
   // raw warning findings). Scrub each with the private-term boundary and DROP any that still leaks. See
   // PRIVATE_FORBIDDEN_TERMS above. (The consensus-defect blocker is already public-safe via toPublicSafe; the
   // gate blockers above go through the SAME scrub as Nits.)
-  // `visual_regression_finding` is excluded here the same way `ai_consensus_defect` is excluded from
-  // gateBlockerLines above — it renders in its OWN "Visual findings" collapsible (see
-  // `visualFindingsFromFindings`/`buildVisualFindingsCollapsible`), so folding it into generic Nits too would
-  // render it twice.
+  // `visual_regression_finding`/`visual_unrelated_issue_finding` are excluded here the same way
+  // `ai_consensus_defect` is excluded from gateBlockerLines above — they render in their OWN "Visual
+  // findings" collapsible (see `visualFindingsFromFindings`/`buildVisualFindingsCollapsible`), so folding
+  // them into generic Nits too would render them twice.
   const gateNits = (args.warnings ?? [])
-    .filter((warning) => !isBoilerplateNit(warning) && warning.code !== VISUAL_REGRESSION_FINDING_CODE)
+    .filter((warning) => !isBoilerplateNit(warning) && warning.code !== VISUAL_REGRESSION_FINDING_CODE && warning.code !== VISUAL_UNRELATED_ISSUE_FINDING_CODE)
     .map((warning) => `${warning.title}${warning.action ? ` — ${warning.action}` : ""}`.trim())
     .filter(Boolean)
     .map((line) => publicSafeNit(line))
@@ -287,16 +287,20 @@ export function consensusDefectFromFindings(findings: AdvisoryFinding[] | undefi
   return { title: found.title, detail: found.detail };
 }
 
-/** Recover the advisory-only visual-regression findings (#4111 — AI-vision analysis of before/after visual
- *  captures) from the SAME advisory findings array `consensusDefectFromFindings` reads above — feeding the
- *  identical pipeline every other AI-judgment finding rides, so a visual finding is suppressible by
- *  review.memory, audited the same way, and — critically — can NEVER become a gate blocker:
- *  `visual_regression_finding` is not one of the codes `isConfiguredGateBlocker` (src/rules/advisory.ts)
- *  recognizes, so it always stays a warning. Formatted `title: detail`, scrubbed through the same
- *  `publicSafeNit` defense-in-depth boundary as every other bridge-recovered string. */
+/** Recover the advisory-only visual-regression AND visual-unrelated-issue findings (#4111 / `review.visual.
+ *  bugAnalysis` — AI-vision analysis of before/after visual captures) from the SAME advisory findings array
+ *  `consensusDefectFromFindings` reads above — feeding the identical pipeline every other AI-judgment finding
+ *  rides, so a visual finding is suppressible by review.memory, audited the same way, and — critically — can
+ *  NEVER become a gate blocker: neither `visual_regression_finding` nor `visual_unrelated_issue_finding` is
+ *  one of the codes `isConfiguredGateBlocker` (src/rules/advisory.ts) recognizes, so both always stay a
+ *  warning. Both codes share the SAME collapsible/rendering path — each finding's own title/action text
+ *  (see `buildVisualRegressionFindings`) already makes the distinction ("possible regression" vs "possible
+ *  unrelated issue — consider opening a new issue") without needing a separate section here. Formatted
+ *  `title: detail`, scrubbed through the same `publicSafeNit` defense-in-depth boundary as every other
+ *  bridge-recovered string. */
 export function visualFindingsFromFindings(findings: AdvisoryFinding[] | undefined): string[] {
   return (findings ?? [])
-    .filter((finding) => finding.code === VISUAL_REGRESSION_FINDING_CODE)
+    .filter((finding) => finding.code === VISUAL_REGRESSION_FINDING_CODE || finding.code === VISUAL_UNRELATED_ISSUE_FINDING_CODE)
     .map((finding) => `${finding.title}: ${finding.detail}`.trim())
     .map((line) => publicSafeNit(line))
     .filter((line): line is string => line !== null);

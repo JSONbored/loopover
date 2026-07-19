@@ -4862,6 +4862,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
       enabled: null,
       themeStorageKey: null,
       actionsFallback: false,
+      bugAnalysis: false,
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.visual).toEqual(m.review.visual);
@@ -4957,7 +4958,7 @@ describe("review.visual (#3609 preview.url_template / #3610 routes)", () => {
   it("resolveReviewVisualConfig: null manifest yields empty defaults; a set manifest passes through", () => {
     expect(resolveReviewVisualConfig(null)).toEqual({ ...EMPTY_VISUAL_CONFIG });
     const manifest = parseFocusManifest({ review: { visual: { routes: { paths: ["/app"] } } } });
-    expect(resolveReviewVisualConfig(manifest)).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(resolveReviewVisualConfig(manifest)).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: ["/app"], maxRoutes: null }, themes: [], gif: false, enabled: null, themeStorageKey: null, actionsFallback: false, bugAnalysis: false });
   });
 });
 
@@ -5103,7 +5104,7 @@ describe("review.visual.gif (#3612 scroll-through GIF capture)", () => {
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { gif: true, themes: ["dark"] } } });
-    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false, bugAnalysis: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], gif: true } });
   });
 
@@ -5206,7 +5207,7 @@ describe("review.visual.theme_storage_key (#4109 localStorage theme-forcing fall
 
   it("composes with themes — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { themes: ["dark"], theme_storage_key: "theme" } } });
-    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: ["dark"], gif: false, enabled: null, themeStorageKey: "theme", actionsFallback: false, bugAnalysis: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { themes: ["dark"], theme_storage_key: "theme" } });
   });
 
@@ -5261,7 +5262,7 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
 
   it("composes with gif — both configured independently and both round-trip", () => {
     const m = parseFocusManifest({ review: { visual: { actions_fallback: true, gif: true } } });
-    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: true, bugAnalysis: false });
     expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true, actions_fallback: true } });
   });
 
@@ -5280,6 +5281,61 @@ describe("review.visual.actions_fallback (#4112 GitHub-Actions build-and-serve f
     const globalDefault = parseReviewConfigMapping({ visual: { actions_fallback: true } }, []);
     const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
     expect(overlayReviewConfig(globalDefault, perRepo).visual.actionsFallback).toBe(true);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
+  });
+});
+
+describe("review.visual.bugAnalysis (PR-intent-aware vision + out-of-scope issue flagging)", () => {
+  it("parses bug_analysis: true, marks present, and round-trips", () => {
+    const m = parseFocusManifest({ review: { visual: { bug_analysis: true } } });
+    expect(m.review.visual.bugAnalysis).toBe(true);
+    expect(m.review.present).toBe(true);
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { bug_analysis: true } });
+  });
+
+  it("absent bug_analysis defaults to false and does not mark review present on its own", () => {
+    expect(parseFocusManifest({}).review.visual.bugAnalysis).toBe(false);
+    expect(parseFocusManifest({ review: { visual: {} } }).review.present).toBe(false);
+  });
+
+  it("bug_analysis: false does not mark review present, so the whole review block round-trips to null", () => {
+    const m = parseFocusManifest({ review: { visual: { bug_analysis: false } } });
+    expect(m.review.visual.bugAnalysis).toBe(false);
+    expect(reviewConfigToJson(m.review)).toBeNull();
+  });
+
+  it("warns and defaults to false when bug_analysis is not a boolean", () => {
+    const bad = parseFocusManifest({ review: { visual: { bug_analysis: "yes" } } });
+    expect(bad.review.visual.bugAnalysis).toBe(false);
+    expect(bad.warnings.some((w) => /review\.visual\.bug_analysis.*must be a boolean/.test(w))).toBe(true);
+  });
+
+  it("marks present via bug_analysis alone (preview + routes + themes + gif + enabled all empty)", () => {
+    const m = parseFocusManifest({ review: { visual: { bug_analysis: true } } });
+    expect(m.review.present).toBe(true);
+  });
+
+  it("composes with gif — both configured independently and both round-trip", () => {
+    const m = parseFocusManifest({ review: { visual: { bug_analysis: true, gif: true } } });
+    expect(m.review.visual).toEqual({ productionUrl: null, preview: { urlTemplate: null }, routes: { paths: [], maxRoutes: null }, themes: [], gif: true, enabled: null, themeStorageKey: null, actionsFallback: false, bugAnalysis: true });
+    expect(reviewConfigToJson(m.review)).toEqual({ visual: { gif: true, bug_analysis: true } });
+  });
+
+  it("resolveReviewVisualConfig passes a configured bug_analysis: true through", () => {
+    const manifest = parseFocusManifest({ review: { visual: { bug_analysis: true } } });
+    expect(resolveReviewVisualConfig(manifest).bugAnalysis).toBe(true);
+  });
+
+  it("overlay: a per-repo bug_analysis: true wins over a global-default false", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { bug_analysis: false } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { bug_analysis: true } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.bugAnalysis).toBe(true);
+  });
+
+  it("overlay: an unset per-repo bug_analysis falls back to the global-default true — this is how the operator turns it on fleet-wide from the global-default .loopover.yml", () => {
+    const globalDefault = parseReviewConfigMapping({ visual: { bug_analysis: true } }, []);
+    const perRepo = parseReviewConfigMapping({ visual: { routes: { paths: ["/app"] } } }, []);
+    expect(overlayReviewConfig(globalDefault, perRepo).visual.bugAnalysis).toBe(true);
     expect(overlayReviewConfig(globalDefault, perRepo).visual.routes.paths).toEqual(["/app"]);
   });
 });

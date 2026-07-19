@@ -996,6 +996,14 @@ export type VisualConfig = {
    *  (see the workflow's own header comment for setup); a repo without it just never gets a fallback run, same
    *  as leaving this unset. (#3607 visual-capture convergence epic) */
   actionsFallback: boolean;
+  /** `review.visual.bugAnalysis`: use the enhanced, PR-intent-aware vision prompt
+   *  (`VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT`, src/review/visual/visual-findings.ts) instead of the default
+   *  regression-only one — it's told the PR's own stated title/description and asked to separate a genuine
+   *  defect THIS PR introduced ("regression") from a pre-existing problem the screenshots happen to reveal
+   *  that has nothing to do with the PR's stated change ("unrelated", surfaced with a suggestion to open a
+   *  new issue for it). false (default, every existing manifest) ⇒ byte-identical to today: the original
+   *  regression-only prompt, no PR context sent, no "unrelated" finding category ever produced. */
+  bugAnalysis: boolean;
 };
 
 /** A `prefers-color-scheme` value the capture pipeline can emulate before rendering (#3678). */
@@ -1037,6 +1045,7 @@ export const EMPTY_VISUAL_CONFIG: VisualConfig = {
   enabled: null,
   themeStorageKey: null,
   actionsFallback: false,
+  bugAnalysis: false,
 };
 
 /** One `review.path_instructions[]` entry: a manifest path glob + the public-safe instructions to apply when a
@@ -2942,6 +2951,7 @@ function overlayVisualConfig(base: VisualConfig, override: VisualConfig): Visual
     enabled: pickOverlayNullable(override.enabled, base.enabled),
     themeStorageKey: pickOverlayNullable(override.themeStorageKey, base.themeStorageKey),
     actionsFallback: override.actionsFallback ? override.actionsFallback : base.actionsFallback,
+    bugAnalysis: override.bugAnalysis ? override.bugAnalysis : base.bugAnalysis,
   };
 }
 
@@ -3146,7 +3156,8 @@ function visualConfigPresent(config: VisualConfig): boolean {
     config.gif ||
     config.enabled !== null ||
     config.themeStorageKey !== null ||
-    config.actionsFallback
+    config.actionsFallback ||
+    config.bugAnalysis
   );
 }
 
@@ -3247,8 +3258,9 @@ function parseVisualConfig(value: JsonValue | undefined, warnings: string[]): Vi
   const enabled = normalizeOptionalBoolean(record.enabled, "review.visual.enabled", warnings);
   const themeStorageKey = parsePublicSafeText(record.theme_storage_key, "review.visual.theme_storage_key", warnings);
   const actionsFallback = normalizeOptionalBoolean(record.actions_fallback, "review.visual.actions_fallback", warnings) === true;
+  const bugAnalysis = normalizeOptionalBoolean(record.bug_analysis, "review.visual.bug_analysis", warnings) === true;
 
-  return { productionUrl, preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback };
+  return { productionUrl, preview: { urlTemplate }, routes: { paths, maxRoutes }, themes, gif, enabled, themeStorageKey, actionsFallback, bugAnalysis };
 }
 
 function parseAutoReviewTitleKeywords(value: JsonValue | undefined, warnings: string[]): string[] {
@@ -3563,6 +3575,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     if (review.visual.enabled !== null) visual.enabled = review.visual.enabled;
     if (review.visual.themeStorageKey !== null) visual.theme_storage_key = review.visual.themeStorageKey;
     if (review.visual.actionsFallback) visual.actions_fallback = true;
+    if (review.visual.bugAnalysis) visual.bug_analysis = true;
     out.visual = visual;
   }
   if (review.linkedIssueSatisfaction !== null) out.linkedIssueSatisfaction = review.linkedIssueSatisfaction;

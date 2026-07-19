@@ -348,6 +348,97 @@ describe("runVisualVisionForAdvisory", () => {
     ]);
   });
 
+  it("review.visual.bugAnalysis OFF (default): sends the original prompt with no PR context, byte-identical to pre-bugAnalysis", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    let capturedBody: string | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.anthropic.com/v1/messages") {
+        capturedBody = String(init?.body ?? "");
+        return anthropicOk(findingsResponse([{ path: "/app", body: "Broke." }]));
+      }
+      if (url.includes("/loopover/shot")) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      return new Response("not found", { status: 404 });
+    }));
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr: { number: 3, title: "Fix pricing overflow", body: "Description text." },
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: [route({ path: "/app", diffUrl: "https://x/loopover/shot?key=diff", beforeUrl: "https://x/loopover/shot?key=b", afterUrl: "https://x/loopover/shot?key=a" })],
+      // bugAnalysisEnabled deliberately omitted — defaults to the pre-bugAnalysis prompt/behavior.
+    });
+    expect(capturedBody).toBeDefined();
+    expect(capturedBody).not.toContain("category");
+    expect(capturedBody).not.toContain("Fix pricing overflow");
+    expect(adv.findings).toEqual([
+      {
+        code: "visual_regression_finding",
+        severity: "warning",
+        title: "Possible visual regression: /app",
+        detail: "Broke.",
+        action: "Advisory only — verify against the Visual preview screenshots before deciding.",
+      },
+    ]);
+  });
+
+  it("review.visual.bugAnalysis ON: sends the PR title/body as context and correctly routes an 'unrelated' finding to its own code", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });
+    let capturedBody: string | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.anthropic.com/v1/messages") {
+        capturedBody = String(init?.body ?? "");
+        return anthropicOk(
+          JSON.stringify({
+            findings: [
+              { path: "/app", body: "This PR's own change clipped the submit button.", category: "regression" },
+              { path: "/app", body: "The footer logo is stretched, unrelated to this change.", category: "unrelated" },
+            ],
+          }),
+        );
+      }
+      if (url.includes("/loopover/shot")) return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      return new Response("not found", { status: 404 });
+    }));
+    const adv = findingsHolder();
+    await runVisualVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr: { number: 3, title: "Fix pricing overflow", body: "Description text." },
+      author: "alice",
+      confirmedContributor: true,
+      settings: byokSettings(),
+      advisory: adv,
+      routes: [route({ path: "/app", diffUrl: "https://x/loopover/shot?key=diff", beforeUrl: "https://x/loopover/shot?key=b", afterUrl: "https://x/loopover/shot?key=a" })],
+      bugAnalysisEnabled: true,
+    });
+    expect(capturedBody).toContain("Fix pricing overflow");
+    expect(capturedBody).toContain("Description text.");
+    expect(adv.findings).toEqual([
+      {
+        code: "visual_regression_finding",
+        severity: "warning",
+        title: "Possible visual regression: /app",
+        detail: "This PR's own change clipped the submit button.",
+        action: "Advisory only — verify against the Visual preview screenshots before deciding.",
+      },
+      {
+        code: "visual_unrelated_issue_finding",
+        severity: "warning",
+        title: "Possible unrelated visual issue: /app",
+        detail: "The footer logo is stretched, unrelated to this change.",
+        action: "Advisory only — this doesn't look related to this PR's stated change. Consider opening a new issue to track it separately.",
+      },
+    ]);
+  });
+
   it("uses the mobile viewport's shots when only diffUrlMobile (not diffUrl) crossed the threshold", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-vision-key", model: null });

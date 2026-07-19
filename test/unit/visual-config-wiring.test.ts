@@ -24,6 +24,7 @@ describe("review.visual wiring (#3609 / #3610)", () => {
       enabled: null,
       themeStorageKey: null,
       actionsFallback: false,
+      bugAnalysis: false,
     });
     expect(loadSpy).toHaveBeenCalledWith(expect.anything(), "acme/widgets");
     loadSpy.mockRestore();
@@ -52,6 +53,19 @@ describe("review.visual wiring (#3609 / #3610)", () => {
     const manifest = parseFocusManifest({ review: { visual: { actions_fallback: true } } });
     const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
     await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, actionsFallback: true });
+    loadSpy.mockRestore();
+  });
+
+  it("resolves a configured bug_analysis: true from the repo's focus manifest", async () => {
+    const manifest = parseFocusManifest({ review: { visual: { bug_analysis: true } } });
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
+    await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, bugAnalysis: true });
+    loadSpy.mockRestore();
+  });
+
+  it("bug_analysis defaults to false, byte-identical to today, when unset", async () => {
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(parseFocusManifest({ review: { visual: { gif: true } } }));
+    await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, gif: true, bugAnalysis: false });
     loadSpy.mockRestore();
   });
 });

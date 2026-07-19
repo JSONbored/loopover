@@ -13,7 +13,7 @@ import {
   verdictToRecommendation,
   visualFindingsFromFindings,
 } from "../../src/review/unified-comment-bridge";
-import { VISUAL_REGRESSION_FINDING_CODE } from "../../src/review/visual/visual-findings";
+import { VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "../../src/review/visual/visual-findings";
 import { PR_PANEL_COMMENT_MARKER as MARKER_FROM_COMMENTS } from "../../src/github/comments";
 import { deriveUnifiedStatus, type MergeReadiness, type UnifiedCollapsible, type UnifiedCommentStatus } from "../../src/review/unified-comment";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
@@ -133,6 +133,32 @@ describe("visualFindingsFromFindings (#4111 — advisory-only AI-vision analysis
     const [line] = visualFindingsFromFindings(findings);
     expect(line).not.toMatch(/trust score/i);
     expect(line).toContain("[context]");
+  });
+
+  it("ALSO recovers visual_unrelated_issue_finding entries (review.visual.bugAnalysis), same format as a regression finding", () => {
+    const findings: AdvisoryFinding[] = [
+      { code: "missing_linked_issue", severity: "warning", title: "No linked issue", detail: "..." },
+      {
+        code: VISUAL_UNRELATED_ISSUE_FINDING_CODE,
+        severity: "warning",
+        title: "Possible unrelated visual issue: /footer",
+        detail: "The footer logo is stretched, unrelated to this change.",
+      },
+    ];
+    expect(visualFindingsFromFindings(findings)).toEqual([
+      "Possible unrelated visual issue: /footer: The footer logo is stretched, unrelated to this change.",
+    ]);
+  });
+
+  it("recovers a mix of regression and unrelated-issue findings, in original order", () => {
+    const findings: AdvisoryFinding[] = [
+      { code: VISUAL_REGRESSION_FINDING_CODE, severity: "warning", title: "Possible visual regression: /pricing", detail: "Broke." },
+      { code: VISUAL_UNRELATED_ISSUE_FINDING_CODE, severity: "warning", title: "Possible unrelated visual issue: /footer", detail: "Stretched." },
+    ];
+    expect(visualFindingsFromFindings(findings)).toEqual([
+      "Possible visual regression: /pricing: Broke.",
+      "Possible unrelated visual issue: /footer: Stretched.",
+    ]);
   });
 });
 
@@ -1003,6 +1029,28 @@ describe("buildUnifiedCommentBody: visual findings render in their OWN section, 
       footerMarkdown: footer,
     });
     expect(body).not.toContain("Visual findings");
+  });
+
+  it("renders a visual_unrelated_issue_finding (review.visual.bugAnalysis) in the SAME 'Visual findings' section, also never duplicated as a generic Nit", () => {
+    const unrelatedFinding: AdvisoryFinding = {
+      code: VISUAL_UNRELATED_ISSUE_FINDING_CODE,
+      severity: "warning",
+      title: "Possible unrelated visual issue: /footer",
+      detail: "The footer logo is stretched, unrelated to this change.",
+      action: "Advisory only — this doesn't look related to this PR's stated change. Consider opening a new issue to track it separately.",
+    };
+    const body = buildUnifiedCommentBody({
+      gate: gate({ warnings: [unrelatedFinding] }),
+      advisoryFindings: [unrelatedFinding],
+      panelRows,
+      readinessTotal: 80,
+      changedFiles: 2,
+      footerMarkdown: footer,
+    });
+    expect(body).toContain("Visual findings");
+    expect(body).toContain("Possible unrelated visual issue: /footer: The footer logo is stretched, unrelated to this change.");
+    expect(body.split("Possible unrelated visual issue: /footer").length - 1).toBe(1);
+    expect(body).toContain("Suggested Action - Approve/Merge");
   });
 });
 

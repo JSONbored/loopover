@@ -459,10 +459,12 @@ import {
   parseFallbackRunCorrelation,
 } from "../review/visual/actions-fallback";
 import {
+  buildVisualBugAnalysisUserPrompt,
   buildVisualRegressionFindings,
   buildVisualVisionUserPrompt,
   evaluateVisualVisionGate,
   parseVisualVisionResponse,
+  VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT,
   VISUAL_VISION_SYSTEM_PROMPT,
 } from "../review/visual/visual-findings";
 import { incr, observe, REVIEW_LATENCY_BUCKETS } from "../selfhost/metrics";
@@ -7280,12 +7282,20 @@ export async function runVisualVisionForAdvisory(
     // must never reach the vision-model call below.
     mode: AgentActionMode;
     repoFullName: string;
-    pr: { number: number };
+    // title/body are OPTIONAL and only ever read when bugAnalysisEnabled is true (VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT
+    // is the only prompt that uses PR context at all) -- a caller that doesn't pass them still gets the exact
+    // same default-prompt behavior as before this field existed.
+    pr: { number: number; title?: string | null | undefined; body?: string | null | undefined };
     author: string | null;
     confirmedContributor: boolean;
     settings: RepositorySettings;
     advisory: { findings: AdvisoryFinding[] };
     routes: readonly CaptureRoute[];
+    // review.visual.bugAnalysis (config-as-code, resolved by the caller from resolveVisualCaptureConfig) --
+    // absent/false ⇒ byte-identical to today: VISUAL_VISION_SYSTEM_PROMPT, no PR context, no "unrelated"
+    // finding category ever produced. See visual-findings.ts's VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT doc comment
+    // for why this is a separate prompt rather than an always-on superset.
+    bugAnalysisEnabled?: boolean;
   },
 ): Promise<void> {
   if (args.mode === "paused" || args.routes.length === 0) return;
@@ -7366,10 +7376,17 @@ export async function runVisualVisionForAdvisory(
       if (afterBlock) images.push(afterBlock);
     }
     if (images.length === 0) return;
+    // review.visual.bugAnalysis (config-as-code): swap in the PR-intent-aware, dual-category prompt + a
+    // user-turn that also names the PR's own stated title/description. Absent/false ⇒ the exact same
+    // VISUAL_VISION_SYSTEM_PROMPT/buildVisualVisionUserPrompt call every existing caller already makes.
+    const visionSystemPrompt = args.bugAnalysisEnabled ? VISUAL_BUG_ANALYSIS_SYSTEM_PROMPT : VISUAL_VISION_SYSTEM_PROMPT;
+    const visionUserPrompt = args.bugAnalysisEnabled
+      ? buildVisualBugAnalysisUserPrompt(visionGate.routes, { title: args.pr.title, body: args.pr.body })
+      : buildVisualVisionUserPrompt(visionGate.routes);
     let visionText: string | null;
     let visionUsage: AiReviewActualUsage | undefined;
     if (visionProviderKey) {
-      const visionResponse = await callAiProvider(visionProviderKey, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), 600, images);
+      const visionResponse = await callAiProvider(visionProviderKey, visionSystemPrompt, visionUserPrompt, 600, images);
       visionText = visionResponse.text;
       visionUsage = visionResponse.usage;
       if (!visionText) {
@@ -7390,7 +7407,7 @@ export async function runVisualVisionForAdvisory(
         return;
       }
     } else {
-      const selfHostResult = await runSelfHostVisualVision(env, VISUAL_VISION_SYSTEM_PROMPT, buildVisualVisionUserPrompt(visionGate.routes), images);
+      const selfHostResult = await runSelfHostVisualVision(env, visionSystemPrompt, visionUserPrompt, images);
       visionText = selfHostResult.text;
       visionUsage = selfHostResult.usage;
       if (!visionText) {
@@ -10298,6 +10315,12 @@ async function maybePublishPrPublicSurface(
       // NEVER sink the review — it just omits the "Visual preview" section. Flag-OFF (default) ⇒ this block is
       // skipped entirely and the unified comment is byte-identical.
       let beforeAfter: CaptureRoute[] = [];
+      // review.visual.bugAnalysis — resolved inside the try block below alongside the rest of reviewVisualConfig,
+      // but needed at the runVisualVisionForAdvisory call OUTSIDE that block's scope (that call is deliberately
+      // independent of the capture try/catch above, see its own comment) — mirrors beforeAfter's own
+      // declared-outer/assigned-inner pattern. false (unresolved, or resolution never ran) ⇒ byte-identical
+      // default-prompt behavior, same fail-safe direction as every other config-as-code read here.
+      let bugAnalysisEnabled = false;
       const visualFiles = unifiedFiles
         .map((file) => file.path)
         .filter(isVisualPath);
@@ -10308,6 +10331,7 @@ async function maybePublishPrPublicSurface(
           // (the default for every repo today) ⇒ EMPTY_VISUAL_CONFIG ⇒ buildCapture's discovery/inference
           // behavior is byte-identical to pre-#3609.
           const reviewVisualConfig = await resolveVisualCaptureConfig(env, repoFullName);
+          bugAnalysisEnabled = reviewVisualConfig.bugAnalysis === true;
           const captureTarget = {
             repoFullName,
             prNumber: pr.number,
@@ -10399,6 +10423,7 @@ async function maybePublishPrPublicSurface(
         settings,
         advisory,
         routes: beforeAfter,
+        bugAnalysisEnabled,
       });
       // Vision-verify a contributor-pasted screenshot-table (#4366 wiring) — see runScreenshotTableVisionForAdvisory's
       // own doc comment. Independent of the bot-capture vision block above: this checks the CONTRIBUTOR's own

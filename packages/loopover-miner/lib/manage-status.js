@@ -1,7 +1,7 @@
 import { initEventLedger } from "./event-ledger.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import { initRunStateStore } from "./run-state.js";
-import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 /** Event vocabulary for manage-phase PR snapshots written by manage poll. (#2325) */
 export const MANAGE_PR_UPDATE_EVENT = "manage_pr_update";
@@ -233,6 +233,10 @@ export function runManageStatus(args = [], options = {}) {
       console.log(`${renderManageStatusTable(rows)}\n\n${renderRunPortfolioTable(runPortfolio)}`);
     }
     return 0;
+  } catch (error) {
+    // Collecting/rendering manage status touches three SQLite stores; a read/render failure must surface as a
+    // clean CLI error (honoring --json), not an unhandled throw -- matching runOrbExportCli / runQueueList (#7236).
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
     if (ownsPortfolioQueue) portfolioQueue.close();
     if (ownsEventLedger) eventLedger.close();

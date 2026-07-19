@@ -275,6 +275,32 @@ describe("loopover-miner manage status (#2325)", () => {
     ]);
   });
 
+  it("reports a clean CLI failure (honoring --json) when collecting status throws, instead of an unhandled throw (#7236)", () => {
+    const throwingQueue = {
+      listQueue() {
+        throw new Error("boom: portfolio-queue read failed");
+      },
+      close() {},
+    };
+    const initStores = {
+      initPortfolioQueue: () => throwingQueue,
+      initEventLedger: () => ({ readEvents: () => [], close() {} }),
+      initRunStateStore: () => ({ listRunStates: () => [], close() {} }),
+    } as unknown as Parameters<typeof runManageStatus>[1];
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() => runManageStatus([], initStores)).not.toThrow();
+    expect(runManageStatus([], initStores)).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: portfolio-queue read failed");
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runManageStatus(["--json"], initStores)).toBe(2);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+      ok: false,
+      error: "boom: portfolio-queue read failed",
+    });
+  });
+
   it("rejects unknown CLI options", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(runManageStatus(["--verbose"])).toBe(2);

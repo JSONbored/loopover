@@ -297,6 +297,37 @@ describe("PortfolioPage queue actions (#4857)", () => {
       await vi.advanceTimersByTimeAsync(1000);
       await vi.waitFor(() => expect(loadPortfolioQueueItems).toHaveBeenCalledTimes(2));
     });
+
+    it("REGRESSION (#7230): an operator action's immediate refresh is additive and does not reset the poll schedule", async () => {
+      vi.useFakeTimers();
+      const loadPortfolioQueueItems = vi.fn(async () => ({ ok: true as const, items: [inProgressItem] }));
+      const releaseItem = vi.fn(async (): Promise<PortfolioQueueActionResult> => ({
+        ok: true,
+        entry: { repoFullName: "acme/widgets", identifier: "issue:12", status: "queued" },
+      }));
+      render(
+        <PortfolioPage
+          loadPortfolioQueue={loadPortfolioQueue}
+          loadPortfolioQueueItems={loadPortfolioQueueItems}
+          releaseItem={releaseItem}
+          pollIntervalMs={1000}
+        />,
+      );
+      // Mount fetch.
+      await vi.waitFor(() => expect(loadPortfolioQueueItems).toHaveBeenCalledTimes(1));
+
+      // Part-way through the interval, the operator releases an item — an immediate, additive re-fetch.
+      await vi.advanceTimersByTimeAsync(600);
+      fireEvent.click(screen.getByRole("button", { name: "Release" }));
+      await vi.waitFor(() => expect(releaseItem).toHaveBeenCalled());
+      await vi.waitFor(() => expect(loadPortfolioQueueItems).toHaveBeenCalledTimes(2));
+
+      // The original 1000ms schedule is undisturbed: the next scheduled tick still lands at t=1000 (400ms later),
+      // NOT 1000ms after the action. Before the fix (refreshKey re-armed the interval) this tick would not have
+      // fired until t=1600.
+      await vi.advanceTimersByTimeAsync(400);
+      await vi.waitFor(() => expect(loadPortfolioQueueItems).toHaveBeenCalledTimes(3));
+    });
   });
 });
 

@@ -185,7 +185,7 @@ export function RunHistoryPage({
   loadRunStates?: () => Promise<RunHistoryResult>;
   pollIntervalMs?: number;
 }) {
-  const result = usePolledFetch(loadRunStates, pollIntervalMs);
+  const { result } = usePolledFetch(loadRunStates, pollIntervalMs);
 
   return (
     <Card>

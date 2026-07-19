@@ -173,8 +173,8 @@ export function IndexPage({
   loadClaims?: () => Promise<LedgersResult>;
   pollIntervalMs?: number;
 }) {
-  const runs = usePolledFetch(loadRuns, pollIntervalMs);
-  const portfolio = usePolledFetch(loadPortfolio, pollIntervalMs);
-  const claims = usePolledFetch(loadClaims, pollIntervalMs);
+  const { result: runs } = usePolledFetch(loadRuns, pollIntervalMs);
+  const { result: portfolio } = usePolledFetch(loadPortfolio, pollIntervalMs);
+  const { result: claims } = usePolledFetch(loadClaims, pollIntervalMs);
   return <OverviewView runs={runs} portfolio={portfolio} claims={claims} />;
 }

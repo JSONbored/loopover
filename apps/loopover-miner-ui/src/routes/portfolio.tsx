@@ -403,25 +403,29 @@ export function PortfolioPage({
   requeueItem?: typeof requeuePortfolioQueueItem;
   pollIntervalMs?: number;
 }) {
-  const [refreshKey, setRefreshKey] = useState(0);
   const [actionPending, setActionPending] = useState(false);
   const [actionResult, setActionResult] = useState<PortfolioQueueActionResult | null>(null);
 
-  const loadSummary = useCallback(() => loadPortfolioQueue(), [loadPortfolioQueue, refreshKey]);
-  const summaryResult = usePolledFetch(loadSummary, pollIntervalMs);
+  const loadSummary = useCallback(() => loadPortfolioQueue(), [loadPortfolioQueue]);
+  const { result: summaryResult, refresh: refreshSummary } = usePolledFetch(loadSummary, pollIntervalMs);
 
   // Poll the queue-actions items on the shared cadence too, independently of the summary card's own poll — a slow
-  // or failed fetch in one section must not block the other. Bumping refreshKey after the operator's own action
-  // re-fetches immediately, additive to the timer rather than replacing it (#7082).
-  const loadItems = useCallback(() => loadPortfolioQueueItems(), [loadPortfolioQueueItems, refreshKey]);
-  const itemsResult = usePolledFetch(loadItems, pollIntervalMs);
+  // or failed fetch in one section must not block the other.
+  const loadItems = useCallback(() => loadPortfolioQueueItems(), [loadPortfolioQueueItems]);
+  const { result: itemsResult, refresh: refreshItems } = usePolledFetch(loadItems, pollIntervalMs);
 
   const runQueueAction = (action: () => Promise<PortfolioQueueActionResult>) => {
     setActionPending(true);
     void action().then((next) => {
       setActionResult(next);
       if (next.ok) {
-        setRefreshKey((key) => key + 1);
+        // Reflect the operator's own action immediately — additively, via usePolledFetch's imperative refresh so
+        // the periodic cadence stays on its original clock (#7230). The prior refreshKey→loadFn-identity bump
+        // instead tore down and re-armed each poll's interval, deferring the next scheduled tick to `intervalMs`
+        // after the action rather than keeping it at its undisturbed time (contradicting #7082's "additive, not a
+        // replacement" requirement).
+        refreshSummary();
+        refreshItems();
       }
       setActionPending(false);
     });

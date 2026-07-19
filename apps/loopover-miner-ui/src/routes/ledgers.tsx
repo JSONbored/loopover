@@ -432,12 +432,12 @@ export function LedgersPage({
 
   // Join the app's shared live-refresh cadence so newly-recorded claims/events appear without a manual reload,
   // matching the Overview page's claims card that reads the same data source (#7082).
-  const result = usePolledFetch(loadLedgers, pollIntervalMs);
+  const { result } = usePolledFetch(loadLedgers, pollIntervalMs);
 
   // Poll the governor pause-state on the same cadence. Each fresh poll result is synced into `pauseState` during
   // render, while the operator's own pause/resume action writes `pauseState` directly so it reflects immediately,
   // not only on the next tick (#7082).
-  const polledPauseState = usePolledFetch(loadGovernorPauseState, pollIntervalMs);
+  const { result: polledPauseState } = usePolledFetch(loadGovernorPauseState, pollIntervalMs);
   if (polledPauseState !== lastPolledPauseState) {
     setLastPolledPauseState(polledPauseState);
     setPauseState(polledPauseState);

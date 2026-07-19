@@ -93,6 +93,33 @@ describe("loopover-miner manage poll (#2323/#2325)", () => {
     });
   });
 
+  it("recordManagePollSnapshot rejects malformed input and dependency seams", async () => {
+    const { eventLedger, portfolioQueue } = tempStores();
+    await expect(recordManagePollSnapshot(null as never, { eventLedger })).rejects.toThrow(
+      "invalid_manage_poll_input",
+    );
+    await expect(
+      recordManagePollSnapshot({ repoFullName: "acme", prNumber: 1 }, { eventLedger }),
+    ).rejects.toThrow("invalid_repo_full_name");
+    await expect(
+      recordManagePollSnapshot({ repoFullName: "acme/widgets", prNumber: 0 }, { eventLedger }),
+    ).rejects.toThrow("invalid_pr_number");
+    await expect(
+      recordManagePollSnapshot(
+        { repoFullName: "acme/widgets", prNumber: 1 },
+        { eventLedger: {} as never },
+      ),
+    ).rejects.toThrow("invalid_event_ledger");
+    await expect(
+      recordManagePollSnapshot(
+        { repoFullName: "acme/widgets", prNumber: 1 },
+        { eventLedger, portfolioQueue: {} as never },
+      ),
+    ).rejects.toThrow("invalid_portfolio_queue");
+    // Keep a live queue reference so afterEach cleanup still closes a real store.
+    expect(portfolioQueue.listQueue("acme/widgets")).toEqual([]);
+  });
+
   it("recordManagePollSnapshot appends manage_pr_update and ensures a portfolio row", async () => {
     const { portfolioQueue, eventLedger } = tempStores();
     const pollCheckRuns = vi.fn().mockResolvedValue(pollResult("failure"));

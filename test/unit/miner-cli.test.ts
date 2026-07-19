@@ -192,6 +192,22 @@ describe("loopover-miner startup update check (#2331)", () => {
     expect(compareSemver("0.1.0-9007199254740992", "0.1.0-9007199254740992")).toBe(0);
   });
 
+  it("covers comparePrerelease length / numeric-vs-alpha / unequal-part branches", () => {
+    // Shorter prerelease sorts lower when a shared prefix runs out of identifiers.
+    expect(compareSemver("0.1.0-rc", "0.1.0-rc.1")).toBe(-1);
+    expect(compareSemver("0.1.0-rc.1", "0.1.0-rc")).toBe(1);
+    // Numeric identifiers have lower precedence than non-numeric ones.
+    expect(compareSemver("0.1.0-1", "0.1.0-alpha")).toBe(-1);
+    expect(compareSemver("0.1.0-alpha", "0.1.0-1")).toBe(1);
+    // Equal-length numeric strings compare lexicographically as decimal digit runs.
+    expect(compareSemver("0.1.0-10", "0.1.0-9")).toBe(1);
+    expect(compareSemver("0.1.0-9", "0.1.0-10")).toBe(-1);
+    // Non-numeric identifiers compare lexicographically.
+    expect(compareSemver("0.1.0-alpha", "0.1.0-beta")).toBe(-1);
+    expect(compareSemver("0.1.0-beta", "0.1.0-alpha")).toBe(1);
+    expect(compareSemver("not-a-version", "0.1.0")).toBeNull();
+  });
+
   it("prints a one-line upgrade nudge when npm latest is newer", async () => {
     const registryUrl = await startRegistryFixture({ latestVersion: "9.9.9" });
     const stderr = vi

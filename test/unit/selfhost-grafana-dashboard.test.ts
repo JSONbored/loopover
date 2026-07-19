@@ -29,7 +29,7 @@ type Dashboard = {
 
 const tmpRoots: string[] = [];
 const dashboardPath = join(process.cwd(), "grafana/dashboards/maintainer-reviews.json");
-const selfhostDashboardPath = join(process.cwd(), "grafana/dashboards/gittensory.json");
+const selfhostDashboardPath = join(process.cwd(), "grafana/dashboards/loopover-selfhost.json");
 const selfhostAlertsPath = join(process.cwd(), "prometheus/rules/alerts.yml");
 const githubPrsPath = join(process.cwd(), "grafana/dashboards/github-prs.json");
 const timeFrom = "${__from:date:seconds}";

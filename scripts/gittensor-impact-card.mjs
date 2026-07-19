@@ -27,7 +27,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const repoIconPath = path.join(
   repoRoot,
-  "apps/loopover-ui/public/brand/gittensory-icon-citron.svg",
+  "apps/loopover-ui/public/brand/loopover-icon-citron.svg",
 );
 
 function compact(n) {

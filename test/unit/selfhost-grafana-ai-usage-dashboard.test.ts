@@ -189,7 +189,7 @@ describe("Loopover - AI usage dashboard (Phase B2 consolidation)", () => {
 
   it("carries over the exact Prometheus expressions from the removed dashboards, byte-for-byte (no copy-paste drift)", () => {
     const targets = readDashboard().panels.flatMap((panel) => panel.targets ?? []);
-    // From gittensory.json's removed "AI Usage & Cost" row.
+    // From loopover-selfhost.json's removed "AI Usage & Cost" row.
     expect(targets.some((t) => t.expr === "sum by (provider) ((loopover_ai_cost_usd_total or gittensory_ai_cost_usd_total)) or vector(0)")).toBe(true);
     expect(targets.some((t) => t.expr === "sum by (provider) (((rate(loopover_ai_input_tokens_total[5m]) or rate(gittensory_ai_input_tokens_total[5m])) + (rate(loopover_ai_output_tokens_total[5m]) or rate(gittensory_ai_output_tokens_total[5m]))) * 60)")).toBe(true);
     expect(targets.some((t) => t.expr === "sum by (model, effort) ((increase(loopover_ai_requests_total[1h]) or increase(gittensory_ai_requests_total[1h])))")).toBe(true);
@@ -203,7 +203,7 @@ describe("Loopover - AI usage dashboard (Phase B2 consolidation)", () => {
   // REGRESSION: #5522 hard-cutover renamed this dashboard's loopover_ai_* queries from their pre-rebrand
   // gittensory_ai_* names with no historical fallback, so every panel here only ever showed data recorded
   // after that cutover -- confirmed live (both metric names have real historical series in Prometheus).
-  // Mirrors the (loopover_x or gittensory_x) union fix applied to grafana/dashboards/gittensory.json in
+  // Mirrors the (loopover_x or gittensory_x) union fix applied to grafana/dashboards/loopover-selfhost.json in
   // #6779/#6787, including that fix's own lesson: a label matcher like {provider="codex"} must bind to each
   // side of the union individually, never to the closing paren of the union as a whole.
   it("unions every loopover_ai_* query with its pre-rebrand gittensory_ai_* counterpart for historical continuity (#5522 follow-up)", () => {

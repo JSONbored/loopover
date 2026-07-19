@@ -17,7 +17,7 @@ describe("LoopOver GPU Metrics Grafana dashboard", () => {
   // pre-rebrand gittensory_ai_provider_* names with no historical fallback, so every panel here only ever
   // showed data recorded after that cutover -- confirmed live, both metric names have real historical series
   // in Prometheus going back well past the cutover. Mirrors the (loopover_x or gittensory_x) union fix
-  // already shipped for grafana/dashboards/gittensory.json (#6779/#6787) and ai-usage.json (#5522 follow-up).
+  // already shipped for grafana/dashboards/loopover-selfhost.json (#6779/#6787) and ai-usage.json (#5522 follow-up).
   it("unions every loopover_ai_provider_* query with its pre-rebrand gittensory_ai_provider_* counterpart for historical continuity", () => {
     const targets = readDashboard().panels.flatMap((panel) => panel.targets ?? []);
 

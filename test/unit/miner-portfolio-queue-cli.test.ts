@@ -210,6 +210,18 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
         { apiBaseUrl: "https://api.github.com", repoFullName: "acme/other", identifier: "b1" },
       ]);
     });
+
+    it("REGRESSION: an in-progress item on one host does not consume another host's per-repo WIP budget (#7224)", () => {
+      const entries = [
+        entry({ status: "in_progress", identifier: "host-a", apiBaseUrl: "https://api.github.com" }),
+        entry({ status: "queued", identifier: "host-b", apiBaseUrl: "https://ghe.example.com/api/v3" }),
+      ];
+      // Same repo name, cap 1 — but the in-progress item is on a DIFFERENT forge host, so host B's queued row is
+      // eligible. Before #7224 the host-A item was mis-counted against host B's cap and this returned [].
+      expect(selectNextEligibleTarget(entries, { globalWipCap: 5, perRepoWipCap: 1 })).toEqual([
+        { apiBaseUrl: "https://ghe.example.com/api/v3", repoFullName: "acme/widgets", identifier: "host-b" },
+      ]);
+    });
   });
 
   it("runQueueNext with --global-wip/--per-repo-wip claims only within the configured caps (#4850)", () => {

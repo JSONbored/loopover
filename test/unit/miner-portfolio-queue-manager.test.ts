@@ -170,6 +170,21 @@ describe("initPortfolioQueueManager().claimNextBatch() (#4285)", () => {
     expect(rows.every((row) => row.status === "in_progress")).toBe(true);
   });
 
+  it("REGRESSION: a binding per-repo WIP cap of 1 still lets two hosts' same-named repos each advance (#7224)", () => {
+    const manager = memoryManager({ globalWipCap: 4, perRepoWipCap: 1 });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 1, apiBaseUrl: "https://api.github.com" });
+    manager.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 1, apiBaseUrl: "https://ghe.example.com/api/v3" });
+
+    // The cap binds PER HOST: each host's independent backlog gets its one claim. Before #7224, the two hosts were
+    // bucketed together under the bare repoFullName, so a cap of 1 let only ONE of them advance.
+    const claimed = manager.claimNextBatch();
+    expect(claimed).toHaveLength(2);
+    expect(claimed.map((entry) => entry.apiBaseUrl).sort()).toEqual([
+      "https://api.github.com",
+      "https://ghe.example.com/api/v3",
+    ]);
+  });
+
   it("does not claim rows another writer already took inside the same transaction window", () => {
     const store = initPortfolioQueueStore(":memory:");
     stores.push(store);

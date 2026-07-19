@@ -56,22 +56,32 @@ export function entriesToPortfolioQueue(entries) {
     // Falls back to the github.com default (matching every store's own normalizeApiBaseUrl) so a row from
     // before #5563 threaded apiBaseUrl through this fold still gets a valid, host-scoped id.
     const apiBaseUrl = typeof entry.apiBaseUrl === "string" && entry.apiBaseUrl.trim() ? entry.apiBaseUrl.trim() : DEFAULT_FORGE_CONFIG.apiBaseUrl;
-    const repoKey = repoFullName.toLowerCase();
+    // Host-qualify the engine's per-repo WIP grouping key (#7224). nextEligibleItems groups its per-repo cap by each
+    // item's `repoFullName`, which it treats as an OPAQUE string -- the engine has no apiBaseUrl concept, the host is
+    // smuggled through the opaque `id` (queueItemId, #5563). The store keys rows by apiBaseUrl too, so two forge
+    // hosts' same-named repos are distinct backlogs; without qualifying the grouping key by host here, a per-repo cap
+    // was shared across them (e.g. perRepoWipCap: 1 let only ONE host's backlog advance). The `id` still carries the
+    // TRUE repoFullName and selectEligibleBatch maps results back via parseQueueItemId(id), so the real repo/host
+    // survive to the caller. Single-host behavior is unchanged: one apiBaseUrl means one grouping key per repo.
+    const repoLower = repoFullName.toLowerCase();
+    const repoKey = `${apiBaseUrl}\n${repoLower}`;
     if (!bucketsByRepo.has(repoKey)) {
-      bucketsByRepo.set(repoKey, []);
+      // The bucket's own repoFullName stays the plain repo (display/diversification), while each ITEM carries the
+      // host-qualified key the engine groups on -- so the returned bucket shape is unchanged for single-host.
+      bucketsByRepo.set(repoKey, { repoFullName: repoLower, items: [] });
       bucketOrder.push(repoKey);
     }
-    bucketsByRepo.get(repoKey).push({
+    bucketsByRepo.get(repoKey).items.push({
       id: queueItemId(apiBaseUrl, repoFullName, identifier),
-      repoFullName,
+      repoFullName: repoKey,
       state: entry.status === "in_progress" ? "in_progress" : "queued",
     });
   }
   return {
-    buckets: bucketOrder.map((repoFullName) => ({
-      repoFullName,
-      items: bucketsByRepo.get(repoFullName),
-    })),
+    buckets: bucketOrder.map((repoKey) => {
+      const bucket = bucketsByRepo.get(repoKey);
+      return { repoFullName: bucket.repoFullName, items: bucket.items };
+    }),
   };
 }
 

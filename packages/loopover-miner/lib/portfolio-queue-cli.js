@@ -118,8 +118,14 @@ export function selectNextEligibleTarget(entries, caps) {
   }
   const globalActiveCount = entries.filter((entry) => entry.status === "in_progress").length;
   if (globalActiveCount >= caps.globalWipCap) return [];
+  // Host-scope the per-repo active count (#7224): a same-named repo on a DIFFERENT forge host is a distinct backlog
+  // (the store keys rows by apiBaseUrl too, #5563), so an in-progress item on host A must not consume host B's
+  // per-repo WIP budget. Single-host is unchanged: every entry shares one apiBaseUrl, so the added match is always true.
   const repoActiveCount = entries.filter(
-    (entry) => entry.status === "in_progress" && entry.repoFullName === topQueued.repoFullName,
+    (entry) =>
+      entry.status === "in_progress" &&
+      entry.repoFullName === topQueued.repoFullName &&
+      entry.apiBaseUrl === topQueued.apiBaseUrl,
   ).length;
   if (repoActiveCount >= caps.perRepoWipCap) return [];
   return [{ repoFullName: topQueued.repoFullName, identifier: topQueued.identifier, apiBaseUrl: topQueued.apiBaseUrl }];

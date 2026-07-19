@@ -102,8 +102,9 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
     else if (constraints.some((c) => c.length > IDEA_CONSTRAINT_MAX_CHARS)) errors.push("constraint_too_long");
   }
   const acceptanceHints = input.acceptanceHints;
-  if (acceptanceHints !== undefined && (!Array.isArray(acceptanceHints) || !acceptanceHints.every((h) => typeof h === "string"))) {
-    errors.push("acceptance_hints_invalid");
+  if (acceptanceHints !== undefined) {
+    if (!Array.isArray(acceptanceHints) || !acceptanceHints.every((h) => typeof h === "string")) errors.push("acceptance_hints_invalid");
+    else if (acceptanceHints.some((h) => h.length > IDEA_CONSTRAINT_MAX_CHARS)) errors.push("acceptance_hint_too_long");
   }
   const priority = input.priority;
   if (priority !== undefined && priority !== "normal" && priority !== "high") errors.push("priority_invalid");

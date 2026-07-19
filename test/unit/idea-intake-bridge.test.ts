@@ -73,6 +73,35 @@ describe("validateIdeaSubmission", () => {
     expect(validateIdeaSubmission(validIdea({ priority: "urgent" as unknown as IdeaSubmission["priority"] })).ok).toBe(false);
     expect(validateIdeaSubmission(validIdea({ priority: "normal" })).ok).toBe(true);
   });
+
+  it("caps acceptanceHints entry length at IDEA_CONSTRAINT_MAX_CHARS, same bound as constraints (#7243)", () => {
+    const atCap = validateIdeaSubmission(validIdea({ acceptanceHints: ["h".repeat(IDEA_CONSTRAINT_MAX_CHARS)] }));
+    expect(atCap.ok).toBe(true);
+
+    const overCap = validateIdeaSubmission(validIdea({ acceptanceHints: ["h".repeat(IDEA_CONSTRAINT_MAX_CHARS + 1)] }));
+    expect(overCap.ok).toBe(false);
+    if (!overCap.ok) expect(overCap.errors).toContain("acceptance_hint_too_long");
+  });
+
+  it("does not raise acceptance_hint_too_long for a malformed (non-array) acceptanceHints — shape error only", () => {
+    const r = validateIdeaSubmission(validIdea({ acceptanceHints: "x".repeat(IDEA_CONSTRAINT_MAX_CHARS + 1) as unknown as string[] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors).toContain("acceptance_hints_invalid");
+      expect(r.errors).not.toContain("acceptance_hint_too_long");
+    }
+  });
+
+  it("collects an over-length acceptanceHints entry alongside other unrelated errors in one pass", () => {
+    const r = validateIdeaSubmission({
+      title: "t",
+      body: "b",
+      targetRepo: "o/n",
+      acceptanceHints: ["h".repeat(IDEA_CONSTRAINT_MAX_CHARS + 1)],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toEqual(expect.arrayContaining(["id_required", "acceptance_hint_too_long"]));
+  });
 });
 
 describe("buildTaskGraph — spec §4 Example A (simple idea → one issue → go)", () => {

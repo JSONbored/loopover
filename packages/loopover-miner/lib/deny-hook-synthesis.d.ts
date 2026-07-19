@@ -1,93 +1,29 @@
+import { aggregateBlockerHistory, canonicalizeChangedPath, changedPathToDenyGlob, DEFAULT_SYNTHESIS_CONFIG, isCoveredByDefaultDenyRules, normalizeBlockerHistory, normalizeBlockerHistoryRecord, resolveEffectiveDenyRules, setProposalStatuses } from "@loopover/engine";
+import type { BlockerHistoryRecord, DenyRuleProposal, DenyRuleProposalAudit, DenyRuleProposalStatus, SynthesisConfig } from "@loopover/engine";
 import type { DenyRule } from "./deny-hooks.js";
-
-export type BlockerHistoryRecord = {
-  repoFullName?: string | null;
-  blockerCodes: string[];
-  changedPaths?: string[];
-  guardrailMatches?: string[];
-  pullNumber?: number | null;
-  recordedAt?: string | null;
-};
-
-export type DenyRuleProposalStatus = "proposed" | "approved" | "rejected";
-
-export type DenyRuleProposalAudit = {
-  kind: string;
-  path?: string;
-  pathPattern?: string;
-  occurrenceCount?: number;
-  blockerCodes?: string[];
-  synthesizedAt: string;
-};
-
-export type DenyRuleProposal = {
-  id: string;
-  status: DenyRuleProposalStatus;
-  rule: DenyRule;
-  audit: DenyRuleProposalAudit;
-};
-
-export type SynthesisConfig = {
-  minPathOccurrences?: number;
-  maxProposals?: number;
-};
-
-export const DEFAULT_SYNTHESIS_CONFIG: Readonly<Required<SynthesisConfig>>;
-
-export function normalizeBlockerHistoryRecord(record: unknown): BlockerHistoryRecord | null;
-
-export function normalizeBlockerHistory(records: unknown): BlockerHistoryRecord[];
-
-export function canonicalizeChangedPath(path: unknown): string | null;
-
-export function changedPathToDenyGlob(path: string): string | null;
-
-export function isCoveredByDefaultDenyRules(pathPattern: string): boolean;
-
-export function aggregateBlockerHistory(records: unknown): {
-  pathCounts: Map<string, number>;
-  pathBlockers: Map<string, Set<string>>;
-  blockerCounts: Map<string, number>;
-  recordCount: number;
-};
-
-export function synthesizeDenyRuleProposals(
-  records: unknown,
-  config?: SynthesisConfig,
-): DenyRuleProposal[];
-
-export function resolveEffectiveDenyRules(options?: {
-  includeDefaults?: boolean;
-  approvedProposals?: DenyRuleProposal[];
-}): DenyRule[];
-
-export function setProposalStatuses(
-  proposals: DenyRuleProposal[],
-  updates: Record<string, DenyRuleProposalStatus> | Map<string, DenyRuleProposalStatus>,
-): DenyRuleProposal[];
-
-export function resolveDenyHookSynthesisDbPath(env?: Record<string, string | undefined>): string;
-
+export { aggregateBlockerHistory, canonicalizeChangedPath, changedPathToDenyGlob, DEFAULT_SYNTHESIS_CONFIG, isCoveredByDefaultDenyRules, normalizeBlockerHistory, normalizeBlockerHistoryRecord, resolveEffectiveDenyRules, setProposalStatuses, };
+export type { BlockerHistoryRecord, DenyRuleProposal, DenyRuleProposalAudit, DenyRuleProposalStatus, SynthesisConfig, };
 export type DenyHookSynthesisStore = {
-  dbPath: string;
-  refreshProposals(
-    repoFullName: string,
-    history: unknown,
-    config?: SynthesisConfig,
-    apiBaseUrl?: string,
-  ): DenyRuleProposal[];
-  listProposals(repoFullName: string, apiBaseUrl?: string): DenyRuleProposal[];
-  setProposalStatus(
-    repoFullName: string,
-    proposalId: string,
-    status: DenyRuleProposalStatus,
-    apiBaseUrl?: string,
-  ): void;
-  resolveEffectiveRules(
-    repoFullName: string,
-    options?: { includeDefaults?: boolean; apiBaseUrl?: string },
-  ): DenyRule[];
-  close(): void;
+    dbPath: string;
+    refreshProposals(repoFullName: string, history: unknown, config?: SynthesisConfig, apiBaseUrl?: string): DenyRuleProposal[];
+    listProposals(repoFullName: string, apiBaseUrl?: string): DenyRuleProposal[];
+    setProposalStatus(repoFullName: string, proposalId: string, status: DenyRuleProposalStatus, apiBaseUrl?: string): void;
+    resolveEffectiveRules(repoFullName: string, options?: {
+        includeDefaults?: boolean;
+        apiBaseUrl?: string;
+    }): DenyRule[];
+    close(): void;
 };
-
-export function initDenyHookSynthesisStore(dbPath?: string): DenyHookSynthesisStore;
+/**
+ * Derive candidate deny-hook rules from blocker/path history. Miner-facing wrapper over the engine's pure
+ * `synthesizeDenyRuleProposals`, defaulting the injected clock to `Date.now()` so this keeps the pre-#5667 2-arg
+ * signature (and wall-clock `audit.synthesizedAt`) every existing caller and test relies on. Returns proposal
+ * objects only — nothing is active until a maintainer approves them (see resolveEffectiveDenyRules).
+ */
+export declare function synthesizeDenyRuleProposals(records: unknown, config?: SynthesisConfig): DenyRuleProposal[];
+export declare function resolveDenyHookSynthesisDbPath(env?: Record<string, string | undefined>): string;
+/**
+ * Local SQLite store for synthesized deny-rule proposals. Refresh re-derives proposals from history while
+ * preserving maintainer decisions on ids that still exist.
+ */
+export declare function initDenyHookSynthesisStore(dbPath?: string): DenyHookSynthesisStore;

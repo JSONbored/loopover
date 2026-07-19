@@ -1,36 +1,25 @@
-export function resolveNpmRegistryUrl(
-  env?: Record<string, string | undefined>,
-): string;
-export function resolveUpgradeCommand(packageName?: string): string;
-export function shouldSkipUpdateCheck(
-  cliArgs: string[],
-  env?: Record<string, string | undefined>,
-): boolean;
-export function compareSemver(a: string, b: string): -1 | 0 | 1 | null;
-export function fetchLatestPackageVersion(input: {
-  packageName: string;
-  npmRegistryUrl: string;
-  timeoutMs?: number;
+export declare function resolveNpmRegistryUrl(env?: Record<string, string | undefined>): string;
+export declare function resolveUpgradeCommand(packageName?: string): string;
+export declare function shouldSkipUpdateCheck(cliArgs: string[], env?: Record<string, string | undefined>): boolean;
+export declare function compareSemver(a: string, b: string): -1 | 0 | 1 | null;
+export declare function fetchLatestPackageVersion(input: {
+    packageName: string;
+    npmRegistryUrl: string;
+    timeoutMs?: number;
 }): Promise<string>;
-export function maybePrintUpdateNudge(input: {
-  packageName: string;
-  packageVersion: string;
-  npmRegistryUrl: string;
-  upgradeCommand: string;
-  timeoutMs?: number;
+export declare function maybePrintUpdateNudge(input: {
+    packageName: string;
+    packageVersion: string;
+    npmRegistryUrl: string;
+    upgradeCommand: string;
+    timeoutMs?: number;
 }): Promise<void>;
-export function startUpdateCheck(
-  cliArgs: string[],
-  input: {
+export declare function startUpdateCheck(cliArgs: string[], input: {
     packageName: string;
     packageVersion: string;
     upgradeCommand?: string;
     env?: Record<string, string | undefined>;
     timeoutMs?: number;
-  },
-): Promise<void>;
-export const updateCheckExitGraceMs: number;
-export function awaitOpportunisticUpdateCheck(
-  updateCheck: Promise<void>,
-  graceMs?: number,
-): Promise<void>;
+}): Promise<void>;
+export declare const updateCheckExitGraceMs = 250;
+export declare function awaitOpportunisticUpdateCheck(updateCheck: Promise<void>, graceMs?: number): Promise<void>;

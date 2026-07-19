@@ -120,6 +120,46 @@ describe("loopover-miner portfolio discovery (#2292)", () => {
     expect(queueStore.listQueue()[0]?.identifier).toBe("issue:1");
   });
 
+  it("rejects every malformed-row shape and counts each as invalid", () => {
+    const queueStore = tempQueueStore();
+    const summary = enqueueRankedDiscovery(
+      [
+        null, // not an object
+        42, // not an object
+        { repoFullName: 123, issueNumber: 1, title: "x", rankScore: 5 }, // non-string repoFullName -> "" -> no owner
+        { repoFullName: "acme/widgets/extra", issueNumber: 1, title: "x", rankScore: 5 }, // three path segments
+        { repoFullName: "acme/widgets", issueNumber: 1.5, title: "x", rankScore: 5 }, // non-integer issueNumber
+        { repoFullName: "acme/widgets", issueNumber: 0, title: "x", rankScore: 5 }, // non-positive issueNumber
+        { repoFullName: "acme/widgets", issueNumber: 1, title: "x", rankScore: "high" }, // non-number rankScore
+        { repoFullName: "acme/widgets", issueNumber: 1, title: "x", rankScore: -1 }, // negative rankScore
+        { repoFullName: "acme/widgets", issueNumber: 1, title: 42, rankScore: 5 }, // non-string title
+      ] as unknown as EnqueueRankedDiscoveryInput[],
+      { queueStore },
+    );
+    expect(summary).toEqual({
+      enqueued: 0,
+      skippedBelowMinRank: 0,
+      skippedInvalid: 9,
+      eventsAppended: 0,
+    });
+    expect(queueStore.listQueue()).toEqual([]);
+  });
+
+  it("normalizes a valid row's title and labels: trims, coerces non-array labels to [], and drops blank/non-string labels", () => {
+    const queueStore = tempQueueStore();
+    const eventLedger = tempEventLedger();
+    enqueueRankedDiscovery(
+      [
+        { repoFullName: "acme/widgets", issueNumber: 5, title: "  Trim me  ", rankScore: 20, labels: "not-an-array" },
+        { repoFullName: "acme/widgets", issueNumber: 6, title: "Second", rankScore: 20, labels: ["  keep me  ", "", 42, "   "] },
+      ] as unknown as EnqueueRankedDiscoveryInput[],
+      { queueStore, eventLedger },
+    );
+    const events = eventLedger.readEvents();
+    expect(events[0]?.payload).toMatchObject({ issueNumber: 5, title: "Trim me", labels: [] });
+    expect(events[1]?.payload).toMatchObject({ issueNumber: 6, title: "Second", labels: ["keep me"] });
+  });
+
   it("refreshes priority for done items but leaves in_progress rows unchanged", () => {
     const queueStore = tempQueueStore();
     enqueueRankedDiscovery([rankedIssue({ issueNumber: 7, rankScore: 10 })], { queueStore });

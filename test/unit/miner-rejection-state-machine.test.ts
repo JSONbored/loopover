@@ -30,6 +30,22 @@ describe("loopover-miner rejection state machine (#4278)", () => {
     });
   });
 
+  it("surfaces a string merged_at from a merged payload (the merged-timestamp branch)", () => {
+    expect(
+      extractPrOutcomeFields({
+        state: "closed",
+        merged: true,
+        merged_at: "2026-07-09T18:00:00Z",
+        closed_at: "2026-07-09T18:00:00Z",
+      }),
+    ).toEqual({
+      state: "closed",
+      merged: true,
+      mergedAt: "2026-07-09T18:00:00Z",
+      closedAt: "2026-07-09T18:00:00Z",
+    });
+  });
+
   it("detects closed-without-merge as a rejection, but not a merged or open PR", () => {
     expect(isRejectedPr({ state: "closed", merged: false })).toBe(true);
     expect(isRejectedPr({ state: "closed", merged: true })).toBe(false); // merged PRs are also state:closed
@@ -42,6 +58,7 @@ describe("loopover-miner rejection state machine (#4278)", () => {
     expect(classifyRejectionReason({ supersededByDuplicate: true })).toBe("superseded_by_duplicate");
     expect(classifyRejectionReason({})).toBe("maintainer_close_no_reason");
     expect(classifyRejectionReason()).toBe("maintainer_close_no_reason"); // zero-signal fallback
+    expect(classifyRejectionReason(null as never)).toBe("maintainer_close_no_reason"); // non-object signal coerced
   });
 
   it("prefers the gate cause when both gate and duplicate signals are present", () => {

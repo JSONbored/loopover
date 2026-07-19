@@ -7,7 +7,6 @@
 // PRs linking it IS the public signal of a contested claim). The caller assembles that set — exactly like the
 // maintainer-side callers in src/ do — and passes it here.
 import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } from "@loopover/engine";
-
 /**
  * Map an observed claim record to the engine's `DuplicateClaimMember`. The field names deliberately DIFFER — the
  * local ledger / observed data expose `claimedAt`, the engine election reads `linkedIssueClaimedAt` — so the bridge
@@ -15,9 +14,8 @@ import { isDuplicateClusterWinnerByClaim, resolveDuplicateClusterWinnerNumber } 
  * election ignores it (an older PR can claim a linked issue later by editing its body). Pure.
  */
 export function toClaimMember(claim) {
-  return { number: claim.number, linkedIssueClaimedAt: claim.claimedAt ?? null };
+    return { number: claim.number, linkedIssueClaimedAt: claim.claimedAt ?? null };
 }
-
 /**
  * Adjudicate whether THIS miner's soft-claim wins a contested issue. `self` is this miner's claim and `competing`
  * is the publicly-observable set of OTHER open PRs linking the same issue; each entry is `{ number, claimedAt }`.
@@ -27,10 +25,11 @@ export function toClaimMember(claim) {
  * `null` when the ordering is too sparse to be sure (it never guesses). An empty `competing` list ⇒ trivial winner.
  */
 export function adjudicateSoftClaim(self, competing = []) {
-  const selfMember = toClaimMember(self);
-  const siblings = competing.map(toClaimMember);
-  return {
-    isWinner: isDuplicateClusterWinnerByClaim(selfMember, siblings),
-    winnerNumber: resolveDuplicateClusterWinnerNumber(selfMember, siblings),
-  };
+    const selfMember = toClaimMember(self);
+    const siblings = competing.map(toClaimMember);
+    return {
+        isWinner: isDuplicateClusterWinnerByClaim(selfMember, siblings),
+        winnerNumber: resolveDuplicateClusterWinnerNumber(selfMember, siblings),
+    };
 }
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiY2xhaW0tYWRqdWRpY2F0aW9uLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiY2xhaW0tYWRqdWRpY2F0aW9uLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBLG9IQUFvSDtBQUNwSCx1R0FBdUc7QUFDdkcsb0hBQW9IO0FBQ3BILEVBQUU7QUFDRixnSEFBZ0g7QUFDaEgsa0hBQWtIO0FBQ2xILDhHQUE4RztBQUM5RywyREFBMkQ7QUFDM0QsT0FBTyxFQUFFLCtCQUErQixFQUFFLG1DQUFtQyxFQUFFLE1BQU0sa0JBQWtCLENBQUM7QUFvQnhHOzs7OztHQUtHO0FBQ0gsTUFBTSxVQUFVLGFBQWEsQ0FBQyxLQUFvQjtJQUNoRCxPQUFPLEVBQUUsTUFBTSxFQUFFLEtBQUssQ0FBQyxNQUFNLEVBQUUsb0JBQW9CLEVBQUUsS0FBSyxDQUFDLFNBQVMsSUFBSSxJQUFJLEVBQUUsQ0FBQztBQUNqRixDQUFDO0FBRUQ7Ozs7Ozs7R0FPRztBQUNILE1BQU0sVUFBVSxtQkFBbUIsQ0FBQyxJQUFtQixFQUFFLFlBQXNDLEVBQUU7SUFDL0YsTUFBTSxVQUFVLEdBQUcsYUFBYSxDQUFDLElBQUksQ0FBQyxDQUFDO0lBQ3ZDLE1BQU0sUUFBUSxHQUFHLFNBQVMsQ0FBQyxHQUFHLENBQUMsYUFBYSxDQUFDLENBQUM7SUFDOUMsT0FBTztRQUNMLFFBQVEsRUFBRSwrQkFBK0IsQ0FBQyxVQUFVLEVBQUUsUUFBUSxDQUFDO1FBQy9ELFlBQVksRUFBRSxtQ0FBbUMsQ0FBQyxVQUFVLEVBQUUsUUFBUSxDQUFDO0tBQ3hFLENBQUM7QUFDSixDQUFDIn0=

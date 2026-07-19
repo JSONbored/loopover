@@ -4,45 +4,51 @@ import type { GovernorLedger } from "./governor-ledger.js";
 import type { PredictionLedger } from "./prediction-ledger.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
 import type { RunStateStore } from "./run-state.js";
-
-export const ATTEMPT_LOG_NOT_PURGEABLE_NOTE: string;
-
-export type ParsedPurgeArgs = { json: boolean; dryRun: boolean; repoFullName: string } | { error: string };
-
-export function parsePurgeArgs(args: string[]): ParsedPurgeArgs;
-
-export type PurgeStoreResult = { store: string; purged: number | null; error?: string; note?: string };
-export type PurgeDryRunStoreResult = { store: string; wouldPurge: number | null; error?: string };
-
+export declare const ATTEMPT_LOG_NOT_PURGEABLE_NOTE = "attempt-log has no repoFullName column and cannot be purged by repo (#5564); its rows are unaffected";
+export type ParsedPurgeArgs = {
+    json: boolean;
+    dryRun: boolean;
+    repoFullName: string;
+} | {
+    error: string;
+};
+export type PurgeStoreResult = {
+    store: string;
+    purged: number | null;
+    error?: string;
+    note?: string;
+};
+export type PurgeDryRunStoreResult = {
+    store: string;
+    wouldPurge: number | null;
+    error?: string;
+};
 export type PurgeDryRunResult = {
-  outcome: "dry_run";
-  repoFullName: string;
-  stores: PurgeDryRunStoreResult[];
-  attemptLogNote: string;
-  attemptLogTotalRows: number;
+    outcome: "dry_run";
+    repoFullName: string;
+    stores: PurgeDryRunStoreResult[];
+    attemptLogNote: string;
+    attemptLogTotalRows: number;
 };
-
 export type PurgeSummary = {
-  outcome: "purged" | "partial";
-  repoFullName: string;
-  totalPurged: number;
-  stores: PurgeStoreResult[];
-  purgedAt: string;
+    outcome: "purged" | "partial";
+    repoFullName: string;
+    totalPurged: number;
+    stores: PurgeStoreResult[];
+    purgedAt: string;
 };
-
 export type PurgeCliOptions = {
-  openClaimLedger?: () => ClaimLedger;
-  initEventLedger?: () => EventLedger;
-  initGovernorLedger?: () => GovernorLedger;
-  initPredictionLedger?: () => PredictionLedger;
-  initPortfolioQueueStore?: () => PortfolioQueueStore;
-  initRunStateStore?: () => RunStateStore;
-  resolveDbPaths?: Record<string, () => string>;
+    openClaimLedger?: () => ClaimLedger;
+    initEventLedger?: () => EventLedger;
+    initGovernorLedger?: () => GovernorLedger;
+    initPredictionLedger?: () => PredictionLedger;
+    initPortfolioQueueStore?: () => PortfolioQueueStore;
+    initRunStateStore?: () => RunStateStore;
+    resolveDbPaths?: Record<string, () => string>;
 };
-
-export function runPurgeDryRun(
-  parsed: { repoFullName: string; json: boolean },
-  options?: PurgeCliOptions,
-): number;
-
-export function runPurge(args: string[], options?: PurgeCliOptions): number;
+export declare function parsePurgeArgs(args: string[]): ParsedPurgeArgs;
+export declare function runPurgeDryRun(parsed: {
+    repoFullName: string;
+    json: boolean;
+}, options?: PurgeCliOptions): number;
+export declare function runPurge(args: string[], options?: PurgeCliOptions): number;

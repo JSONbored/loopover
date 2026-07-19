@@ -187,4 +187,70 @@ describe("loopover-miner governor ledger CLI (#2328)", () => {
     expect(await runGovernorList(["--verbose"])).toBe(2);
     expect(String(error.mock.calls[0]?.[0])).toContain("Unknown option");
   });
+
+  it("rejects --repo and --type flags whose value is missing or flag-shaped", () => {
+    const usage = expect.stringContaining("Usage: loopover-miner governor list");
+    expect(parseGovernorListArgs(["--repo"])).toEqual({ error: usage });
+    expect(parseGovernorListArgs(["--repo", "--json"])).toEqual({ error: usage });
+    expect(parseGovernorListArgs(["--type"])).toEqual({ error: usage });
+    expect(parseGovernorListArgs(["--type", "--json"])).toEqual({ error: usage });
+  });
+
+  it("rejects stray positional arguments", () => {
+    expect(parseGovernorListArgs(["extra"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner governor list"),
+    });
+  });
+
+  it("filterGovernorEvents returns [] when handed a non-array", () => {
+    expect(filterGovernorEvents(null as never)).toEqual([]);
+    expect(filterGovernorEvents(undefined as never)).toEqual([]);
+  });
+
+  it("renderGovernorTable collapses null repo and ts columns to '-' via display()", () => {
+    const events: GovernorLedgerEntry[] = [
+      {
+        id: 7,
+        ts: null as never,
+        eventType: "allowed",
+        repoFullName: null,
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "no repo recorded",
+        payload: {},
+      },
+    ];
+    const table = renderGovernorTable(events);
+    // both the repo and ts columns render the display() placeholder for null/undefined.
+    expect(table.match(/-/g)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("runGovernorList reports a CLI failure when the ledger read throws (catch path)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const throwingLedger = {
+      readGovernorEvents: () => {
+        throw new Error("ledger read boom");
+      },
+      close: vi.fn(),
+    };
+    expect(await runGovernorList([], { initGovernorLedger: () => throwingLedger as never })).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("ledger read boom");
+    // caller-owned ledger must not be closed by runGovernorList
+    expect(throwingLedger.close).not.toHaveBeenCalled();
+  });
+
+  it("opens and closes the real default governor ledger when no initGovernorLedger override is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-ledger-cli-default-"));
+    roots.push(root);
+    const previous = process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+    process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = join(root, "governor-ledger.sqlite3");
+    try {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(await runGovernorList(["--json"])).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ events: [] });
+    } finally {
+      if (previous === undefined) delete process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = previous;
+    }
+  });
 });

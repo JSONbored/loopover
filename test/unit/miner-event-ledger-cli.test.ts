@@ -8,6 +8,7 @@ import {
 } from "../../packages/loopover-miner/lib/event-ledger.js";
 import {
   filterLedgerEvents,
+  normalizeAuditFeedMcpFilter,
   parseLedgerListArgs,
   renderEventLedgerMetrics,
   renderLedgerTable,
@@ -37,6 +38,9 @@ function tempEventDbPath() {
 function metricEntry(seq: number, type: string): LedgerEntry {
   return { id: seq, seq, type, repoFullName: null, payload: {}, createdAt: "2026-07-04T12:00:00.000Z" };
 }
+
+const LEDGER_LIST_USAGE =
+  "Usage: loopover-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]";
 
 afterEach(() => {
   for (const ledger of ledgers.splice(0)) ledger.close();
@@ -171,6 +175,63 @@ describe("loopover-miner event ledger CLI (#2290)", () => {
       }),
     ).toBe(2);
     expect(error).toHaveBeenCalledWith("since must be a non-negative integer seq cursor.");
+  });
+
+  // #7306: cover the remaining argv-parse guards for each option flag.
+  it("parseLedgerListArgs rejects missing or flag-shaped option values", () => {
+    expect(parseLedgerListArgs(["--repo"])).toEqual({ error: LEDGER_LIST_USAGE });
+    expect(parseLedgerListArgs(["--repo", "-x"])).toEqual({ error: LEDGER_LIST_USAGE });
+    expect(parseLedgerListArgs(["--since"])).toEqual({ error: LEDGER_LIST_USAGE });
+    expect(parseLedgerListArgs(["--since", "--nope"])).toEqual({ error: LEDGER_LIST_USAGE });
+    expect(parseLedgerListArgs(["--type"])).toEqual({ error: LEDGER_LIST_USAGE });
+    expect(parseLedgerListArgs(["--type", "-x"])).toEqual({ error: LEDGER_LIST_USAGE });
+  });
+
+  it("parseLedgerListArgs rejects unknown options and stray positional arguments", () => {
+    expect(parseLedgerListArgs(["--bogus"])).toEqual({ error: "Unknown option: --bogus" });
+    expect(parseLedgerListArgs(["stray"])).toEqual({ error: LEDGER_LIST_USAGE });
+  });
+
+  it("filterLedgerEvents returns an empty array when handed a non-array", () => {
+    expect(filterLedgerEvents(null as unknown as LedgerEntry[])).toEqual([]);
+  });
+
+  it("renderLedgerTable renders '-' for a null repo column", () => {
+    const row = renderLedgerTable([
+      { id: 1, seq: 1, type: "plan_built", repoFullName: null, payload: {}, createdAt: "2026-07-04T12:00:00.000Z" },
+    ]).split("\n")[1]!;
+    expect(row).toMatch(/plan_built\s+-\s/);
+  });
+
+  it("normalizeAuditFeedMcpFilter rejects an empty repo and a non-integer since", () => {
+    expect(() => normalizeAuditFeedMcpFilter({ repoFullName: "" })).toThrow(
+      "repoFullName must be in owner/repo form.",
+    );
+    expect(() => normalizeAuditFeedMcpFilter({ since: 1.5 as unknown as number })).toThrow(
+      "since must be a non-negative integer seq cursor.",
+    );
+  });
+
+  it("runLedgerList surfaces an error thrown while reading the ledger", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(
+      runLedgerList([], {
+        initEventLedger: () =>
+          ({
+            readEvents: () => {
+              throw new Error("event ledger is locked");
+            },
+            close: () => undefined,
+          }) as unknown as ReturnType<typeof initEventLedger>,
+      }),
+    ).toBe(2);
+    expect(error).toHaveBeenCalledWith("event ledger is locked");
+  });
+
+  it("runLedgerCli reports an undefined subcommand", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runLedgerCli(undefined, [])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Unknown ledger subcommand: .");
   });
 });
 

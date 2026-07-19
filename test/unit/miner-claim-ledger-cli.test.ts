@@ -354,6 +354,57 @@ describe("loopover-miner claim ledger CLI (#4290)", () => {
     expect(log).toHaveBeenCalled();
   });
 
+  it("parsers reject empty/missing positional and flag values across every code path", () => {
+    // parseRepoArg's `if (!value)` guard: an empty positional owner/repo slot (not a shape mismatch).
+    expect(parseClaimClaimArgs(["", "42"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner claim claim"),
+    });
+    // parseIssueNumberArg's `if (!value)` guard: an empty positional issue slot.
+    expect(parseClaimClaimArgs(["acme/widgets", ""])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner claim claim"),
+    });
+
+    // Release path propagates both parseRepoArg and parseIssueNumberArg failures.
+    expect(parseClaimReleaseArgs(["acme", "7"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseClaimReleaseArgs(["acme/widgets", "0"])).toEqual({
+      error: "issue number must be a positive integer.",
+    });
+
+    // List path propagates a malformed --repo value, and rejects a --status flag with no value.
+    expect(parseClaimListArgs(["--repo", "acme"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseClaimListArgs(["--status"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner claim list"),
+    });
+    expect(parseClaimListArgs(["--status", "--json"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner claim list"),
+    });
+  });
+
+  it("opens and closes the real default on-disk claim ledger when no override is supplied", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-claim-ledger-cli-default-"));
+    roots.push(root);
+    const previous = process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB;
+    process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB = join(root, "claim-ledger.sqlite3");
+    try {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      // No `openClaimLedger` injected: exercises the real default factory (withClaimLedger owns + closes it).
+      expect(runClaimClaim(["acme/widgets", "42", "--note", "on it"])).toBe(0);
+      expect(log).toHaveBeenCalledWith("active");
+
+      // Reopen through the same default path to confirm the owned ledger was closed and the write persisted.
+      const reopened = openClaimLedger(process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB);
+      ledgers.push(reopened);
+      expect(reopened.listClaims({ repoFullName: "acme/widgets" })).toHaveLength(1);
+    } finally {
+      if (previous === undefined) delete process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB = previous;
+    }
+  });
+
   it("rejects unknown claim subcommands, options, and ledger failures", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(runClaimCli("peek", [])).toBe(2);
@@ -402,5 +453,13 @@ describe("loopover-miner claim ledger CLI (#4290)", () => {
       }),
     ).toBe(2);
     expect(error).toHaveBeenCalledWith("list_broken");
+
+    // runClaimRelease and runClaimList short-circuit on a parse error without ever opening the ledger.
+    error.mockClear();
+    expect(runClaimRelease(["acme/widgets"])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner claim release");
+    error.mockClear();
+    expect(runClaimList(["extra"])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Usage: loopover-miner claim list");
   });
 });

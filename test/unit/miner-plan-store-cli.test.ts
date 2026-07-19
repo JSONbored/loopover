@@ -164,4 +164,76 @@ describe("loopover-miner plan store CLI (#2318)", () => {
       error: expect.stringContaining("Unknown plan subcommand"),
     });
   });
+
+  it("runPlanCli reports a missing subcommand as unknown", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runPlanCli(undefined, [])).toBe(2);
+    expect(String(error.mock.calls[0]?.[0])).toContain("Unknown plan subcommand");
+  });
+
+  it("parsePlanShowArgs propagates parseJsonFlag unknown-option errors", () => {
+    expect(parsePlanShowArgs(["--verbose"])).toEqual({ error: "Unknown option: --verbose" });
+  });
+
+  it("parsePlanListArgs rejects --status with a missing or flag-shaped value", () => {
+    expect(parsePlanListArgs(["--status"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner plan list"),
+    });
+    expect(parsePlanListArgs(["--status", "--json"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner plan list"),
+    });
+  });
+
+  it("parsePlanListArgs rejects unknown options and stray positionals", () => {
+    expect(parsePlanListArgs(["--bogus"])).toEqual({ error: "Unknown option: --bogus" });
+    expect(parsePlanListArgs(["extra"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner plan list"),
+    });
+  });
+
+  it("parsePlanShowArgs rejects a whitespace-only plan id", () => {
+    expect(parsePlanShowArgs(["   "])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner plan show"),
+    });
+  });
+
+  it("renderPlanTable renders '-' for a missing updated-at", () => {
+    const plans: PlanRecord[] = [
+      {
+        planId: "beta",
+        status: "pending",
+        updatedAt: null as unknown as string,
+        plan: PLAN,
+      },
+    ];
+    const rowLine = renderPlanTable(plans).split("\n")[1] ?? "";
+    expect(rowLine).toContain("beta");
+    expect(rowLine.trimEnd().endsWith("-")).toBe(true);
+  });
+
+  it("opens and closes the real default plan store when no openPlanStore override is supplied", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-plan-store-cli-default-"));
+    roots.push(root);
+    const dbPath = join(root, "plan-store.sqlite3");
+    const seeded = openPlanStore(dbPath);
+    seeded.savePlan("default-plan", PLAN);
+    seeded.close();
+
+    const previous = process.env.LOOPOVER_MINER_PLAN_STORE_DB;
+    process.env.LOOPOVER_MINER_PLAN_STORE_DB = dbPath;
+    try {
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      expect(runPlanList(["--json"])).toBe(0);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        plans: [expect.objectContaining({ planId: "default-plan" })],
+      });
+
+      log.mockClear();
+      expect(runPlanShow(["default-plan"])).toBe(0);
+      expect(log).toHaveBeenCalledWith("running (2 steps)");
+    } finally {
+      if (previous === undefined) delete process.env.LOOPOVER_MINER_PLAN_STORE_DB;
+      else process.env.LOOPOVER_MINER_PLAN_STORE_DB = previous;
+    }
+  });
 });

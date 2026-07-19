@@ -14,6 +14,7 @@ const {
   parseStateSetArgs,
   runStateGet,
   runStateSet,
+  runStateCli,
 } = await import("../../packages/loopover-miner/lib/run-state-cli.js");
 
 afterEach(() => {
@@ -129,6 +130,53 @@ describe("loopover-miner state CLI", () => {
       ok: false,
       error: "Repository must be in owner/repo form.",
     });
+  });
+
+  it("parseStateGetArgs rejects unknown flags, an empty repo token, and a malformed repo", () => {
+    expect(parseStateGetArgs(["acme/widgets", "--bogus"])).toEqual({
+      error: "Unknown option: --bogus",
+    });
+    // An empty positional token trips the falsy-value guard inside parseRepoArg.
+    expect(parseStateGetArgs([""])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner state get"),
+    });
+    expect(parseStateGetArgs(["not-a-repo"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+  });
+
+  it("parseStateSetArgs rejects unknown flags and the wrong positional count", () => {
+    expect(parseStateSetArgs(["acme/widgets", "planning", "-x"])).toEqual({
+      error: "Unknown option: -x",
+    });
+    expect(parseStateSetArgs(["acme/widgets"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner state set"),
+    });
+    expect(parseStateSetArgs(["acme/widgets", "planning", "extra"])).toEqual({
+      error: expect.stringContaining("Usage: loopover-miner state set"),
+    });
+  });
+
+  it("runStateCli dispatches get and set and rejects unknown subcommands", () => {
+    getRunState.mockReturnValue(null);
+    setRunState.mockReturnValue({
+      repoFullName: "acme/widgets",
+      state: "idle",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runStateCli("get", ["acme/widgets"])).toBe(0);
+    expect(getRunState).toHaveBeenCalledWith("acme/widgets", undefined);
+    expect(runStateCli("set", ["acme/widgets", "idle"])).toBe(0);
+    expect(setRunState).toHaveBeenCalledWith("acme/widgets", "idle", undefined);
+    log.mockRestore();
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runStateCli("bogus", [])).toBe(2);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Unknown state subcommand: bogus"));
+    // An undefined subcommand exercises the nullish-coalescing fallback in the message.
+    expect(runStateCli(undefined, [])).toBe(2);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Unknown state subcommand: ."));
   });
 
   it("runStateGet returns exit code 2 when the store read fails", () => {

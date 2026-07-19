@@ -6,12 +6,21 @@ import type { Plugin } from "vite";
 // vite-chat-governor-actions.ts).
 
 export function chatDiscoverAttemptActionsPlugin(): Plugin {
+  // Register on BOTH dev (`configureServer`) and preview (`configurePreviewServer`) start — `vite preview` (the
+  // persistent-service path in this app's README and systemd unit) only runs the preview hook, so without it
+  // these actions were silently missing in production, unlike every sibling vite-*-api.ts plugin (#7228).
+  const register = () => {
+    void import("./src/lib/chat-discover-attempt-actions").then((mod) => {
+      mod.registerDiscoverAttemptChatActions();
+    });
+  };
   return {
     name: "loopover-miner-chat-discover-attempt-actions",
     configureServer() {
-      void import("./src/lib/chat-discover-attempt-actions").then((mod) => {
-        mod.registerDiscoverAttemptChatActions();
-      });
+      register();
+    },
+    configurePreviewServer() {
+      register();
     },
   };
 }

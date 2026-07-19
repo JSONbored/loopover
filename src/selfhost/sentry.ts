@@ -109,7 +109,21 @@ const SENTRY_MONITORS: Record<SentryMonitorName, { slug: string; config: SentryM
     slug: "orb-relay-drain",
     config: {
       schedule: { type: "interval", value: 1, unit: "minute" },
-      checkinMargin: 2,
+      // #6685-followup-2 (LOOPOVER-12, 1600+ "missed check-in" occurrences over 2+ weeks, still recurring):
+      // checkinMargin: 2 was too tight for a self-host container that gets fully recreated on every redeploy,
+      // not just restarted in place -- both leading in-process hypotheses were investigated and ruled out with
+      // real production evidence: the reentrancy-guard overlap-skip added in #instrument-drain-skip (see
+      // withOrbRelayDrainReentrancyGuard's own header comment) never fired once in 14 days of live coverage
+      // (loopover_orb_relay_drain_skipped_total stayed at 0), and the genuine in-process timeout errors
+      // (LOOPOVER-1Y/1Q, kind: orb_relay_drain) total only ~13 occurrences -- nowhere near enough to explain
+      // 1600+ missed check-ins. What DOES correlate: this container's own StartedAt resets on every redeploy
+      // (unlike its sidecars', which stay up for days), and boot involves an image pull + up to a 30s Postgres-
+      // readiness retry loop (waitForPostgres, server.ts) + app init BEFORE this drain loop's first tick can
+      // even register -- routinely exceeding the old 2-minute margin on a fleet that redeploys multiple times a
+      // day. 6 minutes gives a normal single redeploy cycle room to complete without a false "outage" issue,
+      // while a genuinely stuck/crash-looping instance still alerts within ~3 x (1+6) = ~21 minutes
+      // (failureIssueThreshold below is unchanged -- only the margin, which is what the evidence points at).
+      checkinMargin: 6,
       maxRuntime: 1,
       failureIssueThreshold: 3,
       recoveryThreshold: 1,

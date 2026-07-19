@@ -816,6 +816,30 @@ describe("enabled when SENTRY_DSN is set", () => {
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
+  it("gives orb-relay-drain a 6-minute checkin margin so a normal redeploy cycle doesn't false-positive as a missed check-in (LOOPOVER-12 regression)", async () => {
+    await initSentry({
+      SENTRY_DSN: "d",
+      SENTRY_ENVIRONMENT: "prod",
+    } as unknown as NodeJS.ProcessEnv);
+
+    await expect(
+      withSentryMonitor("orb-relay-drain", { jobType: "orb-relay-drain" }, async () => "ok"),
+    ).resolves.toBe("ok");
+
+    expect(mocks.captureCheckIn).toHaveBeenNthCalledWith(
+      1,
+      { monitorSlug: "loopover-selfhost-prod-orb-relay-drain", status: "in_progress" },
+      expect.objectContaining({
+        schedule: { type: "interval", value: 1, unit: "minute" },
+        checkinMargin: 6,
+        maxRuntime: 1,
+        failureIssueThreshold: 3,
+        recoveryThreshold: 1,
+      }),
+    );
+    expect(mocks.captureException).not.toHaveBeenCalled();
+  });
+
   it("records failed Sentry cron monitor check-ins with sanitized context", async () => {
     await initSentry({
       SENTRY_DSN: "d",

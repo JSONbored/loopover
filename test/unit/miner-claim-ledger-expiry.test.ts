@@ -75,6 +75,27 @@ describe("loopover-miner claim ledger expiry (#2316)", () => {
     expect(findExpiredClaims([fresh, stale, released], nowMs, maxAgeMs)).toEqual([stale]);
   });
 
+  it("findExpiredClaims skips an active claim whose claimedAt is unparseable (NaN age path)", () => {
+    const nowMs = Date.parse("2026-07-03T00:00:00.000Z");
+    const maxAgeMs = 1 * 24 * 60 * 60 * 1000;
+    const bogus = claim({ issueNumber: 7, claimedAt: "not-a-date" }); // Date.parse -> NaN -> claimAgeMs null
+    const stale = claim({ issueNumber: 8, claimedAt: "2026-06-01T00:00:00.000Z" });
+    expect(findExpiredClaims([bogus, stale], nowMs, maxAgeMs)).toEqual([stale]);
+  });
+
+  it("sweepExpiredClaims defaults maxAgeMs and skips rows whose store.expireClaim reports no transition (null)", () => {
+    // A pure-object store (not the real ledger): the row is ~26 years old, so it is selected as expired under the
+    // DEFAULT_MAX_CLAIM_AGE_MS default (maxAgeMs omitted), but expireClaim returns null (already gone), so the
+    // `if (updated)` guard skips it and nothing is transitioned.
+    const expiredRow = claim({ issueNumber: 42, claimedAt: "2000-01-01T00:00:00.000Z" });
+    const store = {
+      listClaims: () => [expiredRow],
+      expireClaim: () => null,
+    };
+    const nowMs = Date.parse("2026-07-03T00:00:00.000Z");
+    expect(sweepExpiredClaims(store, nowMs)).toEqual([]);
+  });
+
   it("findExpiredClaims treats age === maxAgeMs as still active (boundary)", () => {
     const nowMs = Date.parse("2026-07-10T00:00:00.000Z");
     const maxAgeMs = 7 * 24 * 60 * 60 * 1000;

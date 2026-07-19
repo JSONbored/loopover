@@ -11,38 +11,33 @@
 // duplicated here rather than shared, matching how src/review/prompt-injection.ts itself documents being
 // a self-contained port of its own upstream (reviewbot's src/core/prompt-injection.ts). Keep the two
 // regex sources in sync by hand if either evolves.
-
 const INJECTION_SOURCE = [
-  "\\b(?:ignore|disregard|forget)\\b[^.]{0,40}\\b(?:previous|prior|above|earlier|all|the|any)\\b[^.]{0,24}\\b(?:instructions?|prompts?|rules?|rubric|policy|guidelines?|directions?)\\b",
-  "\\b(?:override|bypass)\\b[^.]{0,40}\\b(?:previous|prior|above|earlier|all|any)\\b[^.]{0,24}\\b(?:instructions?|prompts?)\\b|\\b(?:override|bypass)\\s+the\\s+(?:rules?|rubric|policy|guidelines?|directions?)\\b[^.]{0,40}\\b(?:approve|merge|accept|whitelist|allow|pass|scor(?:e|ing))\\b",
-  "\\byou are now\\s+(?:an?\\s+(?:\\w+\\s+)?(?:ai|assistant|language model|reviewer|maintainer|admin|moderator|bot|developer|owner|system)|(?:unrestricted|uncensored|unfiltered|unbound|jailbroken))\\b",
-  "\\b(?:this is|here is|below is)\\s+the\\s+(?:system|developer)\\s+prompt\\b|\\b(?:system|developer)\\s+prompt\\s*:",
-  "\\b(?:approve|merge|accept|whitelist|allow|pass)\\s+this\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b|\\b(?:please|kindly|just)\\s+(?:approve|merge|accept|whitelist|allow|pass)\\s+the\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b",
-  "\\bas an?\\s+(?:ai|assistant|language model)\\b[^.]{0,30}\\b(?:you must\\s+(?:ignore|approve|obey|disregard|comply)|ignore\\s+(?:previous|prior|all|the|any)|approve\\s+(?:this|the))\\b",
-  "\\b(?:print|reveal|output|repeat|leak)\\b[^.]{0,30}\\byour\\s+(?:system prompt|rubric|instructions?)\\b|\\b(?:print|reveal|output|repeat|leak)\\b[^.]{0,30}\\bthe\\s+(?:system|developer)\\s+prompt\\b[^.]{0,40}\\byou\\s+(?:were\\s+)?(?:given|sent|provided|received)\\b",
-  "\\b(?:pretend|roleplay)\\b[^.]{0,24}\\byou\\s+are\\b",
+    "\\b(?:ignore|disregard|forget)\\b[^.]{0,40}\\b(?:previous|prior|above|earlier|all|the|any)\\b[^.]{0,24}\\b(?:instructions?|prompts?|rules?|rubric|policy|guidelines?|directions?)\\b",
+    "\\b(?:override|bypass)\\b[^.]{0,40}\\b(?:previous|prior|above|earlier|all|any)\\b[^.]{0,24}\\b(?:instructions?|prompts?)\\b|\\b(?:override|bypass)\\s+the\\s+(?:rules?|rubric|policy|guidelines?|directions?)\\b[^.]{0,40}\\b(?:approve|merge|accept|whitelist|allow|pass|scor(?:e|ing))\\b",
+    "\\byou are now\\s+(?:an?\\s+(?:\\w+\\s+)?(?:ai|assistant|language model|reviewer|maintainer|admin|moderator|bot|developer|owner|system)|(?:unrestricted|uncensored|unfiltered|unbound|jailbroken))\\b",
+    "\\b(?:this is|here is|below is)\\s+the\\s+(?:system|developer)\\s+prompt\\b|\\b(?:system|developer)\\s+prompt\\s*:",
+    "\\b(?:approve|merge|accept|whitelist|allow|pass)\\s+this\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b|\\b(?:please|kindly|just)\\s+(?:approve|merge|accept|whitelist|allow|pass)\\s+the\\s+(?:submission|pr|pull[ -]?request|entry|request|content|review)\\b",
+    "\\bas an?\\s+(?:ai|assistant|language model)\\b[^.]{0,30}\\b(?:you must\\s+(?:ignore|approve|obey|disregard|comply)|ignore\\s+(?:previous|prior|all|the|any)|approve\\s+(?:this|the))\\b",
+    "\\b(?:print|reveal|output|repeat|leak)\\b[^.]{0,30}\\byour\\s+(?:system prompt|rubric|instructions?)\\b|\\b(?:print|reveal|output|repeat|leak)\\b[^.]{0,30}\\bthe\\s+(?:system|developer)\\s+prompt\\b[^.]{0,40}\\byou\\s+(?:were\\s+)?(?:given|sent|provided|received)\\b",
+    "\\b(?:pretend|roleplay)\\b[^.]{0,24}\\byou\\s+are\\b",
 ].join("|");
-
 export const PROMPT_INJECTION_RE = new RegExp(INJECTION_SOURCE, "i");
-
 /** True when the text contains an agent-manipulation / prompt-injection pattern. */
 export function hasPromptInjection(text) {
-  return !!text && PROMPT_INJECTION_RE.test(text);
+    return !!text && PROMPT_INJECTION_RE.test(text);
 }
-
 /**
  * Replace injection-like spans with a defanged marker so the literal manipulation never reaches the
  * coding agent verbatim. Returns the neutralized text + whether anything was flagged.
- *
- * @param {string | null | undefined} text
- * @returns {{ text: string, injected: boolean }}
  */
 export function neutralizePromptInjection(text) {
-  if (!text) return { text: text ?? "", injected: false };
-  let injected = false;
-  const cleaned = text.replace(new RegExp(INJECTION_SOURCE, "gi"), () => {
-    injected = true;
-    return "[external-instruction-redacted]";
-  });
-  return { text: cleaned, injected };
+    if (!text)
+        return { text: text ?? "", injected: false };
+    let injected = false;
+    const cleaned = text.replace(new RegExp(INJECTION_SOURCE, "gi"), () => {
+        injected = true;
+        return "[external-instruction-redacted]";
+    });
+    return { text: cleaned, injected };
 }
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoicHJvbXB0LWluamVjdGlvbi1kZWZlbnNlLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsicHJvbXB0LWluamVjdGlvbi1kZWZlbnNlLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBLHNHQUFzRztBQUN0Ryx1R0FBdUc7QUFDdkcscUdBQXFHO0FBQ3JHLHNHQUFzRztBQUN0RyxrRUFBa0U7QUFDbEUsRUFBRTtBQUNGLHVHQUF1RztBQUN2RyxtR0FBbUc7QUFDbkcsdUdBQXVHO0FBQ3ZHLG9HQUFvRztBQUNwRyx5R0FBeUc7QUFDekcscUdBQXFHO0FBQ3JHLG1EQUFtRDtBQUVuRCxNQUFNLGdCQUFnQixHQUFHO0lBQ3ZCLHNMQUFzTDtJQUN0TCw2UkFBNlI7SUFDN1IsdU1BQXVNO0lBQ3ZNLG9IQUFvSDtJQUNwSCx3UkFBd1I7SUFDeFIsMExBQTBMO0lBQzFMLDRRQUE0UTtJQUM1USxzREFBc0Q7Q0FDdkQsQ0FBQyxJQUFJLENBQUMsR0FBRyxDQUFDLENBQUM7QUFFWixNQUFNLENBQUMsTUFBTSxtQkFBbUIsR0FBRyxJQUFJLE1BQU0sQ0FBQyxnQkFBZ0IsRUFBRSxHQUFHLENBQUMsQ0FBQztBQUVyRSxvRkFBb0Y7QUFDcEYsTUFBTSxVQUFVLGtCQUFrQixDQUFDLElBQStCO0lBQ2hFLE9BQU8sQ0FBQyxDQUFDLElBQUksSUFBSSxtQkFBbUIsQ0FBQyxJQUFJLENBQUMsSUFBSSxDQUFDLENBQUM7QUFDbEQsQ0FBQztBQUVEOzs7R0FHRztBQUNILE1BQU0sVUFBVSx5QkFBeUIsQ0FBQyxJQUErQjtJQUN2RSxJQUFJLENBQUMsSUFBSTtRQUFFLE9BQU8sRUFBRSxJQUFJLEVBQUUsSUFBSSxJQUFJLEVBQUUsRUFBRSxRQUFRLEVBQUUsS0FBSyxFQUFFLENBQUM7SUFDeEQsSUFBSSxRQUFRLEdBQUcsS0FBSyxDQUFDO0lBQ3JCLE1BQU0sT0FBTyxHQUFHLElBQUksQ0FBQyxPQUFPLENBQUMsSUFBSSxNQUFNLENBQUMsZ0JBQWdCLEVBQUUsSUFBSSxDQUFDLEVBQUUsR0FBRyxFQUFFO1FBQ3BFLFFBQVEsR0FBRyxJQUFJLENBQUM7UUFDaEIsT0FBTyxpQ0FBaUMsQ0FBQztJQUMzQyxDQUFDLENBQUMsQ0FBQztJQUNILE9BQU8sRUFBRSxJQUFJLEVBQUUsT0FBTyxFQUFFLFFBQVEsRUFBRSxDQUFDO0FBQ3JDLENBQUMifQ==

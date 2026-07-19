@@ -144,6 +144,28 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(parsed.manifest.repos).toEqual([]);
       expect(parsed.warnings[0]).toContain("must be a list");
     });
+
+    it("treats an object with a missing or null repos field as an empty repo list", () => {
+      const missing = parseCrossRepoEvaluationManifest(JSON.stringify({}));
+      expect(missing.present).toBe(true);
+      expect(missing.manifest.repos).toEqual([]);
+      expect(missing.warnings).toEqual([]);
+
+      const nulled = parseCrossRepoEvaluationManifest(JSON.stringify({ repos: null }));
+      expect(nulled.present).toBe(true);
+      expect(nulled.manifest.repos).toEqual([]);
+      expect(nulled.warnings).toEqual([]);
+    });
+
+    it("drops a whitespace-only stackHint / fixturePath to undefined without a warning", () => {
+      const parsed = parseCrossRepoEvaluationManifest(
+        JSON.stringify({ repos: [{ repoFullName: "acme/blank", stackHint: "   ", fixturePath: "  " }] }),
+      );
+      expect(parsed.manifest.repos).toEqual([{ repoFullName: "acme/blank", requireTestCommand: false }]);
+      expect(parsed.manifest.repos[0]?.stackHint).toBeUndefined();
+      expect(parsed.manifest.repos[0]?.fixturePath).toBeUndefined();
+      expect(parsed.warnings).toEqual([]);
+    });
   });
 
   describe("scanPositiveLoopoverAssumptions", () => {
@@ -305,6 +327,48 @@ describe("cross-repo evaluation harness (#4788)", () => {
       const result = evaluateRepoReadiness({ repoFullName: "not-a-repo", requireTestCommand: false });
       expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.OTHER);
     });
+
+    it("reports a non-string repoFullName as the placeholder '(invalid)'", () => {
+      const result = evaluateRepoReadiness({ repoFullName: 123 } as never);
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.OTHER);
+      expect(result.repoFullName).toBe("(invalid)");
+    });
+
+    it("fails other with String(error) when buildCodingTaskSpec throws a non-Error value", () => {
+      const repoPath = tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+      const result = evaluateRepoReadiness(
+        { repoFullName: "acme/throws-string", requireTestCommand: false },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: () => {
+            throw "kaboom-string";
+          },
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.OTHER);
+      expect(result.reason).toBe("kaboom-string");
+    });
+
+    it("falls back to a 'unknown' verdict when an unready spec omits its verdict", () => {
+      const repoPath = tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+      const result = evaluateRepoReadiness(
+        { repoFullName: "acme/no-verdict", requireTestCommand: false },
+        { repoPath, existsSync: () => true, buildCodingTaskSpec: () => ({ ready: false }) },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.EXECUTION);
+      expect(result.reason).toContain("unknown");
+    });
+
+    it("treats a ready spec with no instructions as leak-free (empty-string scan fallback)", () => {
+      const repoPath = tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+      const result = evaluateRepoReadiness(
+        { repoFullName: "acme/no-instructions", requireTestCommand: false },
+        { repoPath, existsSync: () => true, buildCodingTaskSpec: () => ({ ready: true }) },
+      );
+      expect(result.passed).toBe(true);
+      expect(result.assumptionFindings).toEqual([]);
+    });
   });
 
   describe("runCrossRepoEvaluation + summarizeCrossRepoEvaluation", () => {
@@ -380,6 +444,39 @@ describe("cross-repo evaluation harness (#4788)", () => {
       ] as never);
       expect(summary.majorityPassed).toBe(true);
       expect(summary.failuresByCategory.other).toBe(1);
+    });
+
+    it("runCrossRepoEvaluation treats a parsed manifest without a repos list as no repos", () => {
+      expect(runCrossRepoEvaluation({} as never)).toEqual([]);
+      expect(runCrossRepoEvaluation(undefined as never)).toEqual([]);
+    });
+
+    it("summarizeCrossRepoEvaluation treats a non-array input as an empty run", () => {
+      const summary = summarizeCrossRepoEvaluation(null as never);
+      expect(summary.total).toBe(0);
+      expect(summary.majorityPassed).toBe(false);
+    });
+
+    it("formatCrossRepoEvaluationReport defaults its summary and omits the totals line for an empty run", () => {
+      // Called with a single argument: the summary defaults to summarizeCrossRepoEvaluation([]) (total 0), so the
+      // "without loopover-specific target config" line and the failures-by-category block are both omitted.
+      const report = formatCrossRepoEvaluationReport([]);
+      expect(report).toBe(
+        ["loopover-miner cross-repo evaluation", "", "", "summary: 0/0 passed (majority failed)"].join("\n"),
+      );
+    });
+
+    it("formatCrossRepoEvaluationReport sorts multiple failure categories alphabetically", () => {
+      const results = [
+        { repoFullName: "acme/a", passed: false, failureCategory: CROSS_REPO_FAILURE_CATEGORY.STACK_DETECTION, reason: "x" },
+        { repoFullName: "acme/b", passed: false, failureCategory: CROSS_REPO_FAILURE_CATEGORY.CLONE_SETUP, reason: "y" },
+      ] as never;
+      const report = formatCrossRepoEvaluationReport(results);
+      // clone_setup sorts before stack_detection_gap (the sort comparator runs only with >= 2 categories).
+      const cloneIdx = report.indexOf("- clone_setup: 1");
+      const stackIdx = report.indexOf("- stack_detection_gap: 1");
+      expect(cloneIdx).toBeGreaterThan(-1);
+      expect(stackIdx).toBeGreaterThan(cloneIdx);
     });
   });
 

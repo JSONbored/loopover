@@ -173,6 +173,18 @@ describe("sweepStuckItems (#4827)", () => {
     expect(stillInProgress).toEqual([expect.objectContaining({ apiBaseUrl: "https://api.github.com" })]);
   });
 
+  it("skips items whose store.reclaimStuckItem reports no transition (null)", () => {
+    // A pure-object store (not the real store): the item's lease is ancient, so findStuckItems selects it, but
+    // reclaimStuckItem returns null (already left in_progress), so the `if (updated)` guard skips it.
+    const stuck = leaseItem({ leasedAt: "2000-01-01T00:00:00.000Z" });
+    const store = {
+      listInProgress: () => [stuck],
+      reclaimStuckItem: () => null,
+    };
+    const nowMs = Date.parse("2026-07-12T12:00:00.000Z");
+    expect(sweepStuckItems(store, nowMs, 30 * 60 * 1000)).toEqual([]);
+  });
+
   it("defaults the bound to DEFAULT_MAX_LEASE_MS and reclaims nothing when all leases are fresh", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-12T10:00:00.000Z"));

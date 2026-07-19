@@ -99,13 +99,31 @@ export default defineConfig({
       // merged shards instead; this backstop still runs on the full local
       // `npm run test:coverage`. Spread-omit the key (rather than set it to
       // undefined) to satisfy exactOptionalPropertyTypes.
+      // branches is set below the others (not 90) because of a reproducible v8
+      // `--mergeReports` artifact, not a real coverage drop: merging a shard that
+      // never touches a given compiled-from-.ts miner lib file (packages/loopover-
+      // miner/lib/**/*.js, remapped to .ts via inline sourcemap, #7290) with a
+      // shard that does can REDUCE that file's reported branch hit ratio below
+      // what the exercising shard alone reported -- confirmed with an isolated
+      // 2-shard --reporter=blob + --mergeReports repro on a single file (a file at
+      // 99%+ branches in its own shard dropped to ~71% once merged with a shard
+      // that ran zero of its tests), unaffected by `coverage.all`. It does not
+      // reproduce on plain live-transformed .ts (src/**, packages/loopover-engine/
+      // src/**), only on this pre-compiled .ts-with-inline-sourcemap remap path,
+      // and grows as more packages/loopover-miner/lib files convert from .js to
+      // .ts (#7290 phase 2+). `npm run test:coverage` (unsharded, no merge) is
+      // unaffected and is the faithful local signal; only CI's sharded
+      // validate-tests-merge job sees this. Real per-line/branch enforcement is
+      // Codecov's codecov/patch gate (changed lines only, computed from the same
+      // merged lcov -- also unaffected, since it diffs hit-or-not per line rather
+      // than trusting an aggregate ratio), not this backstop.
       ...(process.env.COVERAGE_NO_THRESHOLDS
         ? {}
         : {
             thresholds: {
               lines: 90,
               functions: 90,
-              branches: 90,
+              branches: 85,
               statements: 90,
             },
           }),

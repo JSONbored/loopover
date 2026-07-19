@@ -68,7 +68,8 @@ describe("MessageList (#7081) — message list is a polite live region for compl
     expect(screen.getByText("first answer")).toBeTruthy();
 
     // The next completed turn adds exactly one more — never a burst, because streaming chunks (rendered by the
-    // separate StreamingText outside this list) never mutate `messages`.
+    // footer StreamingText outside this live region but inside the same ScrollArea — #7229) never mutate
+    // `messages`.
     const reAnswered: ChatMessage[] = [
       ...answered,
       { id: "u2", role: "user", content: "and now?", timestamp: "2026-07-16T08:00:02.000Z" },
@@ -83,6 +84,86 @@ describe("MessageList (#7081) — message list is a polite live region for compl
     render(<MessageList messages={emptyConversation} isLoading />);
     expect(screen.getByText(/Loading conversation/i)).toBeTruthy();
     expect(screen.queryByRole("list")).toBeNull();
+  });
+});
+
+describe("MessageList (#7229) — stick-to-bottom auto-scroll", () => {
+  function mockViewportMetrics(
+    viewport: HTMLElement,
+    metrics: { scrollHeight: number; clientHeight: number; scrollTop?: number },
+  ) {
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, get: () => metrics.scrollHeight });
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, get: () => metrics.clientHeight });
+    let top = metrics.scrollTop ?? 0;
+    Object.defineProperty(viewport, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (value: number) => {
+        top = value;
+      },
+    });
+  }
+
+  function getViewport(container: HTMLElement): HTMLElement {
+    const viewport = container.querySelector("[data-radix-scroll-area-viewport]");
+    if (!(viewport instanceof HTMLElement)) throw new Error("missing ScrollArea viewport");
+    return viewport;
+  }
+
+  it("pins scrollTop to the bottom when messages grow while already near the bottom", () => {
+    const question: ChatMessage[] = [{ id: "u1", role: "user", content: "q1", timestamp: "2026-07-16T08:00:00.000Z" }];
+    const { container, rerender } = render(<MessageList messages={question} />);
+    const viewport = getViewport(container);
+    mockViewportMetrics(viewport, { scrollHeight: 400, clientHeight: 200, scrollTop: 200 });
+
+    const answered: ChatMessage[] = [
+      ...question,
+      { id: "a1", role: "assistant", content: "a1", timestamp: "2026-07-16T08:00:01.000Z" },
+    ];
+    mockViewportMetrics(viewport, { scrollHeight: 600, clientHeight: 200, scrollTop: viewport.scrollTop });
+    rerender(<MessageList messages={answered} />);
+    expect(viewport.scrollTop).toBe(400); // scrollHeight - clientHeight
+  });
+
+  it("does not yank scrollTop when the operator has scrolled away from the bottom", () => {
+    const question: ChatMessage[] = [{ id: "u1", role: "user", content: "q1", timestamp: "2026-07-16T08:00:00.000Z" }];
+    const { container, rerender } = render(<MessageList messages={question} />);
+    const viewport = getViewport(container);
+    mockViewportMetrics(viewport, { scrollHeight: 600, clientHeight: 200, scrollTop: 0 });
+    viewport.dispatchEvent(new Event("scroll"));
+
+    const answered: ChatMessage[] = [
+      ...question,
+      { id: "a1", role: "assistant", content: "a1", timestamp: "2026-07-16T08:00:01.000Z" },
+    ];
+    mockViewportMetrics(viewport, { scrollHeight: 800, clientHeight: 200, scrollTop: 0 });
+    rerender(<MessageList messages={answered} />);
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  it("keeps pinning while a streaming footer grows (ResizeObserver path)", async () => {
+    const { container, rerender } = render(
+      <MessageList messages={singleMessage} footer={<div data-testid="stream-foot">hi</div>} />,
+    );
+    const viewport = getViewport(container);
+    mockViewportMetrics(viewport, { scrollHeight: 300, clientHeight: 200, scrollTop: 100 });
+
+    rerender(
+      <MessageList
+        messages={singleMessage}
+        footer={<div data-testid="stream-foot">hi there, a longer streamed answer</div>}
+      />,
+    );
+    mockViewportMetrics(viewport, { scrollHeight: 500, clientHeight: 200, scrollTop: viewport.scrollTop });
+    // Re-trigger layout effect via composing toggle (footer already remounted).
+    rerender(
+      <MessageList
+        messages={singleMessage}
+        composing
+        footer={<div data-testid="stream-foot">hi there, a longer streamed answer</div>}
+      />,
+    );
+    expect(viewport.scrollTop).toBe(300);
   });
 });
 

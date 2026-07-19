@@ -1,126 +1,82 @@
-export const FORWARD_REF_PLACEHOLDER: string;
-
+export declare const FORWARD_REF_PLACEHOLDER = "[redacted-forward-ref]";
 export type RecencyPool = "recent" | "older";
-export const RECENCY_POOLS: readonly RecencyPool[];
-
+export declare const RECENCY_POOLS: readonly RecencyPool[];
 export type ForwardReference = {
-  kind: "link" | "hashref" | "sha" | "bare-issue-number";
-  value: string | number;
+    kind: "link" | "hashref" | "sha" | "bare-issue-number";
+    value: string | number;
 };
-
 export type ForwardRefContext = {
-  knownIssueMax?: number;
-  knownCommitShas?: string[];
-  revealedIssueNumbers?: number[];
+    knownIssueMax?: number;
+    knownCommitShas?: string[];
+    revealedIssueNumbers?: number[];
 };
-
 export type DetectedForwardReferences = {
-  scrubbable: ForwardReference[];
-  unscrubbable: ForwardReference[];
+    scrubbable: ForwardReference[];
+    unscrubbable: ForwardReference[];
 };
-
 export type ScrubResult = {
-  scrubbed: string;
-  removed: ForwardReference[];
-  residual: ForwardReference[];
+    scrubbed: string;
+    removed: ForwardReference[];
+    residual: ForwardReference[];
 };
-
 export type LintResult = {
-  ok: boolean;
-  residual: ForwardReference[];
+    ok: boolean;
+    residual: ForwardReference[];
 };
-
 export type FreezePointThresholds = {
-  minPriorCommits?: number;
-  minRevealedCommits?: number;
+    minPriorCommits?: number;
+    minRevealedCommits?: number;
 };
-
 export type FreezePointCandidate = {
-  repo?: string;
-  commitT?: string;
-  priorCommitCount?: number;
-  revealedCommitCount?: number;
-  lastActivityAt?: string;
-  frozenContextTexts?: unknown[];
-  revealedGroundTruth?: unknown;
+    repo?: string;
+    commitT?: string;
+    priorCommitCount?: number;
+    revealedCommitCount?: number;
+    lastActivityAt?: string;
+    frozenContextTexts?: unknown[];
+    revealedGroundTruth?: unknown;
 };
-
 export type FreezePointSelection = {
-  eligible: boolean;
-  reasons: string[];
-  priorCommitCount: number;
-  revealedCommitCount: number;
+    eligible: boolean;
+    reasons: string[];
+    priorCommitCount: number;
+    revealedCommitCount: number;
 };
-
 export type ReplayTaskOptions = {
-  thresholds?: FreezePointThresholds;
-  modelCutoffIso?: string;
+    thresholds?: FreezePointThresholds;
+    modelCutoffIso?: string;
 };
-
 export type ReplayTaskRejected = {
-  eligible: false;
-  rejected: "selection" | "unscrubbable_forward_reference";
-  reasons?: string[];
-  residual?: ForwardReference[];
+    eligible: false;
+    rejected: "selection" | "unscrubbable_forward_reference";
+    reasons?: string[];
+    residual?: ForwardReference[];
 };
-
 export type ReplayTask = {
-  eligible: true;
-  pool: RecencyPool;
-  frozen: {
-    repo: string | null;
-    commitT: string | null;
-    contextTexts: string[];
-  };
+    eligible: true;
+    pool: RecencyPool;
+    frozen: {
+        repo: string | null;
+        commitT: string | null;
+        contextTexts: string[];
+    };
 };
-
 export type ReplayScoringKey = {
-  eligible: true;
-  commitCount: number;
-  groundTruth: unknown;
+    eligible: true;
+    commitCount: number;
+    groundTruth: unknown;
 };
-
-// generateReplayScoringKey never lints/scrubs frozen context (it doesn't touch context text at all), so
-// unlike ReplayTaskRejected it can only ever reject on selection -- narrower than reusing ReplayTaskRejected,
-// which would advertise an "unscrubbable_forward_reference" branch this function can never actually produce.
 export type ReplayScoringKeyRejected = {
-  eligible: false;
-  rejected: "selection";
-  reasons: string[];
+    eligible: false;
+    rejected: "selection";
+    reasons: string[];
 };
-
-export function detectForwardReferences(
-  text: unknown,
-  context: ForwardRefContext | null | undefined,
-): DetectedForwardReferences;
-
-export function scrubForwardReferences(
-  text: unknown,
-  context: ForwardRefContext | null | undefined,
-): ScrubResult;
-
-export function lintFrozenContext(
-  texts: unknown,
-  context: ForwardRefContext | null | undefined,
-): LintResult;
-
-export function selectFreezePoint(
-  candidate: FreezePointCandidate | null | undefined,
-  thresholds: FreezePointThresholds | null | undefined,
-): FreezePointSelection;
-
-export function classifyRecencyPool(
-  candidate: FreezePointCandidate | null | undefined,
-  options: { modelCutoffIso?: string } | null | undefined,
-): RecencyPool;
-
-export function generateReplayTask(
-  candidate: FreezePointCandidate | null | undefined,
-  context: ForwardRefContext | null | undefined,
-  options: ReplayTaskOptions | null | undefined,
-): ReplayTask | ReplayTaskRejected;
-
-export function generateReplayScoringKey(
-  candidate: FreezePointCandidate | null | undefined,
-  options: ReplayTaskOptions | null | undefined,
-): ReplayScoringKey | ReplayScoringKeyRejected;
+export declare function detectForwardReferences(text: unknown, context: ForwardRefContext | null | undefined): DetectedForwardReferences;
+export declare function scrubForwardReferences(text: unknown, context: ForwardRefContext | null | undefined): ScrubResult;
+export declare function lintFrozenContext(texts: unknown, context: ForwardRefContext | null | undefined): LintResult;
+export declare function selectFreezePoint(candidate: FreezePointCandidate | null | undefined, thresholds: FreezePointThresholds | null | undefined): FreezePointSelection;
+export declare function classifyRecencyPool(candidate: FreezePointCandidate | null | undefined, options: {
+    modelCutoffIso?: string;
+} | null | undefined): RecencyPool;
+export declare function generateReplayTask(candidate: FreezePointCandidate | null | undefined, context: ForwardRefContext | null | undefined, options: ReplayTaskOptions | null | undefined): ReplayTask | ReplayTaskRejected;
+export declare function generateReplayScoringKey(candidate: FreezePointCandidate | null | undefined, options: ReplayTaskOptions | null | undefined): ReplayScoringKey | ReplayScoringKeyRejected;

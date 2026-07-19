@@ -498,4 +498,29 @@ describe("loopover-miner doctor — credential presence checks (#5170)", () => {
       expect(check.detail).not.toContain(SECRET_ANTHROPIC);
     }
   });
+
+  it("checkClaudeCliPresent/checkCodexCliPresent default to process.env when no env override is supplied", () => {
+    const claude = checkClaudeCliPresent({ resolveClaudePath: () => null });
+    expect(claude.ok).toBe(true);
+    const codex = checkCodexCliPresent({ resolveCodexPath: () => null });
+    expect(codex.ok).toBe(true);
+  });
+
+  it("checkCodexCliPresent defaults to the real resolveCodexAuthPath when no override is supplied", () => {
+    const codexHome = tempRoot();
+    writeFileSync(join(codexHome, "auth.json"), "{}");
+    // No resolveCodexAuthPath override passed -- exercises the real default, which reads CODEX_HOME.
+    const check = checkCodexCliPresent({
+      env: { CODEX_HOME: codexHome },
+      resolveCodexPath: () => "/usr/bin/codex",
+    });
+    expect(check.detail).toBe("found at /usr/bin/codex (authenticated)");
+  });
+
+  it("resolveCodexAuthPath resolves under CODEX_HOME when set, else under HOME/.codex", async () => {
+    const { resolveCodexAuthPath } = await import("../../packages/loopover-miner/lib/laptop-init.js");
+    expect(resolveCodexAuthPath({ CODEX_HOME: "/custom/codex" })).toBe("/custom/codex/auth.json");
+    expect(resolveCodexAuthPath({ HOME: "/home/alice" })).toBe("/home/alice/.codex/auth.json");
+    expect(resolveCodexAuthPath({})).toContain(".codex/auth.json"); // neither set -- falls back to os.homedir()
+  });
 });

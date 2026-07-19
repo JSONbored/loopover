@@ -51,6 +51,36 @@ describe("loopover-miner leakage-safe replay task generation (#3011)", () => {
       const { scrubbable } = detectForwardReferences("build 12345678 shipped", { knownCommitShas: [] });
       expect(scrubbable).toEqual([]);
     });
+
+    it("scrubs a commit deep-link whose SHA is not in pre-T history, but keeps one that is", () => {
+      const { scrubbable } = detectForwardReferences(
+        `see https://github.com/o/r/commit/deadbeef01 and https://github.com/o/r/commit/abc1234def`,
+        CONTEXT,
+      );
+      const values = scrubbable.map((ref) => ref.value);
+      expect(values).toContain("https://github.com/o/r/commit/deadbeef01");
+      expect(values).not.toContain("https://github.com/o/r/commit/abc1234def"); // known pre-T SHA kept
+    });
+
+    it("ignores a non-integer/negative revealedIssueNumbers entry and a non-string knownCommitShas entry", () => {
+      const garbageContext = {
+        knownIssueMax: 100,
+        knownCommitShas: [42, "abc1234def"] as unknown as string[],
+        revealedIssueNumbers: [-5, 1.5, 300],
+      };
+      const { unscrubbable } = detectForwardReferences("still 300 leaks, -5 and 1.5 do not count", garbageContext);
+      expect(unscrubbable).toEqual([{ kind: "bare-issue-number", value: 300 }]);
+    });
+
+    it("treats a non-array knownCommitShas as no known SHAs, without throwing", () => {
+      const { scrubbable } = detectForwardReferences("see c0ffee99", { knownCommitShas: "not-an-array" as unknown as string[] });
+      expect(scrubbable.map((ref) => ref.value)).toContain("c0ffee99");
+    });
+
+    it("keeps a pre-T issue/pull deep-link untouched", () => {
+      const { scrubbable } = detectForwardReferences("see https://github.com/o/r/issues/42", CONTEXT);
+      expect(scrubbable).toEqual([]);
+    });
   });
 
   describe("scrubForwardReferences", () => {
@@ -92,6 +122,14 @@ describe("loopover-miner leakage-safe replay task generation (#3011)", () => {
 
     it("fails when any text carries an unscrubbable forward reference", () => {
       const lint = lintFrozenContext(["harmless #42", "leaks 250 in prose"], CONTEXT);
+      expect(lint.ok).toBe(false);
+      expect(lint.residual).toEqual([{ kind: "bare-issue-number", value: 250 }]);
+    });
+
+    it("treats a null/undefined texts input as an empty list, and wraps a single non-array text", () => {
+      expect(lintFrozenContext(null, CONTEXT)).toEqual({ ok: true, residual: [] });
+      expect(lintFrozenContext(undefined, CONTEXT)).toEqual({ ok: true, residual: [] });
+      const lint = lintFrozenContext("leaks 250 in prose", CONTEXT);
       expect(lint.ok).toBe(false);
       expect(lint.residual).toEqual([{ kind: "bare-issue-number", value: 250 }]);
     });
@@ -154,6 +192,13 @@ describe("loopover-miner leakage-safe replay task generation (#3011)", () => {
       expect(task).not.toHaveProperty("revealed");
       expect(JSON.stringify(task)).not.toContain("refactor");
       expect(task.frozen).not.toHaveProperty("groundTruth");
+    });
+
+    it("defaults a missing frozenContextTexts to an empty list and missing repo/commitT to null", () => {
+      const { repo: _omitRepo, commitT: _omitCommitT, ...rest } = eligible;
+      const task = generateReplayTask(rest, CONTEXT, options);
+      if (!task.eligible) throw new Error(`expected eligible task, got ${JSON.stringify(task)}`);
+      expect(task.frozen).toEqual({ repo: null, commitT: null, contextTexts: [] });
     });
 
     it("rejects a candidate that fails selection, without scrubbing", () => {

@@ -158,6 +158,15 @@ describe("loopover-miner replay objective-anchor scoring (#3012)", () => {
       expect(result.replayChangeKind).toBe("other");
     });
 
+    it("treats a non-array revealedFeatures.changeKinds as no revealed kinds rather than throwing", () => {
+      const result = scoreObjectiveAnchor(
+        { modules: ["src/a"], changeKind: "feature" },
+        { modules: ["src/a"], changeKinds: "feature" },
+      );
+      expect(result.revealedChangeKinds).toEqual([]);
+      expect(result.changeKindMatch).toBe(0);
+    });
+
     it("normalizes malformed feature inputs (non-array modules, out-of-vocab kinds) defensively", () => {
       const result = scoreObjectiveAnchor(
         { modules: "src/a", changeKind: "banana" },

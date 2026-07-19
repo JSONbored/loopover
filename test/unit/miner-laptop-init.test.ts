@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,10 @@ describe("loopover-miner laptop init (#2329)", () => {
       .toBe("/custom/state/laptop-state.sqlite3");
     expect(resolveLaptopStateDbPath({ XDG_CONFIG_HOME: "/xdg" }))
       .toBe("/xdg/loopover-miner/laptop-state.sqlite3");
+  });
+
+  it("falls back to ~/.config when neither LOOPOVER_MINER_CONFIG_DIR nor XDG_CONFIG_HOME is set", () => {
+    expect(resolveLaptopStateDbPath({})).toBe(join(homedir(), ".config", "loopover-miner", "laptop-state.sqlite3"));
   });
 
   it("fresh init creates the state dir and SQLite file", () => {

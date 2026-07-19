@@ -105,4 +105,32 @@ describe("recordMinerKillSwitchTransition (#2341)", () => {
     expect(append).not.toHaveBeenCalled();
     expect(ledger.readGovernorEvents({})).toHaveLength(0);
   });
+
+  it("falls back to the real governor-ledger appendGovernorEvent when no append override is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-kill-switch-default-append-"));
+    roots.push(root);
+    const dbPath = join(root, "governor-ledger.sqlite3");
+    const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+    process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = dbPath;
+    try {
+      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger.js");
+      const tripped = recordMinerKillSwitchTransition({
+        repoFullName: "acme/widgets",
+        actionClass: "open_pr",
+        previousScope: "none",
+        scope: "repo",
+      });
+      expect(tripped?.decision).toBe("tripped");
+      closeDefaultGovernorLedger();
+
+      // recordMinerKillSwitchTransition wrote through the module-level default appendGovernorEvent (no override
+      // passed); reopening the same file after closing that default confirms the write was actually persisted.
+      const reopened = initGovernorLedger(dbPath);
+      ledgers.push(reopened);
+      expect(reopened.readGovernorEvents({ repoFullName: "acme/widgets" })).toHaveLength(1);
+    } finally {
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = previousDbPath;
+    }
+  });
 });

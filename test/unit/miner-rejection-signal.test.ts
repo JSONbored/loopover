@@ -200,6 +200,44 @@ describe("resolveRejectionSignaled (#5132)", () => {
     expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
   });
 
+  it("tolerates a stream read that reports a chunk with no value (skips it, keeps reading)", async () => {
+    const encoder = new TextEncoder();
+    let call = 0;
+    const body = {
+      getReader() {
+        return {
+          read: async () => {
+            call += 1;
+            if (call === 1) return { done: false, value: undefined };
+            if (call === 2) return { done: false, value: encoder.encode("No AI-generated pull requests, please.") };
+            return { done: true, value: undefined };
+          },
+          cancel: async () => undefined,
+          releaseLock: () => undefined,
+        };
+      },
+    };
+    const fetchImpl = routedFetch({
+      "AI-USAGE.md": () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body,
+        json: async (): Promise<unknown> => {
+          throw new Error("json() is unused by resolveRejectionSignaled");
+        },
+        text: async () => {
+          throw new Error("streaming responses should not call text()");
+        },
+      }),
+      "CONTRIBUTING.md": () => textResponse("Welcome, contributors!"),
+    });
+
+    const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
+
+    expect(result).toBe(REJECTION_REASON_AI_USAGE_POLICY_BAN);
+  });
+
   it("fails open to false when both docs 404", async () => {
     const fetchImpl = routedFetch({});
     const result = await resolveRejectionSignaled("acme/widgets", { fetchImpl });
@@ -217,6 +255,13 @@ describe("resolveRejectionSignaled (#5132)", () => {
   it("returns false for a malformed repoFullName, without calling fetch", async () => {
     const fetchImpl = vi.fn();
     const result = await resolveRejectionSignaled("not-a-repo", { fetchImpl });
+    expect(result).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("returns false for a non-string repoFullName, without calling fetch", async () => {
+    const fetchImpl = vi.fn();
+    const result = await resolveRejectionSignaled(42 as unknown as string, { fetchImpl });
     expect(result).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
   });

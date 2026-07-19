@@ -172,6 +172,65 @@ describe("verifyGithubToken", () => {
     expect(result.login).toBeNull();
     expect(result.detail).toContain("timed out after 1ms");
   });
+
+  it("defaults githubToken to blank and reports a null/unknown-user login when GitHub's payload omits login", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockJsonResponse({}, { headers: { "x-oauth-scopes": "repo" } }));
+
+    const result = await verifyGithubToken({});
+
+    expect(result.ok).toBe(true);
+    expect(result.login).toBeNull();
+    expect(result.detail).toContain("unknown user");
+  });
+
+  it("reports a null login (not 'unknown user') when scopes are insufficient and login is absent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockJsonResponse({}, { headers: { "x-oauth-scopes": "read:org" } }));
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(false);
+    expect(result.login).toBeNull();
+  });
+
+  it("surfaces a thrown non-Error value as a generic request-failed detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue("raw string rejection");
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("request failed");
+  });
+
+  it("reports a null login (not the reported login) when the x-oauth-scopes header is empty and login is absent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockJsonResponse({}, { headers: { "x-oauth-scopes": "" } }));
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(false);
+    expect(result.login).toBeNull();
+  });
+
+  it("reports 'unknown user' and no-scopes-reported detail when both login and scopes are absent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockJsonResponse({}));
+
+    const result = await verifyGithubToken({ githubToken: "token-value" });
+
+    expect(result.ok).toBe(true);
+    expect(result.login).toBeNull();
+    expect(result.detail).toBe("validated GitHub token for unknown user; GitHub did not report classic OAuth scopes");
+  });
+
+  it("falls back to the default GitHub API base URL when apiBaseUrl trims to empty", async () => {
+    const requests: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      requests.push(String(input));
+      return mockJsonResponse({ login: "octocat" }, { headers: { "x-oauth-scopes": "repo" } });
+    };
+
+    await verifyGithubToken({ githubToken: "token-value", apiBaseUrl: "///", fetchImpl });
+
+    expect(requests).toEqual(["https://api.github.com/user"]);
+  });
 });
 
 describe("runInit", () => {

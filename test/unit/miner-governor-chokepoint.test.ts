@@ -372,4 +372,27 @@ describe("evaluateGovernorChokepointGate (#2340)", () => {
     expect(result.decision.stage).toBe("internal_error");
     expect(result.decision.reason).toBe("self_plagiarism_calculator_error: boom: not an Error");
   });
+
+  it("falls back to the real governor-ledger appendGovernorEvent when no append override is supplied", async () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-governor-chokepoint-default-append-"));
+    roots.push(root);
+    const dbPath = join(root, "governor-ledger.sqlite3");
+    const previousDbPath = process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+    process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = dbPath;
+    try {
+      const { closeDefaultGovernorLedger } = await import("../../packages/loopover-miner/lib/governor-ledger.js");
+      const result = evaluateGovernorChokepointGate(baseInput());
+      expect(result.decision.stage).toBe("allow");
+      closeDefaultGovernorLedger();
+
+      // evaluateGovernorChokepointGate wrote through the module-level default appendGovernorEvent (no override
+      // passed); reopening the same file after closing that default confirms the write was actually persisted.
+      const reopened = initGovernorLedger(dbPath);
+      ledgers.push(reopened);
+      expect(reopened.readGovernorEvents({ repoFullName: "acme/widgets" })).toHaveLength(1);
+    } finally {
+      if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_GOVERNOR_LEDGER_DB = previousDbPath;
+    }
+  });
 });

@@ -24,6 +24,17 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("https://printer.local")).toBe(false);
   });
 
+  it("rejects the RFC 6598 shared-address-space (CGNAT) range 100.64.0.0/10 (#7253)", () => {
+    // A URL resolving to a carrier-grade-NAT / shared-address-space host is internal, not publicly routable,
+    // and must be blocked like the other private ranges. Boundary-tested at the /10's inclusive edges.
+    expect(isSafeHttpUrl("https://100.64.0.0")).toBe(false); // lower inclusive bound
+    expect(isSafeHttpUrl("https://100.100.50.1")).toBe(false); // mid-range
+    expect(isSafeHttpUrl("https://100.127.255.255")).toBe(false); // upper inclusive bound
+    // Just outside the /10 in either direction must remain public/safe.
+    expect(isSafeHttpUrl("https://100.63.255.255")).toBe(true); // one below the range
+    expect(isSafeHttpUrl("https://100.128.0.0")).toBe(true); // one above the range
+  });
+
   it("rejects the RFC 6761 *.localhost loopback namespace (not just bare localhost)", () => {
     // RFC 6761 makes every `*.localhost` name loopback (systemd-resolved, browsers), so the bare
     // `=== "localhost"` check leaked sub-labelled forms; `.endsWith(".localhost")` closes them.

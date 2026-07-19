@@ -51,6 +51,7 @@ function ipv4IsPrivateOrLocal(host: string): boolean {
   if (a === 169 && b === 254) return true; // link-local (incl. cloud metadata 169.254.169.254)
   if (a === 192 && b === 168) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 shared address space (RFC 6598 CGNAT)
   return false;
 }
 

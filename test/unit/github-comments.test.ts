@@ -35,6 +35,48 @@ describe("GitHub PR intelligence comments", () => {
     expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(true);
   });
 
+  it("finds a marker comment beyond the first 300 comments (page 4) and PATCHes instead of duplicating (#7232)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    const calls: string[] = [];
+    const chatter = (id: number) => ({ id, user: { login: "operator", type: "User" }, body: "unrelated chatter" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/issues/12/comments") && method === "GET") {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        // Pages 1-3 are full of unrelated chatter (the old cap of 3 stopped here); LoopOver's own marker
+        // comment sits on page 4, only reachable now that the search follows up to 10 pages.
+        if (page < 4) return Response.json(Array.from({ length: 100 }, (_, i) => chatter(page * 1000 + i)));
+        if (page === 4) {
+          return Response.json([
+            { id: 4001, user: { login: "loopover[bot]", type: "Bot" }, body: `${PR_INTELLIGENCE_COMMENT_MARKER}\nstale panel` },
+            ...Array.from({ length: 99 }, (_, i) => chatter(4100 + i)),
+          ]);
+        }
+        return Response.json([]); // page 5 short-circuits the loop
+      }
+      if (url.includes("/issues/comments/4001") && method === "PATCH") {
+        return Response.json({ id: 4001, html_url: "https://github.com/comment/4001" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const result = await createOrUpdatePrIntelligenceComment(
+      createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey, GITHUB_APP_SLUG: "loopover" }),
+      123,
+      "JSONbored/gittensory",
+      12,
+      `${PR_INTELLIGENCE_COMMENT_MARKER}\nfresh panel`,
+    );
+
+    expect(result?.id).toBe(4001); // PATCHed the existing marker comment
+    expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/comments/4001"))).toBe(true);
+    // It must NOT have posted a duplicate panel comment.
+    expect(calls.some((call) => call.startsWith("POST ") && call.includes("/issues/12/comments"))).toBe(false);
+  });
+
   it("expires a rejected cached installation token and retries PR panel publication once", async () => {
     const privateKey = await generatePrivateKeyPem();
     let mints = 0;
@@ -214,7 +256,8 @@ describe("GitHub PR intelligence comments", () => {
     );
 
     expect(result?.id).toBe(303);
-    expect(commentListCalls).toEqual([1, 2, 3]);
+    // The search is still bounded (no unbounded pagination), now at the 10-page sibling cap (#7232) rather than 3.
+    expect(commentListCalls).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("returns null without creating a late first comment when createIfMissing is false", async () => {

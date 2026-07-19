@@ -7,7 +7,12 @@ export const PR_INTELLIGENCE_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
 export const AGENT_COMMAND_COMMENT_MARKER = PR_PANEL_COMMENT_MARKER;
 const LEGACY_PR_INTELLIGENCE_COMMENT_MARKER = "<!-- gittensory-pr-intelligence -->";
 const LEGACY_AGENT_COMMAND_COMMENT_MARKER = "<!-- gittensory-agent-command -->";
-const COMMENT_SEARCH_PAGE_LIMIT = 3;
+// Bound the marker-comment search at 10 pages (up to 1,000 comments), matching src/github's other pagination
+// caps (app.ts's MAX_WORKFLOW_RUN_LIST_PAGES, pr-actions.ts's REVIEW_PAGE_LIMIT). The old cap of 3 (300 comments)
+// let a PR/issue that accrued >300 comments before LoopOver's own marker comment hide it from this search, so
+// createOrUpdateIssueCommentWithMarker POSTed a DUPLICATE instead of PATCHing the existing one (#7232). The
+// `batch.length < 100` early-exit below still keeps a short comment list to a single request.
+const COMMENT_SEARCH_PAGE_LIMIT = 10;
 
 type IssueComment = {
   id: number;

@@ -78,6 +78,23 @@ describe("demo portfolio-queue items (#5963)", () => {
     expect(getDemoPortfolioQueueItems().length).toBeGreaterThan(0);
   });
 
+  it("its actionable-item counts match DEMO_PORTFOLIO_QUEUE_SUMMARY's byStatus, so the table can't disagree with the status cards (#7227)", () => {
+    const items = getDemoPortfolioQueueItems();
+    const count = (status: string) => items.filter((i) => i.status === status).length;
+    expect(count("in_progress")).toBe(DEMO_PORTFOLIO_QUEUE_SUMMARY.byStatus.in_progress);
+    expect(count("done")).toBe(DEMO_PORTFOLIO_QUEUE_SUMMARY.byStatus.done);
+    expect(items).toHaveLength(
+      DEMO_PORTFOLIO_QUEUE_SUMMARY.byStatus.in_progress + DEMO_PORTFOLIO_QUEUE_SUMMARY.byStatus.done,
+    );
+  });
+
+  it("references only the four synthetic demo repos, never a real repo name (#7227)", () => {
+    const allowed = new Set(["acme/widgets", "acme/api-gateway", "acme/docs-site", "northwind/inventory"]);
+    for (const item of getDemoPortfolioQueueItems()) {
+      expect(allowed.has(item.repoFullName)).toBe(true);
+    }
+  });
+
   it("removeDemoPortfolioQueueItem removes and returns the matching item", () => {
     const beforeCount = getDemoPortfolioQueueItems().length;
     const target = { ...getDemoPortfolioQueueItems()[0]! };

@@ -39,6 +39,14 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
     "discovery_index_github_requests_total",
     { help: "discovery-index outbound GitHub API requests, by outcome (ok/retried/failed).", type: "counter" },
   ],
+  [
+    "discovery_index_soft_claim_requests_total",
+    { help: "discovery-index /v1/discovery-index/soft-claim call outcomes, by status.", type: "counter" },
+  ],
+  [
+    "discovery_index_soft_claim_request_duration_seconds",
+    { help: "discovery-index /v1/discovery-index/soft-claim request handling duration in seconds.", type: "histogram" },
+  ],
 ];
 const metricMeta = new Map<string, MetricMeta>(DEFAULT_METRIC_META);
 

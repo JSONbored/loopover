@@ -4,6 +4,7 @@ import { createApp, type AppDeps } from "../../../packages/discovery-index/src/a
 import { TtlCache } from "../../../packages/discovery-index/src/cache";
 import { resetMetrics } from "../../../packages/discovery-index/src/metrics";
 import type { GitHubClientLike } from "../../../packages/discovery-index/src/discovery-query";
+import { SoftClaimStore } from "../../../packages/discovery-index/src/soft-claim";
 
 function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
   const github: GitHubClientLike = {
@@ -22,6 +23,7 @@ function makeDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     resultCache: new TtlCache<DiscoveryIndexCandidate[]>(),
     policyCache: new TtlCache<AiPolicyVerdict>(),
     cacheTtlMs: 300_000,
+    softClaimStore: new SoftClaimStore(new TtlCache(), 1_800_000),
     githubConfigured: true,
     ...overrides,
   };
@@ -146,6 +148,128 @@ describe("discovery-index Hono app (#7164)", () => {
         method: "POST",
         headers: { authorization: "Bearer sek", "content-type": "application/json" },
         body: JSON.stringify({ repos: ["acme/widgets"] }),
+      });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "internal_error" });
+    });
+  });
+
+  describe("POST /v1/discovery-index/soft-claim", () => {
+    it("fails closed with 503 when no shared secret is configured", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "");
+      const app = createApp(makeDeps());
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ repoFullName: "acme/widgets", issueNumber: 1, action: "claim" }),
+      });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: "service_not_configured" });
+    });
+
+    it("returns 401 for a missing or incorrect bearer token", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const app = createApp(makeDeps());
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer nope", "content-type": "application/json" },
+        body: JSON.stringify({ repoFullName: "acme/widgets", issueNumber: 1, action: "claim" }),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 400 for an unparseable JSON body", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const app = createApp(makeDeps());
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer sek", "content-type": "application/json" },
+        body: "not json",
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_json" });
+    });
+
+    it("returns 400 for a structurally invalid request", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const app = createApp(makeDeps());
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer sek", "content-type": "application/json" },
+        body: JSON.stringify({ repoFullName: "no-slash", issueNumber: 1, action: "claim" }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_request" });
+    });
+
+    it("accepts a fresh claim, reports an already-held repeat claim with its age, then accepts again after release", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const deps = makeDeps();
+      const app = createApp(deps);
+      const claimReq = () =>
+        app.request("/v1/discovery-index/soft-claim", {
+          method: "POST",
+          headers: { authorization: "Bearer sek", "content-type": "application/json" },
+          body: JSON.stringify({ repoFullName: "acme/widgets", issueNumber: 1, action: "claim" }),
+        });
+
+      const first = await claimReq();
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ accepted: true, ageMs: null });
+
+      const second = await claimReq();
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as { accepted: boolean; ageMs: number | null };
+      expect(secondBody.accepted).toBe(false);
+      expect(secondBody.ageMs).toBeGreaterThanOrEqual(0);
+
+      const release = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer sek", "content-type": "application/json" },
+        body: JSON.stringify({ repoFullName: "acme/widgets", issueNumber: 1, action: "release" }),
+      });
+      expect(release.status).toBe(200);
+      expect(await release.json()).toMatchObject({ accepted: true, ageMs: null });
+
+      const third = await claimReq();
+      expect(await third.json()).toMatchObject({ accepted: true, ageMs: null });
+    });
+
+    it("never echoes forbidden or identity-shaped fields even when the caller sends them", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const app = createApp(makeDeps());
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer sek", "content-type": "application/json" },
+        body: JSON.stringify({
+          repoFullName: "acme/widgets",
+          issueNumber: 1,
+          action: "claim",
+          note: "look at me",
+          instanceId: "instance-123",
+          reward: 999,
+          wallet: "0xdeadbeef",
+        }),
+      });
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["accepted", "ageMs", "contractVersion"]);
+    });
+
+    it("returns 500 via the centralized error handler when the store throws", async () => {
+      vi.stubEnv("DISCOVERY_INDEX_SHARED_SECRET", "sek");
+      const throwingStore = {
+        claim() {
+          throw new Error("store exploded");
+        },
+        release() {
+          throw new Error("store exploded");
+        },
+      };
+      const app = createApp(makeDeps({ softClaimStore: throwingStore }));
+      const res = await app.request("/v1/discovery-index/soft-claim", {
+        method: "POST",
+        headers: { authorization: "Bearer sek", "content-type": "application/json" },
+        body: JSON.stringify({ repoFullName: "acme/widgets", issueNumber: 1, action: "claim" }),
       });
       expect(res.status).toBe(500);
       expect(await res.json()).toEqual({ error: "internal_error" });

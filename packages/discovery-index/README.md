@@ -12,8 +12,11 @@ This is optional, shared infrastructure to reduce duplicate GitHub API pressure 
 | `GET /ready`                     | Readiness — checks this service's own GitHub token is configured.                               |
 | `GET /metrics`                   | Prometheus text-format metrics.                                                                 |
 | `POST /v1/discovery-index/query` | `Authorization: Bearer <DISCOVERY_INDEX_SHARED_SECRET>` → `DiscoveryIndexRequest` → `DiscoveryIndexResponse`. |
+| `POST /v1/discovery-index/soft-claim` | `Authorization: Bearer <DISCOVERY_INDEX_SHARED_SECRET>` → the payload shape `discovery-soft-claim.ts`'s `buildSoftClaimRequest` produces → `{contractVersion, accepted, ageMs}`. |
 
-See `packages/loopover-engine/src/discovery-index-contract.ts` for the full request/response contract (`normalizeDiscoveryIndexRequest`/`normalizeDiscoveryIndexResponse`), which this service both consumes and emits through.
+See `packages/loopover-engine/src/discovery-index-contract.ts` for the full query request/response contract (`normalizeDiscoveryIndexRequest`/`normalizeDiscoveryIndexResponse`), which this service both consumes and emits through, and `packages/loopover-engine/src/discovery-soft-claim.ts` for the soft-claim payload builder.
+
+Soft-claim design note: the shipped client payload never carries caller identity (`buildSoftClaimRequest` hardcodes `note`/`instanceId` to `null`) — this endpoint only ever sees `repoFullName` + `issueNumber` + `action`. A repeat `claim` call on a still-active key is reported as `accepted: false` (with the existing claim's age) and refreshes its TTL, since there is no identity on the wire to distinguish "the same caller checking in" from "a different caller."
 
 ## Configuration
 
@@ -22,6 +25,7 @@ See `packages/loopover-engine/src/discovery-index-contract.ts` for the full requ
 | `DISCOVERY_INDEX_SHARED_SECRET`     | Bearer secret required to call `/v1/discovery-index/*`. Unset ⇒ the service fails closed (503). |
 | `DISCOVERY_INDEX_GITHUB_TOKEN`      | This service's own GitHub token, isolated from any other component's (REES, the main engine's installation tokens, etc.). Unset ⇒ `/ready` reports not-ready. |
 | `DISCOVERY_INDEX_CACHE_TTL_MS`      | TTL for cached query results, per unique `(repos, orgs, searchTerms)` scope. Default `300000` (5 minutes). |
+| `DISCOVERY_INDEX_SOFT_CLAIM_TTL_MS` | TTL for a soft claim before it's reclaimable. Default `1800000` (30 minutes).                   |
 | `PORT`                              | HTTP port. Default `8080`.                                                                      |
 
 ## Deployment

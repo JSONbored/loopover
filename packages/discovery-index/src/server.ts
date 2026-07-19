@@ -10,16 +10,21 @@ import { createApp } from "./app.js";
 import { TtlCache } from "./cache.js";
 import { DEFAULT_CACHE_TTL_MS } from "./discovery-query.js";
 import { GitHubClient } from "./github-client.js";
+import { DEFAULT_SOFT_CLAIM_TTL_MS, SoftClaimStore } from "./soft-claim.js";
 
 const githubToken = process.env.DISCOVERY_INDEX_GITHUB_TOKEN ?? "";
 const configuredCacheTtlMs = Number(process.env.DISCOVERY_INDEX_CACHE_TTL_MS);
 const cacheTtlMs = Number.isFinite(configuredCacheTtlMs) && configuredCacheTtlMs > 0 ? configuredCacheTtlMs : DEFAULT_CACHE_TTL_MS;
+const configuredSoftClaimTtlMs = Number(process.env.DISCOVERY_INDEX_SOFT_CLAIM_TTL_MS);
+const softClaimTtlMs =
+  Number.isFinite(configuredSoftClaimTtlMs) && configuredSoftClaimTtlMs > 0 ? configuredSoftClaimTtlMs : DEFAULT_SOFT_CLAIM_TTL_MS;
 
 const app = createApp({
   github: new GitHubClient({ token: githubToken }),
   resultCache: new TtlCache<DiscoveryIndexCandidate[]>(),
   policyCache: new TtlCache<AiPolicyVerdict>(),
   cacheTtlMs,
+  softClaimStore: new SoftClaimStore(new TtlCache(), softClaimTtlMs),
   githubConfigured: githubToken.trim().length > 0,
 });
 

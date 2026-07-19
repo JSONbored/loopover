@@ -104,14 +104,14 @@ async function collectGithubToken(
   try {
     const { accessToken } = await runDeviceFlowAuthorization({
       clientId,
-      ...(options.fetchImpl !== undefined ? { fetchFn: options.fetchImpl } : {}),
-      ...(options.sleepFn !== undefined ? { sleepFn: options.sleepFn } : {}),
+      fetchFn: options.fetchImpl,
+      sleepFn: options.sleepFn,
       onCode: (code) => {
         io.writeLine("");
         io.writeLine(`To authorize, visit ${code.verificationUri} and enter code: ${code.userCode}`);
         io.writeLine("Waiting for authorization...");
       },
-    });
+    } as Parameters<typeof runDeviceFlowAuthorization>[0]);
     io.writeLine("Authorized.");
     return accessToken;
   } catch (error) {
@@ -137,7 +137,7 @@ export async function promptProviderSelection(io: WizardIo): Promise<string | nu
     if (!answer) return null;
     const index = Number(answer) - 1;
     if (Number.isInteger(index) && index >= 0 && index < CODING_AGENT_DRIVER_NAMES.length) {
-      return CODING_AGENT_DRIVER_NAMES[index] ?? null;
+      return CODING_AGENT_DRIVER_NAMES[index]!;
     }
     io.writeLine(`Enter a number from 1 to ${CODING_AGENT_DRIVER_NAMES.length}, or press Enter to skip.`);
   }
@@ -149,15 +149,11 @@ export async function promptProviderSelection(io: WizardIo): Promise<string | nu
  * that could drift. Empty input skips that one var; its built-in default (if any) applies at run time as usual.
  */
 export async function promptCompanionVars(io: WizardIo, provider: string): Promise<Array<[string, string]>> {
-  const varsForProvider =
-    CODING_AGENT_DRIVER_CONFIG_ENV[provider as CodingAgentDriverName] ?? {};
+  const varsForProvider = CODING_AGENT_DRIVER_CONFIG_ENV[provider as CodingAgentDriverName] ?? {};
   const collected: Array<[string, string]> = [];
   for (const [kind, envVarName] of Object.entries(varsForProvider)) {
-    if (typeof envVarName !== "string") continue;
-    const label = COMPANION_VAR_LABELS[kind] ?? kind;
-    const answer = (
-      await io.promptText(`Optional ${label} for ${provider} (env ${envVarName}) [Enter to skip]: `)
-    ).trim();
+    const label = COMPANION_VAR_LABELS[kind];
+    const answer = (await io.promptText(`Optional ${label} for ${provider} (env ${envVarName}) [Enter to skip]: `)).trim();
     if (answer) collected.push([envVarName, answer]);
   }
   return collected;

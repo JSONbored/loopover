@@ -125,14 +125,10 @@ export async function fetchLatestPackageVersion(input: {
       signal: controller.signal,
       headers: { accept: "application/json" },
     });
-    const payload: unknown = await response.json().catch(() => ({}));
-    const version =
-      payload && typeof payload === "object" && "version" in payload
-        ? (payload as { version: unknown }).version
-        : undefined;
-    if (!response.ok || typeof version !== "string")
+    const payload = (await response.json().catch(() => ({}))) as { version?: unknown };
+    if (!response.ok || typeof payload.version !== "string")
       throw new Error("npm_latest_version_unavailable");
-    return version;
+    return payload.version;
   } finally {
     clearTimeout(timeout);
   }
@@ -175,8 +171,8 @@ export function startUpdateCheck(
     npmRegistryUrl: resolveNpmRegistryUrl(input.env),
     upgradeCommand:
       input.upgradeCommand ?? resolveUpgradeCommand(input.packageName),
-    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-  });
+    timeoutMs: input.timeoutMs,
+  } as Parameters<typeof maybePrintUpdateNudge>[0]);
 }
 
 export const updateCheckExitGraceMs = 250;

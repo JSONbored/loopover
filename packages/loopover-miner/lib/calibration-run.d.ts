@@ -3,7 +3,6 @@ import type { AppendEventInput, LedgerEntry } from "./event-ledger.js";
 import type { ObjectiveAnchorResult, ReplayPlanInput, RevealedHistoryEntry } from "./replay-objective-anchor.js";
 /** Event-ledger vocabulary for a persisted Phase 7 calibration snapshot (mirrors MINER_PR_OUTCOME_EVENT). */
 export declare const MINER_CALIBRATION_SNAPSHOT_EVENT: "calibration_snapshot";
-/** One completed replay-run task result: what the replay targeted, and the revealed post-T history to score it. */
 export interface ReplayTaskResult {
     replayPlan?: ReplayPlanInput | null;
     revealedHistory?: RevealedHistoryEntry[] | RevealedHistoryEntry | null;
@@ -19,7 +18,6 @@ export interface HistoricalReplayCompositeScore {
     sampleSize: number;
     scores: number[];
 }
-/** A completed replay run's descriptor: its per-task results plus the run's identity/freshness/harness health. */
 export interface ReplayRunDescriptor {
     replayResults?: readonly ReplayTaskResult[] | null;
     replayRunId?: string;
@@ -32,7 +30,6 @@ export interface BuiltHistoricalReplayInput {
     sampleSize: number;
     scores: number[];
 }
-/** The persisted, public-safe projection of a Phase7CalibrationLoopResult. */
 export interface CalibrationSnapshotPayload {
     enabled: boolean;
     combinedAccuracy: number | null;
@@ -54,8 +51,6 @@ export interface SnapshotMeta {
     sampleSize?: number;
 }
 export interface RecordCalibrationSnapshotOptions {
-    /** Optional at the type level so a caller can pass an unusable ledger to exercise the fail-closed guard; the
-     *  writer throws `invalid_event_ledger` at runtime when this is absent or lacks `appendEvent`. */
     eventLedger?: {
         appendEvent(event: AppendEventInput): LedgerEntry;
     };

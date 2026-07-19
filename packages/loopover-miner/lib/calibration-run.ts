@@ -15,134 +15,30 @@
 // combine/freshness/threshold/hold-reason logic; this module owns scheduling the score and persisting the row.
 
 import { computePhase7CalibrationLoop } from "@loopover/engine";
-import type {
-  HistoricalReplayCalibrationInput,
-  Phase7CalibrationConfig,
-  Phase7CalibrationLoopResult,
-  Phase7CalibrationManifest,
-  PrOutcomeCalibrationInput,
-  ReplayHarnessStatus,
-} from "@loopover/engine";
+import type { HistoricalReplayCalibrationInput, Phase7CalibrationConfig, Phase7CalibrationLoopResult, Phase7CalibrationManifest, PrOutcomeCalibrationInput, ReplayHarnessStatus } from "@loopover/engine";
 import type { AppendEventInput, LedgerEntry } from "./event-ledger.js";
 import { computeObjectiveAnchor } from "./replay-objective-anchor.js";
-import type {
-  ObjectiveAnchorResult,
-  ReplayPlanInput,
-  RevealedHistoryEntry,
-} from "./replay-objective-anchor.js";
+import type { ObjectiveAnchorResult, ReplayPlanInput, RevealedHistoryEntry } from "./replay-objective-anchor.js";
 
 /** Event-ledger vocabulary for a persisted Phase 7 calibration snapshot (mirrors MINER_PR_OUTCOME_EVENT). */
 export const MINER_CALIBRATION_SNAPSHOT_EVENT = "calibration_snapshot" as const;
 
+export interface ReplayTaskResult { replayPlan?: ReplayPlanInput | null; revealedHistory?: RevealedHistoryEntry[] | RevealedHistoryEntry | null; }
+export interface ScoreCompositeOptions { computeObjectiveAnchor?: (input: { replayPlan?: ReplayPlanInput | null; revealedHistory?: RevealedHistoryEntry[] | RevealedHistoryEntry | null }) => ObjectiveAnchorResult; }
+export interface HistoricalReplayCompositeScore { compositeScore: number | null; sampleSize: number; scores: number[]; }
+export interface ReplayRunDescriptor { replayResults?: readonly ReplayTaskResult[] | null; replayRunId?: string; observedAt?: string; harnessStatus?: ReplayHarnessStatus; }
+export interface BuiltHistoricalReplayInput { historicalReplay: HistoricalReplayCalibrationInput | null; compositeScore: number | null; sampleSize: number; scores: number[]; }
+export interface CalibrationSnapshotPayload { enabled: boolean; combinedAccuracy: number | null; baselineAccuracy: number; deltaFromBaseline: number | null; autonomyIncreasePermitted: boolean; replayHarnessHold: boolean; replayHarnessStatus: string; replayRunDue: boolean; holdReasons: string[]; contributingSources: string[]; replayRunId: string | null; observedAt: string | null; replaySampleSize: number; }
+export interface SnapshotMeta { replayRunId?: string | null; observedAt?: string | null; sampleSize?: number; }
+export interface RecordCalibrationSnapshotOptions { eventLedger?: { appendEvent(event: AppendEventInput): LedgerEntry }; repoFullName?: string; }
+export interface CalibrationSnapshotReader { readEvents(filter?: { since?: number | null; repoFullName?: string | null }): unknown[]; }
+export interface CalibrationSnapshotFilter { since?: number | null; repoFullName?: string | null; }
+export interface PersistedCalibrationSnapshot extends CalibrationSnapshotPayload { repoFullName: string | null; seq: number | null; createdAt: string | null; }
+export interface RunCalibrationCycleInput { config?: Phase7CalibrationConfig | Phase7CalibrationManifest | Record<string, unknown> | null; prOutcome?: PrOutcomeCalibrationInput | null; replayRun?: ReplayRunDescriptor | null; now?: string | Date | null; observedAt?: string | null; repoFullName?: string; }
+export interface RunCalibrationCycleDeps extends ScoreCompositeOptions { computeLoop?: (input: { config?: Phase7CalibrationConfig | Phase7CalibrationManifest | Record<string, unknown> | null; prOutcome?: PrOutcomeCalibrationInput | null; historicalReplay?: HistoricalReplayCalibrationInput | null; now?: string | Date | null }) => Phase7CalibrationLoopResult; eventLedger?: { appendEvent(event: AppendEventInput): LedgerEntry }; }
+export interface RunCalibrationCycleResult { result: Phase7CalibrationLoopResult; snapshot: CalibrationSnapshotPayload; recorded: LedgerEntry | null; historicalReplay: HistoricalReplayCalibrationInput | null; compositeScore: number | null; sampleSize: number; scores: number[]; }
+
 const SCORE_PRECISION = 1e6;
-
-/** One completed replay-run task result: what the replay targeted, and the revealed post-T history to score it. */
-export interface ReplayTaskResult {
-  replayPlan?: ReplayPlanInput | null;
-  revealedHistory?: RevealedHistoryEntry[] | RevealedHistoryEntry | null;
-}
-
-export interface ScoreCompositeOptions {
-  computeObjectiveAnchor?: (input: {
-    replayPlan?: ReplayPlanInput | null;
-    revealedHistory?: RevealedHistoryEntry[] | RevealedHistoryEntry | null;
-  }) => ObjectiveAnchorResult;
-}
-
-export interface HistoricalReplayCompositeScore {
-  compositeScore: number | null;
-  sampleSize: number;
-  scores: number[];
-}
-
-/** A completed replay run's descriptor: its per-task results plus the run's identity/freshness/harness health. */
-export interface ReplayRunDescriptor {
-  replayResults?: readonly ReplayTaskResult[] | null;
-  replayRunId?: string;
-  observedAt?: string;
-  harnessStatus?: ReplayHarnessStatus;
-}
-
-export interface BuiltHistoricalReplayInput {
-  historicalReplay: HistoricalReplayCalibrationInput | null;
-  compositeScore: number | null;
-  sampleSize: number;
-  scores: number[];
-}
-
-/** The persisted, public-safe projection of a Phase7CalibrationLoopResult. */
-export interface CalibrationSnapshotPayload {
-  enabled: boolean;
-  combinedAccuracy: number | null;
-  baselineAccuracy: number;
-  deltaFromBaseline: number | null;
-  autonomyIncreasePermitted: boolean;
-  replayHarnessHold: boolean;
-  replayHarnessStatus: string;
-  replayRunDue: boolean;
-  holdReasons: string[];
-  contributingSources: string[];
-  replayRunId: string | null;
-  observedAt: string | null;
-  replaySampleSize: number;
-}
-
-export interface SnapshotMeta {
-  replayRunId?: string | null;
-  observedAt?: string | null;
-  sampleSize?: number;
-}
-
-export interface RecordCalibrationSnapshotOptions {
-  /** Optional at the type level so a caller can pass an unusable ledger to exercise the fail-closed guard; the
-   *  writer throws `invalid_event_ledger` at runtime when this is absent or lacks `appendEvent`. */
-  eventLedger?: { appendEvent(event: AppendEventInput): LedgerEntry };
-  repoFullName?: string;
-}
-
-export interface CalibrationSnapshotReader {
-  readEvents(filter?: { since?: number | null; repoFullName?: string | null }): unknown[];
-}
-
-export interface CalibrationSnapshotFilter {
-  since?: number | null;
-  repoFullName?: string | null;
-}
-
-export interface PersistedCalibrationSnapshot extends CalibrationSnapshotPayload {
-  repoFullName: string | null;
-  seq: number | null;
-  createdAt: string | null;
-}
-
-export interface RunCalibrationCycleInput {
-  config?: Phase7CalibrationConfig | Phase7CalibrationManifest | Record<string, unknown> | null;
-  prOutcome?: PrOutcomeCalibrationInput | null;
-  replayRun?: ReplayRunDescriptor | null;
-  now?: string | Date | null;
-  observedAt?: string | null;
-  repoFullName?: string;
-}
-
-export interface RunCalibrationCycleDeps extends ScoreCompositeOptions {
-  computeLoop?: (input: {
-    config?: Phase7CalibrationConfig | Phase7CalibrationManifest | Record<string, unknown> | null;
-    prOutcome?: PrOutcomeCalibrationInput | null;
-    historicalReplay?: HistoricalReplayCalibrationInput | null;
-    now?: string | Date | null;
-  }) => Phase7CalibrationLoopResult;
-  eventLedger?: { appendEvent(event: AppendEventInput): LedgerEntry };
-}
-
-export interface RunCalibrationCycleResult {
-  result: Phase7CalibrationLoopResult;
-  snapshot: CalibrationSnapshotPayload;
-  recorded: LedgerEntry | null;
-  historicalReplay: HistoricalReplayCalibrationInput | null;
-  compositeScore: number | null;
-  sampleSize: number;
-  scores: number[];
-}
 
 function roundScore(value: number): number {
   return Math.round(Math.min(1, Math.max(0, value)) * SCORE_PRECISION) / SCORE_PRECISION;
@@ -168,10 +64,7 @@ function optionalString(value: unknown): string | null {
  * `{ replayPlan, revealedHistory }` pairs; each non-object entry is defensively skipped. Returns `compositeScore:
  * null` (never a fabricated 0) when there is no scorable task. Pure aside from the injected scorer.
  */
-export function scoreHistoricalReplayComposite(
-  replayResults: readonly ReplayTaskResult[] | null | undefined,
-  options: ScoreCompositeOptions = {},
-): HistoricalReplayCompositeScore {
+export function scoreHistoricalReplayComposite(replayResults: readonly ReplayTaskResult[] | null | undefined, options: ScoreCompositeOptions = {}): HistoricalReplayCompositeScore {
   const scoreOne = options.computeObjectiveAnchor ?? computeObjectiveAnchor;
   const list = Array.isArray(replayResults) ? replayResults : [];
   const scores: number[] = [];
@@ -193,16 +86,12 @@ export function scoreHistoricalReplayComposite(
  * engine's fail-closed hold path even if it scored zero tasks; a null composite becomes `0` only for the engine's
  * numeric contract (the un-fabricated `compositeScore`/`sampleSize` are returned alongside for the snapshot).
  */
-export function buildHistoricalReplayCalibrationInput(
-  replayRun: ReplayRunDescriptor | null | undefined,
-  options: ScoreCompositeOptions = {},
-): BuiltHistoricalReplayInput {
+export function buildHistoricalReplayCalibrationInput(replayRun: ReplayRunDescriptor | null | undefined, options: ScoreCompositeOptions = {}): BuiltHistoricalReplayInput {
   if (!replayRun || typeof replayRun !== "object" || Array.isArray(replayRun)) {
     return { historicalReplay: null, compositeScore: null, sampleSize: 0, scores: [] };
   }
   const composite = scoreHistoricalReplayComposite(replayRun.replayResults, options);
   return {
-    // Pass-through matches the pre-TS JS: optional descriptor fields may be undefined at runtime.
     historicalReplay: {
       compositeScore: composite.compositeScore ?? 0,
       replayRunId: replayRun.replayRunId,
@@ -221,10 +110,7 @@ export function buildHistoricalReplayCalibrationInput(
  * Every field is a number/null, boolean, string/null, or string[] so it round-trips through the event ledger's
  * verbatim-JSON serializer unchanged.
  */
-export function snapshotPayloadFromResult(
-  result: Phase7CalibrationLoopResult,
-  meta: SnapshotMeta = {},
-): CalibrationSnapshotPayload {
+export function snapshotPayloadFromResult(result: Phase7CalibrationLoopResult, meta: SnapshotMeta = {}): CalibrationSnapshotPayload {
   return {
     enabled: result.enabled === true,
     combinedAccuracy: numberOrNull(result.combinedAccuracy),
@@ -240,7 +126,7 @@ export function snapshotPayloadFromResult(
       : [],
     replayRunId: optionalString(meta.replayRunId),
     observedAt: optionalString(meta.observedAt),
-    replaySampleSize: Number.isInteger(meta.sampleSize) && (meta.sampleSize as number) >= 0 ? (meta.sampleSize as number) : 0,
+    replaySampleSize: Number.isInteger(meta.sampleSize) && (meta.sampleSize as number) >= 0 ? meta.sampleSize as number : 0,
   };
 }
 
@@ -262,14 +148,14 @@ export function normalizeCalibrationSnapshotPayload(payload: unknown): Calibrati
     return null;
   }
   const contributingSources = Array.isArray(record.contributingSources)
-    ? record.contributingSources.filter((code): code is string => typeof code === "string")
+    ? record.contributingSources.filter((code) => typeof code === "string")
     : [];
   return {
     enabled: record.enabled === true,
     combinedAccuracy: record.combinedAccuracy as number | null,
-    baselineAccuracy: record.baselineAccuracy,
+    baselineAccuracy: record.baselineAccuracy as number,
     deltaFromBaseline: record.deltaFromBaseline as number | null,
-    autonomyIncreasePermitted: record.autonomyIncreasePermitted,
+    autonomyIncreasePermitted: record.autonomyIncreasePermitted as boolean,
     replayHarnessHold: record.replayHarnessHold === true,
     replayHarnessStatus,
     replayRunDue: record.replayRunDue === true,
@@ -278,9 +164,7 @@ export function normalizeCalibrationSnapshotPayload(payload: unknown): Calibrati
     replayRunId: optionalString(record.replayRunId),
     observedAt: optionalString(record.observedAt),
     replaySampleSize:
-      Number.isInteger(record.replaySampleSize) && (record.replaySampleSize as number) >= 0
-        ? (record.replaySampleSize as number)
-        : 0,
+      Number.isInteger(record.replaySampleSize) && (record.replaySampleSize as number) >= 0 ? record.replaySampleSize as number : 0,
   };
 }
 
@@ -289,10 +173,7 @@ export function normalizeCalibrationSnapshotPayload(payload: unknown): Calibrati
  * `recordPrOutcomeSnapshot`, so it's unit-testable without a real SQLite file). Fail-soft: a malformed payload
  * returns `null` without appending. An unusable ledger is the only hard error (a programmer wiring mistake).
  */
-export function recordCalibrationSnapshot(
-  input: unknown,
-  options: RecordCalibrationSnapshotOptions = {},
-): LedgerEntry | null {
+export function recordCalibrationSnapshot(input: unknown, options: RecordCalibrationSnapshotOptions = {}): LedgerEntry | null {
   const eventLedger = options.eventLedger;
   if (!eventLedger || typeof eventLedger.appendEvent !== "function") throw new Error("invalid_event_ledger");
   const payload = normalizeCalibrationSnapshotPayload(input);
@@ -310,10 +191,7 @@ export function recordCalibrationSnapshot(
  * pr-outcome.js's `readPrOutcomes`). Foreign event types and malformed payloads are skipped; a ledger that cannot
  * read reduces to an empty list. Returns snapshots in ledger order (oldest first).
  */
-export function readCalibrationSnapshots(
-  eventLedger: CalibrationSnapshotReader,
-  filter: CalibrationSnapshotFilter = {},
-): PersistedCalibrationSnapshot[] {
+export function readCalibrationSnapshots(eventLedger: CalibrationSnapshotReader, filter: CalibrationSnapshotFilter = {}): PersistedCalibrationSnapshot[] {
   const events =
     eventLedger && typeof eventLedger.readEvents === "function" ? eventLedger.readEvents(filter) : [];
   const snapshots: PersistedCalibrationSnapshot[] = [];
@@ -325,7 +203,7 @@ export function readCalibrationSnapshots(
     snapshots.push({
       ...normalized,
       repoFullName: typeof row.repoFullName === "string" ? row.repoFullName : null,
-      seq: Number.isInteger(row.seq) ? (row.seq as number) : null,
+      seq: Number.isInteger(row.seq) ? row.seq as number : null,
       createdAt: optionalString(row.createdAt),
     });
   }
@@ -333,10 +211,7 @@ export function readCalibrationSnapshots(
 }
 
 /** The most recent persisted calibration snapshot, or `null` when none exist. */
-export function latestCalibrationSnapshot(
-  eventLedger: CalibrationSnapshotReader,
-  filter: CalibrationSnapshotFilter = {},
-): PersistedCalibrationSnapshot | null {
+export function latestCalibrationSnapshot(eventLedger: CalibrationSnapshotReader, filter: CalibrationSnapshotFilter = {}): PersistedCalibrationSnapshot | null {
   const snapshots = readCalibrationSnapshots(eventLedger, filter);
   return snapshots.length > 0 ? snapshots[snapshots.length - 1]! : null;
 }
@@ -348,28 +223,22 @@ export function latestCalibrationSnapshot(
  * ledger entry (or null when no ledger was injected or the payload was malformed), and the un-fabricated
  * composite/sample provenance. The engine combine (`computeLoop`) is injectable so unit tests can pin it.
  */
-export function runHistoricalReplayCalibrationCycle(
-  input: RunCalibrationCycleInput = {},
-  deps: RunCalibrationCycleDeps = {},
-): RunCalibrationCycleResult {
+export function runHistoricalReplayCalibrationCycle(input: RunCalibrationCycleInput = {}, deps: RunCalibrationCycleDeps = {}): RunCalibrationCycleResult {
   const computeLoop = deps.computeLoop ?? computePhase7CalibrationLoop;
   const built = buildHistoricalReplayCalibrationInput(input.replayRun, deps);
   const result = computeLoop({
-    ...(input.config !== undefined ? { config: input.config } : {}),
-    ...(input.prOutcome !== undefined ? { prOutcome: input.prOutcome } : {}),
+    config: input.config,
+    prOutcome: input.prOutcome,
     historicalReplay: built.historicalReplay,
-    ...(input.now !== undefined ? { now: input.now } : {}),
-  });
+    now: input.now,
+  } as Parameters<typeof computeLoop>[0]);
   const snapshot = snapshotPayloadFromResult(result, {
     replayRunId: built.historicalReplay?.replayRunId ?? null,
     observedAt: input.observedAt ?? built.historicalReplay?.observedAt ?? null,
     sampleSize: built.sampleSize,
   });
   const recorded = deps.eventLedger
-    ? recordCalibrationSnapshot(snapshot, {
-        eventLedger: deps.eventLedger,
-        ...(input.repoFullName !== undefined ? { repoFullName: input.repoFullName } : {}),
-      })
+    ? recordCalibrationSnapshot(snapshot, { eventLedger: deps.eventLedger, repoFullName: input.repoFullName } as RecordCalibrationSnapshotOptions)
     : null;
   return {
     result,

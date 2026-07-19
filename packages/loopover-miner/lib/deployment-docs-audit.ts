@@ -6,14 +6,21 @@
 // Wired into CI via `npm run test:miner-deployment-docs-audit` (scripts/check-miner-deployment-docs.mjs)
 // and the live unit suite in test/unit/miner-deployment-docs-audit.test.ts (#6158).
 
-export type DeploymentDocsClaims = { envVars: string[]; filePaths: string[]; subcommands: string[] };
+export type DeploymentDocsClaims = {
+  envVars: string[];
+  filePaths: string[];
+  subcommands: string[];
+};
 export type DeploymentDocsReality = {
   hasEnvRead: (name: string) => boolean;
   envReads: Iterable<string>;
   pathExists: (relativePath: string) => boolean;
   isRegisteredCommand: (name: string) => boolean;
 };
-export type DeploymentDocsAuditResult = { ok: boolean; failures: string[] };
+export type DeploymentDocsAuditResult = {
+  ok: boolean;
+  failures: string[];
+};
 
 /** The miner's own env-var namespace: LOOPOVER_MINER_* and the shorter MINER_* aliases it reads. */
 const ENV_VAR_PATTERN = /\b(?:LOOPOVER_MINER|MINER)_[A-Z0-9_]+\b/g;
@@ -34,7 +41,7 @@ const CLI_DISPATCH_PATTERN = /cliArgs\[0\]\s*===\s*"([a-z][a-z0-9-]*)"/g;
 export function scanEnvVarTokens(text: string): Set<string> {
   const tokens = new Set<string>();
   for (const match of text.matchAll(ENV_VAR_PATTERN)) {
-    tokens.add(match[0] ?? "");
+    tokens.add(match[0]!);
   }
   return tokens;
 }
@@ -48,7 +55,7 @@ export function extractEnvVarClaims(markdown: string): string[] {
 export function extractSubcommandClaims(markdown: string): string[] {
   const commands = new Set<string>();
   for (const match of markdown.matchAll(SUBCOMMAND_PATTERN)) {
-    commands.add(match[1] ?? "");
+    commands.add(match[1]!);
   }
   return [...commands].sort();
 }
@@ -65,10 +72,10 @@ export function isRepoRelativePath(target: string): boolean {
 export function extractFilePathClaims(markdown: string): string[] {
   const paths = new Set<string>();
   for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) {
-    const target = (match[1] ?? "").trim();
+    const target = match[1]!.trim();
     if (isRepoRelativePath(target)) {
       const [pathOnly] = target.split("#");
-      paths.add(pathOnly ?? "");
+      paths.add(pathOnly!);
     }
   }
   return [...paths].sort();
@@ -78,7 +85,7 @@ export function extractFilePathClaims(markdown: string): string[] {
 export function scanRegisteredCommands(binSource: string): Set<string> {
   const commands = new Set<string>();
   for (const match of binSource.matchAll(CLI_DISPATCH_PATTERN)) {
-    commands.add(match[1] ?? "");
+    commands.add(match[1]!);
   }
   return commands;
 }
@@ -90,10 +97,7 @@ export function scanRegisteredCommands(binSource: string): Set<string> {
  * and `isRegisteredCommand(name)` (the subcommand is dispatched by the CLI). Returns the drift findings,
  * each failure naming the specific stale claim rather than a generic mismatch.
  */
-export function auditDeploymentDocs(
-  claims: DeploymentDocsClaims,
-  reality: DeploymentDocsReality,
-): DeploymentDocsAuditResult {
+export function auditDeploymentDocs(claims: DeploymentDocsClaims, reality: DeploymentDocsReality): DeploymentDocsAuditResult {
   const failures: string[] = [];
   for (const name of claims.envVars) {
     if (!reality.hasEnvRead(name)) {
@@ -130,10 +134,7 @@ export function auditDeploymentDocs(
 }
 
 /** Run the audit and throw a build-failing error naming every stale claim; returns the result when in sync. */
-export function assertDeploymentDocsInSync(
-  claims: DeploymentDocsClaims,
-  reality: DeploymentDocsReality,
-): DeploymentDocsAuditResult {
+export function assertDeploymentDocsInSync(claims: DeploymentDocsClaims, reality: DeploymentDocsReality): DeploymentDocsAuditResult {
   const result = auditDeploymentDocs(claims, reality);
   if (!result.ok) {
     throw new Error(

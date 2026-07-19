@@ -132,22 +132,18 @@ export function registerDiscoverAttemptChatActions(options: {
     registry.register(DISCOVER_CHAT_ACTION, {
       paramsValidator: isDiscoverChatParams,
       // Nullish params mean "discover with defaults" -- forwarded as {} so the client always POSTs an object.
-      handler: governorGatedHandler(
-        async (request) =>
-          requestDiscover((asParamsRecord(request?.params) ?? {}) as DiscoverChatActionInput),
-        { evaluateGate },
-      ),
+      handler: governorGatedHandler(async (request) => requestDiscover((asParamsRecord(request?.params) ?? {}) as DiscoverChatActionInput), {
+        evaluateGate,
+      }),
     });
   }
 
   if (!registry.has(ATTEMPT_CHAT_ACTION)) {
     registry.register(ATTEMPT_CHAT_ACTION, {
       paramsValidator: isAttemptChatParams,
-      handler: governorGatedHandler(
-        async (request) =>
-          requestAttempt(asParamsRecord(request?.params) as AttemptChatActionInput),
-        { evaluateGate },
-      ),
+      handler: governorGatedHandler(async (request) => requestAttempt(asParamsRecord(request?.params) as AttemptChatActionInput), {
+        evaluateGate,
+      }),
     });
   }
 }

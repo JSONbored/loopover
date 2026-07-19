@@ -21,13 +21,7 @@ import {
   setProposalStatuses,
   synthesizeDenyRuleProposals as engineSynthesizeDenyRuleProposals,
 } from "@loopover/engine";
-import type {
-  BlockerHistoryRecord,
-  DenyRuleProposal,
-  DenyRuleProposalAudit,
-  DenyRuleProposalStatus,
-  SynthesisConfig,
-} from "@loopover/engine";
+import type { BlockerHistoryRecord, DenyRuleProposal, DenyRuleProposalStatus, SynthesisConfig } from "@loopover/engine";
 import type { DenyRule } from "./deny-hooks.js";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 
@@ -45,73 +39,42 @@ export {
   resolveEffectiveDenyRules,
   setProposalStatuses,
 };
-export type {
-  BlockerHistoryRecord,
-  DenyRuleProposal,
-  DenyRuleProposalAudit,
-  DenyRuleProposalStatus,
-  SynthesisConfig,
-};
 
-const defaultDbFileName = "deny-hook-synthesis.sqlite3";
-
-type ProposalRow = {
-  id: string;
-  status: DenyRuleProposalStatus;
-  rule_json: string;
-  audit_json: string;
-};
-
-type StatusRow = { status: string };
-
-type TableInfoRow = { name: string };
-
+export type { BlockerHistoryRecord, DenyRuleProposal, DenyRuleProposalStatus, SynthesisConfig };
+export type DenyRuleProposalAudit = DenyRuleProposal["audit"];
 export type DenyHookSynthesisStore = {
   dbPath: string;
-  refreshProposals(
-    repoFullName: string,
-    history: unknown,
-    config?: SynthesisConfig,
-    apiBaseUrl?: string,
-  ): DenyRuleProposal[];
+  refreshProposals(repoFullName: string, history: unknown, config?: SynthesisConfig, apiBaseUrl?: string): DenyRuleProposal[];
   listProposals(repoFullName: string, apiBaseUrl?: string): DenyRuleProposal[];
-  setProposalStatus(
-    repoFullName: string,
-    proposalId: string,
-    status: DenyRuleProposalStatus,
-    apiBaseUrl?: string,
-  ): void;
-  resolveEffectiveRules(
-    repoFullName: string,
-    options?: { includeDefaults?: boolean; apiBaseUrl?: string },
-  ): DenyRule[];
+  setProposalStatus(repoFullName: string, proposalId: string, status: DenyRuleProposalStatus, apiBaseUrl?: string): void;
+  resolveEffectiveRules(repoFullName: string, options?: { includeDefaults?: boolean; apiBaseUrl?: string }): DenyRule[];
   close(): void;
 };
+type ProposalRow = { id: string; status: string; rule_json: string; audit_json: string };
+type StatusRow = { status: string };
+type TableInfoRow = { name: string };
+
+const defaultDbFileName = "deny-hook-synthesis.sqlite3";
 
 /**
  * Derive candidate deny-hook rules from blocker/path history. Miner-facing wrapper over the engine's pure
  * `synthesizeDenyRuleProposals`, defaulting the injected clock to `Date.now()` so this keeps the pre-#5667 2-arg
  * signature (and wall-clock `audit.synthesizedAt`) every existing caller and test relies on. Returns proposal
- * objects only — nothing is active until a maintainer approves them (see resolveEffectiveDenyRules).
+ * objects only вЂ” nothing is active until a maintainer approves them (see resolveEffectiveDenyRules).
  */
-export function synthesizeDenyRuleProposals(
-  records: unknown,
-  config: SynthesisConfig = {},
-): DenyRuleProposal[] {
+export function synthesizeDenyRuleProposals(records: unknown, config: SynthesisConfig = {}): DenyRuleProposal[] {
   return engineSynthesizeDenyRuleProposals(records, config, Date.now());
 }
 
 /** Optional forge host, scoping rows so two hosts serving the same owner/repo name never collide (#5563).
- *  Omitted/nullish → the github.com default, so every pre-existing single-forge caller is unaffected. */
+ *  Omitted/nullish в†’ the github.com default, so every pre-existing single-forge caller is unaffected. */
 function normalizeApiBaseUrl(apiBaseUrl: string | null | undefined): string {
   if (apiBaseUrl === undefined || apiBaseUrl === null) return DEFAULT_FORGE_CONFIG.apiBaseUrl;
   if (typeof apiBaseUrl !== "string" || !apiBaseUrl.trim()) throw new Error("invalid_api_base_url");
   return apiBaseUrl.trim();
 }
 
-export function resolveDenyHookSynthesisDbPath(
-  env: Record<string, string | undefined> = process.env,
-): string {
+export function resolveDenyHookSynthesisDbPath(env: Record<string, string | undefined> = process.env): string {
   const explicitPath = typeof env.LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB === "string"
     ? env.LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB.trim()
     : "";
@@ -137,7 +100,7 @@ function normalizeDbPath(dbPath: string | undefined): string {
 function rowToProposal(row: ProposalRow): DenyRuleProposal {
   return {
     id: row.id,
-    status: row.status,
+    status: row.status as DenyRuleProposalStatus,
     rule: JSON.parse(row.rule_json) as DenyRule,
     audit: JSON.parse(row.audit_json) as DenyRuleProposalAudit,
   };
@@ -150,7 +113,9 @@ function rowToProposal(row: ProposalRow): DenyRuleProposal {
 // Guarded by a column-presence check (this module has no schema-version framework of its own, unlike the
 // package's other local stores) so this only runs once per file.
 function ensureDenyRuleProposalsForgeScope(db: DatabaseSync): void {
-  const hasApiBaseUrlColumn = (db.prepare("PRAGMA table_info(deny_rule_proposals)").all() as TableInfoRow[])
+  const hasApiBaseUrlColumn = (db
+    .prepare("PRAGMA table_info(deny_rule_proposals)")
+    .all() as TableInfoRow[])
     .some((column) => column.name === "api_base_url");
   if (hasApiBaseUrlColumn) return;
   db.exec(`
@@ -181,9 +146,7 @@ function ensureDenyRuleProposalsForgeScope(db: DatabaseSync): void {
  * Local SQLite store for synthesized deny-rule proposals. Refresh re-derives proposals from history while
  * preserving maintainer decisions on ids that still exist.
  */
-export function initDenyHookSynthesisStore(
-  dbPath: string = resolveDenyHookSynthesisDbPath(),
-): DenyHookSynthesisStore {
+export function initDenyHookSynthesisStore(dbPath: string = resolveDenyHookSynthesisDbPath()): DenyHookSynthesisStore {
   const resolvedPath = normalizeDbPath(dbPath);
   mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(resolvedPath);
@@ -221,7 +184,7 @@ export function initDenyHookSynthesisStore(
     UPDATE deny_rule_proposals SET status = ?, updated_at = ? WHERE api_base_url = ? AND repo_full_name = ? AND id = ?
   `);
 
-  const store: DenyHookSynthesisStore = {
+  return {
     dbPath: resolvedPath,
     refreshProposals(repoFullName, history, config = {}, apiBaseUrl) {
       const forge = normalizeApiBaseUrl(apiBaseUrl);
@@ -232,11 +195,9 @@ export function initDenyHookSynthesisStore(
       try {
         for (const proposal of synthesized) {
           const existing = getStatusStatement.get(forge, repo, proposal.id) as StatusRow | undefined;
-          const existingStatus = typeof existing?.status === "string" ? existing.status : undefined;
-          const status =
-            existingStatus && proposalStatusSet.has(existingStatus) && existingStatus !== "proposed"
-              ? (existingStatus as DenyRuleProposalStatus)
-              : "proposed";
+          const status = existing?.status && proposalStatusSet.has(existing.status) && existing.status !== "proposed"
+            ? existing.status as DenyRuleProposalStatus
+            : "proposed";
           upsertStatement.run(
             forge,
             repo,
@@ -267,15 +228,14 @@ export function initDenyHookSynthesisStore(
       setStatusStatement.run(status, new Date().toISOString(), forge, repo, proposalId.trim());
     },
     resolveEffectiveRules(repoFullName, options = {}) {
-      const proposals = store.listProposals(repoFullName, options.apiBaseUrl);
+      const proposals = this.listProposals(repoFullName, options.apiBaseUrl);
       return resolveEffectiveDenyRules({
-        ...(options.includeDefaults !== undefined ? { includeDefaults: options.includeDefaults } : {}),
+        includeDefaults: options.includeDefaults,
         approvedProposals: proposals,
-      });
+      } as Parameters<typeof resolveEffectiveDenyRules>[0]);
     },
     close() {
       db.close();
     },
-  };
-  return store;
+  } as DenyHookSynthesisStore;
 }

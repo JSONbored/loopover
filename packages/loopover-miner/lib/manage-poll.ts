@@ -12,69 +12,17 @@ import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
 
+export type ManagePollInput = { repoFullName: string; prNumber: number; branch?: string | null };
+export type ManagePollEventPayload = { prNumber: number; branch: string | null; ciState: PollCheckRunsResult["conclusion"]; gateVerdict: string; outcome: string; lastPolledAt: string };
+export type ManagePollRecordResult = { pollResult: PollCheckRunsResult; payload: ManagePollEventPayload; event: LedgerEntry };
+export type ParsedManagePollArgs = { repoFullName: string; prNumber: number; branch: string | null; dryRun: boolean; json: boolean } | { error: string };
+type ManagePollSnapshotOptions = { eventLedger: { appendEvent(event: unknown): LedgerEntry | null }; portfolioQueue?: PortfolioQueueStore; ensurePortfolioRow?: boolean; pollCheckRuns?: (repoFullName: string, prNumber: number, options?: PollCheckRunsOptions) => Promise<PollCheckRunsResult>; lastPolledAt?: string } & PollCheckRunsOptions;
+type RunManagePollOptions = { initEventLedger?: () => EventLedger; initPortfolioQueue?: () => PortfolioQueueStore; ensurePortfolioRow?: boolean; pollCheckRuns?: (repoFullName: string, prNumber: number, options?: PollCheckRunsOptions) => Promise<PollCheckRunsResult>; githubToken?: string; lastPolledAt?: string } & PollCheckRunsOptions;
+
 const MANAGE_POLL_USAGE =
   "Usage: loopover-miner manage poll <owner/repo> <pr#> [--branch <name>] [--dry-run] [--json]";
 
-export type ManagePollInput = {
-  repoFullName: string;
-  prNumber: number;
-  branch?: string | null;
-};
-
-export type ManagePollEventPayload = {
-  prNumber: number;
-  branch: string | null;
-  ciState: PollCheckRunsResult["conclusion"];
-  gateVerdict: string;
-  outcome: string;
-  lastPolledAt: string;
-};
-
-export type ManagePollRecordResult = {
-  pollResult: PollCheckRunsResult;
-  payload: ManagePollEventPayload;
-  event: LedgerEntry;
-};
-
-export type ParsedManagePollArgs =
-  | {
-      repoFullName: string;
-      prNumber: number;
-      branch: string | null;
-      dryRun: boolean;
-      json: boolean;
-    }
-  | { error: string };
-
-type ManagePollSnapshotOptions = {
-  eventLedger: { appendEvent(event: unknown): LedgerEntry | null };
-  portfolioQueue?: PortfolioQueueStore;
-  ensurePortfolioRow?: boolean;
-  pollCheckRuns?: (
-    repoFullName: string,
-    prNumber: number,
-    options?: PollCheckRunsOptions,
-  ) => Promise<PollCheckRunsResult>;
-  lastPolledAt?: string;
-} & PollCheckRunsOptions;
-
-type RunManagePollOptions = {
-  initEventLedger?: () => EventLedger;
-  initPortfolioQueue?: () => PortfolioQueueStore;
-  ensurePortfolioRow?: boolean;
-  pollCheckRuns?: (
-    repoFullName: string,
-    prNumber: number,
-    options?: PollCheckRunsOptions,
-  ) => Promise<PollCheckRunsResult>;
-  githubToken?: string;
-  lastPolledAt?: string;
-} & PollCheckRunsOptions;
-
-function parseRepoArg(
-  value: string | undefined,
-  usage: string,
-): { repoFullName: string } | { error: string } {
+function parseRepoArg(value: string | undefined, usage: string): { repoFullName: string } | { error: string } {
   if (!value) return { error: usage };
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
@@ -84,9 +32,7 @@ function parseRepoArg(
   return { repoFullName: `${owner}/${repo}` };
 }
 
-export function mapPollConclusionToGateVerdict(
-  conclusion: PollCheckRunsResult["conclusion"],
-): string {
+export function mapPollConclusionToGateVerdict(conclusion: PollCheckRunsResult["conclusion"]): string {
   switch (conclusion) {
     case "success":
       return "pass";
@@ -108,11 +54,7 @@ export function mapPollConclusionToOutcome(conclusion: PollCheckRunsResult["conc
   }
 }
 
-export function buildManagePollEventPayload(
-  prNumber: number,
-  pollResult: PollCheckRunsResult,
-  options: { branch?: string | null; lastPolledAt?: string } = {},
-): ManagePollEventPayload {
+export function buildManagePollEventPayload(prNumber: number, pollResult: PollCheckRunsResult, options: { branch?: string | null; lastPolledAt?: string } = {}): ManagePollEventPayload {
   if (!Number.isInteger(prNumber) || prNumber <= 0) throw new Error("invalid_pr_number");
   if (!pollResult || typeof pollResult !== "object") throw new Error("invalid_poll_result");
   const branch = typeof options.branch === "string" && options.branch.trim() ? options.branch.trim() : null;
@@ -131,16 +73,11 @@ export function buildManagePollEventPayload(
 }
 
 export function parseManagePollArgs(args: string[] = []): ParsedManagePollArgs {
-  const options: { json: boolean; branch: string | null; dryRun: boolean } = {
-    json: false,
-    branch: null,
-    dryRun: false,
-  };
+  const options: { json: boolean; branch: string | null; dryRun: boolean } = { json: false, branch: null, dryRun: false };
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (token === undefined) continue;
+    const token = args[index]!;
     if (token === "--json") {
       options.json = true;
       continue;
@@ -152,7 +89,7 @@ export function parseManagePollArgs(args: string[] = []): ParsedManagePollArgs {
       continue;
     }
     if (token === "--branch") {
-      const branch = args[index + 1];
+      const branch = args[index + 1]!;
       if (!branch || branch.startsWith("-")) return { error: MANAGE_POLL_USAGE };
       options.branch = branch;
       index += 1;
@@ -164,10 +101,10 @@ export function parseManagePollArgs(args: string[] = []): ParsedManagePollArgs {
 
   if (positional.length !== 2) return { error: MANAGE_POLL_USAGE };
 
-  const repo = parseRepoArg(positional[0], MANAGE_POLL_USAGE);
+  const repo = parseRepoArg(positional[0]!, MANAGE_POLL_USAGE);
   if ("error" in repo) return repo;
 
-  const prNumber = Number(positional[1]);
+  const prNumber = Number(positional[1]!);
   if (!Number.isInteger(prNumber) || prNumber <= 0) {
     return { error: "Pull request number must be a positive integer." };
   }
@@ -180,18 +117,13 @@ export function parseManagePollArgs(args: string[] = []): ParsedManagePollArgs {
 }
 
 /** The forge host a managed-PR row belongs to. Mirrors portfolio-queue-manager.js's own fold (and every
- *  store's `normalizeApiBaseUrl`): omitted/blank → the github.com default, so a single-forge caller is
+ *  store's `normalizeApiBaseUrl`): omitted/blank в†’ the github.com default, so a single-forge caller is
  *  unaffected. Used only to COMPARE hosts here; `enqueue` still does its own normalization/validation. */
 function resolveManagedRowApiBaseUrl(apiBaseUrl: string | undefined): string {
   return typeof apiBaseUrl === "string" && apiBaseUrl.trim() ? apiBaseUrl.trim() : DEFAULT_FORGE_CONFIG.apiBaseUrl;
 }
 
-function ensureManagedPrRow(
-  portfolioQueue: PortfolioQueueStore,
-  repoFullName: string,
-  prNumber: number,
-  apiBaseUrl: string | undefined,
-): void {
+function ensureManagedPrRow(portfolioQueue: PortfolioQueueStore, repoFullName: string, prNumber: number, apiBaseUrl: string | undefined): void {
   const identifier = formatManagedPrIdentifier(prNumber);
   // `listQueue(repoFullName)` is forge-BLIND, so the existence check has to compare the host too: the queue's
   // composite (api_base_url, repo_full_name, identifier) key exists precisely so two hosts serving the same
@@ -200,20 +132,11 @@ function ensureManagedPrRow(
   const targetApiBaseUrl = resolveManagedRowApiBaseUrl(apiBaseUrl);
   const exists = portfolioQueue
     .listQueue(repoFullName)
-    .some(
-      (entry) =>
-        entry.identifier === identifier &&
-        resolveManagedRowApiBaseUrl(entry.apiBaseUrl) === targetApiBaseUrl,
-    );
+    .some((entry) => entry.identifier === identifier && resolveManagedRowApiBaseUrl(entry.apiBaseUrl) === targetApiBaseUrl);
   if (!exists) {
     // Thread the SAME apiBaseUrl the CI poll above used, so the row is scoped to the host it was polled from
     // instead of silently defaulting to github.com.
-    portfolioQueue.enqueue({
-      repoFullName,
-      identifier,
-      priority: 0,
-      ...(apiBaseUrl !== undefined ? { apiBaseUrl } : {}),
-    });
+    portfolioQueue.enqueue({ repoFullName, identifier, priority: 0, apiBaseUrl } as Parameters<PortfolioQueueStore["enqueue"]>[0]);
   }
 }
 
@@ -221,10 +144,7 @@ function ensureManagedPrRow(
  * Poll GitHub check runs for a managed PR and append a `manage_pr_update` snapshot to the local event ledger.
  * Completes the manage-status data path introduced in #2325 / #3070 using the CI poller from #2323.
  */
-export async function recordManagePollSnapshot(
-  input: ManagePollInput,
-  options: ManagePollSnapshotOptions,
-): Promise<ManagePollRecordResult> {
+export async function recordManagePollSnapshot(input: ManagePollInput, options: ManagePollSnapshotOptions): Promise<ManagePollRecordResult> {
   if (!input || typeof input !== "object") throw new Error("invalid_manage_poll_input");
   const repoFullName = typeof input.repoFullName === "string" ? input.repoFullName.trim() : "";
   const [owner, repo, extra] = repoFullName.split("/");
@@ -245,19 +165,19 @@ export async function recordManagePollSnapshot(
 
   const pollCheckRunsFn = options.pollCheckRuns ?? pollCheckRuns;
   const pollResult = await pollCheckRunsFn(repoFullName, input.prNumber, {
-    ...(options.apiBaseUrl !== undefined ? { apiBaseUrl: options.apiBaseUrl } : {}),
-    ...(options.fetchFn !== undefined ? { fetchFn: options.fetchFn } : {}),
+    apiBaseUrl: options.apiBaseUrl,
+    fetchFn: options.fetchFn,
     githubToken: options.githubToken ?? "",
-    ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
-    ...(options.minIntervalMs !== undefined ? { minIntervalMs: options.minIntervalMs } : {}),
-    ...(options.maxIntervalMs !== undefined ? { maxIntervalMs: options.maxIntervalMs } : {}),
-    ...(options.sleepFn !== undefined ? { sleepFn: options.sleepFn } : {}),
-  });
+    maxAttempts: options.maxAttempts,
+    minIntervalMs: options.minIntervalMs,
+    maxIntervalMs: options.maxIntervalMs,
+    sleepFn: options.sleepFn,
+  } as PollCheckRunsOptions);
 
   const payload = buildManagePollEventPayload(input.prNumber, pollResult, {
-    ...(input.branch !== undefined ? { branch: input.branch } : {}),
-    ...(options.lastPolledAt !== undefined ? { lastPolledAt: options.lastPolledAt } : {}),
-  });
+    branch: input.branch,
+    lastPolledAt: options.lastPolledAt,
+  } as { branch?: string | null; lastPolledAt?: string });
 
   if ((options.ensurePortfolioRow ?? true) && portfolioQueue) {
     ensureManagedPrRow(portfolioQueue, repoFullName, input.prNumber, options.apiBaseUrl);
@@ -272,10 +192,7 @@ export async function recordManagePollSnapshot(
   return { pollResult, payload, event: event as LedgerEntry };
 }
 
-export async function runManagePoll(
-  args: string[] = [],
-  options: RunManagePollOptions = {},
-): Promise<number> {
+export async function runManagePoll(args: string[] = [], options: RunManagePollOptions = {}): Promise<number> {
   const parsed = parseManagePollArgs(args);
   if ("error" in parsed) {
     return reportCliFailure(argsWantJson(args), parsed.error);
@@ -292,18 +209,18 @@ export async function runManagePoll(
       const result = await recordManagePollSnapshot(
         { repoFullName: parsed.repoFullName, prNumber: parsed.prNumber, branch: parsed.branch },
         {
-          eventLedger: noopEventLedger,
+          eventLedger: noopEventLedger as unknown as EventLedger,
           ensurePortfolioRow: false,
-          ...(options.pollCheckRuns !== undefined ? { pollCheckRuns: options.pollCheckRuns } : {}),
-          ...(options.fetchFn !== undefined ? { fetchFn: options.fetchFn } : {}),
+          pollCheckRuns: options.pollCheckRuns,
+          fetchFn: options.fetchFn,
           githubToken: options.githubToken ?? (await resolveGitHubToken(process.env)) ?? "",
-          ...(options.apiBaseUrl !== undefined ? { apiBaseUrl: options.apiBaseUrl } : {}),
-          ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
-          ...(options.minIntervalMs !== undefined ? { minIntervalMs: options.minIntervalMs } : {}),
-          ...(options.maxIntervalMs !== undefined ? { maxIntervalMs: options.maxIntervalMs } : {}),
-          ...(options.sleepFn !== undefined ? { sleepFn: options.sleepFn } : {}),
-          ...(options.lastPolledAt !== undefined ? { lastPolledAt: options.lastPolledAt } : {}),
-        },
+          apiBaseUrl: options.apiBaseUrl,
+          maxAttempts: options.maxAttempts,
+          minIntervalMs: options.minIntervalMs,
+          maxIntervalMs: options.maxIntervalMs,
+          sleepFn: options.sleepFn,
+          lastPolledAt: options.lastPolledAt,
+        } as ManagePollSnapshotOptions,
       );
       const dryRunResult = { outcome: "dry_run", pollResult: result.pollResult, payload: result.payload };
       if (parsed.json) {
@@ -335,16 +252,16 @@ export async function runManagePoll(
         eventLedger,
         portfolioQueue,
         ensurePortfolioRow: options.ensurePortfolioRow ?? true,
-        ...(options.pollCheckRuns !== undefined ? { pollCheckRuns: options.pollCheckRuns } : {}),
-        ...(options.fetchFn !== undefined ? { fetchFn: options.fetchFn } : {}),
+        pollCheckRuns: options.pollCheckRuns,
+        fetchFn: options.fetchFn,
         githubToken: options.githubToken ?? (await resolveGitHubToken(process.env)) ?? "",
-        ...(options.apiBaseUrl !== undefined ? { apiBaseUrl: options.apiBaseUrl } : {}),
-        ...(options.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {}),
-        ...(options.minIntervalMs !== undefined ? { minIntervalMs: options.minIntervalMs } : {}),
-        ...(options.maxIntervalMs !== undefined ? { maxIntervalMs: options.maxIntervalMs } : {}),
-        ...(options.sleepFn !== undefined ? { sleepFn: options.sleepFn } : {}),
-        ...(options.lastPolledAt !== undefined ? { lastPolledAt: options.lastPolledAt } : {}),
-      },
+        apiBaseUrl: options.apiBaseUrl,
+        maxAttempts: options.maxAttempts,
+        minIntervalMs: options.minIntervalMs,
+        maxIntervalMs: options.maxIntervalMs,
+        sleepFn: options.sleepFn,
+        lastPolledAt: options.lastPolledAt,
+      } as ManagePollSnapshotOptions,
     );
 
     if (parsed.json) {

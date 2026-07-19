@@ -84,7 +84,14 @@ export function readPrOutcomes(eventLedger, filter = {}) {
     if (typeof event.repoFullName !== "string" || !event.repoFullName.trim()) continue;
     const normalized = normalizePrOutcomePayload(event.payload);
     if (!normalized) continue;
-    latest.set(`${event.repoFullName}:${normalized.prNumber}`, { ...normalized, repoFullName: event.repoFullName });
+    // Re-key on every event so Map iteration order tracks most-recently-UPDATED last, not first-seen (#7222). A
+    // bare Map.set() on an existing key updates the value but leaves the key frozen at its original position, so a
+    // later outcome for the same PR (e.g. closed-without-merge, then reopened + merged) stayed at its old slot --
+    // breaking recency-ordered consumers like loop-reentry.js's countConsecutiveDisengagements. Deleting first
+    // moves the freshly-updated entry to the end, matching this reducer's own "a later event supersedes" contract.
+    const key = `${event.repoFullName}:${normalized.prNumber}`;
+    latest.delete(key);
+    latest.set(key, { ...normalized, repoFullName: event.repoFullName });
   }
   return latest;
 }

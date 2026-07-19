@@ -112,6 +112,18 @@ describe("attemptLoopReentry (#2338)", () => {
     expect(countConsecutiveDisengagements(eventLedger, "acme/widgets")).toBe(0);
   });
 
+  it("orders by true event recency: a later merged outcome for an EARLIER PR number resets the streak (#7222)", () => {
+    const eventLedger = tempEventLedger();
+    // PR 1 closed, PR 2 closed, then PR 1 is reopened and MERGED — a second, later outcome for the same PR number.
+    recordPrOutcomeSnapshot({ repoFullName: "acme/widgets", prNumber: 1, decision: "closed", closedAt: new Date().toISOString(), reason: "stale" }, { eventLedger });
+    recordPrOutcomeSnapshot({ repoFullName: "acme/widgets", prNumber: 2, decision: "closed", closedAt: new Date().toISOString(), reason: "stale" }, { eventLedger });
+    recordPrOutcomeSnapshot({ repoFullName: "acme/widgets", prNumber: 1, decision: "merged", closedAt: new Date().toISOString() }, { eventLedger });
+
+    // The most recent event is PR 1's merge, so the consecutive-disengagement streak is 0. Before #7222, the
+    // superseded PR 1 stayed frozen at its first-seen Map slot, so the backward walk mis-counted it as 1.
+    expect(countConsecutiveDisengagements(eventLedger, "acme/widgets")).toBe(0);
+  });
+
   it("the hourly rate cap suppresses re-entry independent of the per-repo circuit breaker, and does not move the run-state or dequeue", () => {
     const eventLedger = tempEventLedger();
     const portfolioQueue = tempPortfolioQueue();

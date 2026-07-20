@@ -257,11 +257,14 @@ type GitHubOpenPullRequestsResponse = {
   errors?: Array<{ message?: string }>;
 };
 
+type GitHubGraphQlPageInfo = { hasNextPage?: boolean | null; endCursor?: string | null } | null;
+
 type GitHubPullRequestDetailsResponse = {
   data?: {
     repository?: {
       pullRequest?: {
         files?: {
+          pageInfo?: GitHubGraphQlPageInfo;
           nodes?: Array<{
             path?: string | null;
             additions?: number | null;
@@ -270,6 +273,7 @@ type GitHubPullRequestDetailsResponse = {
           } | null> | null;
         } | null;
         reviews?: {
+          pageInfo?: GitHubGraphQlPageInfo;
           nodes?: Array<{
             databaseId?: number | null;
             author?: { login?: string | null } | null;
@@ -4137,6 +4141,12 @@ export async function fetchLinkedIssueFacts(
   };
 }
 
+// GraphQL's `files`/`reviews` connections default to first: 100 with no follow-up, so a PR with more than
+// 100 changed files or more than 100 reviews silently truncates here too -- mirror PR_DETAIL_MAX_PAGES's
+// REST bound with the same 10-page-of-100 (1,000 item) ceiling, walked independently per connection via
+// `pageInfo { hasNextPage endCursor }` instead of a Link header.
+const PR_DETAIL_GRAPHQL_MAX_PAGES = 10;
+
 async function fetchPullRequestDetailsFromGraphQl(
   env: Env,
   repoFullName: string,
@@ -4146,48 +4156,93 @@ async function fetchPullRequestDetailsFromGraphQl(
 ): Promise<{ files: GitHubFilePayload[]; reviews: GitHubReviewPayload[] }> {
   /* v8 ignore start -- GitHub detail GraphQL sparse-node fallbacks are exercised through PR detail hydration tests. */
   const { owner, name } = repoParts(repoFullName);
-  const query = `query LoopOverPullRequestDetails {
+  const files: GitHubFilePayload[] = [];
+  const reviews: GitHubReviewPayload[] = [];
+  let filesCursor: string | undefined;
+  let reviewsCursor: string | undefined;
+  let filesHasNextPage = true;
+  let reviewsHasNextPage = true;
+
+  for (let page = 1; page <= PR_DETAIL_GRAPHQL_MAX_PAGES && (filesHasNextPage || reviewsHasNextPage); page += 1) {
+    // Only request a connection that still has more pages -- once one connection finishes, the other keeps
+    // paginating alone rather than re-fetching data already fully collected.
+    const filesSelection = filesHasNextPage
+      ? `files(first: 100${filesCursor ? `, after: ${JSON.stringify(filesCursor)}` : ""}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { path additions deletions changeType }
+        }`
+      : "";
+    const reviewsSelection = reviewsHasNextPage
+      ? `reviews(first: 100${reviewsCursor ? `, after: ${JSON.stringify(reviewsCursor)}` : ""}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { databaseId author { login } state authorAssociation submittedAt }
+        }`
+      : "";
+    const query = `query LoopOverPullRequestDetails {
     repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
       pullRequest(number: ${pullNumber}) {
-        files(first: 100) {
-          nodes { path additions deletions changeType }
-        }
-        reviews(first: 100) {
-          nodes { databaseId author { login } state authorAssociation submittedAt }
-        }
+        ${filesSelection}
+        ${reviewsSelection}
       }
     }
     rateLimit { remaining resetAt }
   }`;
-  const response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token, admissionKey);
-  const pullRequest = response.data?.repository?.pullRequest;
-  if (!pullRequest) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null, null, "");
-  const files: GitHubFilePayload[] = (pullRequest.files?.nodes ?? []).flatMap((file) => {
-    if (!file?.path) return [];
-    const additions = Number(file.additions ?? 0);
-    const deletions = Number(file.deletions ?? 0);
-    return [
-      {
-        filename: file.path,
-        status: String(file.changeType ?? "modified").toLowerCase(),
-        additions,
-        deletions,
-        changes: additions + deletions,
-      },
-    ];
-  });
-  const reviews: GitHubReviewPayload[] = (pullRequest.reviews?.nodes ?? []).flatMap((review) => {
-    if (!review?.databaseId) return [];
-    return [
-      {
-        id: review.databaseId,
-        ...(review.author?.login ? { user: { login: review.author.login } } : {}),
-        ...(review.state ? { state: review.state } : {}),
-        ...(review.authorAssociation ? { author_association: review.authorAssociation } : {}),
-        ...(review.submittedAt === undefined ? {} : { submitted_at: review.submittedAt }),
-      },
-    ];
-  });
+    // A page-1 failure surfaces the same way the un-paginated call always did (the caller's `.catch(() =>
+    // undefined)` falls through to the REST+GraphQL-failed warning). A LATER page failing must not discard
+    // the pages already collected -- same "keep a successful partial result" semantics as githubPaginatedList.
+    let response: GitHubPullRequestDetailsResponse | undefined;
+    try {
+      response = await githubGraphQl<GitHubPullRequestDetailsResponse>(env, query, token, admissionKey);
+    } catch (error) {
+      if (page === 1) throw error;
+      break;
+    }
+    const pullRequest = response.data?.repository?.pullRequest;
+    if (!pullRequest) {
+      if (page === 1) throw new GitHubApiError(`GitHub GraphQL failed for ${repoFullName} pull request #${pullNumber}: pull request not found`, 404, null, null, null, "");
+      break;
+    }
+    if (filesHasNextPage) {
+      files.push(
+        ...(pullRequest.files?.nodes ?? []).flatMap((file) => {
+          if (!file?.path) return [];
+          const additions = Number(file.additions ?? 0);
+          const deletions = Number(file.deletions ?? 0);
+          return [
+            {
+              filename: file.path,
+              status: String(file.changeType ?? "modified").toLowerCase(),
+              additions,
+              deletions,
+              changes: additions + deletions,
+            },
+          ];
+        }),
+      );
+      const pageInfo = pullRequest.files?.pageInfo;
+      if (pageInfo?.hasNextPage && pageInfo.endCursor) filesCursor = pageInfo.endCursor;
+      else filesHasNextPage = false;
+    }
+    if (reviewsHasNextPage) {
+      reviews.push(
+        ...(pullRequest.reviews?.nodes ?? []).flatMap((review) => {
+          if (!review?.databaseId) return [];
+          return [
+            {
+              id: review.databaseId,
+              ...(review.author?.login ? { user: { login: review.author.login } } : {}),
+              ...(review.state ? { state: review.state } : {}),
+              ...(review.authorAssociation ? { author_association: review.authorAssociation } : {}),
+              ...(review.submittedAt === undefined ? {} : { submitted_at: review.submittedAt }),
+            },
+          ];
+        }),
+      );
+      const pageInfo = pullRequest.reviews?.pageInfo;
+      if (pageInfo?.hasNextPage && pageInfo.endCursor) reviewsCursor = pageInfo.endCursor;
+      else reviewsHasNextPage = false;
+    }
+  }
   return { files, reviews };
   /* v8 ignore stop */
 }

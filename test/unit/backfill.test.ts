@@ -3663,6 +3663,111 @@ describe("GitHub backfill", () => {
     );
   });
 
+  it("paginates the GraphQL PR-detail fallback past 100 files instead of truncating at the first page (#7453)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 30,
+      title: "PR with more than 100 changed files",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "hugesha" },
+      labels: [],
+      body: "",
+    });
+    const firstPageFiles = Array.from({ length: 100 }, (_, index) => ({ path: `src/file-${index}.ts`, additions: 1, deletions: 0, changeType: "MODIFIED" }));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("LoopOverPullRequestDetails")) {
+          // A second-page request carries the `after` cursor the first page's pageInfo.endCursor handed back.
+          // The un-paginated fallback never sends this, so this branch only fires against the fixed code.
+          if (query.includes('after: "files-page-2"')) {
+            return Response.json({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ path: "src/file-100.ts", additions: 1, deletions: 0, changeType: "MODIFIED" }] },
+                  },
+                },
+                rateLimit: { remaining: 4998, resetAt: "2026-05-25T16:00:00Z" },
+              },
+            });
+          }
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  files: { pageInfo: { hasNextPage: true, endCursor: "files-page-2" }, nodes: firstPageFiles },
+                  reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ databaseId: 1, author: { login: "rev1" }, state: "APPROVED", authorAssociation: "MEMBER", submittedAt: "2026-05-25T00:00:00Z" }] },
+                },
+              },
+              rateLimit: { remaining: 4999, resetAt: "2026-05-25T16:00:00Z" },
+            },
+          });
+        }
+      }
+      if (url.includes("/pulls/30/files") || url.includes("/pulls/30/reviews")) return new Response("", { status: 404 });
+      if (url.includes("/commits/hugesha/check-runs")) return Response.json({});
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+
+    expect(result).toMatchObject({ status: "complete", processed: 1, warnings: [] });
+    // 101 files total (100 on page 1 + 1 on page 2) must all be persisted -- truncating at page 1 would leave 100.
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 30)).toHaveLength(101);
+    expect(await listPullRequestReviews(env, "JSONbored/gittensory", 30)).toEqual([expect.objectContaining({ id: "JSONbored/gittensory#30#1", reviewerLogin: "rev1" })]);
+  });
+
+  it("does not send a second GraphQL PR-detail page when the fallback's files/reviews already fit on page one", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 31,
+      title: "Single-page PR",
+      state: "open",
+      user: { login: "oktofeesh1" },
+      head: { sha: "singlesha" },
+      labels: [],
+      body: "",
+    });
+    let graphQlCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("LoopOverPullRequestDetails")) {
+          graphQlCalls += 1;
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  files: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ path: "src/only.ts", additions: 2, deletions: 1, changeType: "MODIFIED" }] },
+                  reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ databaseId: 60, author: { login: "solo-reviewer" }, state: "APPROVED", authorAssociation: "MEMBER", submittedAt: "2026-05-25T00:00:00Z" }] },
+                },
+              },
+              rateLimit: { remaining: 4999, resetAt: "2026-05-25T16:00:00Z" },
+            },
+          });
+        }
+      }
+      if (url.includes("/pulls/31/files") || url.includes("/pulls/31/reviews")) return new Response("", { status: 404 });
+      if (url.includes("/commits/singlesha/check-runs")) return Response.json({});
+      return Response.json([]);
+    });
+
+    const result = await backfillOpenPullRequestDetails(env, { repoFullName: "JSONbored/gittensory", mode: "full", cursor: 0 });
+
+    expect(result).toMatchObject({ status: "complete", processed: 1, warnings: [] });
+    expect(await listPullRequestFiles(env, "JSONbored/gittensory", 31)).toEqual([expect.objectContaining({ path: "src/only.ts", changes: 3 })]);
+    expect(await listPullRequestReviews(env, "JSONbored/gittensory", 31)).toEqual([expect.objectContaining({ id: "JSONbored/gittensory#31#60", reviewerLogin: "solo-reviewer" })]);
+    // fetchPullRequestFiles and fetchPullRequestReviews each independently fall back to GraphQL (one call
+    // apiece), but neither should send a page-2 request when pageInfo.hasNextPage is false on page one.
+    expect(graphQlCalls).toBe(2);
+  });
+
   it("refreshes one pull request's files before gate evaluation and drops stale cached paths", async () => {
     const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedRegisteredRepo(env);

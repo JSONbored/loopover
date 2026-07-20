@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  appendEvent,
   closeDefaultEventLedger,
   initEventLedger,
+  readEvents,
   resolveEventLedgerDbPath,
 } from "../../packages/loopover-miner/lib/event-ledger.js";
 
@@ -136,7 +138,13 @@ describe("loopover-miner event ledger (#2290)", () => {
     // @ts-expect-error — payload must be an object
     expect(() => ledger.appendEvent({ type: "x", payload: "nope" })).toThrow("invalid_payload");
     expect(() => ledger.appendEvent({ type: "  ", payload: {} })).toThrow("invalid_event_type");
+    // A non-string event type is rejected the same as an empty one, before any SQL runs.
+    expect(() => ledger.appendEvent({ type: 42 as unknown as string, payload: {} })).toThrow("invalid_event_type");
     expect(() => ledger.appendEvent({ type: "x", repoFullName: "no-slash", payload: {} })).toThrow(
+      "invalid_repo_full_name",
+    );
+    // A non-string (but non-nullish) repo scope is rejected too — distinct from the omitted/null "unscoped" case.
+    expect(() => ledger.appendEvent({ type: "x", repoFullName: 42 as unknown as string, payload: {} })).toThrow(
       "invalid_repo_full_name",
     );
   });
@@ -148,9 +156,44 @@ describe("loopover-miner event ledger (#2290)", () => {
     expect(() => ledger.appendEvent({ type: "x", payload: { a: Number.NaN } })).toThrow("invalid_payload");
     expect(() => ledger.appendEvent({ type: "x", payload: { a: () => 1 } })).toThrow("invalid_payload");
     expect(() => ledger.appendEvent({ type: "x", payload: { a: [1, undefined] } })).toThrow("invalid_payload");
+    // A payload JSON.stringify cannot even serialize (BigInt / a circular reference) fails closed the same way,
+    // via the stringify try/catch rather than the round-trip equality check.
+    expect(() => ledger.appendEvent({ type: "x", payload: { a: 1n } })).toThrow("invalid_payload");
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => ledger.appendEvent({ type: "x", payload: circular })).toThrow("invalid_payload");
     // A fully JSON-safe nested payload is accepted and reads back identically.
     const entry = ledger.appendEvent({ type: "x", payload: { a: { b: [1, "two", true, null] } } });
     expect(ledger.readEvents()).toContainEqual(entry);
+  });
+
+  it("rolls back and rethrows when the append transaction hits a database error mid-flight", () => {
+    const ledger = tempLedger();
+    // Force a deterministic mid-transaction failure: drop the table out from under the open ledger via a separate
+    // connection, so the in-transaction `MAX(seq)` read fails. appendEvent takes BEGIN IMMEDIATE before the try,
+    // so the failure must ROLLBACK (never leave a dangling write transaction) and rethrow the underlying error.
+    const raw = new DatabaseSync(ledger.dbPath);
+    raw.exec("DROP TABLE miner_event_ledger");
+    raw.close();
+    expect(() => ledger.appendEvent({ type: "discovered_issue", payload: {} })).toThrow(/no such table/i);
+    // afterEach then closes the handle cleanly, proving the failed append left no dangling write transaction.
+  });
+
+  it("uses the default singleton ledger helpers and closes cleanly", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-event-default-"));
+    roots.push(root);
+    const previousConfigDir = process.env.LOOPOVER_MINER_CONFIG_DIR;
+    process.env.LOOPOVER_MINER_CONFIG_DIR = root;
+    try {
+      const entry = appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: 1 } });
+      expect(readEvents()).toEqual([entry]);
+      // First close releases the real singleton; the second hits the already-closed no-op early return.
+      closeDefaultEventLedger();
+      closeDefaultEventLedger();
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LOOPOVER_MINER_CONFIG_DIR;
+      else process.env.LOOPOVER_MINER_CONFIG_DIR = previousConfigDir;
+    }
   });
 
   it("is append-only: the module's own source issues no inline UPDATE or DELETE against the ledger (#5564: the sole exception, purgeByRepo, delegates its DELETE to store-maintenance.js's shared helper, never inline SQL here)", () => {

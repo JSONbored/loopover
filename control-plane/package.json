@@ -1,0 +1,23 @@
+{
+  "name": "@loopover/control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LoopOver control-plane — product-agnostic tenant provisioning/deprovisioning orchestration behind an injectable driver interface (#7524, part of the #7173 ORB+AMS hosting control-plane). Fake in-memory driver only; real Cloudflare/Postgres drivers are out of scope pending the Postgres-provider decision.",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && npm run test:node",
+    "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "prettier": "3.9.4",
+    "typescript": "^5.9.3"
+  }
+}

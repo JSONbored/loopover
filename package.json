@@ -43,6 +43,8 @@
     "rees:metadata:check": "npm --prefix review-enrichment run metadata:check",
     "rees:validate-sourcemaps": "npm --prefix review-enrichment run validate:sourcemaps",
     "rees:coverage": "node scripts/rees-coverage.mjs",
+    "control-plane:install": "npm ci --prefix control-plane --prefer-offline --no-audit --no-fund",
+    "control-plane:test": "npm run control-plane:install && npm --prefix control-plane test",
     "db:migrations:check": "tsx scripts/check-migrations.mjs",
     "db:schema-drift:check": "tsx scripts/check-schema-drift.mjs",
     "actionlint": "node scripts/actionlint.mjs",

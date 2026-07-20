@@ -38,12 +38,12 @@ class PreviewGitHubError extends Error {
   }
 }
 
-/** Minimal fetch→JSON helper (mirrors reviewbot's core/github.ts githubJson). Throws PreviewGitHubError on a
- *  non-2xx so callers can distinguish a 404 ("no deployments") from a transient outage. */
-async function githubJson<T>(
-  url: string,
-  init: { token?: string | undefined; apiVersion?: string | undefined; rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined } = {},
-): Promise<T> {
+type GithubJsonInit = { token?: string | undefined; apiVersion?: string | undefined; rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined };
+
+/** Minimal fetch→JSON helper that also surfaces the response's `Link` header for pagination (mirrors
+ *  reviewbot's core/github.ts githubJson). Throws PreviewGitHubError on a non-2xx so callers can distinguish
+ *  a 404 ("no deployments") from a transient outage. */
+async function githubJsonWithLink<T>(url: string, init: GithubJsonInit = {}): Promise<{ payload: T; link: string | null }> {
   const headers = new Headers();
   headers.set("accept", "application/vnd.github+json");
   headers.set("user-agent", PRODUCT_USER_AGENT);
@@ -68,7 +68,50 @@ async function githubJson<T>(
     const message = typeof (payload as { message?: string })?.message === "string" ? (payload as { message: string }).message : `GitHub ${response.status}`;
     throw new PreviewGitHubError(response.status, message);
   }
-  return payload as T;
+  return { payload: payload as T, link: response.headers.get("link") };
+}
+
+async function githubJson<T>(url: string, init: GithubJsonInit = {}): Promise<T> {
+  return (await githubJsonWithLink<T>(url, init)).payload;
+}
+
+// GitHub caps list endpoints at 100 items/page, so a single `per_page=100` read silently truncates: a PR with
+// >100 discussion comments, or a commit with >100 check-runs, would push the Cloudflare Workers Builds bot's
+// comment / check-run onto page 2+ and this discovery would then return null/"absent" as if it genuinely
+// didn't exist (a truncated page-1 response is indistinguishable from an empty one). Walk the `Link: rel="next"`
+// header instead, bounded so a pathological PR/commit (or a mock that always advertises a next page) can't turn
+// one read into an unbounded fetch loop -- mirrors src/github/backfill.ts's githubPaginatedList/PR_DETAIL_MAX_PAGES
+// and src/github/app.ts's workflow-run listing (MAX_WORKFLOW_RUN_LIST_PAGES), both bounded to 10.
+const PREVIEW_LIST_MAX_PAGES = 10;
+
+function hasNextPage(link: string | null): boolean {
+  return Boolean(link?.split(",").some((part) => /rel="next"/.test(part)));
+}
+
+/**
+ * Walk a GitHub list endpoint's `Link: rel="next"` pages, probing each page's items as it arrives and
+ * returning the first non-null probe result. Bounded to PREVIEW_LIST_MAX_PAGES (see the note above) so a
+ * pathological resource can never spin. A page fetch/parse failure propagates to the caller, whose own
+ * try/catch degrades it to null/"absent" -- earlier pages were already probed, so a mid-pagination failure
+ * falls back to what they yielded (nothing usable) rather than dropping a successful first page, mirroring
+ * githubPaginatedList's own "a later-page failure keeps the pages already fetched" contract.
+ */
+async function findAcrossPages<TItem, TResult>(
+  firstPageUrl: string,
+  init: GithubJsonInit,
+  selectItems: (payload: unknown) => TItem[],
+  probe: (items: TItem[]) => TResult | null,
+): Promise<TResult | null> {
+  for (let page = 1; page <= PREVIEW_LIST_MAX_PAGES; page += 1) {
+    // Callers pass a `per_page=100` first-page URL; append the 1-based page cursor for page 2+ only (page 1 is
+    // GitHub's default, so leaving it bare keeps that request byte-identical to the pre-pagination read).
+    const url = page === 1 ? firstPageUrl : `${firstPageUrl}&page=${page}`;
+    const { payload, link } = await githubJsonWithLink<unknown>(url, init);
+    const found = probe(selectItems(payload));
+    if (found !== null) return found;
+    if (!hasNextPage(link)) return null;
+  }
+  return null;
 }
 
 export type DeploymentLookup = { url: string | null; failed: boolean; error?: boolean };
@@ -215,22 +258,26 @@ export async function findPreviewUrlFromPrComments(params: {
   rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<string | null> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
+  const opts = { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey };
   try {
-    const comments = await githubJson<Array<{ user?: { login?: string }; body?: string }>>(
+    return await findAcrossPages<{ user?: { login?: string }; body?: string }, string>(
       `${base}/issues/${params.prNumber}/comments?per_page=100`,
-      { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey },
-    ).catch(() => null);
-    if (!Array.isArray(comments)) return null;
-    // Newest first (the bot edits one comment in place).
-    for (const c of [...comments].reverse()) {
-      if ((c.user?.login ?? "").toLowerCase() !== "cloudflare-workers-and-pages[bot]") continue;
-      const url = extractPreviewUrl(c.body);
-      if (url) return url;
-    }
+      opts,
+      (payload) => (Array.isArray(payload) ? (payload as Array<{ user?: { login?: string }; body?: string }>) : []),
+      (comments) => {
+        // Newest first (the bot edits one comment in place).
+        for (const c of [...comments].reverse()) {
+          if ((c.user?.login ?? "").toLowerCase() !== "cloudflare-workers-and-pages[bot]") continue;
+          const url = extractPreviewUrl(c.body);
+          if (url) return url;
+        }
+        return null;
+      },
+    );
   } catch (error) {
     console.log(JSON.stringify({ event: "preview_from_comments_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
+    return null;
   }
-  return null;
 }
 
 /**
@@ -247,15 +294,20 @@ export async function getPreviewBuildState(params: {
   rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
 }): Promise<"building" | "succeeded" | "failed" | "absent"> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
+  const opts = { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey };
   try {
-    const checks = await githubJson<{ check_runs?: Array<{ name?: string; status?: string; conclusion?: string }> }>(
+    const state = await findAcrossPages<{ name?: string; status?: string; conclusion?: string }, "building" | "succeeded" | "failed">(
       `${base}/commits/${encodeURIComponent(params.sha)}/check-runs?per_page=100`,
-      { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey },
-    ).catch(() => null);
-    const build = (checks?.check_runs ?? []).find((r) => /workers builds|cloudflare/i.test(r.name ?? ""));
-    if (!build) return "absent";
-    if (build.status !== "completed") return "building"; // queued / in_progress → the preview is coming
-    return build.conclusion === "success" ? "succeeded" : "failed";
+      opts,
+      (payload) => (payload as { check_runs?: Array<{ name?: string; status?: string; conclusion?: string }> })?.check_runs ?? [],
+      (runs) => {
+        const build = runs.find((r) => /workers builds|cloudflare/i.test(r.name ?? ""));
+        if (!build) return null; // not on this page — keep walking until found, Link exhausts, or the page bound
+        if (build.status !== "completed") return "building"; // queued / in_progress → the preview is coming
+        return build.conclusion === "success" ? "succeeded" : "failed";
+      },
+    );
+    return state ?? "absent";
   } catch {
     return "absent";
   }

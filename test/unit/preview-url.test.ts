@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
+
+/** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
+const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
+const REPO = { owner: "o", repo: "r" };
+const isPage2 = (input: RequestInfo | URL) => /[?&]page=2\b/.test(String(input));
 
 afterEach(() => {
   clearGitHubResponseCacheForTest();
@@ -44,6 +49,122 @@ describe("preview-url GitHub reads", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
     });
+  });
+});
+
+describe("preview-url pagination (#7450)", () => {
+  it("findPreviewUrlFromPrComments follows Link: rel=next and finds the bot comment on page 2", async () => {
+    const page1 = Array.from({ length: 100 }, (_v, i) => ({ user: { login: `user${i}` }, body: "just chatter" }));
+    const page2 = [{ user: { login: "cloudflare-workers-and-pages[bot]" }, body: "Preview ready: https://pr-9.app.workers.dev/route" }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      isPage2(input) ? Response.json(page2) : Response.json(page1, { headers: { link: NEXT_LINK } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 9 })).resolves.toBe("https://pr-9.app.workers.dev");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("/issues/9/comments?per_page=100");
+    expect(String(fetchMock.mock.calls[0]![0])).not.toContain("&page="); // page 1 stays the bare pre-pagination read
+    expect(String(fetchMock.mock.calls[1]![0])).toContain("&page=2");
+  });
+
+  it("findPreviewUrlFromPrComments stops as soon as the bot comment is found, without fetching further pages", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json([{ user: { login: "cloudflare-workers-and-pages[bot]" }, body: "https://pr-1.app.workers.dev" }], { headers: { link: NEXT_LINK } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 1 })).resolves.toBe("https://pr-1.app.workers.dev");
+    expect(fetchMock).toHaveBeenCalledTimes(1); // early exit despite the advertised next page
+  });
+
+  it("findPreviewUrlFromPrComments returns null when no bot comment exists and there is no next page", async () => {
+    vi.stubGlobal("fetch", async () => Response.json([{ user: { login: "someone" }, body: "hi" }]));
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 2 })).resolves.toBeNull();
+  });
+
+  it("findPreviewUrlFromPrComments treats a non-array comments payload as empty", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ message: "unexpected shape" }));
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 5 })).resolves.toBeNull();
+  });
+
+  it("findPreviewUrlFromPrComments degrades to null when a later-page fetch fails, never throwing", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (isPage2(input)) throw new Error("network down");
+      return Response.json([{ user: { login: "x" }, body: "hi" }], { headers: { link: NEXT_LINK } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 3 })).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("findPreviewUrlFromPrComments is bounded: a pathological always-Link:next response can't loop unboundedly", async () => {
+    const fetchMock = vi.fn(async () => Response.json([{ user: { login: "x" }, body: "hi" }], { headers: { link: NEXT_LINK } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 4 })).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(10); // PREVIEW_LIST_MAX_PAGES
+  });
+
+  it("findPreviewUrlFromPrComments skips a user-less comment and a bot comment with no preview link, then returns the real one", async () => {
+    // Order matters: the scan reverses each page (newest first), so the url-bearing bot comment (index 0) is
+    // examined LAST -- the user-less comment and the link-less bot comment are examined first.
+    vi.stubGlobal("fetch", async () =>
+      Response.json([
+        { user: { login: "cloudflare-workers-and-pages[bot]" }, body: "Preview: https://pr-7.app.workers.dev" },
+        { user: { login: "cloudflare-workers-and-pages[bot]" }, body: "build started, no link yet" }, // bot, no URL -> if(url) is false
+        { body: "a comment with no user object at all" }, // user absent -> `c.user?.login ?? ""` is ""
+      ]),
+    );
+    await expect(findPreviewUrlFromPrComments({ token: "t", repo: REPO, prNumber: 7 })).resolves.toBe("https://pr-7.app.workers.dev");
+  });
+
+  it("getPreviewBuildState ignores a nameless check-run and still classifies the Workers Builds one", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        check_runs: [
+          { status: "completed", conclusion: "success" }, // no name -> `r.name ?? ""` -> regex miss
+          { name: "Cloudflare Workers Builds", status: "completed", conclusion: "success" },
+        ],
+      }),
+    );
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "nameless" })).resolves.toBe("succeeded");
+  });
+
+  it("getPreviewBuildState follows Link: rel=next and finds the Workers Builds check on page 2", async () => {
+    const page1 = { check_runs: Array.from({ length: 100 }, () => ({ name: "unit tests", status: "completed", conclusion: "success" })) };
+    const page2 = { check_runs: [{ name: "Cloudflare Workers Builds", status: "in_progress" }] };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      isPage2(input) ? Response.json(page2) : Response.json(page1, { headers: { link: NEXT_LINK } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "abc" })).resolves.toBe("building");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("getPreviewBuildState classifies a completed Workers Builds check as succeeded or failed", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ check_runs: [{ name: "cloudflare pages", status: "completed", conclusion: "success" }] }));
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "s1" })).resolves.toBe("succeeded");
+    vi.stubGlobal("fetch", async () => Response.json({ check_runs: [{ name: "cloudflare pages", status: "completed", conclusion: "failure" }] }));
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "s2" })).resolves.toBe("failed");
+  });
+
+  it("getPreviewBuildState treats a payload without a check_runs array as absent", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({}));
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "s3" })).resolves.toBe("absent");
+  });
+
+  it("getPreviewBuildState is bounded and degrades to absent on a later-page failure", async () => {
+    const spin = vi.fn(async () => Response.json({ check_runs: [] }, { headers: { link: NEXT_LINK } }));
+    vi.stubGlobal("fetch", spin);
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "spin" })).resolves.toBe("absent");
+    expect(spin).toHaveBeenCalledTimes(10); // PREVIEW_LIST_MAX_PAGES
+
+    const failLater = vi.fn(async (input: RequestInfo | URL) => {
+      if (isPage2(input)) throw new Error("boom");
+      return Response.json({ check_runs: [] }, { headers: { link: NEXT_LINK } });
+    });
+    vi.stubGlobal("fetch", failLater);
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
+    expect(failLater).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { DISCOVERY_INDEX_CONTRACT_VERSION, type AiPolicyVerdict, type DiscoveryIndexCandidate, type DiscoveryIndexQuery } from "@loopover/engine";
 import { TtlCache } from "../../../packages/discovery-index/src/cache";
 import { decodeCursor } from "../../../packages/discovery-index/src/cursor";
 import { runDiscoveryQuery, type DiscoveryQueryDeps, type GitHubClientLike } from "../../../packages/discovery-index/src/discovery-query";
 import type { GitHubIssue } from "../../../packages/discovery-index/src/github-client";
+import { counterValue, resetMetrics } from "../../../packages/discovery-index/src/metrics";
 
 const ALLOWED_AI_USAGE = "We welcome AI-assisted contributions.";
 const BANNED_AI_USAGE = "No AI-generated pull requests are allowed.";
@@ -53,6 +54,10 @@ function query(overrides: Partial<DiscoveryIndexQuery> = {}): DiscoveryIndexQuer
 }
 
 describe("discovery-index runDiscoveryQuery (#7164)", () => {
+  beforeEach(() => {
+    resetMetrics();
+  });
+
   it("builds candidates from an allowed repo's issues, filtering PRs and invalid entries", async () => {
     const { github, calls } = makeStubGitHub({
       issuesByRepo: {
@@ -241,5 +246,36 @@ describe("discovery-index runDiscoveryQuery (#7164)", () => {
     const response = await runDiscoveryQuery(query(), makeDeps(github));
     expect(response).toEqual({ contractVersion: DISCOVERY_INDEX_CONTRACT_VERSION, candidates: [], nextCursor: null });
     expect(calls).toEqual([]);
+  });
+
+  it("records a result-cache miss then a hit on a repeated identical query scope", async () => {
+    const { github } = makeStubGitHub({
+      issuesByRepo: { "acme/one": [{ number: 1, title: "T" }] },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const deps = makeDeps(github);
+
+    await runDiscoveryQuery(query({ repos: ["acme/one"] }), deps);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "miss" })).toBe(1);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "hit" })).toBe(0);
+
+    await runDiscoveryQuery(query({ repos: ["acme/one"] }), deps);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "miss" })).toBe(1);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "hit" })).toBe(1);
+  });
+
+  it("records a policy-cache miss then a hit when the same repo's policy is resolved twice", async () => {
+    // acme/one is reached via both the org search (#1) and the search term (#9); its policy is computed
+    // once (miss) then reused (hit) within the same query.
+    const { github } = makeStubGitHub({
+      searchResults: {
+        "org:acme state:open type:issue": [{ number: 1, title: "Org", repository_url: "https://api.github.com/repos/acme/one" }],
+        "flaky state:open type:issue": [{ number: 9, title: "Term", repository_url: "https://api.github.com/repos/acme/one" }],
+      },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    await runDiscoveryQuery(query({ orgs: ["acme"], searchTerms: ["flaky"] }), makeDeps(github));
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "policy", outcome: "miss" })).toBe(1);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "policy", outcome: "hit" })).toBe(1);
   });
 });

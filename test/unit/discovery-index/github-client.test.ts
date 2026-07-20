@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GitHubClient } from "../../../packages/discovery-index/src/github-client";
+import { counterValue, resetMetrics } from "../../../packages/discovery-index/src/metrics";
 
 interface FetchCall {
   url: string;
@@ -19,6 +20,10 @@ function makeFetchStub(responses: Response[]) {
 }
 
 describe("discovery-index GitHubClient (#7164)", () => {
+  beforeEach(() => {
+    resetMetrics();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -329,6 +334,43 @@ describe("discovery-index GitHubClient (#7164)", () => {
       const { fetchImpl: notObject } = makeFetchStub([new Response("null", { status: 200 })]);
       const client3 = new GitHubClient({ token: "tok", fetchImpl: notObject, sleepFn: vi.fn() });
       expect((await client3.fetchRepoFile("o/r", "X.md")).content).toBeNull();
+    });
+  });
+
+  describe("discovery_index_github_requests_total metric", () => {
+    const ok = () => counterValue("discovery_index_github_requests_total", { outcome: "ok" });
+    const retried = () => counterValue("discovery_index_github_requests_total", { outcome: "retried" });
+    const failed = () => counterValue("discovery_index_github_requests_total", { outcome: "failed" });
+
+    it("emits exactly one ok for a single successful request", async () => {
+      const { fetchImpl } = makeFetchStub([new Response("[]", { status: 200 })]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn() });
+      await client.fetchRepoIssues("owner/repo");
+      expect(ok()).toBe(1);
+      expect(retried()).toBe(0);
+      expect(failed()).toBe(0);
+    });
+
+    it("emits one retried then one ok for a request that 5xx-es once then succeeds", async () => {
+      const { fetchImpl } = makeFetchStub([new Response("err", { status: 500 }), new Response("[]", { status: 200 })]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 3 });
+      await client.fetchRepoIssues("owner/repo");
+      expect(retried()).toBe(1);
+      expect(ok()).toBe(1);
+      expect(failed()).toBe(0);
+    });
+
+    it("emits one retried per extra attempt then one failed when maxAttempts is exhausted", async () => {
+      const { fetchImpl } = makeFetchStub([
+        new Response("err", { status: 500 }),
+        new Response("err", { status: 500 }),
+        new Response("err", { status: 500 }),
+      ]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 3 });
+      await client.fetchRepoIssues("owner/repo");
+      expect(retried()).toBe(2); // two retries before the third (final) attempt
+      expect(failed()).toBe(1);
+      expect(ok()).toBe(0);
     });
   });
 });

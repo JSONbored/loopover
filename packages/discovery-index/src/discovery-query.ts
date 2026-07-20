@@ -18,6 +18,7 @@ import {
 import type { TtlCache } from "./cache.js";
 import { decodeCursor, encodeCursor } from "./cursor.js";
 import type { GitHubIssue } from "./github-client.js";
+import { incr } from "./metrics.js";
 
 /** The subset of GitHubClient this module actually calls — kept as an interface so tests can inject a plain
  *  stub instead of a real GitHubClient (which would need a real/mocked global fetch). */
@@ -93,7 +94,9 @@ function buildCandidate(repoFullName: string, issue: GitHubIssue, verdict: AiPol
  *  otherwise fall through to CONTRIBUTING.md — mirrors opportunity-fanout.js's resolveRepoAiPolicy exactly
  *  (a present-but-blank AI-USAGE.md must not silently fail open past a ban declared in CONTRIBUTING.md). */
 async function resolveRepoAiPolicy(repoFullName: string, deps: DiscoveryQueryDeps): Promise<AiPolicyVerdict> {
-  return deps.policyCache.getOrCompute(repoFullName, deps.cacheTtlMs, async () => {
+  let missed = false;
+  const verdict = await deps.policyCache.getOrCompute(repoFullName, deps.cacheTtlMs, async () => {
+    missed = true;
     const aiUsage = await deps.github.fetchRepoFile(repoFullName, "AI-USAGE.md");
     if (aiUsage.content !== null && aiUsage.content.trim().length > 0) {
       return resolveAiPolicyVerdict({ aiUsage: aiUsage.content, contributing: null });
@@ -101,6 +104,8 @@ async function resolveRepoAiPolicy(repoFullName: string, deps: DiscoveryQueryDep
     const contributing = await deps.github.fetchRepoFile(repoFullName, "CONTRIBUTING.md");
     return resolveAiPolicyVerdict({ aiUsage: null, contributing: contributing.content });
   });
+  incr("discovery_index_cache_lookups_total", { cache: "policy", outcome: missed ? "miss" : "hit" });
+  return verdict;
 }
 
 function scopeCacheKey(query: DiscoveryIndexQuery): string {
@@ -168,7 +173,12 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
  */
 export async function runDiscoveryQuery(query: DiscoveryIndexQuery, deps: DiscoveryQueryDeps): Promise<DiscoveryIndexResponse> {
   const scopeKey = scopeCacheKey(query);
-  const allCandidates = await deps.resultCache.getOrCompute(scopeKey, deps.cacheTtlMs, () => computeCandidates(query, deps));
+  let missed = false;
+  const allCandidates = await deps.resultCache.getOrCompute(scopeKey, deps.cacheTtlMs, () => {
+    missed = true;
+    return computeCandidates(query, deps);
+  });
+  incr("discovery_index_cache_lookups_total", { cache: "result", outcome: missed ? "miss" : "hit" });
   const offset = decodeCursor(query.cursor);
   const page = allCandidates.slice(offset, offset + query.limit);
   const nextOffset = offset + page.length;

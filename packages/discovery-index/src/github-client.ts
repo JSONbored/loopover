@@ -6,6 +6,8 @@
 // historical-backfill system this single-forge server-side fan-out doesn't need) — same retry/backoff/
 // rate-limit-observation shape, proportionately smaller.
 
+import { incr } from "./metrics.js";
+
 const API_BASE_URL = "https://api.github.com";
 const DEFAULT_PER_PAGE = 100;
 const DEFAULT_MAX_PAGES = 10;
@@ -165,7 +167,11 @@ export class GitHubClient {
         this.requestTimeoutMs && this.requestTimeoutMs > 0 ? { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) } : init,
       );
       this.recordRateLimit(response);
-      if (!isRetryableStatus(response) || attempt >= this.maxAttempts) return response;
+      if (!isRetryableStatus(response) || attempt >= this.maxAttempts) {
+        incr("discovery_index_github_requests_total", { outcome: response.ok ? "ok" : "failed" });
+        return response;
+      }
+      incr("discovery_index_github_requests_total", { outcome: "retried" });
       await this.sleepFn(retryDelayMs(response, attempt, this.backoffMs));
     }
   }

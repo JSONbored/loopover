@@ -15,6 +15,10 @@ export type ContributionProfileCache = {
 export declare function resolveContributionProfileCacheDbPath(env?: Record<string, string | undefined>): string;
 /**
  * Open the 100%-local contribution-profile cache. The DB only lives on this machine (#6797).
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation/migrations / purge still use the underlying DatabaseSync until those helpers are
+ * migrated. Public API stays synchronous so callers need no async cascade in this #7282 slice.
  */
 export declare function initContributionProfileCache(dbPath?: string): ContributionProfileCache;
 export declare function getCachedContributionProfile(repoFullName: string, nowMs?: number): CachedContributionProfile | null;

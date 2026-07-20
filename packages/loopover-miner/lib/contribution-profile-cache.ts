@@ -10,7 +10,7 @@ import {
 } from "./contribution-profile.js";
 import {
   normalizeLocalStoreDbPath,
-  openLocalStoreDb,
+  openLocalStoreAdapter,
   resolveLocalStoreDbPath,
 } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
@@ -63,12 +63,16 @@ function normalizeRepoFullName(repoFullName: unknown): string {
 
 /**
  * Open the 100%-local contribution-profile cache. The DB only lives on this machine (#6797).
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation/migrations / purge still use the underlying DatabaseSync until those helpers are
+ * migrated. Public API stays synchronous so callers need no async cascade in this #7282 slice.
  */
 export function initContributionProfileCache(
   dbPath: string = resolveContributionProfileCacheDbPath(),
 ): ContributionProfileCache {
   const resolvedPath = normalizeDbPath(dbPath);
-  const db = openLocalStoreDb(resolvedPath);
+  const { db, driver } = openLocalStoreAdapter(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS ${CONTRIBUTION_PROFILE_STORE_TABLE} (
       repo_full_name TEXT PRIMARY KEY,
@@ -79,16 +83,14 @@ export function initContributionProfileCache(
   // Schema-version convention (#4832): stamp the baseline. No post-baseline migrations for this v1 store yet.
   applySchemaMigrations(db, []);
 
-  const getStatement = db.prepare(
-    `SELECT profile_json, fetched_at FROM ${CONTRIBUTION_PROFILE_STORE_TABLE} WHERE repo_full_name = ?`,
-  );
-  const putStatement = db.prepare(`
+  const getSql = `SELECT profile_json, fetched_at FROM ${CONTRIBUTION_PROFILE_STORE_TABLE} WHERE repo_full_name = ?`;
+  const putSql = `
     INSERT INTO ${CONTRIBUTION_PROFILE_STORE_TABLE} (repo_full_name, profile_json, fetched_at)
     VALUES (?, ?, ?)
     ON CONFLICT(repo_full_name) DO UPDATE SET
       profile_json = excluded.profile_json,
       fetched_at = excluded.fetched_at
-  `);
+  `;
 
   return {
     dbPath: resolvedPath,
@@ -98,7 +100,8 @@ export function initContributionProfileCache(
      * miss (fail closed) rather than throwing — a corrupted/hand-edited file must not break discover.
      */
     get(repoFullName: string, nowMs: number = Date.now()): CachedContributionProfile | null {
-      const row = getStatement.get(normalizeRepoFullName(repoFullName)) as
+      const { rows } = driver.query(getSql, [normalizeRepoFullName(repoFullName)]);
+      const row = rows[0] as
         | { profile_json: string; fetched_at: string }
         | undefined;
       if (!row) return null;
@@ -121,7 +124,7 @@ export function initContributionProfileCache(
     put(profile: ContributionProfile, nowMs: number = Date.now()): { repoFullName: string; fetchedAt: string } {
       const repoFullName = normalizeRepoFullName(profile?.repoFullName);
       const fetchedAt = new Date(nowMs).toISOString();
-      putStatement.run(repoFullName, JSON.stringify(profile), fetchedAt);
+      driver.query(putSql, [repoFullName, JSON.stringify(profile), fetchedAt]);
       return { repoFullName, fetchedAt };
     },
     /**

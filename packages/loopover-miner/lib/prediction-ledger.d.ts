@@ -36,6 +36,10 @@ export declare function resolvePredictionLedgerDbPath(env?: Record<string, strin
 /**
  * Opens the append-only prediction ledger, creating the table on first use. Rows are returned in ascending `id`
  * order (insertion order). (#4263)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation/migrations / retention / purge still use the underlying DatabaseSync until those
+ * helpers are migrated. Public API stays synchronous so callers need no async cascade in this #7282 slice.
  */
 export declare function initPredictionLedger(dbPath?: string): PredictionLedger;
 export declare function appendPrediction(input: AppendPredictionInput): PredictionLedgerEntry;

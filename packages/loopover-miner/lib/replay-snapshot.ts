@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { removeWorktree } from "@loopover/engine";
 import type { WorktreeExecFn, WorktreeRemoveResult } from "@loopover/engine";
-import { openLocalStoreDb, resolveLocalStoreDbPath, normalizeLocalStoreDbPath } from "./local-store.js";
+import { openLocalStoreAdapter, resolveLocalStoreDbPath, normalizeLocalStoreDbPath } from "./local-store.js";
 
 // Freeze/snapshot mechanism for historical replay targets (#3010). Given a repo and a commit SHA T, exports:
 //  (a) the full working tree checked out AT T via a DETACHED git worktree -- the same isolation primitive
@@ -205,9 +205,17 @@ function rowToSnapshot(row: ReplaySnapshotRow): ReplaySnapshot {
   };
 }
 
+/**
+ * Opens the 100% local/client-side replay-snapshot store. The database only lives on this machine; this
+ * module never uploads, syncs, or phones home with its contents. (#3010)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation still uses the underlying DatabaseSync until those helpers are migrated. Public API
+ * stays synchronous so callers need no async cascade in this #7282 slice.
+ */
 export function openReplaySnapshotStore(dbPath: string = resolveReplaySnapshotDbPath()): ReplaySnapshotStore {
   const resolvedPath = normalizeDbPath(dbPath);
-  const db = openLocalStoreDb(resolvedPath);
+  const { db, driver } = openLocalStoreAdapter(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS replay_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,22 +231,23 @@ export function openReplaySnapshotStore(dbPath: string = resolveReplaySnapshotDb
       UNIQUE (repo_full_name, commit_sha)
     )
   `);
-  const getStatement = db.prepare("SELECT * FROM replay_snapshots WHERE repo_full_name = ? AND commit_sha = ?");
-  const insertStatement = db.prepare(`
+  const getSql = "SELECT * FROM replay_snapshots WHERE repo_full_name = ? AND commit_sha = ?";
+  const insertSql = `
     INSERT INTO replay_snapshots
       (repo_full_name, commit_sha, worktree_path, target_date, commits_json, tags_json, readme_filename, readme_content, exported_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  `;
 
   function getSnapshot(repoFullName: string, commitSha: string): ReplaySnapshot | null {
-    const row = getStatement.get(normalizeRepoFullName(repoFullName), normalizeCommitSha(commitSha)) as ReplaySnapshotRow | undefined;
+    const { rows } = driver.query(getSql, [normalizeRepoFullName(repoFullName), normalizeCommitSha(commitSha)]);
+    const row = rows[0] as ReplaySnapshotRow | undefined;
     return row ? rowToSnapshot(row) : null;
   }
 
   function saveSnapshot(snapshot: Omit<ReplaySnapshot, "exportedAt">): ReplaySnapshot {
     const repoFullName = normalizeRepoFullName(snapshot.repoFullName);
     const commitSha = normalizeCommitSha(snapshot.commitSha);
-    insertStatement.run(
+    driver.query(insertSql, [
       repoFullName,
       commitSha,
       snapshot.worktreePath,
@@ -248,7 +257,7 @@ export function openReplaySnapshotStore(dbPath: string = resolveReplaySnapshotDb
       snapshot.readme?.filename ?? null,
       snapshot.readme?.content ?? null,
       new Date().toISOString(),
-    );
+    ]);
     // Non-null: the INSERT above either succeeded (this row now exists) or threw, so getSnapshot here always
     // finds the row it just wrote.
     return getSnapshot(repoFullName, commitSha)!;

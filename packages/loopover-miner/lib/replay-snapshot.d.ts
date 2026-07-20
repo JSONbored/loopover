@@ -44,6 +44,14 @@ export declare function validateSnapshotFreshness(input: {
     commits: ReplaySnapshotCommit[];
     tags: ReplaySnapshotTag[];
 }): void;
+/**
+ * Opens the 100% local/client-side replay-snapshot store. The database only lives on this machine; this
+ * module never uploads, syncs, or phones home with its contents. (#3010)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation still uses the underlying DatabaseSync until those helpers are migrated. Public API
+ * stays synchronous so callers need no async cascade in this #7282 slice.
+ */
 export declare function openReplaySnapshotStore(dbPath?: string): ReplaySnapshotStore;
 export declare function closeDefaultReplaySnapshotStore(): void;
 /**

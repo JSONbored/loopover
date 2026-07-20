@@ -63,7 +63,11 @@ jobs:
         if: steps.cfg.outputs.ready == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version-file: .nvmrc
+          # Hardcoded, NOT node-version-file: .nvmrc -- this job deliberately has no checkout step (see
+          # the file header), so there is no .nvmrc on the runner to read. Keep this in sync with .nvmrc's
+          # pinned version by hand; same exception already established for gittensor-impact.yml and
+          # visual-capture-fallback.yml.
+          node-version: "22.23.1"
 
       - name: Install trusted Wrangler
         if: steps.cfg.outputs.ready == 'true'

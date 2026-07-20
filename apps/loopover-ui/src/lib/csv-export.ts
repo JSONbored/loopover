@@ -1,6 +1,9 @@
 /** RFC-4180-style CSV cell escaping for client-side ledger exports (#2198). */
 export function escapeCsvCell(value: string): string {
-  const needsFormulaGuard = /^[=+\-@]/.test(value);
+  // Leading TAB (\t) and CR (\r) are formula-injection vectors too (#7439): a spreadsheet strips the
+  // leading whitespace and still evaluates the `=`/`+`/`-`/`@` formula that follows, so a bare
+  // `=+-@` guard misses e.g. "\t=HYPERLINK(...)". Guard them the same way.
+  const needsFormulaGuard = /^[=+\-@\t\r]/.test(value);
   const guarded = needsFormulaGuard ? `'${value}` : value;
   const needsQuotes = /[",\n\r]/.test(guarded);
   const escaped = guarded.replace(/"/g, '""');

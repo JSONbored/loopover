@@ -3,6 +3,8 @@ import { generateKeyPairSync } from "node:crypto";
 import { createTestEnv } from "../helpers/d1";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import * as repositories from "../../src/db/repositories";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import * as repositorySettings from "../../src/settings/repository-settings";
 import type { IssueRecord, RepositoryRecord } from "../../src/types";
 import {
   findDeclinedIssuePlanDraft,
@@ -453,6 +455,82 @@ describe("generateIssuePlanDrafts (#7426)", () => {
     const paused = await generateIssuePlanDrafts(pausedEnv, "acme/widgets", "goal", { create: true, dryRun: false });
     expect(paused.dryRun).toBe(true);
     expect(paused.created).toBe(0);
+  });
+});
+
+function capturedUserMessage(run: ReturnType<typeof vi.fn>): string {
+  const opts = (run.mock.calls[0] as unknown as [string, { messages?: Array<{ role: string; content: string }> }])[1];
+  return opts?.messages?.find((message) => message.role === "user")?.content ?? "";
+}
+
+describe("gittensor label-taxonomy enrichment (#7428)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    clearInstallationTokenCacheForTest();
+  });
+
+  it("makes zero additional reads and enriches nothing when the plugin is off fleet-wide (default), even if the repo's own manifest opts in", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai }); // LOOPOVER_EXPERIMENTAL_GITTENSOR unset
+    const manifestSpy = vi.spyOn(repositories, "getRepositorySettings");
+    await upsertRepoFocusManifest(env, "acme/widgets", { experimental: { gittensor: true } });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    expect(capturedUserMessage(run)).not.toContain("gittensor:bug");
+    expect(manifestSpy).not.toHaveBeenCalled(); // short-circuits before even reading repository settings
+  });
+
+  it("does not enrich when the global flag is on but the repo's own manifest does not opt in", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai, LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    expect(capturedUserMessage(run)).not.toContain("gittensor:bug");
+  });
+
+  it("merges the repo's default type-label taxonomy into the prompt when both the global flag and the repo's manifest are enabled", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai, LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
+    await upsertRepoFocusManifest(env, "acme/widgets", { experimental: { gittensor: true } });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    const userMessage = capturedUserMessage(run);
+    expect(userMessage).toContain("gittensor:bug");
+    expect(userMessage).toContain("gittensor:feature");
+    expect(userMessage).toContain("gittensor:priority");
+  });
+
+  it("does not enrich when typeLabelsEnabled is explicitly false for the repo (config-as-code, #6443)", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai, LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
+    // typeLabels/typeLabelsEnabled have no DB column anymore -- only `.loopover.yml settings.*` can set them.
+    await upsertRepoFocusManifest(env, "acme/widgets", { experimental: { gittensor: true }, settings: { typeLabelsEnabled: false } });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    expect(capturedUserMessage(run)).not.toContain("gittensor:bug");
+  });
+
+  it("falls back to DEFAULT_TYPE_LABELS when resolved settings carry no typeLabels value at all", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai, LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
+    await upsertRepoFocusManifest(env, "acme/widgets", { experimental: { gittensor: true } });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    vi.spyOn(repositorySettings, "resolveRepositorySettings").mockResolvedValue({ repoFullName: "acme/widgets", typeLabelsEnabled: true, typeLabels: undefined } as never);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    expect(capturedUserMessage(run)).toContain("gittensor:bug");
+  });
+
+  it("honors a custom typeLabels override (config-as-code) instead of the gittensor:* defaults", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "T", body: "B" }]));
+    const env = baseEnv({ AI: { run } as unknown as Ai, LOOPOVER_EXPERIMENTAL_GITTENSOR: "true" });
+    await upsertRepoFocusManifest(env, "acme/widgets", { experimental: { gittensor: true }, settings: { typeLabels: { bug: "kind:bug", feature: "kind:feature" } } });
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    await generateIssuePlanDrafts(env, "acme/widgets", "goal");
+    const userMessage = capturedUserMessage(run);
+    expect(userMessage).toContain("kind:bug");
+    expect(userMessage).toContain("kind:feature");
+    expect(userMessage).not.toContain("gittensor:bug");
   });
 });
 

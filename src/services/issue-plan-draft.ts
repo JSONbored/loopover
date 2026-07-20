@@ -34,8 +34,12 @@ import {
   recordAuditEvent,
   sumAiEstimatedNeuronsSince,
 } from "../db/repositories";
+import { isGittensorPluginEnabled, shouldEnableGittensorForRepo } from "../review/gittensor-wire";
 import { isGlobalAgentPause } from "../settings/agent-execution";
+import { DEFAULT_TYPE_LABELS } from "../settings/pr-type-label";
+import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isFocusManifestPublicSafe } from "../signals/focus-manifest";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { normalizeIssueTitleKey } from "./contributor-issue-draft";
 import type { IssueRecord } from "../types";
 import { sha256Hex } from "../utils/crypto";
@@ -224,6 +228,32 @@ function buildIssuePlanUserPrompt(goal: string, existingLabelNames: string[]): s
   return `Planning goal:\n${goal}\n\nRepository's existing labels (prefer reusing these):\n${labelsLine}`;
 }
 
+/**
+ * Gittensor-enrollment-aware enrichment (#7428): when this repo has opted into the gittensor plugin
+ * (LOOPOVER_EXPERIMENTAL_GITTENSOR AND the repo's own `.loopover.yml experimental.gittensor: true` --
+ * shouldEnableGittensorForRepo, gittensor-wire.ts), this repo's configured bug/feature/priority type-label
+ * taxonomy is merged into the "existing labels" the prompt already prefers reusing (buildIssuePlanUserPrompt) --
+ * purely additive, no new prompt section, so a plan generated for a gittensor repo just sees a few more labels
+ * to choose from. Label NAMES only, never any scoring weight/multiplier -- those never leave the private
+ * scoring pipeline.
+ *
+ * ZERO FOOTPRINT when the plugin is off (the fleet-wide default, matching gittensor-wire.ts's own contract): the
+ * global flag check short-circuits before this ever loads a manifest or repository settings, so a plain
+ * self-host instance with no gittensor affiliation makes no additional reads for this at all.
+ *
+ * Uses resolveRepositorySettings (DB overlaid with `.loopover.yml`), NOT the raw DB-only getRepositorySettings:
+ * typeLabels/typeLabelsEnabled are config-as-code only now (no DB column backs them, #6443) -- reading the raw
+ * DB row would silently ignore a repo's actual configured taxonomy and always see the built-in default.
+ */
+async function resolveGittensorLabelEnrichment(env: Env, repoFullName: string): Promise<string[]> {
+  if (!isGittensorPluginEnabled(env)) return [];
+  const manifest = await loadRepoFocusManifest(env, repoFullName);
+  if (!shouldEnableGittensorForRepo(env, manifest.experimental.gittensor)) return [];
+  const settings = await resolveRepositorySettings(env, repoFullName);
+  if (settings.typeLabelsEnabled !== true) return [];
+  return Object.values(settings.typeLabels ?? DEFAULT_TYPE_LABELS);
+}
+
 function normalizeIssuePlanCandidate(raw: RawIssuePlanCandidate): { title: string; body: string; labels: string[] } | null {
   const title = typeof raw.title === "string" ? raw.title.trim().slice(0, MAX_TITLE_CHARS) : "";
   const body = typeof raw.body === "string" ? raw.body.trim().slice(0, MAX_BODY_CHARS) : "";
@@ -362,15 +392,17 @@ export async function generateIssuePlanDrafts(env: Env, repoFullName: string, go
   const trimmedGoal = goal.trim().slice(0, MAX_GOAL_CHARS);
   if (!trimmedGoal) return empty("no_output");
 
-  const [repo, openIssues, declinedIssues, labels] = await Promise.all([
+  const [repo, openIssues, declinedIssues, labels, gittensorTypeLabels] = await Promise.all([
     getRepository(env, repoFullName),
     listOpenIssues(env, repoFullName),
     listClosedContributorDraftIssues(env, repoFullName, `<!-- ${ISSUE_PLAN_DRAFT_MARKER_PREFIX}`),
     listRepoLabels(env, repoFullName),
+    resolveGittensorLabelEnrichment(env, repoFullName),
   ]);
 
   const system = ISSUE_PLAN_SYSTEM_PROMPT;
-  const user = buildIssuePlanUserPrompt(trimmedGoal, labels.map((label) => label.name));
+  const promptLabelNames = [...new Set([...labels.map((label) => label.name), ...gittensorTypeLabels])];
+  const user = buildIssuePlanUserPrompt(trimmedGoal, promptLabelNames);
   const estimatedNeurons = estimateNeurons(system.length + user.length, ISSUE_PLAN_MAX_TOKENS, ISSUE_PLAN_MODEL_COUNT);
   const remainingBudget = Math.max(0, issuePlanDailyBudget(env) - (await sumAiEstimatedNeuronsSince(env, utcDayStartIso())));
   if (estimatedNeurons > remainingBudget) {

@@ -128,6 +128,11 @@ export function useSession() {
     });
     if (!result.ok) {
       toast.error("Sign out failed", { description: result.message });
+      // #7533: the optimistic setSession(null)/emitSessionChanged() above was never confirmed
+      // server-side (the logout call failed, so the session cookie is still valid). Re-sync from the
+      // server — the definitive source — instead of leaving the app in a false "signed out" state that
+      // hides every role-gated route/panel until the user manually reloads.
+      await refresh();
       return;
     }
     toast("Signed out", { description: "The browser session cookie was cleared." });

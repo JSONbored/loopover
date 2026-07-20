@@ -4,6 +4,8 @@ import {
   BEST_REVIEW_MODELS,
   buildTestEvidencePromptSection,
   callAiProvider,
+  INCOHERENT_DIFF_ASSESSMENT,
+  isIncoherentDiffBail,
   isStructuralProviderConfigError,
   resolveEffectiveAiReviewOnMerge,
   resolveEffectiveAiReviewPlan,
@@ -3072,6 +3074,49 @@ describe("pure helpers", () => {
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- a structural config error is deterministic, so retrying is pointless.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (structural failure) + 1 fallback (succeeded on its first try).
+  });
+
+  it("runWorkersOpinion stops retrying a model after ONE INCOHERENT_DIFF_ASSESSMENT bail, but the fallback still gets its full retry budget (#ops-review-burst)", async () => {
+    let primaryAttempts = 0;
+    const run = vi.fn(async (model: string) => {
+      if (model === "fallback") return { response: reviewJson() };
+      primaryAttempts += 1;
+      return { response: reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] }) };
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string }> = [];
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    expect(parsed.review?.assessment).toContain("reasonable");
+    expect(primaryAttempts).toBe(1); // NOT 3 -- the model's own deliberate bail will not change on a same-model retry.
+    expect(run).toHaveBeenCalledTimes(2); // 1 primary (incoherent-diff bail) + 1 fallback (succeeded on its first try).
+    expect(diagnostics[0]).toMatchObject({ model: "primary", attempt: 0, status: "unparseable_output" });
+  });
+
+  it("runWorkersOpinion exhausts all providers when EVERY model bails on INCOHERENT_DIFF_ASSESSMENT, without burning the full retry budget on either", async () => {
+    let totalAttempts = 0;
+    const run = vi.fn(async () => {
+      totalAttempts += 1;
+      return { response: reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] }) };
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256);
+    expect(parsed.review).toBeNull();
+    expect(totalAttempts).toBe(2); // 1 per model, NOT 3 per model (6 total) -- each model's own bail is deliberate.
+  });
+
+  it("isIncoherentDiffBail recognizes exactly the model's own INCOHERENT_DIFF_ASSESSMENT text, not a generic parse failure or a look-alike assessment", () => {
+    expect(isIncoherentDiffBail(reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT }))).toBe(true);
+    // Real-world shape (LOOPOVER-29): empty blockers/nits/suggestions alongside the bail assessment.
+    expect(isIncoherentDiffBail(reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] }))).toBe(true);
+    expect(isIncoherentDiffBail(reviewJson({ assessment: "The change looks reasonable and focused." }))).toBe(false);
+    expect(isIncoherentDiffBail(reviewJson({ assessment: `${INCOHERENT_DIFF_ASSESSMENT} (extra prose)` }))).toBe(false);
+    expect(isIncoherentDiffBail("not json at all")).toBe(false);
+    expect(isIncoherentDiffBail("")).toBe(false);
+    // A JSON object whose assessment isn't a string at all (extractLastJsonObject still finds the object).
+    expect(isIncoherentDiffBail(JSON.stringify({ assessment: 42 }))).toBe(false);
+    // Brace-balanced (extractLastJsonObject finds it) but not valid JSON (single-quoted, not double-quoted) --
+    // exercises the try/catch around JSON.parse, not just the "no JSON object at all" early return above.
+    expect(isIncoherentDiffBail("{ 'assessment': 'not valid JSON' }")).toBe(false);
   });
 
   it("isStructuralProviderConfigError matches only codex's own structural-config error messages, not other Errors or non-Error throws (GITTENSORY-K/8)", () => {

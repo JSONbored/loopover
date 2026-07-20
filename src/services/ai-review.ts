@@ -793,6 +793,23 @@ export function parseModelReview(text: string): ModelReview | null {
   }
 }
 
+/** True when the model's raw response is specifically the deliberate INCOHERENT_DIFF_ASSESSMENT bail (see that
+ *  constant's own prompt text) rather than a generic parse failure. parseModelReview collapses both into the
+ *  same `null` -- correct for its own contract, since neither yields a usable review -- but the retry loop needs
+ *  to tell them apart: an incoherent-diff bail is the model's deliberate, confident answer about THIS diff and
+ *  will not change on a same-model retry, unlike a truncated/malformed response that might parse fine next time.
+ *  Mirrors parseModelReview's own extraction so this can never disagree with what that function actually parsed. */
+export function isIncoherentDiffBail(text: string): boolean {
+  const jsonText = extractLastJsonObject(text);
+  if (!jsonText) return false;
+  try {
+    const obj = JSON.parse(jsonText) as Record<string, unknown>;
+    return typeof obj.assessment === "string" && obj.assessment.trim() === INCOHERENT_DIFF_ASSESSMENT;
+  } catch {
+    return false;
+  }
+}
+
 // Aggregate ceiling across ALL optional context sections combined (#3900). Each section below already
 // enforces its OWN per-section cap (FILE_CONTENT_BUDGET, MAX_CONTEXT_CHARS, MAX_PROMPT_CHARS,
 // MAX_ENRICHMENT_PROMPT_SECTION_CHARS...), but nothing previously bounded the COMBINED total: with every
@@ -1141,6 +1158,11 @@ async function runWorkersOpinion(
             }),
           );
         }
+        // #ops-review-burst: an INCOHERENT_DIFF_ASSESSMENT bail is the model's deliberate, confident answer about
+        // THIS diff -- not a truncated/malformed response that might parse fine on a same-model retry. Stop
+        // retrying this model (same reasoning as the CLI-timeout/429/structural-config breaks below); the
+        // fallback model below still gets its own full retry budget, since it may reach a different verdict.
+        if (isIncoherentDiffBail(text)) break;
       } catch (error) {
         // Fail-LOUD (#1566): a provider/CLI failure (e.g. the claude-code CLI absent → spawn ENOENT, or an auth/API
         // error) must be VISIBLE, not silently swallowed into a "no usable output" review. Log every failed attempt;

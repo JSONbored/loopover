@@ -1728,7 +1728,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("counts pending commits, emits CI hints, and tracks deleted or renamed paths", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectCiStatusHints, collectLocalBranchMetadata, collectPendingCommitCount } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1764,7 +1763,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("counts additions and deletions for cross-directory renames that share no prefix or suffix", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1803,14 +1801,34 @@ describe("local MCP git metadata collection", () => {
     );
   });
 
+  it("classifies a type change (regular file replaced by a symlink) as unknown, not modified", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    git(tempDir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(tempDir, "target.txt"), "regular file content\n");
+    writeFileSync(join(tempDir, "link.txt"), "will become a symlink\n");
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "seed a regular file to convert");
+    git(tempDir, "checkout", "-b", "type-change");
+    rmSync(join(tempDir, "link.txt"));
+    execFileSync("ln", ["-s", "target.txt", "link.txt"], { cwd: tempDir });
+    git(tempDir, "add", "-A");
+    git(tempDir, "commit", "-m", "swap link.txt for a symlink");
+
+    const metadata = collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD~1", login: "oktofeesh1" });
+    expect(metadata.changedFiles).toEqual(expect.arrayContaining([expect.objectContaining({ path: "link.txt", status: "unknown" })]));
+  });
+
   it("returns no lines when the git command fails", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { gitLines } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     expect(gitLines(join(tmpdir(), "loopover-no-such-repo-d8f3"), ["rev-parse", "HEAD"])).toEqual([]);
   });
 
   it("counts stats and keeps verbatim paths for non-ASCII filenames at the default core.quotePath", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1846,7 +1864,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("classifies Cypress/e2e and snapshot paths as test files, mirroring the server isTestPath", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { isTestFile, isCodeFile } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     // Existing forms still classify as tests.
     for (const file of ["test/foo.ts", "src/app.test.ts", "pkg/foo_test.go", "spec/foo_spec.rb", "src/__tests__/x.ts"]) {
@@ -1903,7 +1920,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { extractLinkedIssues } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     // Standalone closing keywords (hash optional, as this client-side extractor allows) and bare #refs link.
     expect(extractLinkedIssues("fixes #5")).toEqual([5]);
@@ -1918,13 +1934,14 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     expect(parseGitRemote("git@github.com:entrius/allways-ui.git")).toBe("entrius/allways-ui");
     expect(parseGitRemote("https://github.com/JSONbored/loopover.git")).toBe("JSONbored/loopover");
     expect(parseGitRemote("https://github.com/JSONbored/loopover/")).toBe("JSONbored/loopover");
     expect(parseGitRemote("https://github.com/JSONbored/loopover////")).toBe("JSONbored/loopover");
     expect(parseGitRemote(`x${"/".repeat(32_000)}x`)).toBeUndefined();
+    expect(parseGitRemote(undefined)).toBeUndefined();
+    expect(parseGitRemote(null)).toBeUndefined();
 
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1962,7 +1979,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("selects and validates cwd from MCP roots without leaking local paths", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, normalizeMcpWorkspaceRoots, resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     const workspace = join(tempDir, "workspace");
@@ -2260,6 +2276,228 @@ describe("local MCP git metadata collection", () => {
     expect(analysis.observedPullRequestScenarios.approvedOrMergeable).toBeGreaterThan(0);
     expect(analysis.scenarioSummary.pendingScenarioNotes.length).toBeGreaterThan(0);
     expect(analysis.scenarioSummary.pendingScenarioNotes.join(" ")).toMatch(/cached GitHub reviews, checks, and activity/i);
+  });
+});
+
+describe("local MCP git metadata collection (#7329 coverage)", () => {
+  let tempDir: string | null = null;
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+    tempDir = null;
+  });
+
+  function initFixtureRepo(dir: string) {
+    git(dir, "init");
+    git(dir, "config", "user.email", "test@example.com");
+    git(dir, "config", "user.name", "LoopOver Test");
+    git(dir, "config", "commit.gpgsign", "false");
+    git(dir, "remote", "add", "origin", "git@github.com:entrius/allways-ui.git");
+    writeFileSync(join(dir, "README.md"), "fixture\n");
+    git(dir, "add", "README.md");
+    git(dir, "commit", "-m", "initial commit");
+  }
+
+  it("collectLocalDiff derives a public-safe diff summary from real branch metadata", async () => {
+    const { collectLocalDiff } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+    git(tempDir, "checkout", "-b", "add-cache");
+    mkdirSync(join(tempDir, "src"));
+    mkdirSync(join(tempDir, "test"));
+    writeFileSync(join(tempDir, "src/cache.ts"), "export const cache = 1;\n");
+    writeFileSync(join(tempDir, "test/cache.test.ts"), "expect(1).toBe(1);\n");
+    git(tempDir, "add", "src/cache.ts", "test/cache.test.ts");
+    git(tempDir, "commit", "-m", "add cache module and its test");
+
+    const diff = collectLocalDiff(tempDir, "HEAD~1");
+    expect(diff.changedFiles.sort()).toEqual(["src/cache.ts", "test/cache.test.ts"]);
+    expect(diff.codeFiles).toEqual(["src/cache.ts"]);
+    expect(diff.testFiles).toEqual(["test/cache.test.ts"]);
+    expect(diff.changedLineCount).toBeGreaterThan(0);
+    expect(diff.commitMessage).toMatch(/add cache module and its test/);
+    // Title prefers the branch name (dashes -> spaces) over the commit message when a branch name is present.
+    expect(diff.title).toBe("add cache");
+  });
+
+  it("collectCiStatusHints flags workflow-file and build-manifest changes, not just pending commits", async () => {
+    const { collectCiStatusHints } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+
+    const workflowHints = collectCiStatusHints(tempDir, "HEAD", [
+      { path: ".github/workflows/ci.yml", additions: 1, deletions: 0, status: "modified", binary: false },
+    ]);
+    expect(workflowHints.join(" ")).toMatch(/CI required-check behavior may change/);
+
+    const manifestHints = collectCiStatusHints(tempDir, "HEAD", [
+      { path: "package.json", additions: 1, deletions: 0, status: "modified", binary: false },
+    ]);
+    expect(manifestHints.join(" ")).toMatch(/Build or dependency manifests changed/);
+  });
+
+  it("defaultBaseRef falls back to HEAD when no origin/main or origin/master ref exists locally", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+    // No baseRef supplied and no fetched origin/HEAD or origin/main|master ref in this bare local repo,
+    // so defaultBaseRef exhausts every candidate and falls back to "HEAD" -- changedFiles is then empty
+    // (diffing HEAD against itself), proving the fallback resolved rather than throwing.
+    const metadata = collectLocalBranchMetadata({ cwd: tempDir, login: "oktofeesh1" });
+    expect(metadata.baseRef).toBe("HEAD");
+    expect(metadata.changedFiles).toEqual([]);
+  });
+
+  it("collectRemoteTrackingSha resolves the remote HEAD sha for an origin/<branch> baseRef", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    const upstream = join(tempDir, "upstream");
+    const clone = join(tempDir, "clone");
+    mkdirSync(upstream);
+    initFixtureRepo(upstream);
+    // Force the branch name regardless of this environment's init.defaultBranch (may be "master").
+    git(upstream, "branch", "-M", "main");
+    git(tempDir, "clone", upstream, clone);
+    git(clone, "config", "user.email", "test@example.com");
+    git(clone, "config", "user.name", "LoopOver Test");
+    git(clone, "config", "commit.gpgsign", "false");
+    git(clone, "checkout", "-b", "feature");
+    writeFileSync(join(clone, "feature.ts"), "export const feature = true;\n");
+    git(clone, "add", "feature.ts");
+    git(clone, "commit", "-m", "add feature file");
+
+    // git clone's default origin URL is the local filesystem path, not a github.com URL, so
+    // parseGitRemote can't infer repoFullName from it here -- pass it explicitly.
+    const metadata = collectLocalBranchMetadata({ cwd: clone, baseRef: "origin/main", repoFullName: "acme/widgets", login: "oktofeesh1" });
+    expect(metadata.remoteTrackingSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("collectRemoteTrackingSha resolves to undefined when the origin branch does not exist on the remote", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    const upstream = join(tempDir, "upstream");
+    const clone = join(tempDir, "clone");
+    mkdirSync(upstream);
+    initFixtureRepo(upstream);
+    git(upstream, "branch", "-M", "main");
+    git(tempDir, "clone", upstream, clone);
+
+    // "origin/no-such-branch" matches the ^origin/(.+)$ pattern but ls-remote finds nothing for it, so
+    // remoteTrackingSha resolves to undefined instead of throwing.
+    const metadata = collectLocalBranchMetadata({ cwd: clone, baseRef: "origin/no-such-branch", repoFullName: "acme/widgets", login: "oktofeesh1" });
+    expect(metadata.remoteTrackingSha).toBeUndefined();
+  });
+
+  it("defaultBaseRef prefers a fetched origin/HEAD, then origin/main, then origin/master when present", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+
+    // origin/HEAD symbolic ref present -> used directly, without even checking origin/main.
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: tempDir, encoding: "utf8" }).trim();
+    git(tempDir, "update-ref", "refs/remotes/origin/main", sha);
+    git(tempDir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    const withOriginHead = collectLocalBranchMetadata({ cwd: tempDir, login: "oktofeesh1" });
+    expect(withOriginHead.baseRef).toBe("origin/main");
+    rmSync(tempDir, { recursive: true, force: true });
+
+    // No origin/HEAD symbolic ref, but a real origin/main remote-tracking ref exists.
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+    const mainSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: tempDir, encoding: "utf8" }).trim();
+    git(tempDir, "update-ref", "refs/remotes/origin/main", mainSha);
+    const withOriginMain = collectLocalBranchMetadata({ cwd: tempDir, login: "oktofeesh1" });
+    expect(withOriginMain.baseRef).toBe("origin/main");
+    rmSync(tempDir, { recursive: true, force: true });
+
+    // No origin/HEAD or origin/main, but a real origin/master remote-tracking ref exists.
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    initFixtureRepo(tempDir);
+    const masterSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: tempDir, encoding: "utf8" }).trim();
+    git(tempDir, "update-ref", "refs/remotes/origin/master", masterSha);
+    const withOriginMaster = collectLocalBranchMetadata({ cwd: tempDir, login: "oktofeesh1" });
+    expect(withOriginMaster.baseRef).toBe("origin/master");
+  });
+
+  it("throws when repoFullName cannot be inferred from the remote and is not passed explicitly", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    // No remote at all, so remote.origin.url is empty and parseGitRemote has nothing to parse.
+    writeFileSync(join(tempDir, "README.md"), "fixture\n");
+    git(tempDir, "add", "README.md");
+    git(tempDir, "commit", "-m", "initial commit");
+
+    expect(() => collectLocalBranchMetadata({ cwd: tempDir, baseRef: "HEAD", login: "oktofeesh1" })).toThrow(
+      /Could not infer repoFullName/,
+    );
+  });
+
+  it("falls back to no title at all when both the branch name and every commit message are empty", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    git(tempDir, "init");
+    git(tempDir, "config", "user.email", "test@example.com");
+    git(tempDir, "config", "user.name", "LoopOver Test");
+    git(tempDir, "config", "commit.gpgsign", "false");
+    // No commits at all: collectCommitMessages' own "last commit" fallback also comes up empty, and an
+    // explicit all-dashes branchName reduces titleFromBranch's replace/trim chain to "" too.
+    const metadata = collectLocalBranchMetadata({ cwd: tempDir, repoFullName: "acme/widgets", baseRef: "HEAD", branchName: "---", login: "oktofeesh1" });
+    expect(metadata.title).toBeUndefined();
+    expect(metadata.commitMessages).toEqual([]);
+  });
+
+  it("safeResolvedPath falls back to the resolved (non-realpath) form for a cwd that does not exist on disk", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    const missing = join(tmpdir(), "loopover-definitely-does-not-exist-7329");
+    const metadata = collectLocalBranchMetadata({ cwd: missing, repoFullName: "acme/widgets", baseRef: "HEAD", login: "oktofeesh1" });
+    expect(metadata.repoFullName).toBe("acme/widgets");
+    expect(metadata.changedFiles).toEqual([]);
+  });
+
+  it("resolveWorkspaceCwd defaults to process.cwd() when both cwd and workspaceRoots are omitted", async () => {
+    const { resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    expect(resolveWorkspaceCwd()).toMatchObject({ rootsAvailable: false, rootCount: 0 });
+    expect(resolveWorkspaceCwd({})).toMatchObject({ rootsAvailable: false, rootCount: 0 });
+  });
+
+  it("resolveWorkspaceCwd resolves both a relative and an absolute cwd against a workspace root", async () => {
+    const { resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    const root = join(tempDir, "root");
+    mkdirSync(join(root, "nested"), { recursive: true });
+    const roots = [{ uri: pathToFileURL(root).href }];
+
+    const relative = resolveWorkspaceCwd({ cwd: "nested", workspaceRoots: roots });
+    expect(relative).toMatchObject({ cwd: join(root, "nested"), rootsAvailable: true });
+
+    const absolute = resolveWorkspaceCwd({ cwd: join(root, "nested"), workspaceRoots: roots });
+    expect(absolute).toMatchObject({ cwd: join(root, "nested"), rootsAvailable: true });
+  });
+
+  it("normalizeMcpWorkspaceRoots ignores a root with a non-string uri and dedupes repeated paths", async () => {
+    const { normalizeMcpWorkspaceRoots } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    const uri = pathToFileURL(tempDir).href;
+    expect(normalizeMcpWorkspaceRoots([{ uri: 42 as unknown as string }, { uri }, { uri }])).toEqual([{ path: tempDir }]);
+    expect(normalizeMcpWorkspaceRoots(undefined)).toEqual([]);
+  });
+
+  it("pathIsInside treats a genuinely nested subdirectory as inside its workspace root", async () => {
+    const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
+    tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
+    const workspace = join(tempDir, "workspace");
+    mkdirSync(join(workspace, "packages", "app"), { recursive: true });
+    initFixtureRepo(workspace);
+
+    const roots = [{ uri: pathToFileURL(workspace).href }];
+    // cwd resolves to a real subdirectory of the root (not the root itself), so pathIsInside's relative-path
+    // check -- not its `=== ""` exact-match shortcut -- is what proves it's still inside.
+    const metadata = collectLocalBranchMetadata({ cwd: "packages/app", workspaceRoots: roots, baseRef: "HEAD", login: "oktofeesh1" });
+    expect(metadata.repoFullName).toBe("entrius/allways-ui");
   });
 });
 

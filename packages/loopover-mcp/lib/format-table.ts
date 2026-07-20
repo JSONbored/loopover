@@ -62,8 +62,8 @@ export function formatTable(input?: TableInput | null, opts: FormatTableOptions 
   const widths = headers.map((header, column) =>
     Math.max(header.label.length, ...bodyCells.map((cells) => cells[column]!.length), 0),
   );
+  // Trim trailing padding so a left-aligned final column never emits dangling spaces.
   const renderRow = (cells: string[]) =>
-    // Trim trailing padding so a left-aligned final column never emits dangling spaces.
     cells.map((text, column) => (aligns[column] === "right" ? text.padStart(widths[column]!) : text.padEnd(widths[column]!))).join(gap).replace(/\s+$/, "");
   return [renderRow(headers.map((header) => header.label)), ...bodyCells.map(renderRow)].join("\n");
 }

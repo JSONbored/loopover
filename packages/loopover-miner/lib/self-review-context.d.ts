@@ -46,6 +46,7 @@ export declare function parseLiveGateThresholdFields(payload: unknown): LiveGate
  * Other gate fields are left untouched.
  */
 export declare function applyLiveGateThresholdsToManifest(manifest: FocusManifest, fields: LiveGateThresholdFields | null): FocusManifest;
+export declare function extractLinkedIssueNumbers(body: any, repoFullName: any): number[];
 /**
  * Build a real SelfReviewContext from live GitHub data, at the same fidelity the live gate's own DB-backed
  * construction produces. See this file's header for the one field (bounties) deliberately left undefined

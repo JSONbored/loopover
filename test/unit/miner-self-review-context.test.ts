@@ -7,6 +7,7 @@ vi.mock("@loopover/engine", async () => {
 import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../packages/loopover-engine/src/index";
 import {
   applyLiveGateThresholdsToManifest,
+  extractLinkedIssueNumbers,
   fetchSelfReviewContext,
   parseLiveGateThresholdFields,
 } from "../../packages/loopover-miner/lib/self-review-context.js";
@@ -996,5 +997,46 @@ describe("live gate thresholds probe (#6487)", () => {
 
     const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
     expect(result.manifest.present).toBe(false);
+  });
+});
+
+describe("extractLinkedIssueNumbers — parity with the host's byte-range exclusion + URL form (#7527)", () => {
+  it("counts the bare #N and same-repo qualified owner/repo#N forms, rejecting a different-repo qualified ref", () => {
+    expect(extractLinkedIssueNumbers("Closes #7", "acme/widgets")).toEqual([7]);
+    expect(extractLinkedIssueNumbers("Fixes acme/widgets#12", "acme/widgets")).toEqual([12]);
+    // Qualified reference to a DIFFERENT repo closes an issue there, not here.
+    expect(extractLinkedIssueNumbers("Closes other/repo#99", "acme/widgets")).toEqual([]);
+    // Case-insensitive keyword + owner match.
+    expect(extractLinkedIssueNumbers("RESOLVED Acme/Widgets#5", "acme/widgets")).toEqual([5]);
+  });
+
+  it("REGRESSION (#7527): a closing keyword separated from the issue only by a code span does NOT link", () => {
+    // "Fixes `some code` #45" -- the old string-strip (`body.replace(/`[^`]*`/g, "")`) turned this into
+    // "Fixes  #45", whose surrounding spaces satisfied `\s+` and fabricated a link. The byte-range check
+    // rejects the hit because a code span sits between the keyword and the number.
+    expect(extractLinkedIssueNumbers("Fixes `some code` #45", "acme/widgets")).toEqual([]);
+  });
+
+  it("REGRESSION (#7527): a real 'Closes #N' quoted ENTIRELY inside a code span is excluded by byte range", () => {
+    // The PR template itself contains "(e.g. `Closes #123`)" -- the pattern matches "Closes #45" inside the
+    // backticks, but its byte range overlaps the code span, so it is rejected (this is the exclusion the
+    // string-strip approach handled by accident and the range approach handles correctly).
+    expect(extractLinkedIssueNumbers("see the example `Closes #45` in the template", "acme/widgets")).toEqual([]);
+    // A code span that comes AFTER a genuine match must not exclude that earlier match (span starts past it).
+    expect(extractLinkedIssueNumbers("Closes #45 (compare with `#99`)", "acme/widgets")).toEqual([45]);
+  });
+
+  it("REGRESSION (#7527): code-span exclusion does not swallow a legitimate adjacent match", () => {
+    // "Fixes `#999` for real, Closes #45": the `#999` inside a code span must not count, but the real
+    // "Closes #45" outside any span must still link -- the range check only skips the overlapping hit.
+    expect(extractLinkedIssueNumbers("Fixes `#999` for real, Closes #45", "acme/widgets")).toEqual([45]);
+  });
+
+  it("REGRESSION (#7527): recognizes the full-GitHub-URL closing form, same-repo-scoped", () => {
+    expect(extractLinkedIssueNumbers("Closes https://github.com/acme/widgets/issues/45", "acme/widgets")).toEqual([45]);
+    // www. host + case-insensitive owner still match this repo.
+    expect(extractLinkedIssueNumbers("Fixes https://www.github.com/Acme/Widgets/issues/8", "acme/widgets")).toEqual([8]);
+    // A full URL pointing at a DIFFERENT repo must not count as a same-repo linked issue.
+    expect(extractLinkedIssueNumbers("Closes https://github.com/other/repo/issues/77", "acme/widgets")).toEqual([]);
   });
 });

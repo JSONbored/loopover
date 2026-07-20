@@ -270,18 +270,34 @@ function extractLinkedPrNumbers(body: any) {
   return numbers;
 }
 
-// Mirrors src/db/repositories.ts's extractLinkedIssueNumbers: GitHub's own closing-keyword vocabulary, only
-// counting a fully-qualified owner/repo#N reference when it targets the SAME repo being fetched.
-const LINKED_ISSUE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi;
-function extractLinkedIssueNumbers(body: any, repoFullName: any) {
-  // Strip backtick code spans first so a closing-keyword pattern quoted as example code doesn't count.
-  const withoutCodeSpans = body.replace(/`[^`]*`/g, "");
+// Mirrors src/db/repositories.ts's extractLinkedIssueNumbersWithOverflow (#7527): GitHub's own closing-keyword
+// vocabulary, counting a fully-qualified `owner/repo#N` OR a full-`https://github.com/owner/repo/issues/N`
+// reference only when it targets the SAME repo being fetched. Like the host, code spans are excluded by BYTE
+// RANGE, not by string-replacing them: replacing a span with whitespace would let the text on either side of
+// the removed span combine into a fake closing reference (e.g. "Fixes `x` #45" -> "Fixes  #45", which the two
+// surrounding spaces then make match). This lighter port intentionally omits the host's 50-item overflow cap +
+// dedup set (the miner scans only its own small PR body), but is otherwise in sync on the matching semantics.
+const LINKED_ISSUE_PATTERN =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:https?:\/\/(?:www\.)?github\.com\/(?<urlOwner>[\w.-]+\/[\w.-]+)\/issues\/(?<urlNum>\d+)|(?<qualOwner>[\w.-]+\/[\w.-]+)#(?<qualNum>\d+)|#(?<bareNum>\d+))\b/gi;
+export function extractLinkedIssueNumbers(body: any, repoFullName: any) {
+  // Byte ranges of every inline code span; a keyword match whose range overlaps one is a quoted example, not a
+  // real closing directive (see the comment above for why this is a range check, not a string strip).
+  const inlineCodeSpanRanges = [...body.matchAll(/`[^`\n]*`/g)].map((match: any) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const numbers = [];
   const normalizedRepo = repoFullName.toLowerCase();
-  for (const match of withoutCodeSpans.matchAll(LINKED_ISSUE_PATTERN)) {
-    const qualifiedRepo = match[1];
-    if (qualifiedRepo !== undefined && qualifiedRepo.toLowerCase() !== normalizedRepo) continue;
-    const number = Number(match[2]);
+  for (const match of body.matchAll(LINKED_ISSUE_PATTERN)) {
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
+    if (inlineCodeSpanRanges.some((range: { start: number; end: number }) => matchStart < range.end && matchEnd > range.start)) continue;
+    const groups = match.groups;
+    // Both the qualified and URL forms carry an owner/repo that must match THIS repo; the bare `#N` form has no
+    // owner and always counts. A reference to a different repo closes an issue there, not here.
+    const owner = groups.urlOwner ?? groups.qualOwner;
+    if (owner && owner.toLowerCase() !== normalizedRepo) continue;
+    const number = Number(groups.urlNum ?? groups.qualNum ?? groups.bareNum);
     if (Number.isInteger(number) && number > 0) numbers.push(number);
   }
   return numbers;

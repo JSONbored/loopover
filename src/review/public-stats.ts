@@ -377,6 +377,13 @@ export async function getPublicStats(
   // Snapshot before Orb merge: effort SQL only covers allowlisted own-ledger publishes, while `reviewed`
   // below includes Orb fleet outcomes folded into totals.merged/closed.
   const ownLedgerReviewed = reviewedOf(totals);
+  // #7449: also snapshot the pre-fold own-ledger merged/closed. totals.reversed stays own-ledger-only (the Orb
+  // aggregate has no reversal concept), so the published global accuracyPct below is computed from THESE, not the
+  // fleet-folded totals.merged/closed -- otherwise the denominator would grow with every newly registered install
+  // while the numerator stayed own-ledger-scoped, trending the percentage toward 100 independent of real reversal
+  // behavior. The fleet fold still (correctly) inflates reviewed/handled/minutesSaved, which have no such pairing.
+  const ownLedgerMerged = totals.merged;
+  const ownLedgerClosed = totals.closed;
   const orb = await getOrbGlobalStats(env);
   totals.merged += orb.merged;
   totals.closed += orb.closed;
@@ -398,7 +405,10 @@ export async function getPublicStats(
       ...totals,
       reviewed,
       filteredPct: filteredPct(reviewed, totals.merged),
-      accuracyPct: accuracyPct(totals.merged, totals.closed, totals.reversed),
+      // Option 1 of #7449: compute the global accuracy from the OWN-LEDGER merged/closed snapshot (not the
+      // fleet-folded totals.merged/closed), so its numerator (own-ledger reversed) and denominator are drawn
+      // from the same population. See the ownLedgerMerged/ownLedgerClosed snapshot above the Orb fold for why.
+      accuracyPct: accuracyPct(ownLedgerMerged, ownLedgerClosed, totals.reversed),
       minutesSaved,
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },

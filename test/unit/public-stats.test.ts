@@ -311,6 +311,28 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.minutesSaved).toBe(2742 * MINUTES_SAVED_PER_PR + 80 * MINUTES_SAVED_PER_PR);
   });
 
+  it("REGRESSION (#7449): global accuracyPct reflects the own-ledger population, not the Orb-fleet-inflated merged/closed denominator", async () => {
+    // Own-ledger: 100 decided (all merged), 10 real reversals -> a true 90% accuracy. A huge registered Orb fleet
+    // (6000 merged + 4000 closed, with no reversal data at all) must NOT dilute the denominator toward 100.
+    const handler = (sql: string): Row[] => {
+      if (isDispositions(sql)) return [{ project: "JSONbored/loopover", reviewed: 100, merged: 100, closed: 0, inReview: 0 }];
+      if (isReversal(sql)) return [{ project: "JSONbored/loopover", reversed: 10 }];
+      if (sql.includes("orb_pr_outcomes")) return [{ merged: 6000, closed: 4000, total: 10000 }];
+      return [];
+    };
+    const out = await getPublicStats(stubEnv(handler), NOW);
+    // The fleet fold still (correctly) inflates the raw aggregate counts...
+    expect(out.totals.merged).toBe(100 + 6000);
+    expect(out.totals.closed).toBe(0 + 4000);
+    expect(out.totals.handled).toBe(100 + 10000);
+    // ...but accuracy is computed from own-ledger only: 1 - 10/(100 + 0) = 90.0%.
+    expect(out.totals.accuracyPct).toBe(90);
+    // The pre-fix fleet-inflated denominator would have produced 1 - 10/(6100 + 4000) = 99.0% -- guard against it.
+    expect(out.totals.accuracyPct).not.toBe(99);
+    // Per-project accuracy is already same-scope and stays unchanged: 1 - 10/100 = 90.
+    expect(out.byProject[0]!.accuracyPct).toBe(90);
+  });
+
   it("keeps own-ledger per-PR effort sum separate from Orb fleet flat credit", async () => {
     const withOrbAndEffort = (sql: string): Row[] => {
       if (sql.includes("orb_pr_outcomes")) return [{ merged: 10, closed: 5, total: 15 }];

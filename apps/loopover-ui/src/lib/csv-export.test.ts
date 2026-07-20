@@ -27,6 +27,17 @@ describe("toCsv (#2198)", () => {
     );
   });
 
+  it("guards leading tab and carriage-return formula-injection vectors (#7439)", () => {
+    // A spreadsheet strips leading whitespace and still evaluates the formula that follows, so a
+    // \t / \r before a formula must be guarded the same as a bare =/+/-/@ (which a bare guard missed).
+    expect(escapeCsvCell("\t=1+1")).toBe("'\t=1+1");
+    expect(escapeCsvCell("\t@SUM(A1)")).toBe("'\t@SUM(A1)");
+    // A leading \r additionally triggers RFC-4180 quoting, so the guarded value is wrapped.
+    expect(escapeCsvCell("\r=1+1")).toBe('"\'\r=1+1"');
+    // Unchanged: a value with no leading formula/whitespace vector is untouched.
+    expect(escapeCsvCell("plain")).toBe("plain");
+  });
+
   it("guards formula-injection prefixes from telemetry-sourced values", () => {
     expect(
       toCsv(

@@ -270,18 +270,32 @@ function extractLinkedPrNumbers(body: any) {
   return numbers;
 }
 
-// Mirrors src/db/repositories.ts's extractLinkedIssueNumbers: GitHub's own closing-keyword vocabulary, only
-// counting a fully-qualified owner/repo#N reference when it targets the SAME repo being fetched.
-const LINKED_ISSUE_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+\/[\w.-]+)#|#)(\d+)\b/gi;
+// Mirrors src/db/repositories.ts's extractLinkedIssueNumbersWithOverflow (#7527): GitHub's own closing-keyword
+// vocabulary, counting a qualified `owner/repo#N` or full `https://github.com/owner/repo/issues/N` reference
+// only when it targets THIS repo. The bare `#N` form always counts. GitHub's linker also recognizes the full
+// issue URL after a closing keyword, so a contributor pasting the browser URL still links the issue (the host
+// port fixed the same gap) rather than silently tripping the "no linked issue" hard rule.
+const LINKED_ISSUE_PATTERN =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:https?:\/\/(?:www\.)?github\.com\/(?<urlOwner>[\w.-]+\/[\w.-]+)\/issues\/(?<urlNum>\d+)|(?<qualOwner>[\w.-]+\/[\w.-]+)#(?<qualNum>\d+)|#(?<bareNum>\d+))\b/gi;
 function extractLinkedIssueNumbers(body: any, repoFullName: any) {
-  // Strip backtick code spans first so a closing-keyword pattern quoted as example code doesn't count.
-  const withoutCodeSpans = body.replace(/`[^`]*`/g, "");
+  // Exclude code spans by BYTE RANGE, not string-replace: `body.replace(/`[^`]*`/g, "")` deletes the span's
+  // characters, which can pull a bare `#N` up against a preceding closing keyword that was NOT adjacent to it in
+  // the original text (e.g. "Fixes `x` #45" -> "Fixes  #45"), spuriously linking #45. Matching span ranges and
+  // skipping any keyword hit that overlaps one preserves the original adjacency the regex depends on.
+  const codeSpanRanges = [...String(body).matchAll(/`[^`\n]*`/g)].map((match) => ({
+    start: match.index!,
+    end: match.index! + match[0].length,
+  }));
   const numbers = [];
   const normalizedRepo = repoFullName.toLowerCase();
-  for (const match of withoutCodeSpans.matchAll(LINKED_ISSUE_PATTERN)) {
-    const qualifiedRepo = match[1];
-    if (qualifiedRepo !== undefined && qualifiedRepo.toLowerCase() !== normalizedRepo) continue;
-    const number = Number(match[2]);
+  for (const match of String(body).matchAll(LINKED_ISSUE_PATTERN)) {
+    const matchStart = match.index!;
+    const matchEnd = matchStart + match[0].length;
+    if (codeSpanRanges.some((range) => matchStart < range.end && matchEnd > range.start)) continue;
+    const groups = match.groups!;
+    const owner = groups.urlOwner ?? groups.qualOwner;
+    if (owner && owner.toLowerCase() !== normalizedRepo) continue;
+    const number = Number(groups.urlNum ?? groups.qualNum ?? groups.bareNum);
     if (Number.isInteger(number) && number > 0) numbers.push(number);
   }
   return numbers;

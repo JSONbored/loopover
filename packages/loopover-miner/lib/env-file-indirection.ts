@@ -1,10 +1,11 @@
 // Resolve `<NAME>_FILE` env vars (Docker/Swarm/K8s secret mounts) into `<NAME>` at miner startup (#5178).
 // Ports src/selfhost/load-file-secrets.ts's pattern into the miner package -- the miner is a separate
 // deployable (its own process/container per DEPLOYMENT.md's fleet mode), so it never runs through ORB's own
-// server-startup resolver. Deliberately diverges from that analogue in one way: an unreadable/missing
-// `<NAME>_FILE` here THROWS rather than logging and continuing, so a broken secret mount fails a miner
-// container fast and loud (never silently proceeds with an unset/empty credential the next real GitHub call
-// would then fail on anyway, with a far less specific error).
+// server-startup resolver. Both modules fail-fast the same way: an unreadable/missing `<NAME>_FILE` here
+// THROWS rather than silently proceeding -- the ORB analogue converged onto this same behavior in #6284, so
+// the two no longer diverge -- and a broken secret mount fails a miner container fast and loud (never
+// proceeds with an unset/empty credential the next real GitHub call would then fail on anyway, with a far
+// less specific error).
 import { readFileSync } from "node:fs";
 
 // Docker Compose's OWN reserved `_FILE`-suffixed environment variables -- never loopover's secret-file

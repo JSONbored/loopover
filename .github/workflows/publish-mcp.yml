@@ -54,7 +54,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24.18.0
+          node-version-file: .nvmrc
 
       # workflow_dispatch has no tag ref to derive a version from (unlike the old push:tags: trigger),
       # so the dispatched commit's package.json is now the single source of truth for VERSION/TAG. Pure
@@ -177,7 +177,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24.18.0
+          node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
 
       - name: Create or verify release tag
@@ -244,7 +244,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24.18.0
+          node-version-file: .nvmrc
       - name: Sync and open a PR if the known-latest copy is now stale
         env:
           # A real collaborator token, not github.token -- mirrors mcp-release-please.yml's own

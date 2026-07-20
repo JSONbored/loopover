@@ -79,6 +79,12 @@ jobs:
               - 'scripts/**'
               - 'migrations/**'
               - '.github/workflows/**'
+              # .github/actions/** (composite actions, e.g. setup-workspace) is workflow-adjacent
+              # infrastructure the same way .github/workflows/** above is -- without this, a PR editing
+              # ONLY a composite action file (touching nothing else backend matches) would skip both
+              # "Lint workflows" and "Lint composite actions" below entirely, with zero CI signal on a
+              # broken edit until the next push-triggered full run.
+              - '.github/actions/**'
               - 'wrangler.jsonc'
               - 'worker-configuration.d.ts'
               - '.loopover.yml'
@@ -222,6 +228,17 @@ jobs:
       - name: Lint workflows
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run actionlint
+      # actionlint (above) does not cover .github/actions/**/action.yml at all -- confirmed a genuine,
+      # long-standing upstream limitation (rhysd/actionlint#46 and #401, open since 2021), not something
+      # fixable by a different invocation: even the raw actionlint binary, run directly with no wrapper,
+      # treats any file it's given as a workflow and errors on runs/inputs/outputs as unexpected
+      # top-level keys. This validates composite action files against GitHub's own official
+      # action-metadata JSON Schema instead -- real structural validation, not the full expression-
+      # context linting actionlint does for workflows, which genuinely doesn't exist anywhere for
+      # action.yml files.
+      - name: Lint composite actions
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
+        run: npm run lint:composite-actions
       - name: Check migrations
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run db:migrations:check

@@ -20,9 +20,11 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as ApiRouteImport } from './routes/api'
 import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as InstallIndexRouteImport } from './routes/install.index'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as ApiIndexRouteImport } from './routes/api.index'
+import { Route as InstallPermissionsRouteImport } from './routes/install.permissions'
 import { Route as DocsUpstreamDriftRouteImport } from './routes/docs.upstream-drift'
 import { Route as DocsTuningRouteImport } from './routes/docs.tuning'
 import { Route as DocsTroubleshootingRouteImport } from './routes/docs.troubleshooting'
@@ -142,6 +144,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InstallIndexRoute = InstallIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => InstallRoute,
+} as any)
 const DocsIndexRoute = DocsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -156,6 +163,11 @@ const ApiIndexRoute = ApiIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ApiRoute,
+} as any)
+const InstallPermissionsRoute = InstallPermissionsRouteImport.update({
+  id: '/permissions',
+  path: '/permissions',
+  getParentRoute: () => InstallRoute,
 } as any)
 const DocsUpstreamDriftRoute = DocsUpstreamDriftRouteImport.update({
   id: '/upstream-drift',
@@ -498,7 +510,7 @@ export interface FileRoutesByFullPath {
   '/changelog': typeof ChangelogRoute
   '/docs': typeof DocsRouteWithChildren
   '/extension': typeof ExtensionRoute
-  '/install': typeof InstallRoute
+  '/install': typeof InstallRouteWithChildren
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
   '/roadmap': typeof RoadmapRoute
@@ -564,9 +576,11 @@ export interface FileRoutesByFullPath {
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
+  '/install/permissions': typeof InstallPermissionsRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
+  '/install/': typeof InstallIndexRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRoutesByTo {
@@ -574,7 +588,6 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsRoute
   '/changelog': typeof ChangelogRoute
   '/extension': typeof ExtensionRoute
-  '/install': typeof InstallRoute
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
   '/roadmap': typeof RoadmapRoute
@@ -640,9 +653,11 @@ export interface FileRoutesByTo {
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
+  '/install/permissions': typeof InstallPermissionsRoute
   '/api': typeof ApiIndexRoute
   '/app': typeof AppIndexRoute
   '/docs': typeof DocsIndexRoute
+  '/install': typeof InstallIndexRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRoutesById {
@@ -654,7 +669,7 @@ export interface FileRoutesById {
   '/changelog': typeof ChangelogRoute
   '/docs': typeof DocsRouteWithChildren
   '/extension': typeof ExtensionRoute
-  '/install': typeof InstallRoute
+  '/install': typeof InstallRouteWithChildren
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
   '/roadmap': typeof RoadmapRoute
@@ -720,9 +735,11 @@ export interface FileRoutesById {
   '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/docs/tuning': typeof DocsTuningRoute
   '/docs/upstream-drift': typeof DocsUpstreamDriftRoute
+  '/install/permissions': typeof InstallPermissionsRoute
   '/api/': typeof ApiIndexRoute
   '/app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
+  '/install/': typeof InstallIndexRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRouteTypes {
@@ -801,9 +818,11 @@ export interface FileRouteTypes {
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
+    | '/install/permissions'
     | '/api/'
     | '/app/'
     | '/docs/'
+    | '/install/'
     | '/repos/$owner/$repo/quality'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -811,7 +830,6 @@ export interface FileRouteTypes {
     | '/agents'
     | '/changelog'
     | '/extension'
-    | '/install'
     | '/maintainers'
     | '/miners'
     | '/roadmap'
@@ -877,9 +895,11 @@ export interface FileRouteTypes {
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
+    | '/install/permissions'
     | '/api'
     | '/app'
     | '/docs'
+    | '/install'
     | '/repos/$owner/$repo/quality'
   id:
     | '__root__'
@@ -956,9 +976,11 @@ export interface FileRouteTypes {
     | '/docs/troubleshooting'
     | '/docs/tuning'
     | '/docs/upstream-drift'
+    | '/install/permissions'
     | '/api/'
     | '/app/'
     | '/docs/'
+    | '/install/'
     | '/repos/$owner/$repo/quality'
   fileRoutesById: FileRoutesById
 }
@@ -970,7 +992,7 @@ export interface RootRouteChildren {
   ChangelogRoute: typeof ChangelogRoute
   DocsRoute: typeof DocsRouteWithChildren
   ExtensionRoute: typeof ExtensionRoute
-  InstallRoute: typeof InstallRoute
+  InstallRoute: typeof InstallRouteWithChildren
   MaintainersRoute: typeof MaintainersRoute
   MinersRoute: typeof MinersRoute
   RoadmapRoute: typeof RoadmapRoute
@@ -1056,6 +1078,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/install/': {
+      id: '/install/'
+      path: '/'
+      fullPath: '/install/'
+      preLoaderRoute: typeof InstallIndexRouteImport
+      parentRoute: typeof InstallRoute
+    }
     '/docs/': {
       id: '/docs/'
       path: '/'
@@ -1076,6 +1105,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/'
       preLoaderRoute: typeof ApiIndexRouteImport
       parentRoute: typeof ApiRoute
+    }
+    '/install/permissions': {
+      id: '/install/permissions'
+      path: '/permissions'
+      fullPath: '/install/permissions'
+      preLoaderRoute: typeof InstallPermissionsRouteImport
+      parentRoute: typeof InstallRoute
     }
     '/docs/upstream-drift': {
       id: '/docs/upstream-drift'
@@ -1675,6 +1711,19 @@ const DocsRouteChildren: DocsRouteChildren = {
 
 const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
 
+interface InstallRouteChildren {
+  InstallPermissionsRoute: typeof InstallPermissionsRoute
+  InstallIndexRoute: typeof InstallIndexRoute
+}
+
+const InstallRouteChildren: InstallRouteChildren = {
+  InstallPermissionsRoute: InstallPermissionsRoute,
+  InstallIndexRoute: InstallIndexRoute,
+}
+
+const InstallRouteWithChildren =
+  InstallRoute._addFileChildren(InstallRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgentsRoute: AgentsRoute,
@@ -1683,7 +1732,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChangelogRoute: ChangelogRoute,
   DocsRoute: DocsRouteWithChildren,
   ExtensionRoute: ExtensionRoute,
-  InstallRoute: InstallRoute,
+  InstallRoute: InstallRouteWithChildren,
   MaintainersRoute: MaintainersRoute,
   MinersRoute: MinersRoute,
   RoadmapRoute: RoadmapRoute,

@@ -7,7 +7,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ to, children }: { to: string; children: ReactNode }) => <a href={to}>{children}</a>,
 }));
 
-import { InstallPage } from "./install";
+import { InstallPage } from "./install.index";
 
 // Self-serve signup & App-install entry surface (part of #4802).
 describe("InstallPage (#4802 self-serve install entry)", () => {

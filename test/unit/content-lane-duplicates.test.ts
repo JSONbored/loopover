@@ -96,6 +96,24 @@ describe("protectedFrontmatterChanges", () => {
     const after = mdx({ title: "T", slug: "a", author: "Alice" });
     expect(protectedFrontmatterChanges(before, after)).toEqual([]);
   });
+
+  it("flags a changed protected field written in the snake_case alias (e.g. download_url), matching the camelCase behavior (#7445)", () => {
+    // Before #7445, protectedFrontmatterFields listed only downloadUrl (camelCase), so an entry using the
+    // legitimately-accepted snake_case key was invisible to this gate even though urlFields already treats
+    // download_url as an equally-valid alias for duplicate detection.
+    const before = mdx({ title: "T", slug: "a", download_url: "https://example.com/old.zip" });
+    const after = mdx({ title: "T", slug: "a", download_url: "https://example.com/new.zip" });
+    expect(protectedFrontmatterChanges(before, after)).toEqual(["download_url"]);
+  });
+
+  it("every multi-word camelCase protectedFrontmatterFields member has its snake_case alias present too (#7445, mirrors #7250's urlFields pairing assertion)", () => {
+    const singleLowercaseWords = new Set(["author", "category", "disclosure", "slug"]);
+    const toSnakeCase = (field: string): string => field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    for (const field of AWESOME_CLAUDE_CONTENT_SPEC.protectedFrontmatterFields) {
+      if (singleLowercaseWords.has(field) || field.includes("_")) continue;
+      expect(AWESOME_CLAUDE_CONTENT_SPEC.protectedFrontmatterFields.has(toSnakeCase(field))).toBe(true);
+    }
+  });
 });
 
 describe("extractContentDuplicateSignals + strict match", () => {

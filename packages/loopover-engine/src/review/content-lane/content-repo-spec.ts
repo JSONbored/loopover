@@ -66,6 +66,30 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
     "submittedByUrl",
     "sourceSubmissionNumber",
     "sourceSubmissionUrl",
+    // snake_case aliases, matching urlFields/sourceUrlFields's pairing convention (#7445, same divergence class as
+    // #7250): protectedFrontmatterChanges compares before[field]/after[field] by the literal parsed key, so a
+    // protected field written in the legitimately-accepted snake_case convention (e.g. `download_url`) was invisible
+    // to this gate — a real protected-close bypass. `author`, `category`, `disclosure`, `slug` are single
+    // all-lowercase words (camelCase and snake_case are byte-identical), so no separate alias is needed for them.
+    "affiliate_url",
+    "author_profile_url",
+    "claim_status",
+    "claim_url",
+    "date_added",
+    "download_url",
+    "import_pr_number",
+    "import_pr_url",
+    "package_url",
+    "package_verified",
+    "pricing_model",
+    "reviewed_at",
+    "reviewed_by",
+    "reviewed_pr_number",
+    "submitted_at",
+    "submitted_by",
+    "submitted_by_url",
+    "source_submission_number",
+    "source_submission_url",
   ]),
   urlFields: new Set([
     "documentationUrl",

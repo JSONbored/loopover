@@ -15,10 +15,10 @@
   "dependencies": {
     "@hono/node-server": "^1.19.14",
     "@loopover/engine": "^3.4.0",
-    "hono": "^4.12.27"
+    "hono": "^4.12.30"
   },
   "devDependencies": {
-    "@types/node": "^22.20.0",
+    "@types/node": "^22.20.1",
     "typescript": "^5.9.3"
   }
 }

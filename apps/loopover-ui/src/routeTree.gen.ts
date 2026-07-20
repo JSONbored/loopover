@@ -13,6 +13,7 @@ import { Route as RoadmapRouteImport } from './routes/roadmap'
 import { Route as MinersRouteImport } from './routes/miners'
 import { Route as MaintainersRouteImport } from './routes/maintainers'
 import { Route as InstallRouteImport } from './routes/install'
+import { Route as FairnessRouteImport } from './routes/fairness'
 import { Route as ExtensionRouteImport } from './routes/extension'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ChangelogRouteImport } from './routes/changelog'
@@ -107,6 +108,11 @@ const MaintainersRoute = MaintainersRouteImport.update({
 const InstallRoute = InstallRouteImport.update({
   id: '/install',
   path: '/install',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FairnessRoute = FairnessRouteImport.update({
+  id: '/fairness',
+  path: '/fairness',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExtensionRoute = ExtensionRouteImport.update({
@@ -510,6 +516,7 @@ export interface FileRoutesByFullPath {
   '/changelog': typeof ChangelogRoute
   '/docs': typeof DocsRouteWithChildren
   '/extension': typeof ExtensionRoute
+  '/fairness': typeof FairnessRoute
   '/install': typeof InstallRouteWithChildren
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
@@ -588,6 +595,7 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsRoute
   '/changelog': typeof ChangelogRoute
   '/extension': typeof ExtensionRoute
+  '/fairness': typeof FairnessRoute
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
   '/roadmap': typeof RoadmapRoute
@@ -669,6 +677,7 @@ export interface FileRoutesById {
   '/changelog': typeof ChangelogRoute
   '/docs': typeof DocsRouteWithChildren
   '/extension': typeof ExtensionRoute
+  '/fairness': typeof FairnessRoute
   '/install': typeof InstallRouteWithChildren
   '/maintainers': typeof MaintainersRoute
   '/miners': typeof MinersRoute
@@ -752,6 +761,7 @@ export interface FileRouteTypes {
     | '/changelog'
     | '/docs'
     | '/extension'
+    | '/fairness'
     | '/install'
     | '/maintainers'
     | '/miners'
@@ -830,6 +840,7 @@ export interface FileRouteTypes {
     | '/agents'
     | '/changelog'
     | '/extension'
+    | '/fairness'
     | '/maintainers'
     | '/miners'
     | '/roadmap'
@@ -910,6 +921,7 @@ export interface FileRouteTypes {
     | '/changelog'
     | '/docs'
     | '/extension'
+    | '/fairness'
     | '/install'
     | '/maintainers'
     | '/miners'
@@ -992,6 +1004,7 @@ export interface RootRouteChildren {
   ChangelogRoute: typeof ChangelogRoute
   DocsRoute: typeof DocsRouteWithChildren
   ExtensionRoute: typeof ExtensionRoute
+  FairnessRoute: typeof FairnessRoute
   InstallRoute: typeof InstallRouteWithChildren
   MaintainersRoute: typeof MaintainersRoute
   MinersRoute: typeof MinersRoute
@@ -1027,6 +1040,13 @@ declare module '@tanstack/react-router' {
       path: '/install'
       fullPath: '/install'
       preLoaderRoute: typeof InstallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fairness': {
+      id: '/fairness'
+      path: '/fairness'
+      fullPath: '/fairness'
+      preLoaderRoute: typeof FairnessRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/extension': {
@@ -1732,6 +1752,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChangelogRoute: ChangelogRoute,
   DocsRoute: DocsRouteWithChildren,
   ExtensionRoute: ExtensionRoute,
+  FairnessRoute: FairnessRoute,
   InstallRoute: InstallRouteWithChildren,
   MaintainersRoute: MaintainersRoute,
   MinersRoute: MinersRoute,

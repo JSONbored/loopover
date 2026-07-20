@@ -138,3 +138,42 @@ describe("StateBoundary retry/refresh actions (#793 regression guard)", () => {
     expect(screen.getByText("content")).toBeTruthy();
   });
 });
+
+describe("StateBoundary onFailureNotify edge-trigger (#7436)", () => {
+  it("notifies exactly once while staying in error across unstable callback identities, then again on re-entry", () => {
+    notifyApiFailure.mockClear();
+    const { rerender } = render(
+      <StateBoundary isError errorLabel="Widgets" onRetry={() => {}}>
+        <div>content</div>
+      </StateBoundary>,
+    );
+    expect(notifyApiFailure).toHaveBeenCalledTimes(1);
+
+    // Simulate the app wrapper's fresh onFailureNotify arrow + a fresh onRetry each parent render
+    // while isError stays true — must NOT re-fire.
+    for (let i = 0; i < 4; i += 1) {
+      rerender(
+        <StateBoundary isError errorLabel="Widgets" onRetry={() => {}}>
+          <div>content</div>
+        </StateBoundary>,
+      );
+    }
+    expect(notifyApiFailure).toHaveBeenCalledTimes(1);
+
+    // Leave the error state…
+    rerender(
+      <StateBoundary isError={false} errorLabel="Widgets" onRetry={() => {}}>
+        <div>content</div>
+      </StateBoundary>,
+    );
+    expect(notifyApiFailure).toHaveBeenCalledTimes(1);
+
+    // …then re-enter: exactly one more notification for the second false→true edge.
+    rerender(
+      <StateBoundary isError errorLabel="Widgets" onRetry={() => {}}>
+        <div>content</div>
+      </StateBoundary>,
+    );
+    expect(notifyApiFailure).toHaveBeenCalledTimes(2);
+  });
+});

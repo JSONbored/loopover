@@ -1,5 +1,5 @@
 import { Loader2, Inbox, AlertTriangle, RefreshCw, WifiOff } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { cn } from "../utils";
@@ -265,10 +265,16 @@ export function StateBoundary({
       : "The data source did not respond. Retry the request, or check back once the service has recovered.");
 
   // When this boundary flips into the error state, surface a toast with Retry.
+  // Edge-triggered (#7436): only fire on false→true of (isError && errorLabel). Level-triggering here
+  // re-notified on every re-render while already errored because app wrappers pass a fresh
+  // `onFailureNotify` arrow each render (see apps/loopover-ui site/state-views.tsx). Mirrors the
+  // wasError-ref pattern used by mcp-version-badge for transition detection.
+  const wasFailureNotifyActive = useRef(false);
   useEffect(() => {
-    if (isError && errorLabel) {
+    const failureNotifyActive = Boolean(isError && errorLabel);
+    if (failureNotifyActive && !wasFailureNotifyActive.current) {
       onFailureNotify?.({
-        label: errorLabel,
+        label: errorLabel!,
         kind: errorKind ?? "network",
         message:
           typeof resolvedErrorDescription === "string"
@@ -277,6 +283,7 @@ export function StateBoundary({
         retry: onRetry,
       });
     }
+    wasFailureNotifyActive.current = failureNotifyActive;
   }, [isError, errorLabel, errorKind, resolvedErrorDescription, onRetry, onFailureNotify]);
 
   if (isLoading) {

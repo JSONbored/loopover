@@ -137,11 +137,15 @@ export interface SqliteQueueOptions {
   maxRetries?: number;
   pollIntervalMs?: number;
   backoffMs?: (attempt: number) => number;
-  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 4 — review jobs are I/O-bound
+  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 8 — review jobs are I/O-bound
    *  (GitHub + AI awaits dominate), so overlapping a handful drains a PR burst far faster while SQLite's WAL +
-   *  busy_timeout absorb the short serialized write windows. Set QUEUE_CONCURRENCY=1 to force strict serial. */
+   *  busy_timeout absorb the short serialized write windows. Sized for multi-tenant volume (#4892) to match the
+   *  hosted Cloudflare consumer default and the #4913 load-test concurrency=8 band. Set QUEUE_CONCURRENCY=1 to
+   *  force strict serial. */
   concurrency?: number;
-  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to QUEUE_BACKGROUND_CONCURRENCY or 1. */
+  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to
+   *  QUEUE_BACKGROUND_CONCURRENCY or 4 — raised with #4892 so multiple installations can progress under
+   *  installation-concurrency-admission (default per-install limit 2) instead of a single-operator background=1. */
   backgroundConcurrency?: number;
 }
 
@@ -157,7 +161,7 @@ export function createSqliteQueue(
     ((attempt: number) => Math.min(60_000, 1000 * 2 ** attempt));
   const concurrency =
     opts.concurrency ??
-    parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 4 });
+    parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 8 });
   const backgroundConcurrency = queueBackgroundConcurrency(
     concurrency,
     opts.backgroundConcurrency,
@@ -611,7 +615,7 @@ export function createSqliteQueue(
     } catch (error) {
       // Release the reserved background slot if the claim query itself throws (a SQLite "database is locked" / I/O
       // error). claimNext() runs OUTSIDE processOne's try/finally, so without this rollback the reserved slot leaks
-      // permanently; since backgroundConcurrency defaults to 1, a single such error would starve the entire
+      // permanently; since backgroundConcurrency is intentionally small relative to total concurrency, a single such error would starve the entire
       // background/maintenance lane with no recovery short of a restart. (#selfhost-bg-slot-leak)
       activeBackground--;
       throw error;

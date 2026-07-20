@@ -311,27 +311,26 @@
         // literals directly (a normal PR), or, once a second deploy target exists, adding that target's own
         // named-environment `queues.consumers` override block -- there is only one deploy target today.
         //
-        // The governing constraint, sized against a single installation's GitHub REST rate limit (5000 req/hr
-        // for a GitHub App installation token, shared across every job this lane processes for that install):
-        //   max_batch_size × max_concurrency = the most jobs that can be in flight, each making GitHub calls,
-        //   at any one instant -- keep that product comfortably under the install's remaining rate-limit
-        //   headroom (github-client.ts already backs off on 403/secondary-rate-limit responses; this bound
-        //   exists to make hitting that backoff path the rare case, not the norm).
-        //  - max_batch_size 5 (was 10): one batch can't bundle as many heavy sweep/backfill jobs at once.
-        //  - max_concurrency 3: bounded fan-out -- first sized to drain one heavy installation's worst sweep
-        //    within the 2-min cron interval without flooding its own rate bucket (#1283); the SAME bound
-        //    coincidentally also caps fan-out PER installation under today's single-tenant deployment, since
-        //    every job in this lane shares one GitHub App's rate-limit pool regardless of which repo/install
-        //    it's for. A genuinely multi-tenant volume model needs real production job-volume data (job
-        //    rate, distinct-installation count, GitHub rate-limit headroom actually observed) to re-derive
-        //    against -- not available from this worktree; re-tune from a live dashboard/audit_events query,
-        //    not by guessing a bigger number.
+        // Governing constraints (multi-tenant, post #2970 / #4903-#4913 scaling work):
+        //   1. Each GitHub App installation has its OWN ~5000 req/hr REST rate-limit bucket. Concurrent jobs
+        //      for DIFFERENT installations do not share that bucket.
+        //   2. Per-installation GitHub-fetch admission (`installation-concurrency-admission.ts`, default
+        //      GITHUB_INSTALLATION_CONCURRENCY_LIMIT=2) caps how many background GitHub-budget jobs ONE
+        //      installation may run at once, so raising the GLOBAL consumer fan-out cannot let a single
+        //      tenant monopolize every worker slot the way the old single-operator sizing assumed.
+        //   3. max_batch_size × max_concurrency still bounds Worker in-flight work (CPU/memory + how many
+        //      heavy sweep/backfill deliveries land together). github-client.ts still backs off on
+        //      403/secondary-rate-limit; this product exists to keep that path rare.
+        //  - max_batch_size 5 (was 10 under #1283): keep the per-delivery heavy-job bundle small.
+        //  - max_concurrency 8 (was 3): aligns with the #4913 iterate-loop load-test concurrency=8 band and
+        //    allows ~4 installations to each hold the default per-install background admit of 2 without the
+        //    global consumer being the bottleneck. Product 5×8=40 in-flight vs the previous 5×3=15.
         //  - retry_delay 30: a failed job backs off 30s instead of re-delivering immediately and re-hammering
         //    the already-overloaded path.
         "queue": "loopover-jobs",
         "max_batch_size": 5,
         "max_batch_timeout": 5,
-        "max_concurrency": 3,
+        "max_concurrency": 8,
         // After max_retries failed attempts a job is dead-lettered so a persistently-failing job is observable
         // rather than vanishing silently. The DLQ consumer below picks them up.
         "max_retries": 3,

@@ -64,19 +64,18 @@ attributes, read at `wrangler deploy` time (not runtime-configurable via `env.SO
       description: "The most jobs one batch can bundle at once — bounds how many heavy sweep/backfill jobs land in a single delivery.",
     },
     {
-      title: "max_concurrency = 3",
-      description: "Bounded fan-out, sized to drain one heavy installation's worst sweep within the 2-minute cron interval without flooding that installation's own GitHub rate-limit bucket.",
+      title: "max_concurrency = 8",
+      description: "Global consumer fan-out for multi-tenant volume (#4892) — aligned with the #4913 load-test concurrency=8 band. Per-installation admission (default limit 2) still caps how many background GitHub-budget jobs one tenant may run at once, so raising the global bound cannot let a single installation monopolize every worker slot.",
     },
   ]}
 />
 
-<Callout variant="note" title="Re-tuning these for real multi-tenant volume">
-  `max_batch_size × max_concurrency` bounds the most jobs that can be in flight — each making
-  GitHub calls — at any one instant, kept comfortably under an installation's rate-limit headroom.
-  A genuinely multi-tenant volume model needs real production job-volume data (job rate, distinct-
-  installation count, GitHub rate-limit headroom actually observed) to re-derive against — re-tune
-  from a live dashboard/`audit_events` query when that data exists, not by guessing a bigger
-  number.
+<Callout variant="note" title="Why these defaults (and how to re-tune further)">
+  `max_batch_size × max_concurrency` (5 × 8 = 40) bounds Worker in-flight work. Rate-limit safety across
+  tenants comes from two already-shipped layers: each GitHub App installation has its own REST budget,
+  and `installation-concurrency-admission.ts` (#2970) caps per-install background GitHub fetches. Further
+  re-tuning still benefits from live `audit_events` / dashboard volume data when available — these defaults
+  are the architecture-justified baseline after the #4903–#4913 scaling work, not a production-volume fit.
 </Callout>
 
 **Takeaways:**

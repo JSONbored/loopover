@@ -73,15 +73,17 @@ describe("self-host queue common helpers", () => {
     expect(isForegroundJobPriority(10)).toBe(true);
     expect(isForegroundJobPriority(8)).toBe(true);
     expect(isForegroundJobPriority(7)).toBe(false);
-    expect(queueBackgroundConcurrency(4, undefined)).toBe(1);
+    // #4892 multi-tenant defaults: background fallback is 4 (was 1), clamped to total concurrency.
+    expect(queueBackgroundConcurrency(8, undefined)).toBe(4);
+    expect(queueBackgroundConcurrency(4, undefined)).toBe(4);
     expect(queueBackgroundConcurrency(4, "3")).toBe(3);
     expect(queueBackgroundConcurrency(2, "9")).toBe(2);
-    expect(queueBackgroundConcurrency(4, "-1")).toBe(1);
-    expect(queueBackgroundConcurrency(4, "not-a-number")).toBe(1);
+    expect(queueBackgroundConcurrency(4, "-1")).toBe(4);
+    expect(queueBackgroundConcurrency(4, "not-a-number")).toBe(4);
     expect(queueBackgroundConcurrency(4, "0")).toBe(0);
     expect(queueBackgroundConcurrency(Number.NaN, "3")).toBe(0);
-    expect(queueBackgroundConcurrency(4, null)).toBe(1);
-    expect(queueBackgroundConcurrency(4, "")).toBe(1);
+    expect(queueBackgroundConcurrency(4, null)).toBe(4);
+    expect(queueBackgroundConcurrency(4, "")).toBe(4);
   });
 
   it("builds queue snapshots by job type/status and only marks due pending jobs", () => {

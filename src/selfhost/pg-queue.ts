@@ -222,11 +222,15 @@ export interface PgQueueOptions {
   maxRetries?: number;
   pollIntervalMs?: number;
   backoffMs?: (attempt: number) => number;
-  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 4 — review jobs are I/O-bound
+  /** Max concurrent `processOne()` loops. Defaults to QUEUE_CONCURRENCY env var or 8 — review jobs are I/O-bound
    *  (GitHub + AI awaits dominate), so overlapping a handful drains a PR burst far faster; FOR UPDATE SKIP LOCKED
-   *  keeps claims race-free across the pool (and across replicas). Set QUEUE_CONCURRENCY=1 to force strict serial. */
+   *  keeps claims race-free across the pool (and across replicas). Sized for multi-tenant volume (#4892) to match
+   *  the hosted Cloudflare consumer default and the #4913 load-test concurrency=8 band. Set QUEUE_CONCURRENCY=1
+   *  to force strict serial. */
   concurrency?: number;
-  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to QUEUE_BACKGROUND_CONCURRENCY or 1. */
+  /** Max background jobs (priority < 8) allowed to consume concurrent slots. Defaults to
+   *  QUEUE_BACKGROUND_CONCURRENCY or 4 — raised with #4892 so multiple installations can progress under
+   *  installation-concurrency-admission (default per-install limit 2) instead of a single-operator background=1. */
   backgroundConcurrency?: number;
 }
 
@@ -242,7 +246,7 @@ export function createPgQueue(
     ((attempt: number) => Math.min(60_000, 1000 * 2 ** attempt));
   const concurrency =
     opts.concurrency ??
-    parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 4 });
+    parsePositiveIntEnv("QUEUE_CONCURRENCY", { min: 1, fallback: 8 });
   const backgroundConcurrency = queueBackgroundConcurrency(
     concurrency,
     opts.backgroundConcurrency,
@@ -961,7 +965,7 @@ export function createPgQueue(
       // Release the reserved background slot if the claim query itself throws (a dropped connection / lock
       // timeout — the exact raw pool failures pump() below is documented to catch). claimNext() runs OUTSIDE
       // processOne's try/finally, so without this rollback the reserved slot leaks permanently; since
-      // backgroundConcurrency defaults to 1, a single such error would starve the entire background/maintenance
+      // backgroundConcurrency is intentionally small relative to total concurrency; a single such error would starve the entire background/maintenance
       // lane with no recovery short of a restart. (#selfhost-bg-slot-leak)
       activeBackground--;
       throw error;

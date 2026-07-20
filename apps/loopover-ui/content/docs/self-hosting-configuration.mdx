@@ -172,7 +172,7 @@ GITHUB_METADATA_CACHE_TTL_SECONDS=600`}
 
 ## Queue cadence and startup
 
-`CRON_INTERVAL_MS` (default `120000`, ~2 minutes) is the tick that drives the maintain/sweep and sync cadence — contributor evidence, burden forecasts, RAG re-indexing, drift scans, and notifications all fan out from it. `QUEUE_BACKGROUND_CONCURRENCY` (default `1`) caps how many low-priority background jobs may occupy a `QUEUE_CONCURRENCY` slot at once, independent of live webhook/review work.
+`CRON_INTERVAL_MS` (default `120000`, ~2 minutes) is the tick that drives the maintain/sweep and sync cadence — contributor evidence, burden forecasts, RAG re-indexing, drift scans, and notifications all fan out from it. `QUEUE_CONCURRENCY` (default `8`) caps concurrent `processOne()` loops. `QUEUE_BACKGROUND_CONCURRENCY` (default `4`) caps how many low-priority background jobs may occupy those slots at once, independent of live webhook/review work — raised for multi-tenant volume (#4892) so multiple installations can progress under per-installation concurrency admission instead of a single-operator background=1 default.
 
 `QUEUE_STARTUP_JITTER_MIN_JOBS` (default `8`) sets the pending-job count below which the queue skips its startup jitter delay — useful on a small instance where you'd rather a handful of jobs start processing immediately after boot than wait out a jitter window meant to stagger many instances restarting at once.
 

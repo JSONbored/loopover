@@ -21,7 +21,7 @@ const DEFAULT_RECOVERY_JITTER_MS = 60_000;
 const DEFAULT_SCHEDULED_ENQUEUE_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MIN_JOBS = 8;
 const DEFAULT_PROCESSING_TIMEOUT_MS = 30 * 60_000;
-const DEFAULT_BACKGROUND_CONCURRENCY = 1;
+const DEFAULT_BACKGROUND_CONCURRENCY = 4;
 // Dead-letter auto-retry (#audit-rate-headroom): a job that exhausted its normal retry budget and landed in
 // `dead` gets ONE more attempt every revive interval, as long as its lifetime attempts stay under
 // maxRetries + this extra ceiling — bounded so a permanently-broken job cannot cycle dead→pending→dead

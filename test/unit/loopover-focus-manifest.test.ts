@@ -42,6 +42,7 @@ describe("LoopOver repo focus manifest", () => {
     expect(manifest.present).toBe(true);
     expect(manifest.wantedPaths).toContain("src/");
     expect(manifest.wantedPaths).toContain("review-enrichment/");
+    expect(manifest.wantedPaths).toContain("control-plane/");
     expect(manifest.wantedPaths).toContain("apps/loopover-ui/");
     expect(manifest.issueDiscoveryPolicy).toBe("discouraged");
 

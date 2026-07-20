@@ -1,0 +1,22 @@
+{
+  "name": "@loopover/control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LoopOver hosting control-plane — tenant provision/deprovision orchestration behind an injectable driver (#7524 / #7180). Fake/in-memory driver only in this package today; no live Cloudflare Containers or Postgres SDKs.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && npm run test:node",
+    "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "loopover": "file:.."
+  }
+}

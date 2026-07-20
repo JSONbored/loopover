@@ -14,6 +14,7 @@ wantedPaths:
   - migrations/
   - scripts/
   - review-enrichment/
+  - control-plane/
   - .github/workflows/
   - wrangler.jsonc
   - apps/loopover-ui/

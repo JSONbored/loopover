@@ -1,12 +1,6 @@
-import {
-  DEFAULT_AMS_POLICY_SPEC,
-  DEFAULT_WRITE_RATE_LIMIT_POLICIES,
-  evaluateGovernorCaps,
-  evaluateLocalRateLimit,
-} from "@loopover/engine";
+import { DEFAULT_AMS_POLICY_SPEC, DEFAULT_WRITE_RATE_LIMIT_POLICIES, evaluateGovernorCaps, evaluateLocalRateLimit, } from "@loopover/engine";
 import { openGovernorState } from "./governor-state.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
-
 // `governor metrics` (#5187): render the governor's persisted rate-limit + cap-usage state (#5134,
 // governor-state.js) as Prometheus text-exposition, so an operator's Alertmanager can page on rate-limit/
 // budget pressure without hand-rolling a scrape. Strictly read-only, mirroring queue-cli.js's `queue metrics`
@@ -23,32 +17,27 @@ import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js
 // per-repo capLimits override from a resolved `.loopover-miner.yml` has no matching per-repo usage row to
 // pair it with here. Using the fleet-wide DEFAULT_AMS_POLICY_SPEC.capLimits is the same approximation
 // loop-cli.js itself already makes for any repo without its own override.
-
 const GOVERNOR_METRICS_USAGE = "Usage: loopover-miner governor metrics";
-
 export const GOVERNOR_RATE_LIMIT_REMAINING_RATIO = "loopover_miner_governor_rate_limit_remaining_ratio";
 export const GOVERNOR_CAP_USAGE_RATIO = "loopover_miner_governor_cap_usage_ratio";
-
 /** HELP-text escaping — backslash + newline (mirrors miner-prediction-metrics.ts's escapeHelpText). */
 function escapeMetricsHelpText(help) {
-  return help.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+    return help.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
 }
-
 /** Prometheus label-value escaping — backslash, double-quote, newline (mirrors event-ledger-cli.js's
  *  escapeLabelValue). */
 function escapeLabelValue(value) {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
-
 /** buckets.perRepo is keyed by writeRateLimitRepoKey(actionClass, repoFullName) = "actionClass:repoFullName"
  *  (write-rate-limit.ts). actionClass is a fixed identifier (never contains ":"), so splitting on the FIRST
  *  colon recovers both parts even though repoFullName itself contains a "/". */
 function splitPerRepoKey(key) {
-  const separatorIndex = key.indexOf(":");
-  if (separatorIndex === -1) return { actionClass: key, repoFullName: "" };
-  return { actionClass: key.slice(0, separatorIndex), repoFullName: key.slice(separatorIndex + 1) };
+    const separatorIndex = key.indexOf(":");
+    if (separatorIndex === -1)
+        return { actionClass: key, repoFullName: "" };
+    return { actionClass: key.slice(0, separatorIndex), repoFullName: key.slice(separatorIndex + 1) };
 }
-
 // evaluateLocalRateLimit's own `remaining` field answers "how many MORE writes are allowed AFTER one more write
 // right now" (rate-limit.ts: `remaining = allowed ? limit - effectiveCount - 1 : 0`) -- it is NOT current
 // headroom. At count=2/limit=3 that field is already 0, identical to a fully exhausted count=3/limit=3 bucket,
@@ -58,114 +47,105 @@ function splitPerRepoKey(key) {
 // has already passed the DEFAULT_WRITE_RATE_LIMIT_POLICIES lookup above, so decision.limit is always one of the
 // frozen, non-zero policy limits -- no zero-limit guard needed.
 function remainingRatio(decision) {
-  const headroom = decision.allowed ? decision.remaining + 1 : 0;
-  return headroom / decision.limit;
+    const headroom = decision.allowed ? decision.remaining + 1 : 0;
+    return headroom / decision.limit;
 }
-
 function collectRateLimitRows(buckets, nowMs) {
-  const rows = [];
-  for (const [actionClass, bucket] of Object.entries(buckets.global)) {
-    const config = DEFAULT_WRITE_RATE_LIMIT_POLICIES.global[actionClass];
-    if (!config) continue;
-    rows.push({
-      scope: "global",
-      actionClass,
-      repoFullName: "",
-      ratio: remainingRatio(evaluateLocalRateLimit(bucket, config, nowMs)),
+    const rows = [];
+    for (const [actionClass, bucket] of Object.entries(buckets.global)) {
+        const config = DEFAULT_WRITE_RATE_LIMIT_POLICIES.global[actionClass];
+        if (!config)
+            continue;
+        rows.push({
+            scope: "global",
+            actionClass,
+            repoFullName: "",
+            ratio: remainingRatio(evaluateLocalRateLimit(bucket, config, nowMs)),
+        });
+    }
+    for (const [key, bucket] of Object.entries(buckets.perRepo)) {
+        const { actionClass, repoFullName } = splitPerRepoKey(key);
+        const config = DEFAULT_WRITE_RATE_LIMIT_POLICIES.perRepo[actionClass];
+        if (!config)
+            continue;
+        rows.push({
+            scope: "per_repo",
+            actionClass,
+            repoFullName,
+            ratio: remainingRatio(evaluateLocalRateLimit(bucket, config, nowMs)),
+        });
+    }
+    rows.sort((a, b) => {
+        if (a.scope !== b.scope)
+            return a.scope.localeCompare(b.scope);
+        if (a.actionClass !== b.actionClass)
+            return a.actionClass.localeCompare(b.actionClass);
+        return a.repoFullName.localeCompare(b.repoFullName);
     });
-  }
-  for (const [key, bucket] of Object.entries(buckets.perRepo)) {
-    const { actionClass, repoFullName } = splitPerRepoKey(key);
-    const config = DEFAULT_WRITE_RATE_LIMIT_POLICIES.perRepo[actionClass];
-    if (!config) continue;
-    rows.push({
-      scope: "per_repo",
-      actionClass,
-      repoFullName,
-      ratio: remainingRatio(evaluateLocalRateLimit(bucket, config, nowMs)),
-    });
-  }
-  rows.sort((a, b) => {
-    if (a.scope !== b.scope) return a.scope.localeCompare(b.scope);
-    if (a.actionClass !== b.actionClass) return a.actionClass.localeCompare(b.actionClass);
-    return a.repoFullName.localeCompare(b.repoFullName);
-  });
-  return rows;
+    return rows;
 }
-
 // DEFAULT_AMS_POLICY_SPEC.capLimits is a frozen, non-zero constant for every dimension -- no zero-limit guard
 // needed, mirroring remainingRatio()'s reasoning above.
 function collectCapUsageRows(capUsage) {
-  const report = evaluateGovernorCaps(capUsage, DEFAULT_AMS_POLICY_SPEC.capLimits);
-  return [
-    { dimension: "budget", dimensionReport: report.budget },
-    { dimension: "turns", dimensionReport: report.turns },
-    { dimension: "elapsed_ms", dimensionReport: report.termination },
-  ].map(({ dimension, dimensionReport }) => ({
-    dimension,
-    ratio: dimensionReport.used / dimensionReport.limit,
-  }));
+    const report = evaluateGovernorCaps(capUsage, DEFAULT_AMS_POLICY_SPEC.capLimits);
+    return [
+        { dimension: "budget", dimensionReport: report.budget },
+        { dimension: "turns", dimensionReport: report.turns },
+        { dimension: "elapsed_ms", dimensionReport: report.termination },
+    ].map(({ dimension, dimensionReport }) => ({
+        dimension,
+        ratio: dimensionReport.used / dimensionReport.limit,
+    }));
 }
-
 /**
  * @param {import("./governor-state.js").GovernorRateLimitState} rateLimitState
  * @param {import("@loopover/engine").GovernorCapUsage} capUsage
  * @param {number} nowMs
  */
 export function renderGovernorMetrics(rateLimitState, capUsage, nowMs) {
-  const rateLimitRows = collectRateLimitRows(rateLimitState.buckets, nowMs);
-  const capRows = collectCapUsageRows(capUsage);
-
-  const lines = [
-    `# HELP ${GOVERNOR_RATE_LIMIT_REMAINING_RATIO} ${escapeMetricsHelpText(
-      "Remaining headroom in the governor's current write-rate-limit window, as a fraction of the configured limit (1 = empty bucket, 0 = exhausted). Evaluated against DEFAULT_WRITE_RATE_LIMIT_POLICIES.",
-    )}`,
-    `# TYPE ${GOVERNOR_RATE_LIMIT_REMAINING_RATIO} gauge`,
-  ];
-  for (const row of rateLimitRows) {
-    const repoLabel = row.scope === "per_repo" ? `,repo="${escapeLabelValue(row.repoFullName)}"` : "";
-    lines.push(
-      `${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="${row.scope}",action_class="${escapeLabelValue(row.actionClass)}"${repoLabel}} ${row.ratio}`,
-    );
-  }
-
-  lines.push(
-    `# HELP ${GOVERNOR_CAP_USAGE_RATIO} ${escapeMetricsHelpText(
-      "The governor's persisted cumulative cap usage as a fraction of DEFAULT_AMS_POLICY_SPEC.capLimits (1 = ceiling reached). dimension is one of budget|turns|elapsed_ms.",
-    )}`,
-  );
-  lines.push(`# TYPE ${GOVERNOR_CAP_USAGE_RATIO} gauge`);
-  for (const row of capRows) {
-    lines.push(`${GOVERNOR_CAP_USAGE_RATIO}{dimension="${row.dimension}"} ${row.ratio}`);
-  }
-
-  return `${lines.join("\n")}\n`;
+    const rateLimitRows = collectRateLimitRows(rateLimitState.buckets, nowMs);
+    const capRows = collectCapUsageRows(capUsage);
+    const lines = [
+        `# HELP ${GOVERNOR_RATE_LIMIT_REMAINING_RATIO} ${escapeMetricsHelpText("Remaining headroom in the governor's current write-rate-limit window, as a fraction of the configured limit (1 = empty bucket, 0 = exhausted). Evaluated against DEFAULT_WRITE_RATE_LIMIT_POLICIES.")}`,
+        `# TYPE ${GOVERNOR_RATE_LIMIT_REMAINING_RATIO} gauge`,
+    ];
+    for (const row of rateLimitRows) {
+        const repoLabel = row.scope === "per_repo" ? `,repo="${escapeLabelValue(row.repoFullName)}"` : "";
+        lines.push(`${GOVERNOR_RATE_LIMIT_REMAINING_RATIO}{scope="${row.scope}",action_class="${escapeLabelValue(row.actionClass)}"${repoLabel}} ${row.ratio}`);
+    }
+    lines.push(`# HELP ${GOVERNOR_CAP_USAGE_RATIO} ${escapeMetricsHelpText("The governor's persisted cumulative cap usage as a fraction of DEFAULT_AMS_POLICY_SPEC.capLimits (1 = ceiling reached). dimension is one of budget|turns|elapsed_ms.")}`);
+    lines.push(`# TYPE ${GOVERNOR_CAP_USAGE_RATIO} gauge`);
+    for (const row of capRows) {
+        lines.push(`${GOVERNOR_CAP_USAGE_RATIO}{dimension="${row.dimension}"} ${row.ratio}`);
+    }
+    return `${lines.join("\n")}\n`;
 }
-
 async function withGovernorState(options, run) {
-  const ownsGovernorState = options.openGovernorState === undefined;
-  const governorState = (options.openGovernorState ?? openGovernorState)();
-  try {
-    return run(governorState);
-  } finally {
-    if (ownsGovernorState) governorState.close();
-  }
+    const ownsGovernorState = options.openGovernorState === undefined;
+    const governorState = (options.openGovernorState ?? openGovernorState)();
+    try {
+        return run(governorState);
+    }
+    finally {
+        if (ownsGovernorState)
+            governorState.close();
+    }
 }
-
 export async function runGovernorMetrics(args, options = {}) {
-  if (args.length > 0) {
-    return reportCliFailure(argsWantJson(args), GOVERNOR_METRICS_USAGE);
-  }
-
-  try {
-    return await withGovernorState(options, (governorState) => {
-      const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-      const rateLimitState = governorState.loadRateLimitState();
-      const capUsage = governorState.loadCapUsage();
-      console.log(renderGovernorMetrics(rateLimitState, capUsage, nowMs).trimEnd());
-      return 0;
-    });
-  } catch (error) {
-    return reportCliFailure(argsWantJson(args), describeCliError(error));
-  }
+    if (args.length > 0) {
+        return reportCliFailure(argsWantJson(args), GOVERNOR_METRICS_USAGE);
+    }
+    try {
+        return await withGovernorState(options, (governorState) => {
+            const nowMs = typeof options.nowMs === "number" && Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+            const rateLimitState = governorState.loadRateLimitState();
+            const capUsage = governorState.loadCapUsage();
+            console.log(renderGovernorMetrics(rateLimitState, capUsage, nowMs).trimEnd());
+            return 0;
+        });
+    }
+    catch (error) {
+        return reportCliFailure(argsWantJson(args), describeCliError(error));
+    }
 }
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiZ292ZXJub3ItbWV0cmljcy1jbGkuanMiLCJzb3VyY2VSb290IjoiIiwic291cmNlcyI6WyJnb3Zlcm5vci1tZXRyaWNzLWNsaS50cyJdLCJuYW1lcyI6W10sIm1hcHBpbmdzIjoiQUFBQSxPQUFPLEVBQ0wsdUJBQXVCLEVBQ3ZCLGlDQUFpQyxFQUNqQyxvQkFBb0IsRUFDcEIsc0JBQXNCLEdBQ3ZCLE1BQU0sa0JBQWtCLENBQUM7QUFDMUIsT0FBTyxFQUFFLGlCQUFpQixFQUFFLE1BQU0scUJBQXFCLENBQUM7QUFDeEQsT0FBTyxFQUFFLFlBQVksRUFBRSxnQkFBZ0IsRUFBRSxnQkFBZ0IsRUFBRSxNQUFNLGdCQUFnQixDQUFDO0FBSWxGLG1HQUFtRztBQUNuRywwR0FBMEc7QUFDMUcsOEdBQThHO0FBQzlHLDZHQUE2RztBQUM3Ryx1R0FBdUc7QUFDdkcsNkdBQTZHO0FBQzdHLCtHQUErRztBQUMvRyw4R0FBOEc7QUFDOUcsOEdBQThHO0FBQzlHLDBDQUEwQztBQUMxQyxFQUFFO0FBQ0YsOEdBQThHO0FBQzlHLDBHQUEwRztBQUMxRywwR0FBMEc7QUFDMUcsc0dBQXNHO0FBQ3RHLDBFQUEwRTtBQUUxRSxNQUFNLHNCQUFzQixHQUFHLHdDQUF3QyxDQUFDO0FBRXhFLE1BQU0sQ0FBQyxNQUFNLG1DQUFtQyxHQUFHLG9EQUFvRCxDQUFDO0FBQ3hHLE1BQU0sQ0FBQyxNQUFNLHdCQUF3QixHQUFHLHlDQUF5QyxDQUFDO0FBRWxGLHVHQUF1RztBQUN2RyxTQUFTLHFCQUFxQixDQUFDLElBQVk7SUFDekMsT0FBTyxJQUFJLENBQUMsT0FBTyxDQUFDLEtBQUssRUFBRSxNQUFNLENBQUMsQ0FBQyxPQUFPLENBQUMsS0FBSyxFQUFFLEtBQUssQ0FBQyxDQUFDO0FBQzNELENBQUM7QUFFRDt5QkFDeUI7QUFDekIsU0FBUyxnQkFBZ0IsQ0FBQyxLQUFhO0lBQ3JDLE9BQU8sS0FBSyxDQUFDLE9BQU8sQ0FBQyxLQUFLLEVBQUUsTUFBTSxDQUFDLENBQUMsT0FBTyxDQUFDLElB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

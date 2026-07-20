@@ -621,6 +621,35 @@ test("renderTrackRecordSummaryMarkdown fails closed if a blocked public field is
   );
 });
 
+test("renderTrackRecordSummaryMarkdown tolerates a login containing a blocklisted substring (#6772 / #7444)", () => {
+  const summary = computeTrackRecordSummary({
+    login: "team-wallet",
+    now: NOW,
+    config: { includeTrackRecordSummary: true, warnings: [] },
+    outcomes: [],
+  });
+  const markdown = renderTrackRecordSummaryMarkdown(summary);
+  assert.match(markdown, /GitHub login: team-wallet/u);
+});
+
+test("renderTrackRecordSummaryMarkdown tolerates evidence URLs containing a blocklisted path substring (#7444)", () => {
+  const summary = computeTrackRecordSummary({
+    login: "miner",
+    now: NOW,
+    config: { includeTrackRecordSummary: true, warnings: [] },
+    outcomes: [],
+    incidents: [
+      {
+        login: "miner",
+        kind: "ban",
+        publicEvidenceUrl: "https://example.test/org/wallet-connect/issues/1",
+      },
+    ],
+  });
+  const markdown = renderTrackRecordSummaryMarkdown(summary);
+  assert.match(markdown, /Public evidence: https:\/\/example\.test\/org\/wallet-connect\/issues\/1/u);
+});
+
 test("computeTrackRecordSummary is byte-stable for equivalent repeated calls", () => {
   const input = {
     login: "miner",

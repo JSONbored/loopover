@@ -38,4 +38,18 @@ describe("renderTrackRecordSummaryMarkdown login vs public-field blocklist (#677
     expect(md).toContain("- Open PRs ignored for rate: 3");
     expect(md).toMatch(/- Public evidence: .*example\.test\/record/u);
   });
+
+  it("REGRESSION (#7444): renders an evidence URL whose path contains a blocklisted substring instead of throwing", () => {
+    const base = computeTrackRecordSummary({ login: "miner", now: NOW, config, outcomes: [] });
+    const md = renderTrackRecordSummaryMarkdown({
+      ...base,
+      incidents: {
+        ...base.incidents,
+        hasPublicIncident: true,
+        label: "public conduct incident present",
+        evidenceUrls: ["https://example.test/org/wallet-connect/issues/1"],
+      },
+    });
+    expect(md).toContain("https://example.test/org/wallet-connect/issues/1");
+  });
 });

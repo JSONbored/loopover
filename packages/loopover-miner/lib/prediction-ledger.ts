@@ -1,5 +1,5 @@
-import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
-import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import type { DatabaseSync } from "node:sqlite";
+import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import {
   PREDICTION_LEDGER_PURGE_SPEC,
@@ -176,7 +176,7 @@ function rowToEntry(row: PredictionDbRow): PredictionLedgerEntry {
   };
 }
 
-function asPredictionDbRow(row: Record<string, SQLOutputValue>): PredictionDbRow {
+function asPredictionDbRow(row: Record<string, unknown>): PredictionDbRow {
   return row as unknown as PredictionDbRow;
 }
 
@@ -196,10 +196,14 @@ function addTenantIdColumn(db: DatabaseSync): void {
 /**
  * Opens the append-only prediction ledger, creating the table on first use. Rows are returned in ascending `id`
  * order (insertion order). (#4263)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation/migrations / retention / purge still use the underlying DatabaseSync until those
+ * helpers are migrated. Public API stays synchronous so callers need no async cascade in this #7282 slice.
  */
 export function initPredictionLedger(dbPath: string = resolvePredictionLedgerDbPath()): PredictionLedger {
   const resolvedPath = normalizeDbPath(dbPath);
-  const db = openLocalStoreDb(resolvedPath);
+  const { db, driver } = openLocalStoreAdapter(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS predictions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,21 +225,21 @@ export function initPredictionLedger(dbPath: string = resolvePredictionLedgerDbP
   // Opt-in retention (#4834): prune aged/excess rows when an operator has enabled it; a no-op by default.
   pruneLedgerByRetention(db, PREDICTION_LEDGER_RETENTION_SPEC, resolveLedgerRetentionPolicy(), Date.now());
 
-  const appendStatement = db.prepare(`
+  const appendSql = `
     INSERT INTO predictions
       (ts, repo_full_name, target_id, head_sha, conclusion, pack, readiness_score, blocker_codes_json, warning_codes_json, engine_version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const getByIdStatement = db.prepare("SELECT * FROM predictions WHERE id = ?");
-  const readAllStatement = db.prepare("SELECT * FROM predictions ORDER BY id ASC");
-  const readByRepoStatement = db.prepare("SELECT * FROM predictions WHERE repo_full_name = ? ORDER BY id ASC");
+  `;
+  const getByIdSql = "SELECT * FROM predictions WHERE id = ?";
+  const readAllSql = "SELECT * FROM predictions ORDER BY id ASC";
+  const readByRepoSql = "SELECT * FROM predictions WHERE repo_full_name = ? ORDER BY id ASC";
 
   return {
     dbPath: resolvedPath,
     appendPrediction(input) {
       const n = normalizePredictionInput(input);
       const ts = new Date().toISOString();
-      const result = appendStatement.run(
+      const result = driver.query(appendSql, [
         ts,
         n.repoFullName,
         n.targetId,
@@ -246,12 +250,13 @@ export function initPredictionLedger(dbPath: string = resolvePredictionLedgerDbP
         JSON.stringify(n.blockerCodes),
         JSON.stringify(n.warningCodes),
         n.engineVersion,
-      );
-      return rowToEntry(asPredictionDbRow(getByIdStatement.get(Number(result.lastInsertRowid))!));
+      ]);
+      const { rows } = driver.query(getByIdSql, [Number(result.lastInsertRowid)]);
+      return rowToEntry(asPredictionDbRow(rows[0]!));
     },
     readPredictions(filter = {}) {
       const repoFullName = normalizeOptionalRepoFullName(filter.repoFullName);
-      const rows = repoFullName === undefined ? readAllStatement.all() : readByRepoStatement.all(repoFullName);
+      const { rows } = repoFullName === undefined ? driver.query(readAllSql, []) : driver.query(readByRepoSql, [repoFullName]);
       return rows.map((row) => rowToEntry(asPredictionDbRow(row)));
     },
     // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. See the

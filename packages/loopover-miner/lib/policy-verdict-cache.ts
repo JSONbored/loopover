@@ -1,5 +1,5 @@
 import type { AiPolicyVerdict } from "@loopover/engine";
-import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { POLICY_VERDICT_CACHE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
@@ -92,10 +92,14 @@ function serializeVerdict(verdict: unknown): string {
 /**
  * Opens the 100% local/client-side miner policy-verdict cache. The database only lives on this machine; this
  * module never uploads, syncs, or phones home with its contents. (#4843)
+ *
+ * Opened through the #7175 SqliteDriver seam (`openLocalStoreAdapter`): CRUD goes through `driver.query`,
+ * while schema creation/migrations / purge still use the underlying DatabaseSync until those helpers are
+ * migrated. Public API stays synchronous so callers need no async cascade in this #7282 slice.
  */
 export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdictCacheDbPath()): PolicyVerdictCacheStore {
   const resolvedPath = normalizeDbPath(dbPath);
-  const db = openLocalStoreDb(resolvedPath);
+  const { db, driver } = openLocalStoreAdapter(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS policy_verdict_cache (
       repo_scope TEXT PRIMARY KEY,
@@ -108,10 +112,9 @@ export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdic
   // Schema-version convention (#4832): stamp the baseline and run any post-baseline migrations (none yet).
   applySchemaMigrations(db, []);
 
-  const getStatement = db.prepare(
-    "SELECT decisive_doc, etag, verdict FROM policy_verdict_cache WHERE repo_scope = ?",
-  );
-  const putStatement = db.prepare(`
+  const getSql =
+    "SELECT decisive_doc, etag, verdict FROM policy_verdict_cache WHERE repo_scope = ?";
+  const putSql = `
     INSERT INTO policy_verdict_cache (repo_scope, decisive_doc, etag, verdict, updated_at)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(repo_scope) DO UPDATE SET
@@ -119,13 +122,14 @@ export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdic
       etag = excluded.etag,
       verdict = excluded.verdict,
       updated_at = excluded.updated_at
-  `);
+  `;
 
   return {
     dbPath: resolvedPath,
     /** The last-known `{ decisiveDoc, etag, verdict }` for a repo scope, or null when it has never been cached. */
     get(repoScope) {
-      const row = getStatement.get(normalizeRepoScope(repoScope)) as PolicyVerdictCacheRow | undefined;
+      const { rows } = driver.query(getSql, [normalizeRepoScope(repoScope)]);
+      const row = rows[0] as PolicyVerdictCacheRow | undefined;
       if (!row) return null;
       return {
         decisiveDoc: row.decisive_doc as PolicyVerdictDecisiveDoc,
@@ -140,7 +144,7 @@ export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdic
       const normalizedEtag = normalizeEtag(etag);
       const serializedVerdict = serializeVerdict(verdict);
       const updatedAt = new Date().toISOString();
-      putStatement.run(normalizedRepoScope, normalizedDecisiveDoc, normalizedEtag, serializedVerdict, updatedAt);
+      driver.query(putSql, [normalizedRepoScope, normalizedDecisiveDoc, normalizedEtag, serializedVerdict, updatedAt]);
       return { repoScope: normalizedRepoScope, decisiveDoc: normalizedDecisiveDoc, etag: normalizedEtag, verdict, updatedAt };
     },
     /**

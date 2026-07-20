@@ -49,11 +49,11 @@
   "dependencies": {
     "@loopover/engine": "^3.4.0",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@sentry/node": "^10.63.0",
+    "@sentry/node": "^10.66.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^22.20.0",
+    "@types/node": "^22.20.1",
     "typescript": "^5.9.3"
   },
   "engines": {

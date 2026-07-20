@@ -81,3 +81,46 @@ describe("FORBIDDEN_CONTENT is the single source of truth (#6290)", () => {
     expect(FORBIDDEN_CONTENT.test(SECRET_SHAPED_PROBE)).toBe(true);
   });
 });
+
+describe("FORBIDDEN_CONTENT covers the concrete provider-key formats (#7433)", () => {
+  // One representative fixture per newly-added HARD_SECRET_KINDS format, each assembled from fragments so this
+  // file never contains a contiguous credential-shaped literal (same convention as secret-patterns.test.ts).
+  const A = (n: number) => "A".repeat(n);
+  const a = (n: number) => "a".repeat(n);
+  const NEW_FORMAT_PROBES: Array<[string, string]> = [
+    ["aws_access_key", "AKIA" + "IOSFODNN7EXAMPLE"],
+    ["slack_token", "xox" + "b-" + a(12)],
+    ["google_api_key", "AIza" + a(35)],
+    ["gitlab_token", "glpat-" + a(20)],
+    ["npm_token", "npm_" + a(36)],
+    ["stripe_secret_key", "sk" + "_live_" + a(24)],
+    ["sendgrid_key", "SG." + a(22) + "." + a(43)],
+    ["huggingface_token", "hf_" + a(34)],
+    ["voyage_api_key", "pa" + "-" + a(20)],
+    ["firecrawl_api_key", "fc" + "-" + a(16)],
+    ["openai_api_key", "sk-" + a(20) + "T3Blbk" + "FJ" + a(20)],
+    ["anthropic_api_key", "sk-ant-" + "api03-" + a(93) + "AA"],
+  ];
+
+  it.each(NEW_FORMAT_PROBES)("matches a %s-shaped value", (_name, probe) => {
+    expect(FORBIDDEN_CONTENT.test(probe)).toBe(true);
+  });
+
+  it("still matches the pre-existing shapes (private-key block, github_pat, gh*, gts, generic assignment)", () => {
+    expect(FORBIDDEN_CONTENT.test("BEGIN RSA PRIVATE KEY")).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("github_pat_" + a(20))).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("ghp_" + a(30))).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("gts_" + "0".repeat(64))).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("MY" + "_TOKEN=" + "x")).toBe(true);
+  });
+
+  it("does NOT hard-block the deliberately-excluded weak heuristics (jwt / seed / bittensor key shapes)", () => {
+    // These are intentionally kept out of the packaged-secret hard block (#7433) — an ordinary Bittensor
+    // coldkey/hotkey mention or a mnemonic word is not a leaked credential; a bare JWT is out of scope.
+    expect(FORBIDDEN_CONTENT.test("coldkey: my-wallet-name")).toBe(false);
+    expect(FORBIDDEN_CONTENT.test("the recovery mnemonic is stored offline")).toBe(false);
+    // A bare header-dot-payload JWT shape is not matched by the hard-block detector.
+    expect(FORBIDDEN_CONTENT.test("eyJ" + A(20) + "." + a(20) + "." + a(20))).toBe(false);
+    expect(FORBIDDEN_CONTENT.global).toBe(false);
+  });
+});

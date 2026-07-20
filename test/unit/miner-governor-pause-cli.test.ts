@@ -359,4 +359,23 @@ describe("governor pause/resume/status --json error contract (#5914)", () => {
       "disk full",
     ]);
   });
+
+  // #7307: cover the paused-with-reason and paused-without-reason render arms after JS→TS migrate.
+  // Also flips CI `backend=true` (test/** change) so Build engine package runs before typecheck.
+  it("renders paused status with and without a reason (#7307)", async () => {
+    const governorState = tempGovernorState();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(
+      await runGovernorPause(["--reason", "ops freeze"], {
+        openGovernorState: () => governorState,
+      }),
+    ).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toMatch(/PAUSED since .* \(ops freeze\)/);
+
+    log.mockClear();
+    expect(await runGovernorPause([], { openGovernorState: () => governorState })).toBe(0);
+    expect(String(log.mock.calls.at(-1)?.[0])).toMatch(/PAUSED since /);
+    expect(String(log.mock.calls.at(-1)?.[0])).not.toContain("(");
+  });
 });

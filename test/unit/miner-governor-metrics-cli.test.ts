@@ -226,4 +226,37 @@ describe("runGovernorMetrics (#5187)", () => {
     expect(await runGovernorCli("metrics", [], { openGovernorState: () => governorState })).toBe(0);
     expect(log).toHaveBeenCalled();
   });
+
+  // #7307: keep remapped .ts branch coverage high after the JS→TS migrate (escape helpers +
+  // finite-nowMs fallback). Touching this test file also flips CI `backend=true` so validate-code
+  // builds @loopover/engine before typecheck — miner-only PRs otherwise skip that step.
+  it("escapes backslash/quote/newline in HELP text and per-repo labels (#7307)", () => {
+    const output = renderGovernorMetrics(
+      {
+        buckets: {
+          global: {},
+          perRepo: {
+            'open_pr:acme/wid"gets\\v2': { count: 0, windowStartMs: NOW },
+          },
+        },
+        backoffAttempts: {},
+      },
+      EMPTY_CAP_USAGE,
+      NOW,
+    );
+    expect(output).toContain('repo="acme/wid\\"gets\\\\v2"');
+    expect(output).toMatch(/# HELP .*Remaining headroom/);
+  });
+
+  it("falls back to Date.now when nowMs is non-finite (#7307)", async () => {
+    const governorState = tempGovernorState();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(
+      await runGovernorMetrics([], {
+        openGovernorState: () => governorState,
+        nowMs: Number.NaN,
+      }),
+    ).toBe(0);
+    expect(String(log.mock.calls[0]?.[0])).toContain(GOVERNOR_RATE_LIMIT_REMAINING_RATIO);
+  });
 });

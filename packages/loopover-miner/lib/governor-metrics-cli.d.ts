@@ -1,16 +1,10 @@
-import type { GovernorCapUsage } from "@loopover/engine";
+import { type GovernorCapUsage } from "@loopover/engine";
 import type { GovernorRateLimitState, GovernorState } from "./governor-state.js";
-
-export const GOVERNOR_RATE_LIMIT_REMAINING_RATIO: string;
-export const GOVERNOR_CAP_USAGE_RATIO: string;
-
-export function renderGovernorMetrics(
-  rateLimitState: GovernorRateLimitState,
-  capUsage: GovernorCapUsage,
-  nowMs: number,
-): string;
-
-export function runGovernorMetrics(
-  args: string[],
-  options?: { openGovernorState?: () => GovernorState; nowMs?: number },
-): Promise<number>;
+export declare const GOVERNOR_RATE_LIMIT_REMAINING_RATIO = "loopover_miner_governor_rate_limit_remaining_ratio";
+export declare const GOVERNOR_CAP_USAGE_RATIO = "loopover_miner_governor_cap_usage_ratio";
+export type GovernorMetricsCliOptions = {
+    openGovernorState?: () => GovernorState;
+    nowMs?: number;
+};
+export declare function renderGovernorMetrics(rateLimitState: GovernorRateLimitState, capUsage: GovernorCapUsage, nowMs: number): string;
+export declare function runGovernorMetrics(args: string[], options?: GovernorMetricsCliOptions): Promise<number>;

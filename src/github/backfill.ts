@@ -3834,6 +3834,13 @@ type GitHubReviewThreadResponse = {
   };
 };
 
+// Bound the reviewThreads GraphQL walk so a PR with a pathologically large number of review threads can't turn
+// one merge-readiness evaluation into an unbounded sequence of sequential GraphQL calls -- mirrors this file's own
+// PR_DETAIL_MAX_PAGES and app.ts's MAX_WORKFLOW_RUN_LIST_PAGES (both bounded to 10). 10 pages * 50 threads/page =
+// 500 review threads, far beyond any real PR; hitting the cap returns the blockers derived from the threads
+// gathered so far (fail-open, matching this function's own "GraphQL unavailable -> []" posture), never throws.
+const REVIEW_THREAD_MAX_PAGES = 10;
+
 /** Fetch unresolved GitHub review threads that should block merge readiness. GraphQL is required because REST
  *  review comments do not expose thread resolution; if GraphQL is unavailable this fails open to [] rather than
  *  guessing. Only maintainer/collaborator comments or known scanner-bot comments can create blockers, so
@@ -3851,7 +3858,10 @@ export async function fetchLiveReviewThreadBlockers(
   const threads: Array<GitHubReviewThreadNode | null> = [];
   let cursor: string | null = null;
   const seenCursors = new Set<string>();
-  for (;;) {
+  // Bounded outer walk (REVIEW_THREAD_MAX_PAGES): the loop still stops early on no-next-page / no-nodes / a
+  // repeated cursor, but can never exceed the cap even if GitHub keeps reporting hasNextPage. Reaching the cap
+  // falls through to processing the threads gathered so far (fail-open), never throws.
+  for (let page = 0; page < REVIEW_THREAD_MAX_PAGES; page += 1) {
     const after: string = cursor ? `, after: ${JSON.stringify(cursor)}` : "";
     const query: string = `query LoopOverPullRequestReviewThreads {
       repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
@@ -3862,6 +3872,11 @@ export async function fetchLiveReviewThreadBlockers(
               isOutdated
               path
               line
+              # comments(first: 20) is intentionally NOT paginated (#7454): a thread blocks merge only while it is
+              # unresolved/non-outdated (a thread-level flag, unaffected by comment count), and the authorizing
+              # comment is the thread-opening review comment (index 0) or an early reply -- 20 covers that with
+              # wide margin. Missing an authorizing comment buried past #20 only fails OPEN (no blocker), matching
+              # this function's own fail-open posture, so full nested pagination isn't worth the extra round-trips.
               comments(first: 20) {
                 nodes {
                   body

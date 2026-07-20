@@ -1467,6 +1467,51 @@ describe("GitHub backfill", () => {
       ]);
     });
 
+    it("collects review threads across multiple pages and terminates when hasNextPage is false (#7454)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      const blockerThread = {
+        isResolved: false,
+        isOutdated: false,
+        path: "src/paginated.ts",
+        line: 5,
+        comments: { nodes: [{ body: "**P1:** blocker on the third page", url: "https://github.example/p3", author: { login: "superagent[bot]" }, authorAssociation: "NONE" }] },
+      };
+      const pages = [
+        { nodes: [], hasNextPage: true, endCursor: "cursor-1" },
+        { nodes: [], hasNextPage: true, endCursor: "cursor-2" },
+        { nodes: [blockerThread], hasNextPage: false, endCursor: null },
+      ];
+      let call = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        const page = pages[Math.min(call, pages.length - 1)]!;
+        call += 1;
+        return Response.json({ data: { repository: { pullRequest: { reviewThreads: { nodes: page.nodes, pageInfo: { hasNextPage: page.hasNextPage, endCursor: page.endCursor } } } } } });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/loopover", 1, "public-token");
+      expect(fetchMock).toHaveBeenCalledTimes(3); // walked all three pages, stopped on hasNextPage:false (well under the cap)
+      expect(blockers).toEqual([expect.objectContaining({ title: "blocker on the third page", priority: "P1", path: "src/paginated.ts" })]);
+    });
+
+    it("is bounded: a pathological always-hasNextPage response stops at REVIEW_THREAD_MAX_PAGES instead of looping unboundedly (#7454)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let call = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (input.toString() !== "https://api.github.com/graphql") return new Response("not found", { status: 404 });
+        call += 1;
+        // Always advertise a next page with a DISTINCT cursor (so the seen-cursor guard never trips first) — only
+        // the page cap can stop this.
+        return Response.json({ data: { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: true, endCursor: `cursor-${call}` } } } } } });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const blockers = await fetchLiveReviewThreadBlockers(env, "JSONbored/loopover", 2, "public-token");
+      expect(fetchMock).toHaveBeenCalledTimes(10); // REVIEW_THREAD_MAX_PAGES — the loop cannot exceed the cap
+      expect(blockers).toEqual([]); // fail-open: the capped pages yielded no blockers, and it never threw
+    });
+
     it("only trusts exact scanner bot logins for scanner-authored review thread blockers", async () => {
       const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {

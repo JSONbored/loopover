@@ -30,3 +30,23 @@ test("predictedGateEngineInternals.sharesMeaningfulFile: a shared Cartfile.resol
   );
   assert.equal(predictedGateEngineInternals.sharesMeaningfulFile(["src/app.ts"], ["src/app.ts"]), true);
 });
+
+test("diffFilePriority: ranks every vendored-directory name path-matchers.ts's isVendoredFileFrom recognizes (#7526)", () => {
+  assert.equal(diffFilePriority("vendor/x.js"), 4);
+  assert.equal(diffFilePriority("vendored/x.js"), 4);
+  assert.equal(diffFilePriority("third_party/x.js"), 4);
+  assert.equal(diffFilePriority("third-party/x.js"), 4);
+  assert.equal(diffFilePriority("bower_components/x.js"), 4);
+  assert.equal(diffFilePriority("jspm_packages/x.js"), 4);
+});
+
+test("predictedGateEngineInternals.sharesMeaningfulFile: a file shared only under a vendored directory is not meaningful collision evidence (#7526)", () => {
+  assert.equal(
+    predictedGateEngineInternals.sharesMeaningfulFile(["third_party/lib.js"], ["third_party/lib.js"]),
+    false,
+  );
+  assert.equal(
+    predictedGateEngineInternals.sharesMeaningfulFile(["bower_components/lib.js"], ["bower_components/lib.js"]),
+    false,
+  );
+});

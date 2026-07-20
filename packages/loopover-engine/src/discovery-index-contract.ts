@@ -48,6 +48,11 @@ export type DiscoveryIndexCandidate = {
   issueNumber: number;
   title: string;
   labels: readonly string[];
+  /** Repo login(s) the issue is assigned to on GitHub (#7442). OPTIONAL: an older, backward-compatible hosted
+   *  server build that doesn't populate it leaves the field absent, which lets a client distinguish "assignees
+   *  were never served" from "served, and empty" -- the former falls back to [] at the merge site rather than
+   *  silently no-opping contribution-profile-filter's repo-owner exclusion (#7040). Normalized like `labels`. */
+  assignees?: readonly string[];
   commentsCount: number;
   createdAt: string | null;
   updatedAt: string | null;
@@ -197,6 +202,12 @@ export function normalizeDiscoveryIndexCandidate(raw: unknown): DiscoveryIndexCa
   const labels = Array.isArray(candidate.labels)
     ? candidate.labels.filter((label): label is string => typeof label === "string" && label.trim() !== "").map((label) => label.trim())
     : [];
+  // #7442: carry real assignees through when the server provides them (same string normalization as `labels`); an
+  // older build omits the field, leaving `assignees` off the result (undefined) so the merge site falls back to []
+  // -- fail-safe, never silently skipping the repo-owner exclusion filter.
+  const assignees = Array.isArray(candidate.assignees)
+    ? candidate.assignees.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "").map((entry) => entry.trim())
+    : undefined;
   return {
     owner,
     repo,
@@ -204,6 +215,7 @@ export function normalizeDiscoveryIndexCandidate(raw: unknown): DiscoveryIndexCa
     issueNumber,
     title,
     labels,
+    ...(assignees !== undefined ? { assignees } : {}),
     commentsCount: typeof candidate.commentsCount === "number" && Number.isFinite(candidate.commentsCount) ? candidate.commentsCount : 0,
     createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : null,
     updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : null,

@@ -162,9 +162,11 @@ function dedupeKey(repoFullName: string, issueNumber: number): string {
  * no-op (returns `fanOut` unchanged) unless the plane is enabled, so a run with the flag unset behaves exactly
  * as before this feature existed. Local results always win on a duplicate issue (the discovery-index candidate
  * is dropped, not merged over it) -- this instance's own live fan-out is more current than a cached shared
- * index entry. Discovery-index candidates lack `assignees` (not part of the public contract), so they're
- * annotated with an empty array to match opportunity-fanout.js's own candidate shape; contribution-profile-
- * filter.js's assignee-exclusion rule treats that identically to "no assignees on this issue".
+ * index entry. Discovery-index candidates now carry their real `assignees` when the hosted contract supplies them
+ * (#7442): the value flows through so contribution-profile-filter.js's repo-owner exclusion (#7040) engages for
+ * index-sourced candidates exactly as it does for direct fan-out ones. A candidate whose response omitted the
+ * field (older discovery-index build) falls back to `[]` -- fail-safe: the filter still runs, it just can't detect
+ * an owner-assignment it was never told about, rather than the check being silently skipped.
  */
 async function supplementWithDiscoveryIndex(
   fanOut: DiscoverFanOutSummary,
@@ -181,9 +183,10 @@ async function supplementWithDiscoveryIndex(
   const seen = new Set(fanOut.issues.map((issue) => dedupeKey(issue.repoFullName, issue.issueNumber)));
   const supplemented = response.candidates
     .filter((candidate) => !seen.has(dedupeKey(candidate.repoFullName, candidate.issueNumber)))
-    // DiscoveryIndexCandidate is a near-superset of RawCandidateIssue; assignees is absent from the hosted
-    // contract (#7168) so we annotate [] — cast preserves pre-existing runtime shape rather than re-mapping.
-    .map((candidate) => ({ ...candidate, assignees: [], labels: [...candidate.labels] }) as RawCandidateIssue);
+    // DiscoveryIndexCandidate is a near-superset of RawCandidateIssue; copy the real assignees through when the
+    // hosted contract carried them (#7442), falling back to [] only when the served response genuinely omitted the
+    // field — cast preserves pre-existing runtime shape rather than re-mapping.
+    .map((candidate) => ({ ...candidate, assignees: [...(candidate.assignees ?? [])], labels: [...candidate.labels] }) as RawCandidateIssue);
   if (supplemented.length === 0) return fanOut;
   return { ...fanOut, issues: [...fanOut.issues, ...supplemented] };
 }

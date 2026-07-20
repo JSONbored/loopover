@@ -82,6 +82,26 @@ function fanOutIssue(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// A hosted discovery-index candidate (#7168 shape). assignees is optional in the contract (#7442) — omit it to
+// simulate an older server build that never populated the field.
+function indexCandidate(overrides: Record<string, unknown> = {}) {
+  return {
+    owner: "acme",
+    repo: "widgets",
+    repoFullName: "acme/widgets",
+    issueNumber: 2,
+    title: "index-sourced issue",
+    labels: ["help wanted"],
+    commentsCount: 0,
+    createdAt: null,
+    updatedAt: null,
+    htmlUrl: null,
+    aiPolicyAllowed: true as const,
+    aiPolicySource: "none" as const,
+    ...overrides,
+  };
+}
+
 afterEach(() => {
   for (const store of stores.splice(0)) store.close();
   closeDefaultPortfolioQueueStore();
@@ -467,6 +487,67 @@ describe("runDiscover (#4247)", () => {
       "issue:1",
       "issue:2",
     ]);
+  });
+
+  it("REGRESSION (#7442): a discovery-index candidate assigned to its own repo owner is excluded once real assignees flow through", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "direct fan-out issue" })],
+      warnings: [],
+      rateLimitRemaining: 5000,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    // The hosted index supplies a DIFFERENT issue (so it survives dedupe) assigned to the repo owner "acme".
+    const queryDiscoveryIndex = vi.fn(async () => ({ contractVersion: 1, candidates: [indexCandidate({ issueNumber: 2, assignees: ["acme"] })], nextCursor: null }));
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { ...process.env, LOOPOVER_MINER_DISCOVERY_PLANE: "1" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(queryDiscoveryIndex).toHaveBeenCalled();
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    // The owner-assigned index candidate (issue 2) is excluded by the #7040 filter; only the direct fan-out issue survives.
+    expect(payload.ranked.map((e: { issueNumber: number }) => e.issueNumber)).toEqual([1]);
+    expect(portfolioQueue.listQueue("acme/widgets").map((e) => e.identifier)).toEqual(["issue:1"]);
+  });
+
+  it("REGRESSION (#7442): a discovery-index response that omits assignees falls back to [] and still runs the filter (kept, not skipped)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "direct fan-out issue" })],
+      warnings: [],
+      rateLimitRemaining: 5000,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    // Older server build: the candidate carries NO assignees field at all.
+    const queryDiscoveryIndex = vi.fn(async () => ({ contractVersion: 1, candidates: [indexCandidate({ issueNumber: 2 })], nextCursor: null }));
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { ...process.env, LOOPOVER_MINER_DISCOVERY_PLANE: "1" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    // Fail-safe: the omitted field becomes [], the owner-exclusion filter still runs (finds no assignment), issue 2 is KEPT.
+    expect(payload.ranked.map((e: { issueNumber: number }) => e.issueNumber).sort()).toEqual([1, 2]);
+    expect(portfolioQueue.listQueue("acme/widgets").map((e) => e.identifier).sort()).toEqual(["issue:1", "issue:2"]);
   });
 
   it("#4847: --dry-run performs the real fan-out/rank but never opens any local store", async () => {

@@ -122,6 +122,18 @@ describe("discovery-index API contract (#4300)", () => {
       });
     });
 
+    it("normalizes assignees like labels, and omits the field entirely when the response never carries it (#7442)", () => {
+      // Present: filtered + trimmed exactly like labels (non-strings and blanks dropped).
+      expect(
+        normalizeDiscoveryIndexCandidate({ repoFullName: "acme/widgets", issueNumber: 1, title: "t", assignees: ["acme", "  ", 42, " maintainer "] })?.assignees,
+      ).toEqual(["acme", "maintainer"]);
+      // Explicitly served empty: present as [] (a real "no assignees" signal).
+      expect(normalizeDiscoveryIndexCandidate({ repoFullName: "acme/widgets", issueNumber: 1, title: "t", assignees: [] })?.assignees).toEqual([]);
+      // Never served (older server build): the field is omitted, so a client can tell it apart from served-empty
+      // and fall back to [] at the merge site rather than silently skipping the repo-owner exclusion filter.
+      expect("assignees" in (normalizeDiscoveryIndexCandidate({ repoFullName: "acme/widgets", issueNumber: 1, title: "t" }) ?? {})).toBe(false);
+    });
+
     it("maps aiPolicySource and respects an explicit aiPolicyAllowed:false", () => {
       expect(normalizeDiscoveryIndexCandidate({ repoFullName: "o/r", issueNumber: 1, title: "t", aiPolicySource: "CONTRIBUTING.md", aiPolicyAllowed: false })).toMatchObject({
         aiPolicySource: "CONTRIBUTING.md",

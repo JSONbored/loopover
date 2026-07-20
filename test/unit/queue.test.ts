@@ -2370,6 +2370,128 @@ describe("queue processors", () => {
     }
   });
 
+  it("REGRESSION (#7556): a dirty-base PR with missing required context finalizes past the short cap instead of deferring forever", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto", close: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Dirty base, missing required context", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    // 3 minutes elapsed: past the 2-minute missing-required-context surfacing cap. Unlike the "past short cap"
+    // clean-base case above, a dirty base is terminal regardless of whether the expected required context ever
+    // arrives -- it must finalize here so the disposition planner (agent-actions.ts's isConflict) can close it,
+    // instead of deferring forever like PR #7537 did live.
+    await env.SELFHOST_TRANSIENT_CACHE?.set(
+      "ci-pending-first-seen:owner/agent-repo#7:a7",
+      String(Date.now() - 3 * 60 * 1000),
+      7 * 24 * 3600,
+    );
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: true,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
+      ciCompletenessWarning: null,
+    });
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Dirty base, missing required context", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, mergeable_state: "dirty", labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) {
+        gateChecks += 1;
+        return Response.json({ id: 901 }, { status: method === "POST" ? 201 : 200 });
+      }
+      return Response.json({});
+    });
+
+    try {
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "dirty-base-missing-context", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      expect(gateChecks).toBeGreaterThan(0);
+      const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_finalized_ci_stuck")
+        .first<{ n: number }>();
+      expect(finalized?.n).toBe(1);
+      const missingContextDefers = await env.DB.prepare(
+        "select count(*) as n from audit_events where event_type = ? and detail like ?",
+      )
+        .bind("github_app.review_deferred_ci_pending", "Required CI context is still missing%")
+        .first<{ n: number }>();
+      expect(missingContextDefers?.n).toBe(0);
+    } finally {
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION (#7556): falls back to the stored mergeable_state when the live re-fetch can't report one", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto", close: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    // Seed the STORED mergeable_state as dirty (persisted into payloadJson, reconstructed by getPullRequest).
+    // The mocked /pulls/7 GET below (the live re-fetch prReadyForReview and its caller both consult) reports the
+    // SAME head SHA but omits mergeable_state entirely, so the live read degrades to undefined and the stored
+    // value is what's left to fall back to -- exercising the `??`'s nullish side, not just its present side.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "Dirty base, live re-fetch can't report mergeable_state", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, base: { ref: "main" }, labels: [], body: "Closes #1", mergeable_state: "dirty" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    await env.SELFHOST_TRANSIENT_CACHE?.set(
+      "ci-pending-first-seen:owner/agent-repo#7:a7",
+      String(Date.now() - 3 * 60 * 1000),
+      7 * 24 * 3600,
+    );
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(null);
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "pending",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: true,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
+      ciCompletenessWarning: null,
+    });
+    let gateChecks = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // No mergeable_state field at all -- the live merge-state read (both reReviewStoredPullRequest's resync
+      // and prReadyForReview's own cachedLiveMergeState) resolves to undefined from this response.
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "Dirty base, live re-fetch can't report mergeable_state", state: "open", user: { login: "contributor" }, head: { sha: "a7" }, labels: [], body: "Closes #1" });
+      if (url.includes("/pulls/7/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) {
+        gateChecks += 1;
+        return Response.json({ id: 901 }, { status: method === "POST" ? 201 : 200 });
+      }
+      return Response.json({});
+    });
+
+    try {
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "dirty-base-fallback-mergeable-state", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
+
+      expect(gateChecks).toBeGreaterThan(0);
+      const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+        .bind("github_app.review_finalized_ci_stuck")
+        .first<{ n: number }>();
+      expect(finalized?.n).toBe(1);
+    } finally {
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
   it("records an informational audit event when the live CI aggregate carries a completeness warning (#2137)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });

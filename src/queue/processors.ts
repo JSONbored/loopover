@@ -3570,7 +3570,21 @@ async function prReadyForReview(
       }).catch(() => undefined);
       return false;
     }
-    if (ci.hasMissingRequiredContext) {
+    // #3947 made this defer UNCONDITIONAL and INDEFINITE ("no finalize escape") specifically to stop a
+    // clean-base PR's gate from ever reading "passed" while an expected required check might still land
+    // red later -- a real risk when the base is otherwise mergeable and the PR's disposition genuinely
+    // depends on how that check resolves. A DIRTY base changes that calculus: agent-actions.ts's
+    // `isConflict` closes a contributor PR on mergeableState==="dirty" regardless of gate conclusion OR
+    // CI state (see `pendingCiMayStillCloseForTerminalReason` there), so the disposition is ALREADY
+    // decided the instant we know the base is dirty -- no future CI report, required or not, can change
+    // it. #3947's concern (a premature verdict later contradicted by CI) cannot occur here, and waiting
+    // can only make things worse: no amount of deferring makes an expected required context appear on a
+    // PR that needs a rebase. Excluding this case lets a dirty-base PR fall through to the same
+    // finalize-past-cap path below instead of deferring forever (#7537-class stuck PRs, #7556). Every
+    // OTHER missing-required-context PR keeps deferring unconditionally, exactly as #3947 intended: a
+    // clean-base PR really might still be waiting on a required check whose eventual result matters.
+    const isLiveBaseConflict = (liveMergeState ?? pr.mergeableState) === "dirty";
+    if (ci.hasMissingRequiredContext && !isLiveBaseConflict) {
       await recordAuditEvent(env, {
         eventType: "github_app.review_deferred_ci_pending",
         actor: "loopover",

@@ -31,19 +31,19 @@ import { detectRepoStack, renderStackSummary } from "./stack-detection.js";
 // DIFFERENT concern from prompt-packet.ts's sanitizePromptPacketField (already applied downstream to
 // taskBrief via buildPromptPacket): that scrubs economic/identity terms and local paths, not
 // manipulation-shaped instructions, so both layers run and neither substitutes for the other.
+function logPromptInjectionNeutralized(issueNumber, title, body) {
+    if (!title.injected && !body.injected)
+        return;
+    console.log(JSON.stringify({
+        event: "prompt_injection_neutralized",
+        issueNumber,
+        fields: [title.injected ? "title" : null, body.injected ? "body" : null].filter(Boolean),
+    }));
+}
 function buildTaskBrief(issue) {
     const title = neutralizePromptInjection(issue.title);
     const body = neutralizePromptInjection((issue.body ?? "").trim());
-    // Audit parity with buildInstructions (#7441): both agent-facing embeds of raw issue text must log when
-    // neutralization actually redacted something. Operators inspecting attempt logs need visibility for the
-    // acceptance-criteria taskBrief path, not only the coding-agent instructions path.
-    if (title.injected || body.injected) {
-        console.log(JSON.stringify({
-            event: "prompt_injection_neutralized",
-            issueNumber: issue.number,
-            fields: [title.injected ? "title" : null, body.injected ? "body" : null].filter(Boolean),
-        }));
-    }
+    logPromptInjectionNeutralized(issue.number, title, body);
     return body.text ? `${title.text}\n\n${body.text}` : title.text;
 }
 function buildConstraints(issue) {
@@ -190,13 +190,7 @@ function buildValidationGuidance(stack) {
 function buildInstructions(issue, acceptanceCriteriaPath, stack) {
     const title = neutralizePromptInjection(issue.title);
     const body = neutralizePromptInjection((issue.body ?? "").trim());
-    if (title.injected || body.injected) {
-        console.log(JSON.stringify({
-            event: "prompt_injection_neutralized",
-            issueNumber: issue.number,
-            fields: [title.injected ? "title" : null, body.injected ? "body" : null].filter(Boolean),
-        }));
-    }
+    logPromptInjectionNeutralized(issue.number, title, body);
     return [
         `Resolve the following GitHub issue in this repository: #${issue.number} -- ${title.text}`,
         "",

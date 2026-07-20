@@ -22,23 +22,30 @@
 import Ajv from "ajv";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parse } from "yaml";
 
 const ACTIONS_DIR = ".github/actions";
 const SCHEMA_PATH = new URL("./schemas/github-action.schema.json", import.meta.url);
 
-const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
-const ajv = new Ajv({ allErrors: true, strict: false });
-const validateSchema = ajv.compile(schema);
+/** Compile the vendored action-metadata schema into an Ajv validator. Exported (with the schema JSON
+ *  injectable) so tests validate against the real schema without this module reading it off disk. */
+export function compileActionSchema(schemaJson) {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  return ajv.compile(schemaJson);
+}
 
-function findActionFiles() {
+/** Discover action.yml/action.yaml files, one per subdirectory. `readdir`/`readFile` are injected so this
+ *  is testable without a real .github/actions tree; a subdirectory with neither file is silently skipped
+ *  (the per-candidate readFile throw is the existing fallback). */
+export function findActionFiles(actionsDir, { readdir, readFile }) {
   const results = [];
-  for (const entry of readdirSync(ACTIONS_DIR, { withFileTypes: true })) {
+  for (const entry of readdir(actionsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     for (const name of ["action.yml", "action.yaml"]) {
-      const candidate = join(ACTIONS_DIR, entry.name, name);
+      const candidate = join(actionsDir, entry.name, name);
       try {
-        readFileSync(candidate);
+        readFile(candidate);
         results.push(candidate);
         break; // a directory has one action file, not both
       } catch {
@@ -49,38 +56,64 @@ function findActionFiles() {
   return results;
 }
 
-const actionFiles = findActionFiles();
-if (actionFiles.length === 0) {
-  console.log(`No composite action files found under ${ACTIONS_DIR}/ -- nothing to validate.`);
-  process.exit(0);
-}
-
-let hasErrors = false;
-
-for (const path of actionFiles) {
-  const doc = parse(readFileSync(path, "utf8"));
+/** Validate one action file's YAML text: JSON-schema violations, plus the composite-only rule that every
+ *  `run:` step carries an explicit `shell:`. Returns the human-readable error lines (empty === clean). */
+export function validateActionFile(path, content, validateSchema) {
+  const errors = [];
+  const doc = parse(content);
 
   if (!validateSchema(doc)) {
-    hasErrors = true;
-    console.error(`${path}: schema violations:`);
+    errors.push(`${path}: schema violations:`);
     for (const err of validateSchema.errors ?? []) {
-      console.error(`  ${err.instancePath || "(root)"} ${err.message}`);
+      errors.push(`  ${err.instancePath || "(root)"} ${err.message}`);
     }
   }
 
   if (doc?.runs?.using === "composite") {
     for (const [index, step] of (doc.runs.steps ?? []).entries()) {
       if (step.run !== undefined && step.shell === undefined) {
-        hasErrors = true;
-        console.error(
+        errors.push(
           `${path}: runs.steps[${index}] ("${step.name ?? "unnamed"}") has a run: but no shell: -- required for composite action steps, unlike a top-level workflow job which defaults to bash`,
         );
       }
     }
   }
+
+  return errors;
 }
 
-if (hasErrors) {
-  process.exit(1);
+/** Lint every discovered composite action; returns the process exit code (0 clean / 1 violations). Pure
+ *  aside from the injected `readdir`/`readFile`/`validateSchema` and the `log`/`error` sinks. */
+export function runLint({ actionsDir, readdir, readFile, validateSchema, log = console.log, error = console.error }) {
+  const actionFiles = findActionFiles(actionsDir, { readdir, readFile });
+  if (actionFiles.length === 0) {
+    log(`No composite action files found under ${actionsDir}/ -- nothing to validate.`);
+    return 0;
+  }
+
+  let hasErrors = false;
+  for (const path of actionFiles) {
+    const fileErrors = validateActionFile(path, readFile(path, "utf8"), validateSchema);
+    if (fileErrors.length > 0) {
+      hasErrors = true;
+      for (const line of fileErrors) error(line);
+    }
+  }
+
+  if (hasErrors) return 1;
+  log(`Validated ${actionFiles.length} composite action file(s) against the GitHub action-metadata schema: all clean.`);
+  return 0;
 }
-console.log(`Validated ${actionFiles.length} composite action file(s) against the GitHub action-metadata schema: all clean.`);
+
+// Entrypoint guard (#7459): importing this module for tests exercises the pure validation logic with
+// injected inputs; only direct invocation reads the schema/actions tree off disk and exits.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const validateSchema = compileActionSchema(JSON.parse(readFileSync(SCHEMA_PATH, "utf8")));
+  const exitCode = runLint({
+    actionsDir: ACTIONS_DIR,
+    readdir: readdirSync,
+    readFile: readFileSync,
+    validateSchema,
+  });
+  process.exit(exitCode);
+}

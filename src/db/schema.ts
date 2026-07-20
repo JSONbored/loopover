@@ -879,6 +879,9 @@ export const orbRelayPending = sqliteTable(
     coalesce: index("idx_orb_relay_pending_coalesce")
       .on(table.installationId, table.coalesceKey)
       .where(sql`coalesce_key IS NOT NULL`),
+    // pruneRelayPending (src/orb/relay.ts) filters/deletes by created_at alone (fleet-wide TTL sweep, not
+    // scoped to one installation) -- neither index above leads with created_at, so that scan was unindexed.
+    createdAt: index("idx_orb_relay_pending_created_at").on(table.createdAt),
   }),
 );
 

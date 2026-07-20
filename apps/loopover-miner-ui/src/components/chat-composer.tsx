@@ -58,6 +58,10 @@ export function ChatComposer({
     <div className="flex items-end gap-2">
       <Textarea
         ref={textareaRef}
+        // #7440: the ui-kit Textarea is a bare native <textarea> with no label of its own, and a
+        // placeholder is not a reliable accessible name (it vanishes once typing starts and is exposed
+        // to AT inconsistently). Give it a stable, purpose-describing name independent of `placeholder`.
+        aria-label="Chat message"
         value={value}
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {

@@ -9,7 +9,8 @@ const MAX_HEIGHT_PX = 160;
 function setup(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
   const onSubmit = vi.fn();
   render(<ChatComposer onSubmit={onSubmit} {...props} />);
-  const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+  // #7440: query by accessible name so this pins that the composer's textarea actually has one.
+  const textarea = screen.getByRole("textbox", { name: /chat message/i }) as HTMLTextAreaElement;
   return { onSubmit, textarea, button: screen.getByRole("button", { name: /send/i }) };
 }
 

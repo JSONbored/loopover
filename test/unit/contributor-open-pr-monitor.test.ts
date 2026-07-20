@@ -346,10 +346,11 @@ describe("contributor open PR monitor", () => {
       ]),
     );
 
+    // Every live OpenPrWorkClassification value must have next-steps guidance. "stale" was removed (#7448):
+    // mapPendingClassToWorkClassification never produced it (upstream stale_likely_close → should_close_or_withdraw).
     for (const classification of [
       "reviewable",
       "blocked",
-      "stale",
       "draft",
       "maintainer_lane",
       "missing_tests",

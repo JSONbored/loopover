@@ -18,7 +18,6 @@ import { isTestPath } from "./test-evidence";
 export type OpenPrWorkClassification =
   | "approved"
   | "blocked"
-  | "stale"
   | "needs_author"
   | "failing_checks"
   | "missing_tests"
@@ -112,7 +111,7 @@ export async function buildContributorOpenPrMonitor(env: Env, login: string): Pr
   packets.sort((left, right) => priorityRank(left.classification) - priorityRank(right.classification) || left.repoFullName.localeCompare(right.repoFullName) || left.number - right.number);
 
   const cleanupFirst = packets.some((entry) =>
-    ["needs_author", "failing_checks", "duplicate_prone", "stale", "should_close_or_withdraw", "blocked"].includes(entry.classification),
+    ["needs_author", "failing_checks", "duplicate_prone", "should_close_or_withdraw", "blocked"].includes(entry.classification),
   );
   const approvedCount = packets.filter((entry) => entry.classification === "approved").length;
   const summary = summarizeMonitor(openByContributor.length, approvedCount, cleanupFirst);
@@ -183,7 +182,6 @@ function nextStepsForClassification(classification: OpenPrWorkClassification, re
       return [`Add or update tests on ${ref} if the repo expects test coverage.`, `Note test commands run in the PR description.`];
     case "duplicate_prone":
       return [`Check overlap with other open PRs in ${repoFullName}; close or consolidate duplicates.`, `Comment on ${ref} linking the canonical PR if one exists.`];
-    case "stale":
     case "should_close_or_withdraw":
       return [`Update ${ref} with a short status comment or close it if no longer needed.`, `Do not open new work until stale queue pressure is reduced.`];
     case "maintainer_lane":
@@ -281,7 +279,6 @@ function priorityRank(classification: OpenPrWorkClassification): number {
     "missing_tests",
     "blocked",
     "should_close_or_withdraw",
-    "stale",
     "draft",
     "reviewable",
     "approved",

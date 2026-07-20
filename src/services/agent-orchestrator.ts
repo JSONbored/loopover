@@ -412,7 +412,6 @@ function buildOpenPrMonitorActions(run: AgentRunRecord, pack: ContributorDecisio
     "needs_author",
     "failing_checks",
     "duplicate_prone",
-    "stale",
     "should_close_or_withdraw",
     "blocked",
   ]);

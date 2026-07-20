@@ -7,17 +7,9 @@
 // including queue time), not the sum of individual job durations.
 
 import { writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
-const WINDOW_DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.split("=")[1] ?? 7);
-const outputArg = process.argv.find((a) => a.startsWith("--output="));
-const OUTPUT_PATH = outputArg ? outputArg.split("=")[1] : null;
-
-const repo = process.env.GITHUB_REPOSITORY;
-if (!repo) throw new Error("GITHUB_REPOSITORY is required");
-const token = process.env.GITHUB_TOKEN;
-if (!token) throw new Error("GITHUB_TOKEN is required");
-
-async function fetchAllRuns(sinceIso) {
+async function fetchAllRuns(repo, token, sinceIso) {
   const runs = [];
   let page = 1;
   for (;;) {
@@ -43,17 +35,17 @@ async function fetchAllRuns(sinceIso) {
   return runs;
 }
 
-function durationSeconds(run) {
+export function durationSeconds(run) {
   return (new Date(run.updated_at).getTime() - new Date(run.created_at).getTime()) / 1000;
 }
 
-function percentile(sortedValues, p) {
+export function percentile(sortedValues, p) {
   if (sortedValues.length === 0) return null;
   const index = Math.min(sortedValues.length - 1, Math.ceil((p / 100) * sortedValues.length) - 1);
   return sortedValues[Math.max(0, index)];
 }
 
-function summarize(allRuns) {
+export function summarize(allRuns) {
   // "cancelled" excluded entirely, not just from the failure count: this workflow's own
   // cancel-in-progress concurrency setting means a cancelled run is almost always a rapid re-push
   // superseding its predecessor mid-run, not CI breaking -- counting it as a failure (or even as a
@@ -72,19 +64,37 @@ function summarize(allRuns) {
   };
 }
 
-const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-const runs = await fetchAllRuns(since);
+// Entrypoint guard (#7456): the pure percentile/summarize/durationSeconds logic above is importable for
+// tests without this driving code -- which reads required env, makes a live GitHub API call, and writes
+// output -- ever running. Only executes when the file is invoked directly as a script.
+async function main() {
+  const WINDOW_DAYS = Number(process.argv.find((a) => a.startsWith("--days="))?.split("=")[1] ?? 7);
+  const outputArg = process.argv.find((a) => a.startsWith("--output="));
+  const OUTPUT_PATH = outputArg ? outputArg.split("=")[1] : null;
 
-const report = {
-  windowDays: WINDOW_DAYS,
-  generatedAt: new Date().toISOString(),
-  push: summarize(runs.filter((r) => r.event === "push")),
-  pullRequest: summarize(runs.filter((r) => r.event === "pull_request")),
-};
+  const repo = process.env.GITHUB_REPOSITORY;
+  if (!repo) throw new Error("GITHUB_REPOSITORY is required");
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GITHUB_TOKEN is required");
 
-const json = JSON.stringify(report, null, 2);
-if (OUTPUT_PATH) {
-  writeFileSync(OUTPUT_PATH, json);
-} else {
-  process.stdout.write(`${json}\n`);
+  const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const runs = await fetchAllRuns(repo, token, since);
+
+  const report = {
+    windowDays: WINDOW_DAYS,
+    generatedAt: new Date().toISOString(),
+    push: summarize(runs.filter((r) => r.event === "push")),
+    pullRequest: summarize(runs.filter((r) => r.event === "pull_request")),
+  };
+
+  const json = JSON.stringify(report, null, 2);
+  if (OUTPUT_PATH) {
+    writeFileSync(OUTPUT_PATH, json);
+  } else {
+    process.stdout.write(`${json}\n`);
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await main();
 }

@@ -276,7 +276,6 @@ declare global {
     SENTRY_MIN_SEVERITY?: string;
     /** Per-repo override map for SENTRY_MIN_SEVERITY — see its doc comment for the shape and precedence. */
     SENTRY_REPO_MIN_SEVERITY?: string;
-    LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN?: string;
     PRODUCT_USAGE_HASH_SALT?: string;
     /** Server-to-server API bearer token — bypasses per-repo write checks (src/auth/security.ts). */
     LOOPOVER_API_TOKEN?: string;

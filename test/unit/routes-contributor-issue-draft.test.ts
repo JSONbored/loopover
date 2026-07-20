@@ -97,7 +97,7 @@ describe("contributor-issue-drafts route auth", () => {
 
   it("requires live GitHub write permission before session issue creation", async () => {
     const app = createApp();
-    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "", LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "service-token" });
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedRegisteredInstalledRepo(env, 201, "repo-owner", "owned-repo");
     await upsertPullRequestFromGitHub(env, "repo-owner/owned-repo", {
       number: 5,

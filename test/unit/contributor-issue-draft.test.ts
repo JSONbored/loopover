@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { createTestEnv } from "../helpers/d1";
+import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import * as focusManifest from "../../src/signals/focus-manifest";
 import { parseFocusManifestContent } from "../../src/signals/focus-manifest";
 import {
@@ -16,7 +18,7 @@ import {
 } from "../../src/services/contributor-issue-draft";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import * as repositories from "../../src/db/repositories";
-import type { IssueRecord } from "../../src/types";
+import type { IssueRecord, RepositoryRecord } from "../../src/types";
 import { buildRepoPolicyReadiness } from "../../src/signals/repo-policy-readiness";
 import { buildLaneAdvice, buildConfigQuality, buildContributorIntakeHealth, buildLabelAudit, buildQueueHealth, buildCollisionReport } from "../../src/signals/engine";
 
@@ -45,10 +47,33 @@ function openIssue(number: number, title: string, body?: string): IssueRecord {
   };
 }
 
+// The installation this repo is configured on, so createGitHubContributorIssue (#7425) resolves an
+// installationId and actually attempts the installation-token/Orb-broker create path instead of failing closed.
+function installedRepo(fullName: string): RepositoryRecord {
+  const [owner = "", name = ""] = fullName.split("/");
+  return { fullName, owner, name, installationId: 123, isInstalled: true, isRegistered: true, isPrivate: false };
+}
+
+function generateRsaPrivateKeyPem(): string {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  return privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+}
+
+// Stubs the installation-token mint (App-key path) alongside the real POST /issues under test, mirroring
+// github-labels.test.ts / github-issues.test.ts's dual-branch fetch stub convention.
+function stubGitHubIssueCreate(respond: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+    return respond(input, init);
+  });
+}
+
 describe("contributor issue drafts", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    clearInstallationTokenCacheForTest();
   });
 
   it("draft generation fixture includes the full issue body contract", async () => {
@@ -153,16 +178,14 @@ describe("contributor issue drafts", () => {
   });
 
   it("optional create audit test records created drafts", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          number: 501,
-          html_url: "https://github.com/JSONbored/loopover/issues/501",
-        }),
-      ),
+    stubGitHubIssueCreate(() =>
+      Response.json({
+        number: 501,
+        html_url: "https://github.com/JSONbored/loopover/issues/501",
+      }),
     );
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("JSONbored/loopover"));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     const manifest = {
       ...LOOPOVER_MANIFEST,
       wantedPaths: ["src/unique-path-119/"],
@@ -283,19 +306,17 @@ describe("contributor issue drafts", () => {
   });
 
   it("does not let untrusted closed issue markers suppress draft creation", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          number: 502,
-          html_url: "https://github.com/other-owner/other-repo/issues/502",
-        }),
-      ),
+    stubGitHubIssueCreate(() =>
+      Response.json({
+        number: 502,
+        html_url: "https://github.com/other-owner/other-repo/issues/502",
+      }),
     );
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     const repoFullName = "other-owner/other-repo";
     const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
     const marker = contributorIssueDraftMarker(fingerprint);
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo(repoFullName));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
       {
@@ -313,15 +334,19 @@ describe("contributor issue drafts", () => {
     expect(result.drafts[0]?.status).toBe("created");
   });
 
-  it("REGRESSION (#audit-rawfetch-pause): the global agent brake / freeze overrides {dryRun:false}, so no contributor issue is filed (raw POST outside the chokepoint)", async () => {
+  it("REGRESSION (#audit-rawfetch-pause): the global agent brake / freeze overrides {dryRun:false}, so no contributor issue is filed", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push(`${(init?.method ?? "GET").toUpperCase()} ${String(input)}`);
+      if (String(input).includes("/access_tokens")) return Response.json({ token: "installation-token" });
       return Response.json({ number: 503, html_url: "https://github.com/other-owner/other-repo/issues/503" });
     });
     const repoFullName = "other-owner/other-repo";
     const fingerprint = await contributorIssueDraftFingerprint(repoFullName, "policy:focus_policy_missing", "policy:focus_policy_missing");
     const marker = contributorIssueDraftMarker(fingerprint);
+    // installedRepo() so a gate bug would actually reach (and succeed at) the installation-token mint below --
+    // proving the assertion means "the brake stopped it", not "there was never an installation to act through".
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo(repoFullName));
     const seedCandidate = () => {
       vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
       vi.spyOn(repositories, "listClosedContributorDraftIssues").mockResolvedValue([
@@ -330,16 +355,16 @@ describe("contributor issue drafts", () => {
     };
 
     // DB-freeze arm: a frozen agent forces dryRun even though the caller asked to create.
-    const frozenEnv = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const frozenEnv = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     await repositories.setGlobalAgentFrozen(frozenEnv, true);
     seedCandidate();
     const frozen = await generateContributorIssueDrafts(frozenEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
     expect(frozen.dryRun).toBe(true); // global freeze overrode the caller's dryRun:false
     expect(frozen.created).toBe(0);
-    expect(calls.some((c) => c.startsWith("POST"))).toBe(false); // no issue POST reached the network
+    expect(calls.some((c) => c.startsWith("POST"))).toBe(false); // not even an installation-token mint was attempted
 
     // env-brake arm: AGENT_ACTIONS_PAUSED short-circuits before the DB freeze read.
-    const pausedEnv = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token", AGENT_ACTIONS_PAUSED: "true" });
+    const pausedEnv = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), AGENT_ACTIONS_PAUSED: "true" });
     seedCandidate();
     const paused = await generateContributorIssueDrafts(pausedEnv, repoFullName, { dryRun: false, create: true, limit: 1 });
     expect(paused.dryRun).toBe(true);
@@ -361,8 +386,9 @@ describe("contributor issue drafts", () => {
   });
 
   it("records skipped_create_failed when GitHub returns a non-ok response", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 403 })));
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    stubGitHubIssueCreate(() => new Response("nope", { status: 403 }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("JSONbored/loopover"));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
 
     const result = await generateContributorIssueDrafts(env, "JSONbored/loopover", {
@@ -375,18 +401,16 @@ describe("contributor issue drafts", () => {
   });
 
   it("creates issues and records audit metadata when explicit create succeeds", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          number: 501,
-          html_url: "https://github.com/JSONbored/loopover/issues/501",
-        }),
-      ),
+    stubGitHubIssueCreate(() =>
+      Response.json({
+        number: 501,
+        html_url: "https://github.com/JSONbored/loopover/issues/501",
+      }),
     );
     const auditSpy = vi.spyOn(repositories, "recordAuditEvent").mockResolvedValue(undefined);
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("JSONbored/loopover"));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     const result = await generateContributorIssueDrafts(env, "JSONbored/loopover", {
       dryRun: false,
       create: true,
@@ -480,8 +504,11 @@ describe("contributor issue drafts", () => {
   });
 
   it("returns null for invalid repo names when creating GitHub issues", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ number: 1, html_url: "https://example.com/1" })));
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    stubGitHubIssueCreate(() => Response.json({ number: 1, html_url: "https://example.com/1" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    // installedRepo("invalid") so installationId resolves and execution actually reaches createInstallationIssue's
+    // own parseRepoFullName -- proving THIS malformed-name throw is caught, not merely that no installation exists.
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("invalid"));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     const result = await generateContributorIssueDrafts(env, "invalid", {
       dryRun: false,
@@ -492,8 +519,9 @@ describe("contributor issue drafts", () => {
   });
 
   it("treats malformed GitHub create responses as skipped_create_failed", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ html_url: "https://github.com/x/y/issues/1" })));
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    stubGitHubIssueCreate(() => Response.json({ html_url: "https://github.com/x/y/issues/1" }));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("JSONbored/loopover"));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     const result = await generateContributorIssueDrafts(env, "JSONbored/loopover", {
       dryRun: false,
@@ -525,18 +553,16 @@ describe("contributor issue drafts", () => {
   });
 
   it("uses default limit and requestedBy when options omit them", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          number: 502,
-          html_url: "https://github.com/JSONbored/loopover/issues/502",
-        }),
-      ),
+    stubGitHubIssueCreate(() =>
+      Response.json({
+        number: 502,
+        html_url: "https://github.com/JSONbored/loopover/issues/502",
+      }),
     );
     const auditSpy = vi.spyOn(repositories, "recordAuditEvent").mockResolvedValue(undefined);
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("JSONbored/loopover"));
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
-    const env = createTestEnv({ LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN: "token" });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
     const result = await generateContributorIssueDrafts(env, "JSONbored/loopover", {
       dryRun: false,
       create: true,

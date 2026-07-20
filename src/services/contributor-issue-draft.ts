@@ -17,9 +17,9 @@ import {
 import type { IssueRecord, RepositoryRecord, RepositorySettings } from "../types";
 import { isGlobalAgentPause } from "../settings/agent-execution";
 import { isMaintainerAssociation } from "../github/commands";
-import { githubHeaders, timeoutFetch } from "../github/client";
+import { createInstallationIssue } from "../github/issues";
 import { sha256Hex } from "../utils/crypto";
-import { jsonString, nowIso, repoParts } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 import {
   buildCollisionReport,
   buildConfigQuality,
@@ -259,8 +259,10 @@ export async function generateContributorIssueDrafts(
 ): Promise<ContributorIssueDraftGenerationResult> {
   const context = await loadContributorIssueDraftContext(env, repoFullName);
   // The caller's dryRun flag, OVERLAID with the global agent kill-switch: a paused/frozen agent must not file
-  // contributor issues even when a caller passes {dryRun:false}. These POSTs use a raw token outside the
-  // installation-Octokit dry-run chokepoint (#dry-run-chokepoint), so the brake is applied here. (#audit-rawfetch-pause)
+  // contributor issues even when a caller passes {dryRun:false}. createGitHubContributorIssue now creates via
+  // the installation-Octokit path (#7425), but it's only ever invoked from the branch below once dryRun is
+  // already resolved false -- this gate (not the per-call AgentActionMode) remains the actual brake, so it must
+  // stay here rather than assuming the Octokit chokepoint alone would catch a paused/frozen agent. (#audit-rawfetch-pause)
   // isGlobalAgentFrozen is an absolute fleet-wide brake with no per-repo bypass, same tier as the env-var
   // hard stop (isGlobalAgentPause); day-to-day per-repo enable/disable is settings.agentPaused instead.
   const dryRun = options.dryRun !== false || isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env));
@@ -310,7 +312,7 @@ export async function generateContributorIssueDrafts(
       continue;
     }
     if (!dryRun && createRequested) {
-      const issue = await createGitHubContributorIssue(env, repoFullName, draft);
+      const issue = await createGitHubContributorIssue(env, repoFullName, draft, context.repo?.installationId);
       if (issue) {
         draft.status = "created";
         draft.issue = issue;
@@ -552,21 +554,36 @@ async function loadContributorIssueDraftQueueCounts(env: Env, repoFullName: stri
   };
 }
 
-async function createGitHubContributorIssue(env: Env, repoFullName: string, draft: ContributorIssueDraft): Promise<{ number: number; url: string } | null> {
-  const token = env.LOOPOVER_CONTRIBUTOR_ISSUE_TOKEN ?? env.LOOPOVER_DRIFT_ISSUE_TOKEN ?? env.GITHUB_PUBLIC_TOKEN;
-  if (!token) return null;
-  const { owner, name } = repoParts(repoFullName);
-  if (!owner || !name) return null;
-  const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues`, {
-    method: "POST",
-    headers: githubHeaders({ token }),
-    body: jsonString({
+/**
+ * Creates via the installation-token/Orb-broker path (src/github/issues.ts) instead of a flat PAT (#7425), so
+ * this works on any repo the caller's App/Orb is actually installed on with no separate token to configure. No
+ * installation on this repo (installationId absent) fails closed the same way "no PAT configured" used to.
+ * Catches broadly: unlike the raw fetch this replaces (which returned a checkable `.ok` flag), Octokit THROWS on
+ * a non-2xx response or a malformed repoFullName -- callers of this function rely on a null return, never a
+ * throw, to mark a draft `skipped_create_failed` instead of failing the whole batch.
+ */
+async function createGitHubContributorIssue(
+  env: Env,
+  repoFullName: string,
+  draft: ContributorIssueDraft,
+  installationId: number | null | undefined,
+): Promise<{ number: number; url: string } | null> {
+  if (!installationId) return null;
+  try {
+    return await createInstallationIssue(env, installationId, repoFullName, {
       title: draft.title,
       body: draft.body,
       labels: draft.labels,
-    }),
-  });
-  if (!response.ok) return null;
-  const payload = (await response.json()) as { number?: number; html_url?: string };
-  return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "contributor_issue_create_failed",
+        repoFullName,
+        message: errorMessage(error).slice(0, 200),
+      }),
+    );
+    return null;
+  }
 }

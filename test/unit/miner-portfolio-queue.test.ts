@@ -10,6 +10,7 @@ import {
   enqueue,
   getAttemptHistory,
   initPortfolioQueueStore,
+  listQueue,
   markDone,
   markFailed,
   resolvePortfolioQueueDbPath,
@@ -197,6 +198,8 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
     const store = tempStore();
     expect(() => store.enqueue({ repoFullName: "no-slash", identifier: "1" })).toThrow("invalid_repo_full_name");
     expect(() => store.enqueue({ repoFullName: "o/a", identifier: "  " })).toThrow("invalid_identifier");
+    // A non-string identifier is rejected before any trim, distinct from the empty-string case above.
+    expect(() => store.enqueue({ repoFullName: "o/a", identifier: 42 as unknown as string })).toThrow("invalid_identifier");
     expect(() => store.enqueue({ repoFullName: "o/a", identifier: "1", priority: Number.NaN })).toThrow(
       "invalid_priority",
     );
@@ -216,6 +219,31 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
     enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
     expect(markDone("o/a", "work")?.status).toBe("done");
     expect(markDone("o/a", "work")).toBeNull();
+  });
+
+  it("module-level listQueue delegates to the default portfolio-queue store", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-portfolio-default-"));
+    roots.push(root);
+    vi.stubEnv("LOOPOVER_MINER_PORTFOLIO_QUEUE_DB", join(root, "portfolio-queue.sqlite3"));
+    enqueue({ repoFullName: "o/a", identifier: "work", priority: 1 });
+    expect(listQueue().map((entry) => entry.identifier)).toEqual(["work"]);
+    expect(listQueue("o/a").map((entry) => entry.identifier)).toEqual(["work"]);
+  });
+
+  it("batchClaim rejects a non-function selector and a non-array selection, and rolls back (never partially claims) when the selector throws", () => {
+    const store = tempStore();
+    store.enqueue({ repoFullName: "o/a", identifier: "1", priority: 1 });
+    expect(() => store.batchClaim(undefined as never)).toThrow("invalid_batch_claim_selector");
+    // A selector that returns a non-array is rejected inside the transaction, which then rolls back.
+    expect(() => store.batchClaim(() => ({}) as never)).toThrow("invalid_batch_claim_selection");
+    // A selector that throws propagates after the transaction rolls back — the row stays claimable, unchanged.
+    expect(() =>
+      store.batchClaim(() => {
+        throw new Error("selector boom");
+      }),
+    ).toThrow("selector boom");
+    // No partial claim survived either failure: the item is still queued and dequeues normally.
+    expect(store.dequeueNext()?.identifier).toBe("1");
   });
 
   describe("forge-scoping (#5563)", () => {
@@ -326,6 +354,44 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
       const geEntry = store.enqueue({ repoFullName: "acme/widgets", identifier: "issue:5", apiBaseUrl: "https://ghe.example.com/api/v3" });
       expect(store.listQueue("acme/widgets")).toHaveLength(2);
       expect(geEntry.apiBaseUrl).toBe("https://ghe.example.com/api/v3");
+    });
+
+    it("migrates a pre-leased_at v1 file: adds the leased_at column before the v3 rebuild, and a pre-existing in-progress row keeps a null lease", () => {
+      const root = mkdtempSync(join(tmpdir(), "loopover-miner-portfolio-legacy-v1-"));
+      roots.push(root);
+      const dbPath = join(root, "legacy-v1.sqlite3");
+      const legacy = new DatabaseSync(dbPath);
+      // The original v1 shape predates leased_at (#4827) entirely, so opening it must run the additive ALTER
+      // migration (1->2) before the (2->3) primary-key rebuild.
+      legacy.exec(`
+        CREATE TABLE miner_portfolio_queue (
+          repo_full_name TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          priority REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'done')),
+          enqueued_at TEXT NOT NULL,
+          PRIMARY KEY (repo_full_name, identifier)
+        )
+      `);
+      legacy.exec("PRAGMA user_version = 1");
+      legacy.exec(
+        "INSERT INTO miner_portfolio_queue (repo_full_name, identifier, priority, status, enqueued_at) VALUES ('acme/widgets', 'issue:9', 2, 'in_progress', '2026-01-01T00:00:00.000Z')",
+      );
+      legacy.close();
+
+      const store = initPortfolioQueueStore(dbPath);
+      stores.push(store);
+      // The newly-added leased_at column is NULL for the pre-existing in-progress row; listInProgress surfaces it
+      // as a null lease (which the expiry sweep treats as immediately reclaimable).
+      expect(store.listInProgress()).toEqual([
+        {
+          apiBaseUrl: "https://api.github.com",
+          repoFullName: "acme/widgets",
+          identifier: "issue:9",
+          status: "in_progress",
+          leasedAt: null,
+        },
+      ]);
     });
 
     it("REGRESSION: a legacy row violating the rebuilt table's status CHECK constraint is dropped, not a migration-aborting crash", () => {

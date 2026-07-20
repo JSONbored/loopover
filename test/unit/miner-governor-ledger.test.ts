@@ -118,6 +118,17 @@ describe("loopover-miner governor ledger (#2328)", () => {
     expect(() => ledger.readGovernorEvents()).toThrow("corrupted_governor_row");
   });
 
+  it("rejects a payload blob that is valid JSON but not an object (null/array/scalar) on read", () => {
+    const ledger = tempLedger();
+    ledger.appendGovernorEvent({ eventType: "allowed", actionClass: "analyze", decision: "allow", reason: "ok" });
+    const raw = new DatabaseSync(ledger.dbPath);
+    // Valid JSON, but a scalar rather than an object -- the explicit shape guard rejects it distinctly from a
+    // JSON.parse failure, so a widened-but-malformed row can never read back as a governor entry.
+    raw.prepare("UPDATE governor_events SET payload_json = ? WHERE id = 1").run("123");
+    raw.close();
+    expect(() => ledger.readGovernorEvents()).toThrow("corrupted_governor_row");
+  });
+
   it("records throttled and kill_switch outcomes for later audit", () => {
     const ledger = tempLedger();
     const throttled = ledger.appendGovernorEvent({
@@ -137,6 +148,36 @@ describe("loopover-miner governor ledger (#2328)", () => {
     expect(ledger.readGovernorEvents().map((row) => row.eventType)).toEqual(["throttled", "kill_switch"]);
     expect(throttled.payload).toEqual({ retryAfterMs: 5000 });
     expect(killSwitch.repoFullName).toBeNull();
+  });
+
+  it("readGovernorDecisions returns the redacted decision-log projection (no payload), filterable by repo (#5159)", () => {
+    const ledger = tempLedger();
+    ledger.appendGovernorEvent({
+      eventType: "denied",
+      repoFullName: "acme/widgets",
+      actionClass: "write",
+      decision: "block",
+      reason: "kill switch active",
+      payload: { rule: "global_kill_switch", sensitive: true },
+    });
+    ledger.appendGovernorEvent({
+      eventType: "allowed",
+      repoFullName: "acme/other",
+      actionClass: "analyze",
+      decision: "allow",
+      reason: "within budget",
+    });
+
+    const all = ledger.readGovernorDecisions();
+    expect(all).toHaveLength(2);
+    // The projection omits payload by construction — the sensitive column never leaves the store.
+    for (const decision of all) expect("payload" in decision).toBe(false);
+    expect(all.map((decision) => decision.eventType)).toEqual(["denied", "allowed"]);
+
+    const scoped = ledger.readGovernorDecisions({ repoFullName: "acme/widgets" });
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]).toMatchObject({ eventType: "denied", decision: "block", reason: "kill switch active" });
+    expect("payload" in scoped[0]!).toBe(false);
   });
 
   describe("purgeByRepo (#5564)", () => {

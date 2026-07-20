@@ -216,6 +216,7 @@ function SubscribeForm({ subscribed, onStored }: { subscribed: boolean; onStored
       <Input
         type="email"
         required
+        aria-label="Digest notification email"
         placeholder="you@maintainer.dev"
         value={email}
         onChange={(event) => setEmail(event.target.value)}

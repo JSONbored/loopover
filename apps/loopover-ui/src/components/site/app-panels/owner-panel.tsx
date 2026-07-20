@@ -83,10 +83,14 @@ export function OwnerPanel() {
             </p>
           </div>
           <div className="w-full sm:w-64">
-            <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="owner-repo"
+              className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground"
+            >
               Repository
             </label>
             <Input
+              id="owner-repo"
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               className="mt-1 font-mono text-token-xs"

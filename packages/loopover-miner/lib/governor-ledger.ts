@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { normalizeGovernorLedgerEvent } from "@loopover/engine";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import {
   GOVERNOR_LEDGER_PURGE_SPEC,
@@ -82,6 +83,9 @@ function normalizeOptionalRepoFullName(repoFullName: string | null | undefined):
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  // #7525: extend #5831's path-safety guard here too — reject a `.`/`..`/control-char segment before it can
+  // be persisted into SQLite (or echoed back through the CLI), matching claim-ledger.ts's sibling parser.
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

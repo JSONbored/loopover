@@ -251,6 +251,18 @@ describe("governor-state reputation history (#5134)", () => {
     expect(() => state.saveReputationHistory("not-a-repo", { decided: 1, unfavorable: 0 })).toThrow(/invalid_repo_full_name/);
   });
 
+  it("REGRESSION (#7525): rejects a path-traversal or control-char repo segment", () => {
+    const state = tempState();
+    // Bad owner (../repo) exercises the left arm of the new isValidRepoSegment guard; bad repo (owner/..) the
+    // right; a tab-bearing segment the REPO_SEGMENT_PATTERN. None may reach the SQLite store (#5831 parity).
+    for (const bad of ["../widgets", "acme/..", "acme/wid\tgets", "ac\nme/widgets"]) {
+      expect(() => state.loadReputationHistory(bad)).toThrow(/invalid_repo_full_name/);
+      expect(() => state.saveReputationHistory(bad, { decided: 1, unfavorable: 0 })).toThrow(/invalid_repo_full_name/);
+    }
+    // Control: a clean owner/repo still passes the new guard.
+    expect(() => state.saveReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 })).not.toThrow();
+  });
+
   describe("forge-scoping (#5563)", () => {
     it("two forge hosts can each hold their own reputation history for the same owner/repo without colliding", () => {
       const state = tempState();

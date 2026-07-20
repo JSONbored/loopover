@@ -55,6 +55,13 @@ describe("loopover-miner governor ledger CLI (#2328)", () => {
     expect(parseGovernorListArgs(["--repo", "bad"])).toEqual({
       error: "Repository must be in owner/repo form.",
     });
+    // REGRESSION (#7525): a path-traversal / control-char segment is rejected with the SAME error shape as the
+    // malformed-slash branch above — ../repo hits the guard's left arm, owner/.. the right, a tab the pattern.
+    for (const bad of ["../loopover", "acme/..", "ac\tme/widgets"]) {
+      expect(parseGovernorListArgs(["--repo", bad])).toEqual({
+        error: "Repository must be in owner/repo form.",
+      });
+    }
   });
 
   it("filterGovernorEvents and renderGovernorTable format rows", () => {

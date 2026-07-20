@@ -88,6 +88,11 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     expect(() => allocator.acquire(null as never, "acme/widgets")).toThrow("invalid_attempt_id");
     expect(() => allocator.acquire("attempt-c", "bad")).toThrow("invalid_repo_full_name");
     expect(() => allocator.acquire("attempt-c", null as never)).toThrow("invalid_repo_full_name");
+    // REGRESSION (#7525): path-traversal / control-char segments are rejected before they can shape a worktree
+    // path — ../repo hits the guard's left arm, owner/.. the right, a tab-bearing segment the pattern.
+    for (const bad of ["../widgets", "acme/..", "acme/wid\tgets"]) {
+      expect(() => allocator.acquire("attempt-c", bad)).toThrow("invalid_repo_full_name");
+    }
     expect(allocator.release("missing")).toBeNull();
   });
 

@@ -4,6 +4,7 @@ import { initPortfolioQueueManager } from "./portfolio-queue-manager.js";
 import type { PortfolioQueueManager } from "./portfolio-queue-manager.js";
 import { runPortfolioDashboard } from "./portfolio-dashboard.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 const QUEUE_LIST_USAGE = "Usage: loopover-miner queue list [--repo <owner/repo>] [--json]";
 const QUEUE_NEXT_USAGE =
@@ -55,6 +56,11 @@ function parseRepoArg(value: string | undefined, usage: string): { error: string
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) {
+    return { error: "Repository must be in owner/repo form." };
+  }
+  // #7525: extend #5831's path-safety guard to this CLI filter too — a `.`/`..`/control-char segment must not
+  // reach the queue query. Reuse the same error shape as the malformed-input branch above (don't invent one).
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

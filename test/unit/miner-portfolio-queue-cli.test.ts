@@ -74,6 +74,13 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     expect(parseQueueListArgs(["--repo", "notarepo"])).toEqual({
       error: "Repository must be in owner/repo form.",
     });
+    // REGRESSION (#7525): a path-traversal / control-char segment is rejected with the SAME error shape —
+    // ../repo hits the guard's left arm, owner/.. the right, a tab-bearing segment the REPO_SEGMENT_PATTERN.
+    for (const bad of ["../loopover", "acme/..", "acme/wid\tgets"]) {
+      expect(parseQueueListArgs(["--repo", bad])).toEqual({
+        error: "Repository must be in owner/repo form.",
+      });
+    }
   });
 
   it("renderQueueTable formats numeric priority and empty output", () => {

@@ -5,6 +5,7 @@ import { runGovernorMetrics } from "./governor-metrics-cli.js";
 /** Must match `GOVERNOR_LEDGER_EVENT_TYPES` in `@loopover/engine`. */
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import type { GovernorLedger, GovernorLedgerEntry } from "./governor-ledger.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 export type GovernorLedgerEventType = "allowed" | "denied" | "throttled" | "kill_switch";
 
@@ -47,6 +48,11 @@ function parseRepoArg(value: string): ParsedRepoArg {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) {
+    return { error: "Repository must be in owner/repo form." };
+  }
+  // #7525: extend #5831's path-safety guard to this CLI filter too — a `.`/`..`/control-char segment must not
+  // reach the ledger query. Reuse the same error shape as the malformed-input branch above (don't invent one).
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

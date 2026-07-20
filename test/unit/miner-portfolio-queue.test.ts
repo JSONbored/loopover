@@ -210,6 +210,12 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
     expect(() => store.markDone("o/a", "  ")).toThrow("invalid_identifier");
     expect(() => store.markFailed("no-slash", "1")).toThrow("invalid_repo_full_name");
     expect(() => store.markFailed("o/a", "  ")).toThrow("invalid_identifier");
+    // REGRESSION (#7525): path-traversal / control-char segments are rejected before they can reach SQLite —
+    // ../repo hits the guard's left arm, owner/.. the right, a tab-bearing segment the REPO_SEGMENT_PATTERN.
+    for (const bad of ["../a", "o/..", "o/a\tb"]) {
+      expect(() => store.enqueue({ repoFullName: bad, identifier: "1" })).toThrow("invalid_repo_full_name");
+      expect(() => store.listQueue(bad)).toThrow("invalid_repo_full_name");
+    }
   });
 
   it("module-level markDone delegates to the default portfolio-queue store", () => {

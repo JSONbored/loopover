@@ -47,10 +47,21 @@ export const DEFAULT_SYNTHESIS_CONFIG: Readonly<Required<SynthesisConfig>> = Obj
   maxProposals: 20,
 });
 
+// #7525: local mirror of packages/loopover-miner/lib/repo-clone.ts's REPO_SEGMENT_PATTERN / isValidRepoSegment
+// path-safety check (#5831). Duplicated here rather than imported to avoid a cross-package dependency from
+// @loopover/engine back into loopover-miner (the engine is the lower layer). Keep the two definitions in sync:
+// GitHub owner/repo segments are `[A-Za-z0-9._-]+` and never a bare "." / ".." path-traversal segment.
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function isValidRepoSegment(segment: string): boolean {
+  return REPO_SEGMENT_PATTERN.test(segment) && segment !== "." && segment !== "..";
+}
+
 export function normalizeRepoFullName(repoFullName: unknown): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

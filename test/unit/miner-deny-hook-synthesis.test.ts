@@ -17,6 +17,9 @@ import {
   setProposalStatuses,
   synthesizeDenyRuleProposals,
 } from "../../packages/loopover-miner/lib/deny-hook-synthesis.js";
+// #7525: normalizeRepoFullName is defined in the engine and re-exported unchanged by the miner-lib module
+// above; import it from the engine source directly so the guard's src branches are the ones exercised.
+import { normalizeRepoFullName } from "../../packages/loopover-engine/src/miner/deny-hook-synthesis";
 
 const tempDirs: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -33,6 +36,22 @@ function tempStore() {
   stores.push(store);
   return store;
 }
+
+describe("normalizeRepoFullName() path-safety (#7525)", () => {
+  it("normalizes a clean owner/repo and rejects malformed, path-traversal, and control-char segments", () => {
+    // The both-valid case exercises the guard's passing (false/false) path.
+    expect(normalizeRepoFullName("  acme/widgets  ")).toBe("acme/widgets");
+    // The pre-existing "exactly one slash, both non-empty" negative cases stay covered.
+    for (const bad of ["no-slash", "a/b/c", 42 as unknown]) {
+      expect(() => normalizeRepoFullName(bad)).toThrow(/invalid_repo_full_name/);
+    }
+    // #7525: ../repo hits the guard's left arm, owner/.. the right, a tab/newline segment the REPO_SEGMENT_PATTERN.
+    // A bare "." segment (./repo, acme/.) exercises the isValidRepoSegment `!== "."` arm distinctly from "..".
+    for (const bad of ["../widgets", "acme/..", "./widgets", "acme/.", "acme/wid\tgets", "ac\nme/widgets"]) {
+      expect(() => normalizeRepoFullName(bad)).toThrow(/invalid_repo_full_name/);
+    }
+  });
+});
 
 describe("resolveDenyHookSynthesisDbPath() (#4522)", () => {
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {

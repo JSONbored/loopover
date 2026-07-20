@@ -78,6 +78,16 @@ describe("loopover-miner governor ledger (#2328)", () => {
     expect(ledger.readGovernorEvents({ repoFullName: "acme/other" })).toEqual([]);
   });
 
+  it("REGRESSION (#7525): rejects a path-traversal or control-char repo filter/purge segment", () => {
+    const ledger = tempLedger();
+    // ../repo hits the guard's left arm, owner/.. the right, a tab-bearing segment the REPO_SEGMENT_PATTERN.
+    for (const bad of ["../loopover", "JSONbored/..", "JSON\tbored/loopover"]) {
+      expect(() => ledger.readGovernorEvents({ repoFullName: bad })).toThrow(/invalid_repo_full_name/);
+      expect(() => ledger.readGovernorDecisions({ repoFullName: bad })).toThrow(/invalid_repo_full_name/);
+      expect(() => ledger.purgeByRepo(bad)).toThrow(/invalid_repo_full_name/);
+    }
+  });
+
   it("rejects malformed events before insert and preserves insertion order", () => {
     const ledger = tempLedger();
     ledger.appendGovernorEvent({

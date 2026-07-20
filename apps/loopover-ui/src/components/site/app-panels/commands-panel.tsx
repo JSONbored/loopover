@@ -267,8 +267,18 @@ function BotReply({ boundary, body }: { boundary: CommandSample["boundary"]; bod
   );
 }
 
-function renderInline(line: string) {
-  const parts = line.split(/(\*\*[^*]+\*\*|`[^`]+`|_[^_]+_)/g).filter(Boolean);
+// Exported for direct unit testing (commands-panel.test.tsx). It returns JSX, so unlike the pure-logic
+// *-model.ts helpers in this directory it cannot live in a plain .ts module; the Fast-Refresh rule is a
+// dev-only concern that does not apply to this small stateless renderer.
+// eslint-disable-next-line react-refresh/only-export-components
+export function renderInline(line: string) {
+  // #7531: anchor the `_..._` italics alternative at word boundaries so it no longer matches inside
+  // underscore-heavy identifiers (env vars / snake_case like LOOPOVER_ENABLE_PAGERDUTY, repo_full_name).
+  // `**bold**` and `` `code` `` are untouched. Mirrors CommonMark's intraword-underscore rule: the flanking
+  // `_` opens/closes emphasis only when it is not bordered by an alphanumeric on the outside.
+  const parts = line
+    .split(/(\*\*[^*]+\*\*|`[^`]+`|(?<![A-Za-z0-9])_[^_]+_(?![A-Za-z0-9]))/g)
+    .filter(Boolean);
   return parts.map((part, index) => {
     if (part.startsWith("**") && part.endsWith("**"))
       return <strong key={index}>{part.slice(2, -2)}</strong>;

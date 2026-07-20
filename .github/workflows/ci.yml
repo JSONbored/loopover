@@ -395,8 +395,13 @@ jobs:
           key: turbo-code-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
           restore-keys: |
             turbo-code-${{ hashFiles('package-lock.json') }}-
+      # Includes mcp/miner to match the "Typecheck" gate below (and the Turborepo-cache restore above):
+      # once a package's lib/ file is real TypeScript that imports @loopover/engine, `npm run typecheck`
+      # pulls it in (via a test's import of the compiled .js -> its sibling .ts) and needs engine's built
+      # dist/*.d.ts. The later "Build MCP"/"Build miner CLI" steps do build engine transitively via turbo,
+      # but they run AFTER Typecheck, so engine must be built here for an mcp/miner-only change too.
       - name: Build engine package
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.miner == 'true' }}
         run: npx turbo run build --filter=@loopover/engine
       # .tsbuildinfo mutates every run (tsc's own incremental state), unlike node_modules above which is
       # immutable per lockfile -- so this needs the run_id-suffixed-key + restore-keys-prefix pattern (always

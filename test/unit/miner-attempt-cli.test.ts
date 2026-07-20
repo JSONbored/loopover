@@ -17,6 +17,19 @@ import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/l
 import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/loopover-miner/lib/attempt-cli.js";
 import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
+import * as liveIssueSnapshotModule from "../../packages/loopover-miner/lib/live-issue-snapshot.js";
+import * as githubTokenResolutionModule from "../../packages/loopover-miner/lib/github-token-resolution.js";
+import * as worktreeAllocatorModule from "../../packages/loopover-miner/lib/worktree-allocator.js";
+import * as claimLedgerModule from "../../packages/loopover-miner/lib/claim-ledger.js";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger.js";
+import * as attemptLogModule from "../../packages/loopover-miner/lib/attempt-log.js";
+import * as governorLedgerModule from "../../packages/loopover-miner/lib/governor-ledger.js";
+import * as rejectionSignalModule from "../../packages/loopover-miner/lib/rejection-signal.js";
+import * as attemptWorktreeModule from "../../packages/loopover-miner/lib/attempt-worktree.js";
+import * as selfReviewContextModule from "../../packages/loopover-miner/lib/self-review-context.js";
+import * as codingTaskSpecModule from "../../packages/loopover-miner/lib/coding-task-spec.js";
+import * as amsPolicyModule from "../../packages/loopover-miner/lib/ams-policy.js";
+import * as attemptRunnerModule from "../../packages/loopover-miner/lib/attempt-runner.js";
 import type { PrepareAttemptWorktreeResult } from "../../packages/loopover-miner/lib/attempt-worktree.js";
 import {
   REJECTION_REASON_AI_USAGE_POLICY_BAN,
@@ -212,6 +225,12 @@ describe("parseAttemptArgs (#5132)", () => {
       error: "Unknown option: --verbose",
     });
   });
+
+  it("REGRESSION: rejects a three-segment repo target (owner/repo/extra)", () => {
+    expect(parseAttemptArgs(["acme/widgets/extra", "7", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: acme/widgets/extra",
+    });
+  });
 });
 
 describe("buildAttemptDeps (#5132)", () => {
@@ -262,6 +281,69 @@ describe("buildAttemptDeps (#5132)", () => {
     expect(() => buildAttemptDeps({}, { claimLedger, eventLedger, attemptLog, governorLedger, nowMs: 1 })).toThrow(
       /unconfigured_coding_agent_driver/,
     );
+  });
+
+  it("wires runSlopAssessment through to the real assessor for a minimal valid input", () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    closeables.push(allocator, claimLedger, eventLedger, attemptLog, governorLedger);
+    const deps = buildAttemptDeps(
+      { MINER_CODING_AGENT_PROVIDER: "noop" },
+      { claimLedger, eventLedger, attemptLog, governorLedger, nowMs: 1 },
+    );
+
+    expect(() =>
+      deps.runSlopAssessment({
+        description: "Add retry helper",
+        commitMessages: ["feat: add retry helper"],
+        changedFiles: [{ path: "src/retry.ts", additions: 10, deletions: 0 }],
+        tests: ["test/retry.test.ts"],
+        hasLinkedIssue: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("wires executeLocalWrite through to a safe noop command", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    closeables.push(allocator, claimLedger, eventLedger, attemptLog, governorLedger);
+    const deps = buildAttemptDeps(
+      { MINER_CODING_AGENT_PROVIDER: "noop" },
+      { claimLedger, eventLedger, attemptLog, governorLedger, nowMs: 1 },
+    );
+
+    await expect(
+      deps.executeLocalWrite({
+        action: "open_pr",
+        description: "noop",
+        inputs: {},
+        command: "true",
+        boundary: "boundary",
+      }),
+    ).resolves.toMatchObject({ action: "open_pr", code: 0, timedOut: false });
+  });
+
+  it("REGRESSION: fetchLiveIssueSnapshot omits githubToken when unset and includes it when GITHUB_TOKEN is set", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    closeables.push(allocator, claimLedger, eventLedger, attemptLog, governorLedger);
+    const fetchSpy = vi
+      .spyOn(liveIssueSnapshotModule, "fetchLiveIssueSnapshot")
+      .mockResolvedValue({ state: "open" as const, referencingPrs: [] });
+    const resolveSpy = vi.spyOn(githubTokenResolutionModule, "resolveGitHubToken");
+
+    const depsNoToken = buildAttemptDeps(
+      { MINER_CODING_AGENT_PROVIDER: "noop" },
+      { claimLedger, eventLedger, attemptLog, governorLedger, nowMs: 1 },
+    );
+    resolveSpy.mockResolvedValueOnce(null);
+    await depsNoToken.fetchLiveIssueSnapshot("acme/widgets", 7);
+    expect(fetchSpy).toHaveBeenCalledWith("acme/widgets", 7, {});
+
+    const depsWithToken = buildAttemptDeps(
+      { MINER_CODING_AGENT_PROVIDER: "noop", GITHUB_TOKEN: "ghp_test_token" },
+      { claimLedger, eventLedger, attemptLog, governorLedger, nowMs: 1 },
+    );
+    resolveSpy.mockResolvedValueOnce("ghp_test_token");
+    await depsWithToken.fetchLiveIssueSnapshot("acme/widgets", 7);
+    expect(fetchSpy).toHaveBeenCalledWith("acme/widgets", 7, { githubToken: "ghp_test_token" });
   });
 });
 
@@ -1048,6 +1130,110 @@ describe("runAttempt (#5132)", () => {
     );
     // Nothing ran against this worktree -- cleaned up like every other pre-execution block.
     expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), true);
+  });
+
+  it("REGRESSION: infeasible WITHOUT --json prints the feasibility verdict on stderr and exits 4", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        buildCodingTaskSpec: () => ({
+          ready: false,
+          verdict: "raise",
+          feasibility: {
+            verdict: "raise",
+            avoidReasons: [],
+            raiseReasons: ["target_not_found"],
+            summary: "issue not found",
+          },
+        }),
+        runMinerAttempt: vi.fn(),
+      }),
+    });
+
+    expect(exitCode).toBe(4);
+    expect(String(error.mock.calls[0]?.[0])).toContain('feasibility verdict "raise"');
+    expect(String(error.mock.calls[0]?.[0])).toContain("target_not_found");
+  });
+
+  it("REGRESSION: an unexpected runMinerAttempt outcome falls through to exit 2", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () =>
+          ({ outcome: "totally_unexpected", loopResult: fakeLoopResult() }) as never,
+      }),
+    });
+
+    expect(exitCode).toBe(2);
+  });
+
+  it("REGRESSION: exercises the default module fallbacks when injectables are omitted", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    vi.spyOn(worktreeAllocatorModule, "openWorktreeAllocator").mockReturnValue(allocator);
+    vi.spyOn(claimLedgerModule, "openClaimLedger").mockReturnValue(claimLedger);
+    vi.spyOn(eventLedgerModule, "initEventLedger").mockReturnValue(eventLedger);
+    vi.spyOn(attemptLogModule, "initAttemptLog").mockReturnValue(attemptLog);
+    vi.spyOn(governorLedgerModule, "initGovernorLedger").mockReturnValue(governorLedger);
+    vi.spyOn(rejectionSignalModule, "resolveRejectionSignaled").mockResolvedValue(false);
+    vi.spyOn(attemptWorktreeModule, "prepareAttemptWorktree").mockResolvedValue(fakeWorktreeResult());
+    vi.spyOn(attemptWorktreeModule, "cleanupAttemptWorktree").mockResolvedValue({ ok: true, removed: true });
+    vi.spyOn(selfReviewContextModule, "fetchSelfReviewContext").mockResolvedValue(fakeReviewContext() as never);
+    vi.spyOn(codingTaskSpecModule, "buildCodingTaskSpec").mockReturnValue(fakeCodingTaskSpec() as never);
+    vi.spyOn(amsPolicyModule, "resolveAmsPolicy").mockResolvedValue({
+      spec: DEFAULT_AMS_POLICY_SPEC,
+      source: "default",
+      warnings: [],
+    });
+    vi.spyOn(attemptRunnerModule, "runMinerAttempt").mockResolvedValue({
+      outcome: "abandon",
+      loopResult: fakeLoopResult(),
+    } as never);
+
+    // Deliberately omit every injectable that has a module-level default, so the `?? default` arms run.
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      ...readyPipelineOptions({
+        resolveRejectionSignaled: undefined,
+        prepareAttemptWorktree: undefined,
+        cleanupAttemptWorktree: undefined,
+        fetchSelfReviewContext: undefined,
+        buildCodingTaskSpec: undefined,
+        resolveAmsPolicy: undefined,
+        runMinerAttempt: undefined,
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(worktreeAllocatorModule.openWorktreeAllocator).toHaveBeenCalled();
+    expect(claimLedgerModule.openClaimLedger).toHaveBeenCalled();
+    expect(eventLedgerModule.initEventLedger).toHaveBeenCalled();
+    expect(attemptLogModule.initAttemptLog).toHaveBeenCalled();
+    expect(governorLedgerModule.initGovernorLedger).toHaveBeenCalled();
+    expect(rejectionSignalModule.resolveRejectionSignaled).toHaveBeenCalled();
+    expect(attemptWorktreeModule.prepareAttemptWorktree).toHaveBeenCalled();
+    expect(attemptWorktreeModule.cleanupAttemptWorktree).toHaveBeenCalled();
+    expect(selfReviewContextModule.fetchSelfReviewContext).toHaveBeenCalled();
+    expect(codingTaskSpecModule.buildCodingTaskSpec).toHaveBeenCalled();
+    expect(amsPolicyModule.resolveAmsPolicy).toHaveBeenCalled();
+    expect(attemptRunnerModule.runMinerAttempt).toHaveBeenCalled();
   });
 
   it("reports and cleans up when the coding-agent driver is unconfigured, still releasing the worktree slot", async () => {

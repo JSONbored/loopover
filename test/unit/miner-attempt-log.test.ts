@@ -210,6 +210,39 @@ describe("loopover-miner attempt log (#4294)", () => {
     expect(() => log.readAttemptLogEvents()).toThrow("corrupted_attempt_log_row");
   });
 
+  it("rejects a JSON array / null / primitive payload blob on read (object-shaped only)", () => {
+    const log = tempAttemptLog();
+    log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent });
+    for (const bad of ["[]", "null", "42", '"hi"']) {
+      const raw = new DatabaseSync(log.dbPath);
+      raw.prepare("UPDATE attempt_log_events SET payload_json = ? WHERE id = 1").run(bad);
+      raw.close();
+      expect(() => log.readAttemptLogEvents()).toThrow("corrupted_attempt_log_row");
+    }
+  });
+
+  it("rolls back the append transaction when the inserted row cannot be re-hydrated", () => {
+    const log = tempAttemptLog();
+    // Same connection's AFTER INSERT trigger rewrites payload to a JSON array so rowToEntry throws inside the txn.
+    const raw = new DatabaseSync(log.dbPath);
+    raw.exec(`
+      CREATE TRIGGER corrupt_payload_after_insert AFTER INSERT ON attempt_log_events
+      BEGIN
+        UPDATE attempt_log_events SET payload_json = '[]' WHERE id = NEW.id;
+      END;
+    `);
+    raw.close();
+    expect(() =>
+      log.appendAttemptLogEvent({ eventType: "attempt_started", ...baseEvent }),
+    ).toThrow("corrupted_attempt_log_row");
+    expect(log.readAttemptLogEvents()).toHaveLength(0);
+  });
+
+  it("rejects undefined attemptId on export (required filter)", () => {
+    const log = tempAttemptLog();
+    expect(() => log.exportAttemptLogJsonl(undefined as unknown as string)).toThrow(/invalid_attempt_id/);
+  });
+
   it("uses the default singleton helpers and closes cleanly", () => {
     const root = mkdtempSync(join(tmpdir(), "loopover-miner-attempt-log-default-"));
     roots.push(root);

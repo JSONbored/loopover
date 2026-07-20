@@ -126,6 +126,12 @@ describe("parseDiscoverArgs (#4247)", () => {
     });
   });
 
+  it("REGRESSION: rejects a three-segment repo target", () => {
+    expect(parseDiscoverArgs(["acme/widgets/extra"])).toEqual({
+      error: "Repository must be in owner/repo form: acme/widgets/extra",
+    });
+  });
+
   it("rejects mixing repo targets with --search", () => {
     expect(parseDiscoverArgs(["acme/widgets", "--search", "x"])).toEqual({
       error: "Pass either repository targets or --search, not both.",
@@ -524,6 +530,144 @@ describe("runDiscover (#4247)", () => {
     );
   });
 
+  it("REGRESSION: dry-run omits nowMs when unset and forwards goalSpecsByRepo when set", async () => {
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    const goalSpecsByRepo = { "acme/widgets": { minerEnabled: true } };
+    const rankCandidateIssuesWithSummary = vi.fn((_issues: unknown[], _opts?: Record<string, unknown>) => ({
+      issues: [
+        {
+          ...fanOutIssue({ issueNumber: 1 }),
+          potential: 0.5,
+          feasibility: 0.5,
+          laneFit: 0.5,
+          freshness: 0.5,
+          dupRisk: 0,
+          rankScore: 0.5,
+        },
+      ],
+      skippedInvalid: 0,
+      usedDefaultGoalSpec: false,
+      defaultGoalSpec: {} as never,
+    }));
+    const resolveContributionProfiles = vi.fn(
+      async (_repos: string[], _ctx?: Record<string, unknown>) => new Map(),
+    );
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+      // deliberately omit nowMs — exercise the omit arm of the optional spreads
+      fetchCandidateIssuesWithSummary,
+      rankCandidateIssuesWithSummary,
+      resolveContributionProfiles,
+      goalSpecsByRepo: goalSpecsByRepo as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const resolveCtx = resolveContributionProfiles.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(resolveCtx).not.toHaveProperty("nowMs");
+    expect(resolveCtx).not.toHaveProperty("apiBaseUrl");
+
+    expect(rankCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ goalSpecsByRepo }),
+    );
+    const rankOpts = rankCandidateIssuesWithSummary.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(rankOpts).not.toHaveProperty("nowMs");
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).outcome).toBe("dry_run");
+
+    // Include arms: nowMs + apiBaseUrl present; goalSpecsByRepo omitted.
+    resolveContributionProfiles.mockClear();
+    rankCandidateIssuesWithSummary.mockClear();
+    await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+      nowMs: NOW,
+      apiBaseUrl: "https://ghe.example.com/api/v3",
+      fetchCandidateIssuesWithSummary,
+      rankCandidateIssuesWithSummary,
+      resolveContributionProfiles,
+    });
+    expect(resolveContributionProfiles.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        nowMs: NOW,
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+      }),
+    );
+    const rankOptsWithNow = rankCandidateIssuesWithSummary.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(rankOptsWithNow).toMatchObject({ nowMs: NOW });
+    expect(rankOptsWithNow).not.toHaveProperty("goalSpecsByRepo");
+
+    // Dry-run include arm for goalSpecContentByRepo.
+    rankCandidateIssuesWithSummary.mockClear();
+    await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+      nowMs: NOW,
+      fetchCandidateIssuesWithSummary,
+      rankCandidateIssuesWithSummary,
+      resolveContributionProfiles,
+      goalSpecContentByRepo: { "acme/widgets": "minerEnabled: true\n" },
+    });
+    expect(rankCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ goalSpecContentByRepo: { "acme/widgets": "minerEnabled: true\n" } }),
+    );
+  });
+
+  it("REGRESSION: non-dry-run omits nowMs when unset and includes goalSpecsByRepo when set", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1 })],
+      warnings: [],
+      rateLimitRemaining: null,
+      rateLimitResetAt: null,
+    }));
+    const goalSpecsByRepo = { "acme/widgets": { minerEnabled: true } };
+    const rankCandidateIssuesWithSummary = vi.fn((_issues: unknown[], _opts?: Record<string, unknown>) => ({
+      issues: [
+        {
+          ...fanOutIssue({ issueNumber: 1 }),
+          potential: 0.5,
+          feasibility: 0.5,
+          laneFit: 0.5,
+          freshness: 0.5,
+          dupRisk: 0,
+          rankScore: 0.5,
+        },
+      ],
+      skippedInvalid: 0,
+      usedDefaultGoalSpec: false,
+      defaultGoalSpec: {} as never,
+    }));
+    const resolveContributionProfiles = vi.fn(
+      async (_repos: string[], _ctx?: Record<string, unknown>) => new Map(),
+    );
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      // omit nowMs
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      rankCandidateIssuesWithSummary,
+      resolveContributionProfiles,
+      goalSpecsByRepo: goalSpecsByRepo as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const resolveCtx = resolveContributionProfiles.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(resolveCtx).not.toHaveProperty("nowMs");
+    expect(rankCandidateIssuesWithSummary).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ goalSpecsByRepo }),
+    );
+    const rankOpts = rankCandidateIssuesWithSummary.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+    expect(rankOpts).not.toHaveProperty("nowMs");
+  });
+
   it("#4847: --dry-run reports fan-out failures and exits non-zero without opening any local store", async () => {
     const initPortfolioQueue = vi.fn();
     const fetchCandidateIssuesWithSummary = vi.fn(async () => {
@@ -798,8 +942,6 @@ describe("runDiscover (#4247)", () => {
           initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
           initRankedCandidatesStore: () => tempRankedCandidatesStore(),
           fetchCandidateIssuesWithSummary,
-          // A token is set, so the default profile resolver would otherwise reach the network — no-op it (#6798).
-          resolveContributionProfiles: async () => new Map(),
         },
       );
 
@@ -1531,6 +1673,36 @@ describe("runDiscover onResult hook (#6522)", () => {
       expect(cache.close).toHaveBeenCalled();
       expect(profiles.get("acme/widgets")).toMatchObject({
         repoFullName: "acme/widgets",
+      });
+    });
+
+    it("REGRESSION: extract omits apiBaseUrl when unset and includes it when set", async () => {
+      const { resolveContributionProfilesForDiscover } =
+        await import("../../packages/loopover-miner/lib/discover-cli.js");
+      const cache = { get: vi.fn(() => null), put: vi.fn(), close: vi.fn() };
+      const extract = vi.fn(async (repoFullName: string, _opts?: Record<string, unknown>) => ({
+        ...trustworthyProfile,
+        repoFullName,
+      }));
+
+      await resolveContributionProfilesForDiscover(["acme/widgets"], {
+        githubToken: "tok",
+        initCache: (() => cache) as never,
+        extract: extract as never,
+      });
+      expect(extract.mock.calls[0]?.[1]).toEqual({ githubToken: "tok" });
+      expect(extract.mock.calls[0]?.[1]).not.toHaveProperty("apiBaseUrl");
+
+      extract.mockClear();
+      await resolveContributionProfilesForDiscover(["acme/widgets"], {
+        githubToken: "tok",
+        apiBaseUrl: "https://ghe.example.com/api/v3",
+        initCache: (() => cache) as never,
+        extract: extract as never,
+      });
+      expect(extract.mock.calls[0]?.[1]).toEqual({
+        githubToken: "tok",
+        apiBaseUrl: "https://ghe.example.com/api/v3",
       });
     });
 

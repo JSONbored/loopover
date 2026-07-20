@@ -528,6 +528,25 @@ describe("fetchSelfReviewContext (#5145)", () => {
     expect(result.pullRequests.find((pr) => pr.number === 52)?.mergeableState).toBeNull();
   });
 
+  it("uses global fetch when fetchImpl is omitted", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    }) as unknown as typeof fetch;
+    try {
+      const result = await fetchSelfReviewContext("acme/widgets", { loopoverAuth: null });
+      expect(result.repo?.fullName).toBe("acme/widgets");
+      expect(globalThis.fetch).toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("defaults GITHUB_TOKEN from process.env when not supplied", async () => {
     const original = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "env-token";
@@ -627,6 +646,17 @@ describe("live gate thresholds probe (#6487)", () => {
     expect(parseLiveGateThresholdFields({ confidence_floor: null, scope_cap_files: null, scope_cap_lines: null })).toBeNull();
     expect(parseLiveGateThresholdFields({ confidence_floor: 1.5 })).toBeNull();
     expect(parseLiveGateThresholdFields(null)).toBeNull();
+  });
+
+  it("applyLiveGateThresholdsToManifest skips a non-numeric confidence_floor", () => {
+    const base = parseFocusManifestContent("gate:\n  readiness:\n    mode: block\n    minScore: 70\n", "repo_file");
+    const overlaid = applyLiveGateThresholdsToManifest(base, {
+      confidence_floor: null,
+      scope_cap_files: 3,
+      scope_cap_lines: null,
+    });
+    expect(overlaid.gate.readinessMinScore).toBe(70);
+    expect(overlaid.gate.sizeMaxFiles).toBe(3);
   });
 
   it("applyLiveGateThresholdsToManifest raises readinessMinScore and prefers live scope caps", () => {
@@ -742,5 +772,222 @@ describe("live gate thresholds probe (#6487)", () => {
 
     expect(timeoutSpy.mock.calls.some(([ms]) => ms === 350)).toBe(true);
     timeoutSpy.mockRestore();
+  });
+
+  it("covers option defaults, sparse GitHub payloads, streaming manifest success, and label/date fallbacks", async () => {
+    expect(parseLiveGateThresholdFields([])).toBeNull();
+    expect(parseLiveGateThresholdFields({ scope_cap_files: 0, scope_cap_lines: -1 })).toBeNull();
+    expect(applyLiveGateThresholdsToManifest(null as never, { confidence_floor: 0.9, scope_cap_files: null, scope_cap_lines: null })).toBeNull();
+    expect(
+      applyLiveGateThresholdsToManifest({ gate: { readinessMinScore: "x" } } as never, {
+        confidence_floor: 0.9,
+        scope_cap_files: null,
+        scope_cap_lines: null,
+      }),
+    ).toEqual({ gate: { readinessMinScore: "x" } });
+    const baseForFloor = parseFocusManifestContent("gate:\n  readiness:\n    mode: block\n    minScore: 10\n", "repo_file");
+    expect(
+      applyLiveGateThresholdsToManifest(baseForFloor, { confidence_floor: 0.9, scope_cap_files: 0, scope_cap_lines: 0 }),
+    ).toMatchObject({ gate: { readinessMinScore: 90 } });
+
+    const chunks = [new TextEncoder().encode("gate:\n  duplicates: advisory\n")];
+    const fetchImpl = async (url: string) => {
+      if (url.includes("raw.githubusercontent.com")) return chunkedManifestResponse(chunks, () => {});
+      if (url.includes("/repos/acme/widgets/issues")) {
+        return jsonResponse([
+          issuePayload({
+            user: undefined,
+            author_association: undefined,
+            html_url: undefined,
+            body: undefined,
+            created_at: undefined,
+            updated_at: undefined,
+            closed_at: undefined,
+            labels: "bug",
+          }),
+          issuePayload({ number: 8, labels: [{}, { name: 1 }, { name: "ok" }, null] }),
+          null,
+          { pull_request: {} },
+        ]);
+      }
+      if (url.includes("/repos/acme/widgets/pulls")) {
+        return jsonResponse([
+          prPayload({
+            user: undefined,
+            author_association: undefined,
+            html_url: undefined,
+            body: undefined,
+            created_at: undefined,
+            updated_at: undefined,
+            closed_at: undefined,
+            labels: null,
+            head: { sha: undefined, ref: undefined },
+            base: { ref: undefined },
+          }),
+        ]);
+      }
+      if (url.includes("/repos/acme/widgets")) {
+        return jsonResponse({
+          private: undefined,
+          html_url: undefined,
+          default_branch: undefined,
+          owner: {},
+        });
+      }
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse({ not: "array" });
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: null,
+      apiBaseUrl: "   ",
+      rawContentBaseUrl: "  ",
+      gittensorApiBase: "\t",
+      githubToken: 12 as unknown as string,
+      perPage: -1,
+      maxPages: 0,
+      contributorLogin: "  Miner  ",
+      linkedIssues: [7, "x", 8.5, null, 8] as unknown as number[],
+      liveGateProbeTimeoutMs: -1,
+      requestTimeoutMs: 0,
+    });
+
+    expect(result.manifest.present).toBe(true);
+    expect(result.repo).toMatchObject({
+      owner: "acme",
+      name: "widgets",
+      isPrivate: false,
+      htmlUrl: null,
+      defaultBranch: null,
+    });
+    expect(result.issues.some((issue) => issue.number === 8 && issue.labels.includes("ok"))).toBe(true);
+    expect(result.issues.find((issue) => issue.number === 7)?.authorLogin).toBeNull();
+    expect(result.confirmedContributor).toBe(false);
+    expect(result.pullRequests[0]?.authorLogin).toBeNull();
+    expect(result.pullRequests[0]?.labels).toEqual([]);
+  });
+
+  it("resolves loopoverAuth apiUrl from an explicit session when apiUrl is blank", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      if (url.includes("/live-gate-thresholds")) {
+        return jsonResponse({ confidence_floor: 0.8, scope_cap_files: null, scope_cap_lines: null });
+      }
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("raw.githubusercontent.com")) return jsonResponse(null, 404);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: { apiUrl: "  ", sessionToken: "tok" },
+      env: {} as NodeJS.ProcessEnv,
+    });
+
+    expect(seen.some((url) => url.startsWith("https://api.loopover.ai/v1/repos/"))).toBe(true);
+  });
+
+  it("rejects a non-string repoFullName and a three-segment path", async () => {
+    await expect(fetchSelfReviewContext(12 as unknown as string)).rejects.toThrow("invalid_repo_full_name");
+    await expect(fetchSelfReviewContext("acme/widgets/extra")).rejects.toThrow("invalid_repo_full_name");
+  });
+
+  it("honors explicit non-blank API base URLs, pagination caps, and ignores PR #0 links", async () => {
+    const seen: string[] = [];
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      if (url.includes("raw.example.test")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-length": "32" }),
+          text: async () => "gate:\n  duplicates: advisory\n",
+        };
+      }
+      if (url.includes("api.example.test") && url.includes("/issues")) {
+        return jsonResponse([
+          issuePayload({ body: "Closes PR #0 and also Closes PR #7" }),
+        ]);
+      }
+      if (url.includes("api.example.test") && url.includes("/pulls")) {
+        return jsonResponse([
+          prPayload({ body: "Closes #0 and Closes other/repo#9 and Closes #7", draft: undefined }),
+        ]);
+      }
+      if (url.includes("api.example.test") && url.includes("/repos/")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("gittensor.example.test/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", {
+      fetchImpl: fetchImpl as never,
+      loopoverAuth: null,
+      apiBaseUrl: "https://api.example.test",
+      rawContentBaseUrl: "https://raw.example.test",
+      gittensorApiBase: "https://gittensor.example.test",
+      perPage: 1,
+      maxPages: 1,
+      contributorLogin: "miner-bot",
+    });
+
+    expect(seen.some((url) => url.startsWith("https://api.example.test/"))).toBe(true);
+    expect(seen.some((url) => url.startsWith("https://raw.example.test/"))).toBe(true);
+    expect(seen.some((url) => url.startsWith("https://gittensor.example.test/"))).toBe(true);
+    expect(result.issues[0]?.linkedPrs).toEqual([7]);
+    expect(result.pullRequests[0]?.linkedIssues).toEqual([7]);
+    expect(result.pullRequests[0]?.isDraft).toBeNull();
+    expect(result.manifest.present).toBe(true);
+  });
+
+  it("falls back when a non-streaming manifest response is oversized by encoded byte length", async () => {
+    const encodeSpy = vi.spyOn(TextEncoder.prototype, "encode").mockReturnValue(new Uint8Array(MAX_FOCUS_MANIFEST_BYTES + 1));
+    try {
+      const fetchImpl = async (url: string) => {
+        if (url.includes("raw.githubusercontent.com")) {
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            text: async () => "gate:\n  duplicates: advisory\n",
+          };
+        }
+        if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+        if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+        if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+        if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+        return jsonResponse(null, 404);
+      };
+
+      const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+      expect(result.manifest.present).toBe(false);
+    } finally {
+      encodeSpy.mockRestore();
+    }
+  });
+
+  it("treats a non-string text() body on a non-streaming manifest as absent", async () => {
+    const fetchImpl = async (url: string) => {
+      if (url.includes("raw.githubusercontent.com")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          text: async () => 123,
+        };
+      }
+      if (url.includes("/repos/acme/widgets/issues")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets/pulls")) return jsonResponse([]);
+      if (url.includes("/repos/acme/widgets")) return jsonResponse(REPO_PAYLOAD);
+      if (url.includes("api.gittensor.io/miners")) return jsonResponse([]);
+      return jsonResponse(null, 404);
+    };
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.manifest.present).toBe(false);
   });
 });

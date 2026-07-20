@@ -130,6 +130,9 @@ describe("detectRepoStack — Node (#4785)", () => {
     expect(detect({ "package.json": "{ not json" })).toMatchObject({ detected: true, language: "javascript", buildCommand: null });
     // Present but unreadable (read throws -> null).
     expect(detect({ "package.json": null })).toMatchObject({ detected: true, language: "javascript" });
+    // Valid JSON that is not an object (number / bool / string) → parseJson returns null, still Node.
+    expect(detect({ "package.json": "42" })).toMatchObject({ detected: true, language: "javascript", buildCommand: null });
+    expect(detect({ "package.json": "true" })).toMatchObject({ detected: true, language: "javascript", buildCommand: null });
   });
 
   it("treats a non-string readFileSync result as no content", () => {

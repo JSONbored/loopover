@@ -41,8 +41,8 @@ describe("loopover-miner package skeleton (#2287)", () => {
     expect(miner.dependencies["@loopover/engine"]).toBeDefined();
     expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2}$/);
     expect(miner.files).toEqual(expect.arrayContaining(["bin", "lib"]));
-    // build is split into build:tsc (the real tsc compile, cacheable-by-turbo-but-not-turbo-restorable
-    // since its output is committed to git alongside hand-written siblings tsc never touches) and
+    // build is split into build:tsc (the real tsc compile; output is committed alongside sources as the
+    // package's published in-place emit) and
     // build:verify (a glob-driven node --check pass over every bin/lib .js file, replacing a previously
     // hand-listed ~119-file chain here that had to be kept in sync by hand).
     expect(miner.scripts.build).toBe("npm run build:tsc && npm run build:verify");

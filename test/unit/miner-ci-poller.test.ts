@@ -432,4 +432,176 @@ describe("miner CI check-run poller (#2323)", () => {
     expect(timeoutSpy.mock.calls.every(([ms]) => ms === 2500)).toBe(true);
     timeoutSpy.mockRestore();
   });
+
+  it("rejects a non-string repo full name", async () => {
+    await expect(
+      pollCheckRuns(null as unknown as string, 1, { apiBaseUrl: API, fetchFn: vi.fn() }),
+    ).rejects.toThrow("invalid_repo_full_name");
+  });
+
+  it("falls back to the default API base for non-string and blank apiBaseUrl", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url.startsWith("https://api.github.com/")).toBe(true);
+      if (url.includes("/pulls/")) return prResponse("sha-default");
+      if (url.includes("/check-runs")) {
+        return checksResponse([
+          null,
+          { status: "completed", conclusion: "startup_failure" },
+          { name: "mystery", status: "completed", conclusion: "mystery" },
+          { name: "skipped", status: "completed", conclusion: "skipped" },
+          { name: "neutral", status: "completed", conclusion: "neutral" },
+          { name: "cancelled", status: "completed", conclusion: "cancelled" },
+          { name: "action_required", status: "completed", conclusion: "action_required" },
+          checkRun("ok", "completed", "success"),
+        ]);
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    await expect(
+      pollCheckRuns("acme/widgets", 9, {
+        apiBaseUrl: 42 as unknown as string,
+        githubToken: "  tok  ",
+        fetchFn,
+        maxAttempts: Number.NaN,
+        minIntervalMs: Number.NaN,
+        maxIntervalMs: Number.NaN,
+        requestTimeoutMs: Number.NaN,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).resolves.toMatchObject({ conclusion: "failure" });
+
+    const blankBase = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/pulls/")) return prResponse("sha-blank");
+      if (url.includes("/check-runs")) return checksResponse([checkRun("ok", "completed", "success")]);
+      return jsonResponse({}, { status: 404 });
+    });
+    await expect(
+      pollCheckRuns("acme/widgets", 10, { apiBaseUrl: "   ", fetchFn: blankBase, sleepFn: vi.fn(async () => {}) }),
+    ).resolves.toMatchObject({ conclusion: "success" });
+  });
+
+  it("surfaces a GitHub error with a whitespace-only message as a bare status code", async () => {
+    const bareError = vi.fn().mockResolvedValue(jsonResponse({ message: "   " }, { status: 404 }));
+    await expect(
+      pollCheckRuns("acme/widgets", 11, { apiBaseUrl: API, fetchFn: bareError, sleepFn: vi.fn(async () => {}) }),
+    ).rejects.toThrow("github_404");
+  });
+
+  it("throws when pagination ends with an empty page before the reported total", async () => {
+    const incompletePage = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/13")) return prResponse("page-sha");
+      // Match `&page=N` (not `per_page=`) so page 2 is not mis-routed as page 1.
+      if (url.includes("&page=1")) {
+        return jsonResponse({ total_count: 2, check_runs: [checkRun("a", "completed", "success")] });
+      }
+      if (url.includes("&page=2")) {
+        return jsonResponse({ total_count: 2, check_runs: [] });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    await expect(
+      pollCheckRuns("acme/widgets", 13, {
+        apiBaseUrl: API,
+        fetchFn: incompletePage,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_incomplete");
+  });
+
+  it("returns pending after exhausting maxAttempts", async () => {
+    const pendingForever = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/pulls/")) return prResponse("pending-sha");
+      if (url.includes("/check-runs")) return checksResponse([checkRun("validate", "queued")]);
+      return jsonResponse({}, { status: 404 });
+    });
+    await expect(
+      pollCheckRuns("acme/widgets", 14, {
+        apiBaseUrl: API,
+        fetchFn: pendingForever,
+        sleepFn: vi.fn(async () => {}),
+        maxAttempts: 2,
+        minIntervalMs: 1,
+        maxIntervalMs: 2,
+      }),
+    ).resolves.toMatchObject({ conclusion: "pending", attempts: 2 });
+  });
+
+  it("uses global fetch when fetchFn is omitted", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/pulls/15")) return prResponse("global-sha");
+      if (url.includes("/check-runs")) return checksResponse([checkRun("validate", "queued")]);
+      return jsonResponse({}, { status: 404 });
+    }) as typeof fetch;
+    try {
+      await expect(
+        pollCheckRuns("acme/widgets", 15, {
+          apiBaseUrl: API,
+          maxAttempts: 1,
+          sleepFn: vi.fn(async () => {}),
+        }),
+      ).resolves.toMatchObject({ conclusion: "pending", attempts: 1 });
+      expect(globalThis.fetch).toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("keeps a prior total_count when a later page omits a valid count, and rejects a negative total_count", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/17")) return prResponse("neg-sha");
+      if (url.includes("&page=1")) {
+        return jsonResponse(
+          { total_count: 2, check_runs: [checkRun("a", "completed", "success")] },
+          {
+            headers: {
+              link: `<${API}/repos/acme/widgets/commits/neg-sha/check-runs?per_page=100&page=2>; rel="next"`,
+            },
+          },
+        );
+      }
+      if (url.includes("&page=2")) {
+        // Invalid/negative total_count → payloadTotalCount null, so ?? keeps the prior expected total.
+        return jsonResponse({ total_count: -1, check_runs: [checkRun("b", "completed", "success")] });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    await expect(
+      pollCheckRuns("acme/widgets", 17, {
+        apiBaseUrl: API,
+        fetchFn,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).resolves.toMatchObject({ conclusion: "success", checks: [{ name: "a" }, { name: "b" }] });
+  });
+
+  it("uses the default sleepFn (setTimeout) between pending polls when sleepFn is omitted", async () => {
+    vi.useFakeTimers();
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/pulls/")) return prResponse("sleep-sha");
+      if (url.includes("/check-runs")) return checksResponse([checkRun("validate", "queued")]);
+      return jsonResponse({}, { status: 404 });
+    });
+    try {
+      const pending = pollCheckRuns("acme/widgets", 16, {
+        apiBaseUrl: API,
+        fetchFn,
+        maxAttempts: 2,
+        minIntervalMs: 10,
+        maxIntervalMs: 10,
+        requestTimeoutMs: 1000,
+      });
+      await vi.runAllTimersAsync();
+      await expect(pending).resolves.toMatchObject({ conclusion: "pending", attempts: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

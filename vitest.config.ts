@@ -35,7 +35,7 @@ export default defineConfig({
         "src/**/*.ts",
         "packages/loopover-engine/src/**/*.ts",
         "packages/loopover-miner/lib/**/*.js",
-        // Files already converted to real TypeScript (#7290) execute as the compiled .js above, but
+        // Files converted to real TypeScript (#7290 / #7317) execute as the compiled .js above, but
         // v8's coverage provider remaps through the inline sourcemap tsc emits, attributing coverage to
         // the .ts source instead -- this entry is what keeps that remapped file in the report.
         "packages/loopover-miner/lib/**/*.ts",
@@ -75,8 +75,8 @@ export default defineConfig({
       // build+boot path, not unit-coverable without actually binding a port. See codecov.yml's matching
       // ignore entry; app.ts (everything server.ts wires together) is what tests actually import.
       //
-      // packages/loopover-miner/lib/**/*.ts (above) also glob-matches its own still-hand-maintained
-      // *.d.ts siblings (a ".d.ts" path ends in ".ts" too) -- those aren't real modules and can't be
+      // packages/loopover-miner/lib/**/*.ts (above) also glob-matches its own emitted *.d.ts siblings
+      // (a ".d.ts" path ends in ".ts" too) -- those aren't real modules and can't be
       // parsed as coverage source, so they're excluded the same way src/env.d.ts already is. Same story
       // for the *.ts entries under packages/loopover-miner/bin/** and packages/loopover-mcp/{lib,bin}/**
       // added above -- each glob-matches its own *.d.ts siblings too.

@@ -1,0 +1,151 @@
+---
+title: Kill-switch incident runbook
+description: Detect, activate, and audit a misbehaving Rent-a-Loop miner after the kill-switch stops it — grounded in the shipped #5670 mechanism.
+---
+
+Operator runbook for a **misbehaving autonomous miner loop** once the emergency kill-switch has
+been (or must be) engaged. Grounded in the shipped mechanism from #5670 (`packages/loopover-engine/src/governor/kill-switch.ts`,
+`packages/loopover-miner/lib/governor-kill-switch.ts`) — not a hypothetical design.
+
+<Callout variant="note">
+  Scope: AMS miner kill-switch only. For local SQLite corruption / multi-process collisions see the
+  [AMS operations runbook](/docs/ams-operations-runbook). Config precedence for the kill-switch
+  knobs is also summarized in [AMS config precedence](/docs/ams-config-precedence).
+</Callout>
+
+## Mechanism (what you are operating)
+
+Two independent triggers compose into one scope per repo:
+
+| Trigger | How | Scope reported |
+| --- | --- | --- |
+| Global | `LOOPOVER_MINER_KILL_SWITCH` env var (`1` / `true` / `yes` / `on`) | `"global"` — every repo |
+| Per-repo | `killSwitch.paused: true` in that repo's `.loopover-miner.yml` (`MinerGoalSpec`) | `"repo"` — that repo only |
+
+A global halt **always wins** and is reported as `"global"` even when the per-repo flag is also set.
+
+Since #5799 the check fires **mid-attempt**, not only between cycles: a running loop abandons with
+`abandonReason: "kill_switch_engaged"` and cleanly releases any in-flight queue claim.
+
+<Callout variant="warn">
+  **Not the same as** `loopover-miner governor pause` / `resume` / `status`. That is a separate,
+  independently persisted cooperative pause (stop before the next cycle). It does **not** read or
+  affect kill-switch state — do not reach for those commands during a kill-switch incident.
+</Callout>
+
+What activation does **not** undo: anything already submitted (a merged/pushed PR before the kill).
+Governance (#4782): in-flight actuation is not rolled back. The queue claim is released on abandon;
+nothing should hold a stale lock.
+
+## 1. Detection
+
+Flag a misbehaving loop from any of:
+
+1. Direct observation — destructive/off-scope file changes, a PR touching the wrong surface, repeated nonsensical commits.
+2. Soft-claim inventory — confirm what is in flight before you act:
+
+<CodeBlock
+  lang="bash"
+  code={`loopover-miner claim list --repo <owner/repo> --status active --json`}
+/>
+
+3. Fleet observability — error-rate spikes, abnormal claim/submission patterns, elevated
+   `consecutive_failures` / rejection-reason clustering, or an explicit customer/support escalation
+   (see the rented-loop escalation path from #4806).
+
+**Triage before acting:** decide one-repo vs fleet-wide. Prefer the narrowest scope that stops the
+harm so one bad tenant does not force an unnecessary global halt.
+
+**Target (detection → halt engaged):** ≤ **15 minutes** for a single-repo incident once an operator
+is on the page; treat anything longer as a follow-up gap (#5137-style post-incident obligations if a
+harmful change already merged).
+
+## 2. Activation
+
+### One repo misbehaving
+
+1. Edit that repo's `.loopover-miner.yml` — set `killSwitch.paused: true` under `MinerGoalSpec`.
+2. The next mid-attempt kill-switch check resolves `scope: "repo"` and abandons with
+   `kill_switch_engaged`.
+
+### Fleet-wide (systemic / not tenant-isolated)
+
+1. Set `LOOPOVER_MINER_KILL_SWITCH=true` in the miner process environment (restart or hot-reload
+   per your deployment's env-refresh mechanism).
+2. Every in-flight attempt abandons the same way; global always takes precedence over any per-repo flag.
+
+### Confirm the transition was recorded
+
+`resolveMinerKillSwitch` / `checkMinerKillSwitch` are pure — there is no separate “status” CLI. Verify by:
+
+1. Confirming the env var / yaml change is actually in place.
+2. Confirming `recordMinerKillSwitchTransition` wrote a governor-ledger row (it returns `null` and
+   appends nothing when the scope did not change — treat a failed/no-op append as “not confirmed”).
+3. Observing the attempt/loop process abandon, and/or listing transitions:
+
+<CodeBlock
+  lang="bash"
+  code={`loopover-miner governor list --type kill_switch --repo <owner/repo> --json`}
+/>
+
+Notify internal ops and, when a rented tenant is affected, the customer via the support/escalation path (#4806).
+
+## 3. Post-incident audit-trail review
+
+Every scope **transition** (not every check) is recorded as a governor `kill_switch` event with
+`decision: "tripped" | "resumed"` and a `previousScope` / `scope` pair.
+
+1. Pull kill-switch transitions:
+
+<CodeBlock
+  lang="bash"
+  code={`loopover-miner governor list --type kill_switch [--repo <owner/repo>] [--json]`}
+/>
+
+2. Cross-reference claims and the manage event ledger around the trip time:
+
+<CodeBlock
+  lang="bash"
+  code={`loopover-miner claim list --repo <owner/repo> --json
+loopover-miner ledger list --repo <owner/repo> --json`}
+/>
+
+3. Confirm no further write activity after the recorded trip (the gap between “detected” and
+   “recorded” is the real exposure window — measure it).
+4. File a follow-up issue for any gap (detection lag, a write that slipped through, a missing alert)
+   rather than closing informally. If a harmful change already merged, escalate with the post-merge
+   incident process (#5137).
+5. Resume only after the misbehavior is understood and fixed — clear `killSwitch.paused` and/or the
+   env var. There is no separate re-arm command; the loop resumes on its own next check once triggers
+   are cleared. Confirm a `resumed` transition appears in `governor list --type kill_switch`.
+
+## Drill procedure (simulated misbehaving loop)
+
+Automated coverage already proves mid-attempt abandon at the unit level
+(`packages/loopover-engine/test/iterate-loop.test.ts` #5670 regressions). The operational drill
+below confirms the same path through real CLI / config:
+
+1. While a real attempt is mid-run against a throwaway sandbox repo, set
+   `killSwitch.paused: true` in that repo's `.loopover-miner.yml` (or set the global env for a
+   fleet drill).
+2. Confirm the running attempt abandons with `kill_switch_engaged` within one iteration boundary
+   (mid-attempt — do not wait for the next full cycle). **Target:** abandon observed within
+   **2 minutes** of the config/env change under a normal poll interval.
+3. Confirm `governor list --type kill_switch --repo <owner/repo> --json` shows a `tripped`
+   transition.
+4. Clear the flag/env; confirm `resumed` is recorded and the loop picks up on its next check.
+5. Record wall-clock **detection → trip recorded** time; open a follow-up if it exceeds the
+   15-minute operator target.
+
+<Callout variant="note">
+  A live drill against a real hosted Rent-a-Loop tenant is deferred until provisioning exists
+  (#7180). Until then, run the sandbox/self-host drill above and rely on the #5670 unit regressions
+  plus the runbook contract test in `test/unit/kill-switch-incident-runbook.test.ts`.
+</Callout>
+
+## Related docs
+
+- [AMS config precedence — kill switch](/docs/ams-config-precedence)
+- [Miner goal spec — `killSwitch`](/docs/ams-goal-spec)
+- [AMS operations runbook](/docs/ams-operations-runbook) (SQLite / local-state incidents)
+- [AMS observability](/docs/ams-observability)

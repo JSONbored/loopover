@@ -76,6 +76,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/federated-fleet-intelligence", label: "Federated fleet intelligence" },
       { to: "/docs/ams-deployment", label: "AMS deployment guide" },
       { to: "/docs/ams-operations-runbook", label: "AMS operations runbook" },
+      { to: "/docs/ams-kill-switch-incident", label: "Kill-switch incident runbook" },
       { to: "/docs/ams-observability", label: "Observing your miner" },
       { to: "/docs/ams-unattended-scheduling", label: "Unattended scheduling" },
       { to: "/docs/ams-sizing", label: "Resource sizing" },

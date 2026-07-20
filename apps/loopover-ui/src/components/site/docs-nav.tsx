@@ -79,6 +79,7 @@ export const docsNav: DocsGroup[] = [
         items: [
           { to: "/docs/ams-deployment", label: "Deployment guide" },
           { to: "/docs/ams-operations-runbook", label: "Operations runbook" },
+          { to: "/docs/ams-kill-switch-incident", label: "Kill-switch incident runbook" },
           { to: "/docs/ams-observability", label: "Observing your miner" },
           { to: "/docs/ams-unattended-scheduling", label: "Unattended scheduling" },
           { to: "/docs/ams-sizing", label: "Resource sizing" },

@@ -661,9 +661,16 @@ function workflowRank(state: OwnerWorkflowState): number {
   return 2;
 }
 
-function workflowHeadline(state: OwnerWorkflowState, ready: boolean): string {
+export function workflowHeadline(state: OwnerWorkflowState, ready: boolean): string {
   if (state === "accepted" && ready) {
     return "Accepted — contributor intake posture matches the recommended registration mode.";
+  }
+  // #7535: `state` is bucket-derived (every bucket "accepted"), while `ready` (readiness.ready) is an
+  // independent API-side signal. When the buckets are all clear but readiness is still false there is no
+  // actionable bucket item, so falling through to the generic "needs cleanup — some areas require follow-up"
+  // default contradicts the "Accepted" pill rendered from the same overallState. Say so truthfully instead.
+  if (state === "accepted" && !ready) {
+    return "Accepted — the workflow buckets are all clear, but an overall readiness check outside them is still blocking; resolve it before scaling intake.";
   }
   if (state === "not_ready") {
     return "Not ready — resolve blockers in the workflow buckets before inviting more contributors.";

@@ -1728,7 +1728,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("counts pending commits, emits CI hints, and tracks deleted or renamed paths", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectCiStatusHints, collectLocalBranchMetadata, collectPendingCommitCount } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1764,7 +1763,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("counts additions and deletions for cross-directory renames that share no prefix or suffix", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1804,13 +1802,11 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("returns no lines when the git command fails", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { gitLines } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     expect(gitLines(join(tmpdir(), "loopover-no-such-repo-d8f3"), ["rev-parse", "HEAD"])).toEqual([]);
   });
 
   it("counts stats and keeps verbatim paths for non-ASCII filenames at the default core.quotePath", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     git(tempDir, "init");
@@ -1846,7 +1842,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("classifies Cypress/e2e and snapshot paths as test files, mirroring the server isTestPath", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { isTestFile, isCodeFile } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     // Existing forms still classify as tests.
     for (const file of ["test/foo.ts", "src/app.test.ts", "pkg/foo_test.go", "spec/foo_spec.rb", "src/__tests__/x.ts"]) {
@@ -1903,7 +1898,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("extracts linked issues only from standalone closing keywords, not keyword substrings", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { extractLinkedIssues } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     // Standalone closing keywords (hash optional, as this client-side extractor allows) and bare #refs link.
     expect(extractLinkedIssues("fixes #5")).toEqual([5]);
@@ -1918,7 +1912,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("parses remotes, changed-file stats, linked issues, and refuses source upload mode", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, parseGitRemote } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     expect(parseGitRemote("git@github.com:entrius/allways-ui.git")).toBe("entrius/allways-ui");
     expect(parseGitRemote("https://github.com/JSONbored/loopover.git")).toBe("JSONbored/loopover");
@@ -1962,7 +1955,6 @@ describe("local MCP git metadata collection", () => {
   });
 
   it("selects and validates cwd from MCP roots without leaking local paths", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { collectLocalBranchMetadata, normalizeMcpWorkspaceRoots, resolveWorkspaceCwd } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     tempDir = mkdtempSync(join(tmpdir(), "loopover-local-"));
     const workspace = join(tempDir, "workspace");

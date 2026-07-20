@@ -88,7 +88,7 @@ function readPackageVersion(path) {
   return JSON.parse(readFileSync(path, "utf8")).version;
 }
 
-function readReleasePrepEntries({ baseTag, targetVersion }) {
+export function readReleasePrepEntries({ baseTag, targetVersion }) {
   if (!baseTag) return [];
   const entries = [];
   const previousMcpPackage = readJsonAt(baseTag, defaultPackageJson);
@@ -128,14 +128,14 @@ function readReleasePrepEntries({ baseTag, targetVersion }) {
   return entries;
 }
 
-function dependencyChange(name, previousDependencies = {}, currentDependencies = {}) {
+export function dependencyChange(name, previousDependencies = {}, currentDependencies = {}) {
   const previousVersion = previousDependencies?.[name];
   const currentVersion = currentDependencies?.[name];
   if (!previousVersion || !currentVersion || previousVersion === currentVersion) return null;
   return `${name} ${previousVersion} -> ${currentVersion}`;
 }
 
-function readConstant(source, constantName) {
+export function readConstant(source, constantName) {
   return new RegExp(`export const ${constantName} = "([^"]+)"`).exec(source)?.[1] ?? null;
 }
 

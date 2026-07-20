@@ -1156,6 +1156,12 @@ settings:
   # moderationWarningLabel: mod:warning  # Label applied at >=1 lifetime violation. Default: the global config's warningLabel.
   # moderationBannedLabel: mod:banned    # Label applied at >= the ban threshold. Default: the global config's bannedLabel.
 
+  # Contributor trust profiles (#fairness-analytics): whether THIS repo's gate decisions and moderation history
+  # participate in the internal, bearer-gated cross-repo contributor fairness/accuracy analytics -- never
+  # exposed publicly. Independent of the fleet-wide fairnessAnalytics: block below, which gates whether the
+  # internal routes exist at all.
+  # fairnessAnalyticsMode: inherit  # inherit | off | enabled. Default: inherit (participate).
+
   # Review-evasion protection (#review-evasion-protection, anti-abuse): a contributor closing or converting
   # their own PR to draft while loopover has an ACTIVE review pass running against it is dodging the
   # one-shot review process, not making an ordinary close. When enabled, loopover reopens (if needed) and
@@ -1351,6 +1357,16 @@ settings:
 # fleet-wide, only meaningful on the loopover self-repo's own manifest; a present block there wins over the
 # LOOPOVER_PUBLIC_STATS env var, which stays the fallback when absent.
 # publicStats:
+#   enabled: true   # Bool. Default: false (the env var decides instead).
+
+# Contributor trust profiles / fairness analytics (#fairness-analytics): config-as-code override for the
+# LOOPOVER_FAIRNESS_ANALYTICS flag gating the internal, bearer-gated per-contributor fairness/accuracy routes
+# (GET /v1/internal/fairness/contributors[/:login], POST .../jobs/backfill-contributor-gate-history/run). Same
+# shape and precedence as `publicStats:`/`ops:` above -- fleet-wide, only meaningful on the loopover self-repo's
+# own manifest; a present block there wins over the LOOPOVER_FAIRNESS_ANALYTICS env var, which stays the
+# fallback when absent. NEVER exposed publicly regardless of this flag -- see settings.fairnessAnalyticsMode
+# above for the separate PER-REPO participation override.
+# fairnessAnalytics:
 #   enabled: true   # Bool. Default: false (the env var decides instead).
 
 # Fleet-wide AI-drafted-PR creation capability (#6275): config-as-code override for the LOOPOVER_REVIEW_DRAFT

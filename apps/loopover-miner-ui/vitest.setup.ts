@@ -16,6 +16,23 @@ class ResizeObserverStub {
 }
 globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObserver;
 
+// #7576: restore jsdom's Web Storage on Node 25+ -- same fix as apps/loopover-ui/vitest.setup.ts, and
+// needed independently here because `theme-toggle.test.tsx` reads localStorage. Node 25 shipped a native
+// `globalThis.localStorage` that evaluates to `undefined` without `--localstorage-file`
+// (nodejs/node#60303), and vitest's jsdom environment then skips copying jsdom's real Storage because the
+// key already "exists" (vitest-dev/vitest#8757, closed as non-LTS-unsupported). Reachable via the raw
+// JSDOM instance vitest exposes as `globalThis.jsdom`. No-op on Node <=24, where the key is absent and
+// jsdom's Storage is copied normally.
+const jsdomWindow = (globalThis as { jsdom?: { window?: Record<string, unknown> } }).jsdom?.window;
+for (const storageKey of ["localStorage", "sessionStorage"] as const) {
+  if (globalThis[storageKey] !== undefined || jsdomWindow?.[storageKey] === undefined) continue;
+  Object.defineProperty(globalThis, storageKey, {
+    value: jsdomWindow[storageKey],
+    configurable: true,
+    writable: true,
+  });
+}
+
 // #7075: ChatConversation wires handlePortfolioQueueChatCommand, which imports chat-action-registry →
 // governor-chokepoint → governor-ledger → node:sqlite. jsdom/Vite cannot bundle that builtin (same twin
 // pattern as chat-governor-actions.test.tsx / chat-portfolio-queue-actions.test.tsx).

@@ -39,7 +39,6 @@ describe("local scorer adapter", () => {
   });
 
   it("returns structured success output from a working scorer command", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     const result = runExternalScorePreview(metadata, fixtureCommand("scorer-success.mjs"));
     expect(result).toMatchObject({
@@ -52,7 +51,6 @@ describe("local scorer adapter", () => {
   });
 
   it("reports missing scorer command with setup guidance", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { runExternalScorePreview, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     const result = runExternalScorePreview(metadata, undefined);
     expect(result).toMatchObject({ ok: false, code: "missing_scorer_command", fallbackMode: "metadata_only" });
@@ -62,7 +60,6 @@ describe("local scorer adapter", () => {
   });
 
   it("handles scorer timeouts without crashing analysis", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     previousTimeout = process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS;
     process.env.GITTENSOR_SCORE_PREVIEW_TIMEOUT_MS = "200";
@@ -73,7 +70,6 @@ describe("local scorer adapter", () => {
   });
 
   it("handles malformed scorer JSON and non-zero exits", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     const malformed = runExternalScorePreview(metadata, fixtureCommand("scorer-malformed.mjs"));
     expect(malformed).toMatchObject({ ok: false, code: "malformed_json", fallbackMode: "metadata_only" });
@@ -84,7 +80,6 @@ describe("local scorer adapter", () => {
   });
 
   it("falls back to metadata-only scorer output and keeps source upload disabled", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { buildBranchAnalysisPayload, collectLocalBranchMetadata } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     const payload = buildBranchAnalysisPayload({
       cwd: process.cwd(),
@@ -104,7 +99,6 @@ describe("local scorer adapter", () => {
   });
 
   it("runs the packaged reference scorer against metadata only", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { runExternalScorePreview } = await import("../../packages/loopover-mcp/lib/local-branch.js");
     const result = runExternalScorePreview(metadata, packagedScorerCommand("metadata"));
     expect(result.ok).toBe(true);
@@ -115,7 +109,6 @@ describe("local scorer adapter", () => {
   });
 
   it("redacts local paths from scorer diagnostics and setup guidance", async () => {
-    // @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
     const { probeLocalScorer, redactLocalPath, redactScorerCommand, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer } = await import("../../packages/loopover-mcp/lib/local-branch.js");
 
     previousGittensorRoot = process.env.GITTENSOR_ROOT;

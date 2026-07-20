@@ -23,7 +23,7 @@ const MCP_TOOL_CALL_EVENT = "mcp_tool_call";
 const MCP_TELEMETRY_DISTINCT_ID = "loopover-mcp";
 
 export type RecordMcpToolCallOptions = {
-  telemetryEnabled: boolean;
+  telemetryEnabled?: boolean;
 };
 
 export type RecordMcpToolCallEvent = {
@@ -38,7 +38,10 @@ export type RecordMcpToolCallEvent = {
  * `true` (the caller's resolved, persisted opt-in flag, default OFF -- #6236) AND
  * LOOPOVER_MCP_POSTHOG_API_KEY is configured; never throws.
  */
-export function recordMcpToolCall(options: RecordMcpToolCallOptions, event: RecordMcpToolCallEvent): void {
+export function recordMcpToolCall(
+  options: RecordMcpToolCallOptions | null | undefined,
+  event: RecordMcpToolCallEvent,
+): void {
   // Opt-in default OFF (#6236, per #6228's privacy decision) -- unlike the remote wrapper, presence of an
   // API key alone is not enough; the user must have explicitly enabled telemetry.
   if (options?.telemetryEnabled !== true) return;

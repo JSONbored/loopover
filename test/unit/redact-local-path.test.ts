@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 // #6264: the three former MCP redaction call sites now share packages/loopover-mcp/lib/redact-local-path.js.
 // This is the single home for the redaction contract, so it is tested once here; the call-site tests
 // (local-scorer-adapter.test.ts, mcp-cli-packets.test.ts) still assert the wired-up behavior end to end.
-// @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
 const { redactLocalPath, redactKnownLocalPaths } = await import("../../packages/loopover-mcp/lib/redact-local-path.js");
 
 describe("redactLocalPath (heuristic: detect an unknown path in free text)", () => {

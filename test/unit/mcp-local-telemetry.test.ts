@@ -22,7 +22,6 @@ vi.mock("posthog-node", () => ({
   },
 }));
 
-// @ts-expect-error package helper is plain JS because the local wrapper ships as a Node bin package.
 const { recordMcpToolCall } = await import("../../packages/loopover-mcp/lib/telemetry.js");
 
 type LocalToolCallEvent = { tool: string; callerType?: "local"; ok: boolean; durationMs: number };

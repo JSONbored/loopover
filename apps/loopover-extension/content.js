@@ -38,9 +38,10 @@ function mountOverlay(target) {
   } else {
     document.body.appendChild(container);
   }
+  const load = createOverlayLoader(container, target);
   const refresh = container.querySelector(".loopover-overlay__refresh");
-  refresh?.addEventListener("click", () => load(container, target));
-  void load(container, target);
+  refresh?.addEventListener("click", () => load());
+  void load();
 }
 
 function findPullRequestSidebar() {
@@ -52,17 +53,23 @@ function findPullRequestSidebar() {
   );
 }
 
-async function load(container, target) {
-  const body = container.querySelector(".loopover-overlay__body");
-  if (!body) return;
-  body.textContent = "Loading private context...";
-  const response = await chrome.runtime.sendMessage({ type: "loopover:pull-context", ...target });
-  if (!response?.ok) {
-    body.innerHTML = `<div class="loopover-overlay__error">${escapeHtml(response?.error || "Context unavailable")}</div>`;
-    return;
-  }
-  body.innerHTML = renderPullContext(response.payload);
-  renderActions(body, response.payload?.actions);
+function createOverlayLoader(container, target) {
+  let latestTicket = 0;
+  return async function load() {
+    const body = container.querySelector(".loopover-overlay__body");
+    if (!body) return;
+    const ticket = ++latestTicket;
+    body.textContent = "Loading private context...";
+    const response = await chrome.runtime.sendMessage({ type: "loopover:pull-context", ...target });
+    // A newer load() has started while this request was in flight; discard the stale response.
+    if (ticket !== latestTicket) return;
+    if (!response?.ok) {
+      body.innerHTML = `<div class="loopover-overlay__error">${escapeHtml(response?.error || "Context unavailable")}</div>`;
+      return;
+    }
+    body.innerHTML = renderPullContext(response.payload);
+    renderActions(body, response.payload?.actions);
+  };
 }
 
 function renderPullContext(payload) {
@@ -185,6 +192,7 @@ if (globalThis.__LOOPOVER_EXTENSION_TEST__) {
   globalThis.__loopoverContentInternals = {
     matchGitHubPageTarget,
     matchPullRequestTarget,
+    createOverlayLoader,
     renderPullContext,
     renderSection,
     renderLegacyPanels,

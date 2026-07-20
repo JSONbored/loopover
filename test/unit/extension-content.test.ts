@@ -70,9 +70,46 @@ describe("extension content script", () => {
     expect(html).toContain("public");
     expect(html).toContain("no");
   });
+
+  it("discards an out-of-order refresh response so the overlay keeps the newest request's payload", async () => {
+    const resolvers: Array<(response: unknown) => void> = [];
+    const sendMessage = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+    const internals = loadContentInternals({
+      chrome: { runtime: { sendMessage } },
+    });
+
+    const body = { innerHTML: "", textContent: "" };
+    const container = { querySelector: vi.fn(() => body) };
+    const load = internals.createOverlayLoader(container, {
+      kind: "pull_request",
+      owner: "JSONbored",
+      repo: "loopover",
+      pullNumber: 42,
+    });
+
+    // Two rapid refresh clicks: the second (newer) request is issued while the first is still in flight.
+    const first = load();
+    const second = load();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const [resolveFirst, resolveSecond] = resolvers;
+    if (!resolveFirst || !resolveSecond) throw new Error("expected two in-flight pull-context requests");
+
+    // The newer request resolves and renders first...
+    resolveSecond({ ok: true, payload: { sections: [{ label: "Newer context" }] } });
+    await second;
+    expect(body.innerHTML).toContain("Newer context");
+
+    // ...then the older, first-issued request resolves last — the out-of-order case. Its stale
+    // payload must be discarded rather than clobbering the fresher render already on screen.
+    resolveFirst({ ok: true, payload: { sections: [{ label: "Stale context" }] } });
+    await first;
+
+    expect(body.innerHTML).toContain("Newer context");
+    expect(body.innerHTML).not.toContain("Stale context");
+  });
 });
 
-function loadContentInternals() {
+function loadContentInternals(overrides: Record<string, unknown> = {}) {
   const context: Record<string, unknown> = {
     __LOOPOVER_EXTENSION_TEST__: true,
     location: { pathname: "/JSONbored/loopover/issues/146" },
@@ -84,6 +121,7 @@ function loadContentInternals() {
       body: { appendChild: vi.fn() },
     },
     chrome: { runtime: { sendMessage: vi.fn() } },
+    ...overrides,
   };
   context.globalThis = context;
   const vmContext = createContext(context);
@@ -93,6 +131,7 @@ function loadContentInternals() {
       pathname: string,
     ) => { kind: "pull_request"; owner: string; repo: string; pullNumber: number } | { kind: "issue"; owner: string; repo: string; issueNumber: number } | null;
     matchPullRequestTarget: (pathname: string) => { owner: string; repo: string; pullNumber: number } | null;
+    createOverlayLoader: (container: { querySelector: (selector: string) => unknown }, target: unknown) => () => Promise<void>;
     renderPullContext: (payload: unknown) => string;
   };
 }

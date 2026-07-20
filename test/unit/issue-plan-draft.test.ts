@@ -308,6 +308,136 @@ describe("generateIssuePlanDrafts (#7426)", () => {
     expect(result.skippedCreateFailed).toBe(1);
   });
 
+  it("does not resolve or create a milestone on a dry run, even when one is requested", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return new Response("unexpected", { status: 599 });
+    });
+    const env = baseEnv({ AI: { run } as unknown as Ai });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { milestone: { title: "Wave 5" } });
+    expect(result.milestoneNumber).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("creates a new milestone and assigns it to every created issue when no matching open milestone exists (#7427)", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry to the sync job", body: "Retries transient failures." }]));
+    const bodies: Array<{ url: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones") && method === "GET") return Response.json([{ number: 9, title: "Unrelated milestone" }]);
+      if (url.includes("/milestones") && method === "POST") {
+        bodies.push({ url, body: JSON.parse(init?.body as string) });
+        return Response.json({ number: 55, title: "Wave 5" });
+      }
+      if (url.includes("/issues") && method === "POST") {
+        bodies.push({ url, body: JSON.parse(init?.body as string) });
+        return Response.json({ number: 900, html_url: "https://github.com/acme/widgets/issues/900" });
+      }
+      return new Response("unexpected", { status: 599 });
+    });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const env = baseEnv({ AI: { run } as unknown as Ai, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { create: true, dryRun: false, milestone: { title: "Wave 5", description: "the wave", dueOn: "2026-08-01T00:00:00Z" } });
+    expect(result.milestoneNumber).toBe(55);
+    expect(result.created).toBe(1);
+    const milestoneCreate = bodies.find((entry) => entry.url.includes("/milestones"));
+    expect(milestoneCreate?.body).toMatchObject({ title: "Wave 5", description: "the wave", due_on: "2026-08-01T00:00:00Z" });
+    const issueCreate = bodies.find((entry) => entry.url.includes("/issues"));
+    expect(issueCreate?.body).toMatchObject({ milestone: 55 });
+  });
+
+  it("reuses an existing open milestone by exact normalized title instead of creating a new one (#7427)", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
+    let milestonePostCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones") && method === "GET") return Response.json([{ number: 7, title: "  Wave   5!!" }]);
+      if (url.includes("/milestones") && method === "POST") {
+        milestonePostCalled = true;
+        return Response.json({ number: 999, title: "Wave 5" });
+      }
+      if (url.includes("/issues") && method === "POST") return Response.json({ number: 901, html_url: "https://github.com/acme/widgets/issues/901" });
+      return new Response("unexpected", { status: 599 });
+    });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const env = baseEnv({ AI: { run } as unknown as Ai, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { create: true, dryRun: false, milestone: { title: "Wave 5" } });
+    expect(result.milestoneNumber).toBe(7);
+    expect(milestonePostCalled).toBe(false);
+  });
+
+  it("creates directly (skipping the existing-milestone lookup) when the milestone title normalizes to an empty key", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
+    let listCalled = false;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones") && method === "GET") {
+        listCalled = true;
+        return Response.json([]);
+      }
+      if (url.includes("/milestones") && method === "POST") return Response.json({ number: 77, title: "###" });
+      if (url.includes("/issues") && method === "POST") return Response.json({ number: 903, html_url: "https://github.com/acme/widgets/issues/903" });
+      return new Response("unexpected", { status: 599 });
+    });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const env = baseEnv({ AI: { run } as unknown as Ai, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { create: true, dryRun: false, milestone: { title: "###" } });
+    expect(result.milestoneNumber).toBe(77);
+    expect(listCalled).toBe(false);
+  });
+
+  it("degrades gracefully (still creates the issues, without a milestone) when milestone resolution fails", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones")) return new Response("nope", { status: 500 });
+      if (url.includes("/issues") && method === "POST") return Response.json({ number: 902, html_url: "https://github.com/acme/widgets/issues/902" });
+      return new Response("unexpected", { status: 599 });
+    });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const env = baseEnv({ AI: { run } as unknown as Ai, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { create: true, dryRun: false, milestone: { title: "Wave 5" } });
+    expect(result.milestoneNumber).toBeUndefined();
+    expect(result.created).toBe(1);
+    expect(result.drafts[0]?.status).toBe("created");
+  });
+
+  it("never attempts milestone resolution when the repo has no installation", async () => {
+    const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      calls.push(input.toString());
+      return new Response("unexpected", { status: 599 });
+    });
+    vi.spyOn(repositories, "getRepository").mockResolvedValue(null);
+    vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
+    const env = baseEnv({ AI: { run } as unknown as Ai });
+    const result = await generateIssuePlanDrafts(env, "acme/widgets", "goal", { create: true, dryRun: false, milestone: { title: "Wave 5" } });
+    expect(result.milestoneNumber).toBeUndefined();
+    expect(calls).toHaveLength(0);
+    expect(result.skippedCreateFailed).toBe(1);
+  });
+
   it("REGRESSION: the global agent brake / freeze overrides {dryRun:false}, so nothing is created", async () => {
     const run = vi.fn(async () => issuesResponse([{ title: "Add retry", body: "Body" }]));
     vi.spyOn(repositories, "getRepository").mockResolvedValue(installedRepo("acme/widgets"));

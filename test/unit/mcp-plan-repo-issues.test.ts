@@ -76,6 +76,27 @@ describe("MCP loopover_plan_repo_issues (#7426)", () => {
     expect(drafts[0]).toMatchObject({ status: "created", issueNumber: 42, issueUrl: "https://github.com/owner/widgets/issues/42" });
   });
 
+  it("resolves the requested milestone and surfaces its number when create succeeds (#7427)", async () => {
+    const run = async () => issuesResponse([{ title: "Add retry to the sync job", body: "Retries transient failures." }]);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/milestones") && method === "GET") return Response.json([]);
+      if (url.includes("/milestones") && method === "POST") return Response.json({ number: 55, title: "Wave 5" });
+      return Response.json({ number: 42, html_url: "https://github.com/owner/widgets/issues/42" });
+    });
+    const env = createTestEnv({ ...AI_ENABLED, AI: { run } as unknown as Ai, GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem() });
+    await seedRepo(env);
+    const client = await connect(env, API_IDENTITY);
+    const result = await client.callTool({
+      name: "loopover_plan_repo_issues",
+      arguments: { owner: "owner", repo: "widgets", goal: "improve sync reliability", create: true, dryRun: false, milestone: { title: "Wave 5" } },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ milestoneNumber: 55 });
+  });
+
   it("REJECTS create without an explicit dryRun:false — the tool can never silently create", async () => {
     const env = createTestEnv({ ...AI_ENABLED });
     await seedRepo(env);

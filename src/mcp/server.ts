@@ -666,6 +666,15 @@ const generateContributorIssueDraftsOutputSchema = {
 // #7426: dryRun/create/limit mirror generateContributorIssueDraftsShape's own bounds/defaults (create alone is
 // rejected -- the handler re-applies the explicit_create_requires_dry_run_false guard). `limit` is capped lower
 // (10, not 20): every draft here costs real LLM spend, unlike that tool's zero-cost static signals.
+// #7427: title/description/dueOn are the CALLER's own input, never model-generated -- milestone metadata is
+// maintainer-authored/approved by design. Only ever consulted when actually creating; a dry-run preview makes
+// no milestone-related GitHub calls at all.
+const planRepoIssuesMilestoneShape = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(2000).optional(),
+  dueOn: z.string().datetime({ offset: true }).optional(),
+});
+
 const planRepoIssuesShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -673,6 +682,7 @@ const planRepoIssuesShape = {
   dryRun: z.boolean().optional().default(true),
   create: z.boolean().optional().default(false),
   limit: z.number().int().min(1).max(10).optional().default(5),
+  milestone: planRepoIssuesMilestoneShape.optional(),
 };
 
 const planRepoIssuesOutputSchema = {
@@ -703,6 +713,9 @@ const planRepoIssuesOutputSchema = {
       }),
     )
     .optional(),
+  // Set only when a milestone target was given AND creation actually ran AND resolution succeeded (#7427) --
+  // absent on a dry run, no milestone requested, or a degraded (failed) resolution.
+  milestoneNumber: z.number().optional(),
 };
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
@@ -2624,7 +2637,7 @@ export class LoopoverMcp {
       "loopover_plan_repo_issues",
       {
         description:
-          "AI-plan a small set of concrete GitHub issues from a maintainer-supplied free-form goal, for ANY repo the caller's App/Orb is installed on -- repo-agnostic and gittensor-optional (#7426). Dry-run BY DEFAULT: only PREVIEWS drafts (full title/body/labels) unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Creates exclusively via the installation-token/Orb-broker path (#7425), never a flat PAT. Makes a real LLM call subject to the shared daily AI budget and the fleet AI_SUMMARIES_ENABLED/AI_PUBLIC_COMMENTS_ENABLED switches. Maintainer access required.",
+          "AI-plan a small set of concrete GitHub issues from a maintainer-supplied free-form goal, for ANY repo the caller's App/Orb is installed on -- repo-agnostic and gittensor-optional (#7426). Dry-run BY DEFAULT: only PREVIEWS drafts (full title/body/labels) unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Creates exclusively via the installation-token/Orb-broker path (#7425), never a flat PAT. An optional `milestone` (title/description/dueOn, all maintainer-supplied -- never model-generated) is resolved against existing OPEN milestones by exact normalized title before creating a new one, and assigned to every created issue (#7427). Makes a real LLM call subject to the shared daily AI budget and the fleet AI_SUMMARIES_ENABLED/AI_PUBLIC_COMMENTS_ENABLED switches. Maintainer access required.",
         inputSchema: planRepoIssuesShape,
         outputSchema: planRepoIssuesOutputSchema,
       },
@@ -4321,6 +4334,7 @@ export class LoopoverMcp {
       create: input.create,
       limit: input.limit,
       requestedBy: this.identity.kind === "session" ? this.identity.actor : "mcp",
+      milestone: input.milestone,
     });
     return {
       summary: `Issue plan for ${fullName} (status=${result.status}, dryRun=${result.dryRun}): ${result.proposed} proposed, ${result.created} created, ${result.skippedDuplicate} duplicate, ${result.skippedDeclined} declined, ${result.skippedUnsafe} unsafe.`,
@@ -4335,6 +4349,7 @@ export class LoopoverMcp {
         skippedDeclined: result.skippedDeclined,
         skippedUnsafe: result.skippedUnsafe,
         created: result.created,
+        ...(result.milestoneNumber !== undefined ? { milestoneNumber: result.milestoneNumber } : {}),
         skippedCreateFailed: result.skippedCreateFailed,
         drafts: result.drafts.map((draft) => ({
           title: draft.title,

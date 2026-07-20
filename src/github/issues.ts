@@ -18,6 +18,10 @@ export type CreateInstallationIssueInput = {
   title: string;
   body: string;
   labels?: string[] | undefined;
+  /** GitHub milestone NUMBER (not title) to assign on create (#7427). Resolving a title to a number is the
+   *  caller's job (see src/github/milestones.ts + the service-layer resolve-or-create heuristic) -- this
+   *  primitive just passes through whatever number it's given. */
+  milestone?: number | undefined;
 };
 
 export type CreatedInstallationIssue = { number: number; url: string };
@@ -52,6 +56,7 @@ export async function createInstallationIssue(
       title: issue.title,
       body: issue.body,
       ...(issue.labels && issue.labels.length > 0 ? { labels: issue.labels } : {}),
+      ...(issue.milestone !== undefined ? { milestone: issue.milestone } : {}),
     });
     const data = response.data as { number?: number; html_url?: string; dryRunSuppressed?: boolean };
     if (data.dryRunSuppressed) return null;

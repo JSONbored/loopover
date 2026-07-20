@@ -22,6 +22,7 @@ import {
   utcDayStartIso,
 } from "./ai-review";
 import { createInstallationIssue } from "../github/issues";
+import { createInstallationMilestone, listOpenInstallationMilestones } from "../github/milestones";
 import { isMaintainerAssociation } from "../github/commands";
 import {
   getRepository,
@@ -242,10 +243,11 @@ async function createIssuePlanDraftIssue(
   repoFullName: string,
   draft: Pick<IssuePlanDraft, "title" | "body" | "labels">,
   installationId: number | null | undefined,
+  milestoneNumber: number | undefined,
 ): Promise<{ number: number; url: string } | null> {
   if (!installationId) return null;
   try {
-    return await createInstallationIssue(env, installationId, repoFullName, { title: draft.title, body: draft.body, labels: draft.labels });
+    return await createInstallationIssue(env, installationId, repoFullName, { title: draft.title, body: draft.body, labels: draft.labels, milestone: milestoneNumber });
   } catch (error) {
     console.warn(
       JSON.stringify({ level: "warn", event: "issue_plan_draft_create_failed", repoFullName, message: errorMessage(error).slice(0, 200) }),
@@ -254,11 +256,52 @@ async function createIssuePlanDraftIssue(
   }
 }
 
+export type IssuePlanMilestoneTarget = { title: string; description?: string | undefined; dueOn?: string | undefined };
+
+/**
+ * Resolve-or-create a milestone for the batch about to be created (#7427). Reuse is an EXACT normalized-title
+ * match against existing OPEN milestones only (normalizeIssueTitleKey, already generic despite living on the
+ * issue-draft side) -- deliberately not fuzzy: a fuzzy match risks silently grouping issues under the wrong
+ * milestone, which is worse than creating a new, differently-named one. Mirrors the manual convention
+ * `.claude/skills/contributor-pipeline-gardening` already follows (reusing one milestone across recurring
+ * rounds) instead of spawning a fresh one every planning run under the same title.
+ *
+ * Degrades to null on ANY failure (including a malformed/suppressed create) rather than aborting the batch --
+ * the maintainer still gets their issues, just ungrouped, which is preferable to filing nothing at all over a
+ * milestone-specific glitch. Titles/descriptions/due dates are the CALLER's own input, never model-generated
+ * (see the epic's #7427 boundary: milestone metadata is maintainer-authored/approved, not invented by the AI).
+ */
+async function resolveOrCreateIssuePlanMilestone(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  target: IssuePlanMilestoneTarget,
+): Promise<number | undefined> {
+  try {
+    const titleKey = normalizeIssueTitleKey(target.title);
+    if (titleKey) {
+      const existing = await listOpenInstallationMilestones(env, installationId, repoFullName);
+      const match = existing.find((milestone) => normalizeIssueTitleKey(milestone.title) === titleKey);
+      if (match) return match.number;
+    }
+    const created = await createInstallationMilestone(env, installationId, repoFullName, { title: target.title, description: target.description, dueOn: target.dueOn });
+    return created?.number;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({ level: "warn", event: "issue_plan_milestone_resolve_failed", repoFullName, message: errorMessage(error).slice(0, 200) }),
+    );
+    return undefined;
+  }
+}
+
 export type IssuePlanDraftOptions = {
   dryRun?: boolean | undefined;
   create?: boolean | undefined;
   limit?: number | undefined;
   requestedBy?: string | undefined;
+  /** Optional milestone to resolve-or-create and assign created issues to (#7427). Only ever consulted when
+   *  actually creating ({create:true, dryRun:false}) -- a dry-run preview makes no GitHub calls for it at all. */
+  milestone?: IssuePlanMilestoneTarget | undefined;
 };
 
 export type IssuePlanGenerationStatus = "ok" | "disabled" | "unavailable" | "quota_exceeded" | "no_output";
@@ -276,6 +319,10 @@ export type IssuePlanGenerationResult = {
   created: number;
   skippedCreateFailed: number;
   drafts: IssuePlanDraft[];
+  /** Set only when a milestone was actually resolved-or-created this call (i.e. a milestone target was given
+   *  AND creation actually ran AND resolution succeeded). Absent on a dry run, a disabled/unavailable/quota
+   *  short-circuit, no milestone requested, or a degraded (failed) resolution. */
+  milestoneNumber?: number | undefined;
 };
 
 function emptyIssuePlanResult(
@@ -342,6 +389,11 @@ export async function generateIssuePlanDrafts(env: Env, repoFullName: string, go
   });
   if (rawCandidates.length === 0) return empty("no_output");
 
+  const milestoneNumber =
+    !dryRun && createRequested && options.milestone && repo?.installationId
+      ? await resolveOrCreateIssuePlanMilestone(env, repo.installationId, repoFullName, options.milestone)
+      : undefined;
+
   const drafts: IssuePlanDraft[] = [];
   let proposed = 0;
   let skippedDuplicate = 0;
@@ -389,7 +441,7 @@ export async function generateIssuePlanDrafts(env: Env, repoFullName: string, go
     }
 
     if (!dryRun && createRequested) {
-      const issue = await createIssuePlanDraftIssue(env, repoFullName, draft, repo?.installationId);
+      const issue = await createIssuePlanDraftIssue(env, repoFullName, draft, repo?.installationId, milestoneNumber);
       if (issue) {
         draft.status = "created";
         draft.issue = issue;
@@ -413,5 +465,5 @@ export async function generateIssuePlanDrafts(env: Env, repoFullName: string, go
     });
   }
 
-  return { repoFullName, generatedAt, status: "ok", dryRun, createRequested, proposed, skippedDuplicate, skippedDeclined, skippedUnsafe, created, skippedCreateFailed, drafts };
+  return { repoFullName, generatedAt, status: "ok", dryRun, createRequested, proposed, skippedDuplicate, skippedDeclined, skippedUnsafe, created, skippedCreateFailed, drafts, milestoneNumber };
 }

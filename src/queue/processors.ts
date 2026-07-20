@@ -8306,6 +8306,31 @@ async function maybePublishPrPublicSurface(
       willCheckRun: false,
     };
 
+  // #ops-review-burst: the LAST completed gate-check conclusion recorded for this EXACT head SHA, captured
+  // BEFORE this pass writes anything -- recordPublishedGateCheckSummary upserts keyed on
+  // [repoFullName, headSha, name], so a row only exists here at all if THIS SAME COMMIT was already
+  // gate-checked before (a genuinely new commit has no prior row for its own headSha, and correctly falls
+  // through to "changed" below). Read once, up front, so the later surfaceContentChanged comparison
+  // compares against what was true before this pass, not a value this pass's own writes already overwrote.
+  const priorGateCheckConclusion =
+    gateEnabled && advisory.headSha
+      ? await listCheckSummaries(env, repoFullName, pr.number)
+          .then((checks) =>
+            checks.find(
+              (check) =>
+                check.name === LOOPOVER_GATE_CHECK_NAME &&
+                check.headSha === advisory.headSha &&
+                check.status === "completed",
+            ),
+          )
+          .then((check) => check?.conclusion)
+          .catch(() => undefined)
+      : undefined;
+  // Set at whichever of this pass's gate-check publish sites actually fires, to the SAME conclusion value
+  // passed to recordPublishedGateCheckSummary there -- compared against priorGateCheckConclusion above when
+  // surfaceContentChanged is computed further down, instead of re-deriving (and risking drifting from) the
+  // conclusion actually recorded.
+  let finalGateCheckConclusion: string | null | undefined;
   let pendingGateCheckRunId: number | undefined;
   if (gateEnabled) {
     const pendingGateResult = await createOrUpdatePendingGateCheckRun(
@@ -9959,16 +9984,17 @@ async function maybePublishPrPublicSurface(
         if (gateCheckResult?.kind === "published") {
           gateFinalized = true;
           publishedOutputs.push("gate_check_run");
+          /* v8 ignore next -- gate-enabled publication always has a gate evaluation. */
+          finalGateCheckConclusion =
+            autoReviewSkipReason && !publicSurfaceSkipped && gateEvaluation?.conclusion === "success"
+              ? "skipped"
+              : (gateEvaluation?.conclusion ?? null);
           await recordPublishedGateCheckSummary(env, {
             repoFullName,
             pullNumber: pr.number,
             headSha: advisory.headSha,
             checkRunId: gateCheckResult.id,
-            /* v8 ignore next -- gate-enabled publication always has a gate evaluation. */
-            conclusion:
-              autoReviewSkipReason && !publicSurfaceSkipped && gateEvaluation?.conclusion === "success"
-                ? "skipped"
-                : (gateEvaluation?.conclusion ?? null),
+            conclusion: finalGateCheckConclusion,
             detailsUrl: gateCheckResult.html_url,
             deliveryId: webhook.deliveryId,
           }).catch((error) => {
@@ -10008,6 +10034,7 @@ async function maybePublishPrPublicSurface(
             if (fallbackGateCheckResult?.kind === "published") {
               gateFinalized = true;
               publishedOutputs.push("gate_check_run");
+              finalGateCheckConclusion = "neutral";
               await recordPublishedGateCheckSummary(env, {
                 repoFullName,
                 pullNumber: pr.number,
@@ -10049,6 +10076,7 @@ async function maybePublishPrPublicSurface(
           if (fallbackGateCheckResult?.kind === "published") {
             gateFinalized = true;
             publishedOutputs.push("gate_check_run");
+            finalGateCheckConclusion = "neutral";
             await recordPublishedGateCheckSummary(env, {
               repoFullName,
               pullNumber: pr.number,
@@ -10785,11 +10813,22 @@ async function maybePublishPrPublicSurface(
     }
   }
   // #6724 (review-burst): only a PUBLISHED-OUTPUTS SET of exactly comment/label (both proven no-ops, or absent
-  // entirely) counts as a no-op pass. Any other output kind in this pass (gate_check_run, check_run) has no
-  // cheap no-op signal, so its mere presence keeps this true -- conservative by design, this can only ever
+  // entirely) counts as a no-op pass. `check_run` (the separate advisory check, distinct from the gate one) has
+  // no cheap no-op signal, so its mere presence keeps this true -- conservative by design, this can only ever
   // suppress a pr_public_surface_published record for a pass PROVEN to have changed nothing, never the reverse.
+  // `gate_check_run` DOES have one (#ops-review-burst): finalGateCheckConclusion/priorGateCheckConclusion above
+  // -- a stuck-CI-finalize loop that keeps re-reviewing the SAME unchanged head SHA republishes the IDENTICAL
+  // gate conclusion every pass (confirmed live: repeated "review burst" ops_anomaly alerts, 6+ published
+  // surfaces in 2h for one PR with no real state change), which this now proves a no-op rather than always
+  // counting gate_check_run's mere presence as a change. Any doubt -- no gate_check_run this pass, no prior row
+  // for this exact head (a genuinely new commit), or a differing conclusion -- still counts as changed.
+  const gateCheckRunContentChanged =
+    !publishedOutputs.includes("gate_check_run") ||
+    priorGateCheckConclusion === undefined ||
+    finalGateCheckConclusion !== priorGateCheckConclusion;
   const surfaceContentChanged =
-    publishedOutputs.some((output) => output !== "comment" && output !== "label") ||
+    publishedOutputs.some((output) => output !== "comment" && output !== "label" && output !== "gate_check_run") ||
+    (publishedOutputs.includes("gate_check_run") && gateCheckRunContentChanged) ||
     (publishedOutputs.includes("comment") && commentContentChanged) ||
     (publishedOutputs.includes("label") && labelContentChanged);
   return finishPublicSurfacePublication(surfaceContentChanged);

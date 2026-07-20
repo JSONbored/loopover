@@ -99,29 +99,36 @@ async function loadOwnLedgerDayRows(env: Env, projects: string[], sinceIso: stri
   return map;
 }
 
-/** Day-bucketed reversal count, matching public-stats.ts's `reversalRows` query exactly except bucketed by the
- *  ORIGINAL auto-action's own created_at (not the later reversal's timestamp) so a reversal always credits the
- *  week the decision was actually made, and never retroactively shifts a past week's published trend. */
+/** Day-bucketed reversal count, bucketed by the ORIGINAL auto-action's own created_at (not the later reversal's
+ *  timestamp) so a reversal always credits the week the decision was actually made, and never retroactively
+ *  shifts a past week's published trend. Detection matches public-stats.ts's `reversalRows` fix (#fairness-
+ *  analytics bugfix): reads the reversal_reopened/reversal_reverted events outcomes-wire.ts's
+ *  recordReversalSignals already correctly records -- rather than re-deriving reversal from the terminal PR's
+ *  own `state`, which can never detect a merge undone via a separate revert PR (a merged PR's state can never
+ *  become 'open' again on GitHub). Needs one extra join back to the ORIGINAL agent.action.close/merge event
+ *  (unlike public-stats.ts's lifetime total, which doesn't need a decision timestamp at all) purely to recover
+ *  that original created_at for bucketing. */
 async function loadReversalDayRows(env: Env, projects: string[], sinceIso: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (projects.length === 0) return map;
   const inList = projects.map(() => "?").join(", ");
   const rows = await safeAll<{ day: string; n: number }>(
     env,
-    `SELECT date(ev.created_at) AS day, COUNT(DISTINCT ev.pr_number) AS n FROM (
+    `SELECT date(orig.created_at) AS day, COUNT(DISTINCT orig.pr_number) AS n FROM (
         SELECT substr(target_key, 1, instr(target_key, '#') - 1) AS project,
                CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number,
-               event_type, created_at
+               target_key, created_at
           FROM audit_events
          WHERE event_type IN ('agent.action.close', 'agent.action.merge')
            AND outcome = 'completed' AND instr(target_key, '#') > 0
            AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
            AND created_at >= ?
-      ) ev
-      JOIN pull_requests pr ON pr.repo_full_name = ev.project AND pr.number = ev.pr_number
-      WHERE LOWER(ev.project) IN (${inList})
-        AND ( (ev.event_type = 'agent.action.close' AND (pr.state = 'open' OR pr.merged_at IS NOT NULL))
-           OR (ev.event_type = 'agent.action.merge' AND pr.state = 'open') )
+      ) orig
+      JOIN (
+        SELECT DISTINCT target_key FROM audit_events
+         WHERE event_type IN ('reversal_reopened', 'reversal_reverted') AND outcome = 'completed'
+      ) rev ON rev.target_key = orig.target_key
+      WHERE LOWER(orig.project) IN (${inList})
       GROUP BY day`,
     sinceIso,
     ...projects,

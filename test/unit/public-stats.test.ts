@@ -53,9 +53,9 @@ function isDispositions(sql: string): boolean {
     !isOrbGlobal(sql)
   );
 }
-// The reversal read is the only one that inspects engine auto-actions (close/merge) against pull_requests state.
+// The reversal read is the only one that reads the recorded reversal_reopened/reversal_reverted events.
 function isReversal(sql: string): boolean {
-  return sql.includes("agent.action.close");
+  return sql.includes("reversal_reopened");
 }
 
 describe("isPublicStatsEnabled", () => {
@@ -206,6 +206,8 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       "JSONbored/loopover",
     ]);
     expect(out.updatedAt).toBe(out.generatedAt);
+    // No registered self-hosted instances in this fixture -- fleetAccuracy degrades to the "not eligible yet" shape.
+    expect(out.fleetAccuracy).toEqual({ accuracyPct: null, instanceCount: 0, windowDays: 90, gamingFlagsCaught: 0 });
   });
 
   // #1955/#2070: minutesSaved sums per-PR estimates (with MINUTES_SAVED_PER_PR fallback for missing rows)
@@ -428,65 +430,111 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     ]);
   });
 
-  it("excludes dry-run terminal actions from live reversal counts", async () => {
+  it("REGRESSION (#fairness-analytics): counts a merged PR reverted via a separate revert PR, previously undetectable via PR state alone", async () => {
+    // A bad merge is undone by a SEPARATE "Reverts #N" PR -- the original PR's own state stays 'closed' with
+    // merged_at set (a merged PR's state can never read as 'open' again on GitHub), which is exactly the case the
+    // old pr.state-based reversal query could never detect. Reading the recorded reversal_reverted event directly
+    // (as outcomes-wire.ts's recordReversalSignals already writes it) must catch it.
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
     const db = env.DB;
 
     await db
       .prepare(
         `INSERT INTO pull_requests (id, repo_full_name, number, title, state, merged_at)
-         VALUES (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .bind(
-        "pr-real",
-        "JSONbored/loopover",
-        1,
-        "real auto-closed PR",
-        "closed",
-        null,
-        "pr-dry-run",
-        "JSONbored/loopover",
-        2,
-        "dry-run close shadow",
-        "open",
-        null,
-      )
+      .bind("pr-merged", "JSONbored/loopover", 1, "merged then reverted", "closed", "2026-06-01T00:00:00.000Z")
       .run();
     await db
       .prepare(
         `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json)
-         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
       )
       .bind(
-        "published-real",
+        "published",
         "github_app.pr_public_surface_published",
         "JSONbored/loopover#1",
         "completed",
         "{}",
-        "published-dry-run",
-        "github_app.pr_public_surface_published",
-        "JSONbored/loopover#2",
-        "completed",
-        "{}",
-        "live-close",
-        "agent.action.close",
+        "reverted",
+        "reversal_reverted",
         "JSONbored/loopover#1",
         "completed",
-        JSON.stringify({ mode: "live" }),
-        "dry-run-close",
-        "agent.action.close",
-        "JSONbored/loopover#2",
-        "completed",
-        JSON.stringify({ mode: "dry_run" }),
+        JSON.stringify({ repoFullName: "JSONbored/loopover", revertedPullNumber: 1, revertPullNumber: 2 }),
       )
       .run();
 
     const out = await getPublicStats(env, NOW);
 
-    expect(out.totals.closed).toBe(1);
-    expect(out.totals.commented).toBe(1);
-    expect(out.totals.reversed).toBe(0);
-    expect(out.totals.accuracyPct).toBe(100);
+    expect(out.totals.merged).toBe(1);
+    expect(out.totals.reversed).toBe(1);
+    expect(out.totals.accuracyPct).toBe(0); // 1 - 1/1
+  });
+
+  it("REGRESSION (#fairness-analytics): the headline accuracy prefers live fleet data once a registered instance clears the volume bar", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    const db = env.DB;
+
+    await db.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)").bind("inst-1").run();
+    for (let i = 0; i < 4; i++) {
+      await db
+        .prepare(
+          `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag)
+           VALUES (?, ?, ?, 'merge', 'merged', 'none')`,
+        )
+        .bind("inst-1", "repo-hash", `pr-hash-${i}`)
+        .run();
+    }
+    await db
+      .prepare(
+        `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag)
+         VALUES (?, ?, ?, 'merge', 'merged', 'reverted')`,
+      )
+      .bind("inst-1", "repo-hash", "pr-hash-reverted")
+      .run();
+
+    const out = await getPublicStats(env, NOW);
+
+    // decided=5 (>= computeFleetAnalytics's MIN_DECIDED), reversed=1 -> reversalRate 0.2 -> accuracy 80%.
+    expect(out.fleetAccuracy).toEqual({ accuracyPct: 80, instanceCount: 1, windowDays: 90, gamingFlagsCaught: 0 });
+  });
+
+  it("REGRESSION (#fairness-analytics): surfaces gamingFlagsCaught from computeFleetAnalytics's anti-farming detector", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "" });
+    const db = env.DB;
+
+    // Three baseline instances: 5 decided each, 4 merged (1 later reverted) -> mergePrecision 0.6, reversalRate 0.2.
+    for (const inst of ["baseline-1", "baseline-2", "baseline-3"]) {
+      await db.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)").bind(inst).run();
+      for (let i = 0; i < 3; i++) {
+        await db
+          .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', 'merged', 'none')`)
+          .bind(inst, "repo-hash", `${inst}-pr-${i}`)
+          .run();
+      }
+      await db
+        .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', 'merged', 'reverted')`)
+        .bind(inst, "repo-hash", `${inst}-pr-reverted`)
+        .run();
+      await db
+        .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', 'closed', 'none')`)
+        .bind(inst, "repo-hash", `${inst}-pr-mergefalse`)
+        .run();
+    }
+
+    // Gaming instance: 30 decided, ALL merged with no reversal -> high volume (>2x fleet median 5), high precision
+    // (1.0 vs fleet median 0.6), low reversal (0 vs fleet median 0.2) -- the exact #2350 farming signature.
+    await db.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES (?, 1)").bind("gaming-1").run();
+    for (let i = 0; i < 30; i++) {
+      await db
+        .prepare(`INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag) VALUES (?, ?, ?, 'merge', 'merged', 'none')`)
+        .bind("gaming-1", "repo-hash", `gaming-pr-${i}`)
+        .run();
+    }
+
+    const out = await getPublicStats(env, NOW);
+
+    expect(out.fleetAccuracy.gamingFlagsCaught).toBe(1);
   });
 
   // #1955/#2070: end-to-end over REAL D1/SQLite — published reviewEffortMinutes round-trip through

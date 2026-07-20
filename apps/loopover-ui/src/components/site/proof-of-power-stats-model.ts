@@ -26,6 +26,14 @@ export type PublicStats = {
     closed: number;
     accuracyPct: number | null;
   }>;
+  /** Live, fleet-wide accuracy across registered self-hosted ORB instances -- preferred over totals.accuracyPct
+   *  (a frozen own-ledger snapshot) whenever instanceCount > 0. See public-stats.ts's PublicStatsPayload. */
+  fleetAccuracy: {
+    accuracyPct: number | null;
+    instanceCount: number;
+    windowDays: number;
+    gamingFlagsCaught: number;
+  };
   /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447). */
   accuracyTrend: Array<{
     weekStart: string;

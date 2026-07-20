@@ -99,10 +99,12 @@ describe("loadPublicAccuracyTrend — end-to-end over the real live tables", () 
     await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 1, title: "PR 1", state: "closed", merged_at: thisWeekIso, user: { login: "a" }, head: { sha: "s1" }, labels: [] });
     await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#1", outcome: "completed", createdAt: thisWeekIso });
 
-    // Own-ledger: PR #2 auto-closed by the engine this week, then REVERTED (reopened) -- must count in `reversed`.
+    // Own-ledger: PR #2 auto-closed by the engine this week, then REVERTED (reopened by a contributor) -- must
+    // count in `reversed`, bucketed by the ORIGINAL close's created_at (not the later reopen's timestamp).
     await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 2, title: "PR 2", state: "open", user: { login: "b" }, head: { sha: "s2" }, labels: [] });
     await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#2", outcome: "completed", createdAt: thisWeekIso });
     await recordAuditEvent(env, { eventType: "agent.action.close", targetKey: "JSONbored/loopover#2", outcome: "completed", createdAt: thisWeekIso });
+    await recordAuditEvent(env, { eventType: "reversal_reopened", targetKey: "JSONbored/loopover#2", outcome: "completed", createdAt: laterInWeekIso });
 
     // Own-ledger: PR #3 closes WITHOUT merging (no reversal), on a DAY WITH NO PRIOR own-ledger merge -- exercises
     // the closedRows fold's `map.get(day)?.merged ?? 0` fallback branch (a day the mergedRows loop never touched),
@@ -128,6 +130,33 @@ describe("loadPublicAccuracyTrend — end-to-end over the real live tables", () 
     expect(currentWeek?.merged).toBe(2);
     expect(currentWeek?.closed).toBe(1);
     expect(currentWeek?.reversed).toBe(1);
+  });
+
+  it("REGRESSION (#fairness-analytics): a reversal recorded in a LATER week still credits the ORIGINAL decision's week", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    const priorMonday = isoWeekStart(NOW - 7 * 86_400_000);
+    const priorWeekIso = `${priorMonday}T09:00:00.000Z`;
+    const thisMonday = isoWeekStart(NOW);
+    const thisWeekIso = `${thisMonday}T09:00:00.000Z`;
+
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+    for (const n of [9, 10, 11]) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: n, title: `merged PR ${n}`, state: "closed", merged_at: priorWeekIso, user: { login: "a" }, head: { sha: `s${n}` }, labels: [] });
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: `JSONbored/loopover#${n}`, outcome: "completed", createdAt: priorWeekIso });
+      await recordAuditEvent(env, { eventType: "agent.action.merge", targetKey: `JSONbored/loopover#${n}`, outcome: "completed", createdAt: priorWeekIso });
+    }
+    // PR #9's revert PR merges (and gets recorded) THIS week -- the mistake must still credit the PRIOR week, when
+    // the bad merge decision was actually made, not the week the revert surfaced.
+    await recordAuditEvent(env, { eventType: "reversal_reverted", targetKey: "JSONbored/loopover#9", outcome: "completed", createdAt: thisWeekIso });
+
+    const trend = await loadPublicAccuracyTrend(env, NOW);
+    const priorWeek = trend[trend.length - 2];
+    const currentWeek = trend[trend.length - 1];
+    expect(priorWeek?.weekStart).toBe(priorMonday);
+    expect(priorWeek?.merged).toBe(3);
+    expect(priorWeek?.reversed).toBe(1);
+    expect(priorWeek?.accuracyPct).toBe(66.7);
+    expect(currentWeek?.reversed ?? 0).toBe(0);
   });
 
   it("redacts a sparse Orb-fleet week when LOOPOVER_PUBLIC_STATS_REPOS is empty (no own-ledger allowlist)", async () => {

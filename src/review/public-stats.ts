@@ -20,6 +20,21 @@
 //                                                          with MINUTES_SAVED_PER_PR only backstopping PRs
 //                                                          that lack a stored estimate)
 //
+// REVERSAL DETECTION (bugfix, #fairness-analytics): `reversed` reads the `reversal_reopened`/`reversal_reverted`
+// audit_events already correctly recorded by outcomes-wire.ts's recordReversalSignals (a bot-closed PR a
+// contributor reopened, or a bot-merged PR undone by a separate "Reverts #N" PR). A PREVIOUS version of this
+// query derived "reversed" from the terminal PR's own `state` after an `agent.action.close`/`agent.action.merge`
+// -- which can only ever detect the close-then-reopened case, because a MERGED PR's state can never become
+// 'open' again on GitHub. A merge undone by a separate revert PR (the dominant real-world "we made a mistake"
+// pattern) was therefore structurally invisible, silently inflating accuracyPct toward 100%.
+//
+// FLEET SCOPE (bugfix, #fairness-analytics): the own-ledger accuracyPct above is computed ONLY over
+// LOOPOVER_PUBLIC_STATS_REPOS -- a frozen snapshot as of the self-host cutover (see GLOBAL below) that no
+// longer reflects how ORB treats today's contributors on the live self-hosted fleet. `fleetAccuracy` folds in
+// computeFleetAnalytics's LIVE, growing, reversal-grounded accuracy across REGISTERED self-hosted instances
+// (src/orb/analytics.ts) -- the UI prefers this number once it has enough volume to be meaningful, falling back
+// to the own-ledger accuracyPct only when the fleet has no eligible instances yet.
+//
 // PRIVACY: counts only — no PR content, authors, scores, or reward internals. Safe to serve publicly.
 //
 // GLOBAL: the homepage total folds in every REGISTERED Orb installation's outcomes (getOrbGlobalStats) on top of
@@ -35,6 +50,7 @@
 // `github_app.pr_public_surface_published` audit events this file's own disposition query reads, so the two sums
 // are over disjoint PR sets and can be added directly.
 import { getOrbGlobalStats } from "../orb/outcomes";
+import { computeFleetAnalytics } from "../orb/analytics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
@@ -218,6 +234,21 @@ export interface PublicStatsPayload {
     closed: number;
     accuracyPct: number | null;
   }>;
+  /** Live, fleet-wide reversal-grounded accuracy across REGISTERED self-hosted ORB instances
+   *  (computeFleetAnalytics, src/orb/analytics.ts) -- unlike totals.accuracyPct (own-ledger, frozen as of the
+   *  self-host cutover, see the file header), this keeps growing as the fleet operates, so it's the number that
+   *  actually reflects how ORB is treating today's contributors. accuracyPct is null until at least one
+   *  registered instance clears computeFleetAnalytics's own minimum-volume bar -- the caller falls back to
+   *  totals.accuracyPct in that case. */
+  fleetAccuracy: {
+    accuracyPct: number | null;
+    instanceCount: number;
+    windowDays: number;
+    /** Self-hosted instances currently flagged by computeFleetAnalytics's anti-farming detector
+     *  (gamingPatternFlags, src/orb/analytics.ts) -- proof the fleet actively polices for gaming, not just a
+     *  claim of it. Never identifies which instance; a bare count is public-safe. */
+    gamingFlagsCaught: number;
+  };
 }
 
 // Live "reviewed" = a distinct PR for which the bot published a review surface (audit_events
@@ -270,23 +301,19 @@ export async function getPublicStats(
     ),
     safeAll<{ project: string; reversed: number }>(
       env,
-      // A "reversal" = a terminal engine auto-action (close/merge) a human later OVERTURNED, detected LIVE from the
-      // PR's current state: an engine-closed PR now reopened/merged, or an engine-merged PR now reopened. Counts
-      // the detectable subset — a merge undone via a SEPARATE revert PR isn't visible here yet (the revert detector
-      // is the follow-up). Replaces the orphaned review_audit reversal events, frozen at the convergence cutover.
+      // A "reversal" = a human overturning a terminal engine auto-action, already detected and recorded by
+      // outcomes-wire.ts's recordReversalSignals: a bot-CLOSED PR a contributor REOPENED (reversal_reopened), or
+      // a bot-MERGED PR undone by a separate "Reverts #N" PR (reversal_reverted). Read these events directly
+      // instead of re-deriving reversal from the PR's own current `state` -- a merged PR's state can never
+      // become 'open' again on GitHub, so a merge undone via a revert PR was previously undetectable this way.
       `SELECT project, COUNT(DISTINCT pr_number) AS reversed FROM (
          SELECT substr(target_key, 1, instr(target_key, '#') - 1) AS project,
-                CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number,
-                event_type
+                CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number
            FROM audit_events
-          WHERE event_type IN ('agent.action.close', 'agent.action.merge')
+          WHERE event_type IN ('reversal_reopened', 'reversal_reverted')
             AND outcome = 'completed' AND instr(target_key, '#') > 0
-            AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
        ) ev
-       JOIN pull_requests pr ON pr.repo_full_name = ev.project AND pr.number = ev.pr_number
         WHERE LOWER(ev.project) IN (${inList})
-          AND ( (ev.event_type = 'agent.action.close' AND (pr.state = 'open' OR pr.merged_at IS NOT NULL))
-             OR (ev.event_type = 'agent.action.merge' AND pr.state = 'open') )
         GROUP BY project`,
       ...projects,
     ),
@@ -384,10 +411,24 @@ export async function getPublicStats(
   // behavior. The fleet fold still (correctly) inflates reviewed/handled/minutesSaved, which have no such pairing.
   const ownLedgerMerged = totals.merged;
   const ownLedgerClosed = totals.closed;
-  const orb = await getOrbGlobalStats(env);
+  // Fleet accuracy (bugfix, #fairness-analytics): independent of the own-ledger allowlist above, so it's fetched
+  // unconditionally alongside the Orb global fold, matching that fold's own unscoped-regardless-of-allowlist
+  // behavior (see the "skips the own-ledger queries but still queries the Orb aggregate" test).
+  const [orb, fleet] = await Promise.all([getOrbGlobalStats(env), computeFleetAnalytics(env)]);
   totals.merged += orb.merged;
   totals.closed += orb.closed;
   totals.handled += orb.total;
+
+  // computeFleetAnalytics's fleet.reversalRate is a median over ELIGIBLE instances, each of which always has a
+  // non-null reversalRate (InstanceMetrics.reversalRate is a plain division, never null) -- it can only be null
+  // when there are zero eligible instances, which is exactly the `instanceCount > 0` guard below.
+  let fleetAccuracyPct: number | null = null;
+  if (fleet.instanceCount > 0) {
+    /* v8 ignore next -- fleet.fleet.reversalRate is non-null whenever instanceCount > 0, per the comment above;
+     *  the ?? 0 fallback exists only to satisfy the number|null type, not a reachable runtime case. */
+    const reversalRate = fleet.fleet.reversalRate ?? 0;
+    fleetAccuracyPct = Math.round((1 - reversalRate) * 1000) / 10;
+  }
 
   const reviewed = reviewedOf(totals);
   const w = weeklyRows[0] ?? { reviewed: 0, merged: 0 };
@@ -413,5 +454,11 @@ export async function getPublicStats(
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },
     byProject,
+    fleetAccuracy: {
+      accuracyPct: fleetAccuracyPct,
+      instanceCount: fleet.instanceCount,
+      windowDays: fleet.windowDays,
+      gamingFlagsCaught: fleet.gamingPatternFlags.length,
+    },
   };
 }

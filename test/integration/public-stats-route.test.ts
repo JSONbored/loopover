@@ -37,10 +37,14 @@ async function seed(env: Env) {
       )
       .run();
   }
-  // One live reversal: the engine CLOSED loopover#3, but it is now reopened (state 'open') — a human overturned
-  // the auto-action. awesome-claude has none → exercises the per-project ?? 0 fallback.
+  // One live reversal: the engine CLOSED loopover#3, and a contributor reopened it — a human overturned the
+  // auto-action, recorded as a reversal_reopened event (outcomes-wire.ts's recordReversalSignals). awesome-claude
+  // has none → exercises the per-project ?? 0 fallback.
   await env.DB.prepare(
     `INSERT INTO audit_events (id, event_type, target_key, outcome) VALUES ('rev1', 'agent.action.close', 'JSONbored/loopover#3', 'completed')`,
+  ).run();
+  await env.DB.prepare(
+    `INSERT INTO audit_events (id, event_type, target_key, outcome) VALUES ('rev1-reopened', 'reversal_reopened', 'JSONbored/loopover#3', 'completed')`,
   ).run();
 }
 

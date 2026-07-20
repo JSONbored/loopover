@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 
 import { cn } from "@/lib/utils";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -105,6 +106,13 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
   const filteredSparkline = toTrendPoints(data.reviewVolumeTrend, (week) => week.filteredPct);
   const accuracySparkline = toTrendPoints(data.accuracyTrend, (week) => week.accuracyPct);
   const reuseRateSparkline = toTrendPoints(data.reuseRateTrend, (week) => week.reuseRatePct);
+  // Prefer the live, fleet-wide accuracy (across registered self-hosted instances) once it has enough volume to
+  // be meaningful -- it reflects how ORB treats today's contributors, unlike totals.accuracyPct, which is a
+  // frozen own-ledger snapshot as of the self-host cutover (see public-stats.ts). The own accuracyTrend sparkline
+  // has no fleet-accuracy equivalent yet, so it's only shown alongside the own-ledger fallback number.
+  const fleetEligible =
+    data.fleetAccuracy.instanceCount > 0 && data.fleetAccuracy.accuracyPct != null;
+  const displayedAccuracyPct = fleetEligible ? data.fleetAccuracy.accuracyPct : totals.accuracyPct;
   const latestReuseRatePct =
     data.reuseRateTrend.length > 0
       ? data.reuseRateTrend[data.reuseRateTrend.length - 1]!.reuseRatePct
@@ -143,16 +151,28 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
           }
           hint="est. review time at ~20 min/PR"
         />
-        <Stat
-          label="Decision accuracy"
-          value={totals.accuracyPct == null ? "—" : `${totals.accuracyPct}%`}
-          hint={
-            totals.reversed > 0
-              ? `${intFmt.format(totals.reversed)} human-reversed`
-              : "reversal-grounded"
-          }
-          trend={<Sparkline points={accuracySparkline} color="var(--chart-1)" />}
-        />
+        <Link
+          to="/fairness"
+          className="block rounded-token transition-colors hover:bg-muted/40"
+          aria-label="View the full fairness report"
+        >
+          <Stat
+            label="Decision accuracy"
+            value={displayedAccuracyPct == null ? "—" : `${displayedAccuracyPct}%`}
+            hint={
+              fleetEligible
+                ? `across ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
+                : totals.reversed > 0
+                  ? `${intFmt.format(totals.reversed)} human-reversed`
+                  : "reversal-grounded"
+            }
+            trend={
+              fleetEligible ? undefined : (
+                <Sparkline points={accuracySparkline} color="var(--chart-1)" />
+              )
+            }
+          />
+        </Link>
         <Stat
           label="AI work reused"
           value={latestReuseRatePct == null ? "—" : `${latestReuseRatePct}%`}

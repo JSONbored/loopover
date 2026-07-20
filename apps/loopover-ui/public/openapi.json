@@ -552,6 +552,30 @@
                 "filteredPct"
               ]
             }
+          },
+          "fleetAccuracy": {
+            "type": "object",
+            "properties": {
+              "accuracyPct": {
+                "type": "number",
+                "nullable": true
+              },
+              "instanceCount": {
+                "type": "number"
+              },
+              "windowDays": {
+                "type": "number"
+              },
+              "gamingFlagsCaught": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "accuracyPct",
+              "instanceCount",
+              "windowDays",
+              "gamingFlagsCaught"
+            ]
           }
         },
         "required": [
@@ -560,6 +584,7 @@
           "totals",
           "weekly",
           "byProject",
+          "fleetAccuracy",
           "accuracyTrend",
           "reuseRateTrend",
           "reviewVolumeTrend"
@@ -9694,17 +9719,14 @@
             ],
             "description": "Off by default (opt-in, unlike reviewEvasionProtection's default-close). \"close\" enforces on ANY draft PR, including the very first one, before a review pass has had a chance to run -- distinct from reviewEvasionProtection's family, which only enforces after a review already ran or on the 2nd+ draft conversion."
           },
-          "issuePlanEnabled": {
-            "type": "boolean"
-          },
-          "issuePlanExtraLabels": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "issuePlanMilestoneReuse": {
-            "type": "boolean"
+          "fairnessAnalyticsMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "off",
+              "enabled"
+            ],
+            "description": "Per-repo participation in cross-repo contributor fairness/accuracy analytics -- 'off' excludes this repo's gate decisions and moderation history from every aggregation, independent of whether the internal fairness-analytics routes are enabled fleet-wide."
           }
         },
         "required": [

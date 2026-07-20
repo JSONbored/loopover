@@ -6,6 +6,24 @@ import type { ReactNode } from "react";
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock("@/lib/api/request", () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 vi.mock("@/lib/api/origin", () => ({ getApiOrigin: () => "https://api.test" }));
+// Mirrors site-header.test.tsx's own mock -- <Link> needs a real TanStack Router context to call
+// useLinkProps, which this component tree doesn't provide; render it as a plain <a> instead.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    to,
+    children,
+    ...props
+  }: {
+    to: string;
+    children: ReactNode;
+    className?: string;
+    "aria-label"?: string;
+  }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -53,6 +71,9 @@ const PAYLOAD: PublicStats = {
     },
     { project: "JSONbored/loopover", reviewed: 193, merged: 24, closed: 24, accuracyPct: 93.8 },
   ],
+  // No eligible registered self-hosted instances in this baseline fixture -- the tile falls back to
+  // totals.accuracyPct (own-ledger). A dedicated test below covers the fleet-eligible path.
+  fleetAccuracy: { accuracyPct: null, instanceCount: 0, windowDays: 90, gamingFlagsCaught: 0 },
   accuracyTrend: [
     { weekStart: "2026-05-04", merged: 40, closed: 10, reversed: 2, accuracyPct: 96 },
     { weekStart: "2026-05-11", merged: 42, closed: 9, reversed: 1, accuracyPct: 98 },
@@ -163,6 +184,27 @@ describe("ProofOfPowerStats", () => {
     const sparklines = screen.getAllByRole("img", { name: "Trend over the last 8 weeks" });
     // PRs reviewed + Filtered without merge + Decision accuracy + AI work reused, all 8-week payloads.
     expect(sparklines).toHaveLength(4);
+  });
+
+  it("prefers the live fleet accuracy over the own-ledger number once the fleet has eligible instances", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      durationMs: 1,
+      data: {
+        ...PAYLOAD,
+        fleetAccuracy: { accuracyPct: 80, instanceCount: 3, windowDays: 90, gamingFlagsCaught: 2 },
+      },
+    });
+    renderWithClient(<ProofOfPowerStats />);
+    await screen.findByText("Decision accuracy");
+    expect(screen.getByText("80%")).toBeTruthy();
+    expect(screen.queryByText("98.4%")).toBeNull(); // the own-ledger number is no longer shown
+    expect(
+      screen.getByText("across 3 self-hosted instances · 2 gaming patterns flagged"),
+    ).toBeTruthy();
+    // No fleet-accuracy trend exists yet -- the tile's sparkline is omitted rather than showing a mismatched one.
+    expect(screen.getAllByRole("img", { name: "Trend over the last 8 weeks" })).toHaveLength(3);
   });
 
   it("settles the count-up on the real reviewed total (not stuck at 0 when rAF never fires)", async () => {

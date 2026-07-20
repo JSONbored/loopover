@@ -1,0 +1,47 @@
+name: Stuck required-check watchdog
+
+# This repo's auto-merge gate merges based on GitHub's own mergeable_state, which only goes "clean"
+# once every required status check resolves (see .claude/skills/contributing-to-loopover/reference.md
+# section 3). A required check that hangs forever -- this repo hit exactly this with the third-party
+# "Superagent Security Scan" check, stuck in_progress for 90+ minutes with zero visibility beyond
+# manually pulling data PR-by-PR -- silently stalls the ENTIRE merge pipeline, not just one PR, with
+# nothing surfacing that fact anywhere. This can't fix a stuck check (nothing on this repo's side can,
+# for a third-party check it doesn't control), it just makes the situation visible fast: flags any open
+# PR where a required check has been running past a threshold, via a single idempotent PR comment (see
+# scripts/check-stuck-required-checks.mjs for the detection logic and why the required-check list is
+# hardcoded rather than read live from branch protection).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (log what would be flagged, don't post any comments)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: stuck-check-watchdog
+  cancel-in-progress: true
+
+jobs:
+  watchdog:
+    name: watchdog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+      - name: Check for stuck required checks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-stuck-required-checks.mjs${{ inputs.dry_run && ' --dry-run' || '' }}

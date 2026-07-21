@@ -859,7 +859,7 @@ jobs:
       # miner + ui-kit + ui + extension) was very likely discarded every run in favor of a shard's
       # engine-only one. Splitting the prefixes gives each job's own lineage instead of racing; within THIS
       # prefix, the 6 shards below still race each other for one slot, which is fine since they all save the
-      # exact same content (only @loopover/engine#build runs in this job) -- whichever shard wins, the
+      # exact same content (engine + mcp + miner builds all run in this job) -- whichever shard wins, the
       # content is equivalent, unlike the cross-job case this split just fixed.
       - name: Restore Turborepo cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -870,6 +870,21 @@ jobs:
             turbo-tests-${{ hashFiles('package-lock.json') }}-
       - name: Build engine package
         run: npx turbo run build --filter=@loopover/engine
+      # packages/loopover-mcp and packages/loopover-miner both ship .ts source only (no compiled .js
+      # committed -- gitignored, same as @loopover/engine's dist/), but this job's own SKIP_MCP_CLI_HARNESS/
+      # SKIP_MINER_TEST_HARNESS env below (see "Test with coverage") can both be false, which spawns the
+      # REAL built CLI binary (packages/loopover-mcp/bin/loopover-mcp.js /
+      # packages/loopover-miner/bin/loopover-miner.js) as a subprocess -- unlike a `.js`-suffixed import
+      # specifier, a child-process spawn has no bundler resolving it to sibling .ts, so the compiled output
+      # must actually exist on disk first. Before the compiled output stopped being committed, this job's
+      # checkout already had it for free; now it needs building here too, same as validate-code's own "Build
+      # MCP"/"Build miner CLI" steps. Unconditional (no `if:`), matching "Build engine package" immediately
+      # above -- turbo's own content-hash caching (not this step) is what keeps a PR that doesn't touch
+      # mcp/miner cheap.
+      - name: Build MCP
+        run: npx turbo run build --filter=@loopover/mcp
+      - name: Build miner CLI
+        run: npx turbo run build:tsc build:verify --filter=@loopover/miner
       - name: Save Turborepo cache
         if: ${{ !cancelled() }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

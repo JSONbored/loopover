@@ -217,6 +217,51 @@ describe("preview-url pagination (#7450)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3); // deployments list + statuses pages 1 and 2
     expect(fetchMock.mock.calls.some((c) => /\/deployments\/7\/statuses.*page=2/.test(String(c[0])))).toBe(true);
   });
+
+  it("getLatestDeploymentStatus returns failed:true when the latest status errored and none are pending", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 1 }]);
+      return Response.json([{ state: "failure" }]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "fail" })).resolves.toEqual({ url: null, failed: true });
+  });
+
+  it("getLatestDeploymentStatus keeps failed:false while a deployment is still pending", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 1 }]);
+      return Response.json([{ state: "pending" }]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "pending" })).resolves.toEqual({ url: null, failed: false });
+  });
+
+  it("getLatestDeploymentStatus treats a 404 deployments list as absent", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ message: "Not Found" }, { status: 404 }));
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "missing" })).resolves.toEqual({ url: null, failed: false });
+  });
+
+  it("getLatestDeploymentStatus reports error:true on a non-404 deployment lookup failure", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ message: "rate limited" }, { status: 403 }));
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "rl" })).resolves.toEqual({ url: null, failed: false, error: true });
+  });
+
+  it("getLatestDeploymentStatus skips the GitHub read when neither sha nor ref is provided", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO })).resolves.toEqual({ url: null, failed: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("getLatestDeploymentStatus degrades when a deployment statuses fetch throws", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 1 }]);
+      throw new Error("status read down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "status-down" })).resolves.toEqual({ url: null, failed: false });
+  });
 });
 
 describe("extractPreviewUrl", () => {

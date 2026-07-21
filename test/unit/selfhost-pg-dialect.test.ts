@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripConflictTargetQualifiers, toNumberedPlaceholders, translateDdl, translateFunctions, translateInsertOr, translateMigrationInserts, translateRowid, translateSql } from "../../src/selfhost/pg-dialect";
+import { quoteCamelCaseAliases, stripConflictTargetQualifiers, toNumberedPlaceholders, translateDdl, translateFunctions, translateInsertOr, translateMigrationInserts, translateRowid, translateSql } from "../../src/selfhost/pg-dialect";
 
 describe("pg-dialect (#977 SQLite → Postgres)", () => {
   it("numbers placeholders, skipping `?` inside string literals", () => {
@@ -29,6 +29,53 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translateFunctions("strftime('%Y-%m', created_at)")).toContain("'YYYY-MM'");
     expect(translateFunctions("CURRENT_TIMESTAMP")).toContain("to_char(now(),");
     expect(translateFunctions("json_extract(meta, '$.mode')")).toBe("((meta)::jsonb ->> 'mode')");
+  });
+
+  it("REGRESSION: translates instr(haystack, needle) to Postgres's strpos (SQLite has no `instr` on Postgres)", () => {
+    expect(translateFunctions("instr(x, '#')")).toBe("strpos(x, '#')");
+    expect(translateFunctions("instr(ra.target_id, '#') > 0")).toBe("strpos(ra.target_id, '#') > 0");
+  });
+
+  it("REGRESSION: an instr() nested inside substr()/CAST() -- the actual shape public-stats.ts and contributor-gate-history-backfill.ts emit to parse a `repo#123` target_id -- translates end-to-end", () => {
+    // public-stats.ts's exact pattern: extract the PR number after the `#`.
+    const out = translateFunctions("CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number");
+    expect(out).toBe("CAST(substr(target_key, strpos(target_key, '#') + 1) AS INTEGER) AS number");
+    // Two instr() calls in the same expression (repo name before the `#`, PR number after) both translate.
+    const both = translateFunctions("substr(target_key, 1, instr(target_key, '#') - 1) AS repo, CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS number");
+    expect(both).not.toMatch(/instr\(/i);
+    expect(both).toContain("strpos(target_key, '#') - 1");
+    expect(both).toContain("strpos(target_key, '#') + 1");
+  });
+
+  it("REGRESSION: quotes a bare camelCase AS alias so Postgres preserves its case instead of folding it to lowercase", () => {
+    expect(quoteCamelCaseAliases("SELECT ra.target_id AS targetId FROM review_audit ra")).toBe('SELECT ra.target_id AS "targetId" FROM review_audit ra');
+    expect(quoteCamelCaseAliases("pr.author_login AS authorLogin, ra.created_at AS createdAt")).toBe('pr.author_login AS "authorLogin", ra.created_at AS "createdAt"');
+  });
+
+  it("leaves an all-lowercase or snake_case alias untouched (already case-fold-safe on Postgres)", () => {
+    expect(quoteCamelCaseAliases("SELECT a.project AS project, a.target_id AS target_id FROM a")).toBe("SELECT a.project AS project, a.target_id AS target_id FROM a");
+  });
+
+  it("never double-quotes an alias that's already quoted", () => {
+    expect(quoteCamelCaseAliases('SELECT a.x AS "targetId" FROM a')).toBe('SELECT a.x AS "targetId" FROM a');
+  });
+
+  it("REGRESSION: translateSql composes alias-quoting with instr/strpos on the actual contributor-gate-history-backfill.ts query shape", () => {
+    const out = translateSql(
+      `SELECT ra.project AS project, ra.target_id AS targetId, ra.decision AS decision, ra.head_sha AS headSha,
+              ra.source AS source, pr.author_login AS authorLogin, ra.created_at AS createdAt
+         FROM review_audit ra
+         LEFT JOIN pull_requests pr
+           ON pr.repo_full_name = ra.project
+          AND pr.number = CAST(substr(ra.target_id, instr(ra.target_id, '#') + 1) AS INTEGER)
+        WHERE ra.event_type = 'gate_decision' AND instr(ra.target_id, '#') > 0`,
+    );
+    expect(out).toContain('AS "targetId"');
+    expect(out).toContain('AS "headSha"');
+    expect(out).toContain('AS "authorLogin"');
+    expect(out).toContain('AS "createdAt"');
+    expect(out).not.toMatch(/instr\(/i);
+    expect(out).toContain("strpos(ra.target_id, '#')");
   });
 
   it("REGRESSION (#4997): a JSON-boolean json_extract comparison survives translation as text-to-text, not text-to-integer", () => {

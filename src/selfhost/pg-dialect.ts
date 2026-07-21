@@ -62,7 +62,28 @@ export function translateFunctions(sql: string): string {
       .replace(/CURRENT_TIMESTAMP/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
       // json_extract(col, '$.key') → (col::jsonb ->> 'key')  (single-level paths — all the codebase uses)
       .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/gi, `(($1)::jsonb ->> '$2')`)
+      // instr(haystack, needle) → strpos(haystack, needle): both are 1-based first-occurrence index, 0 if
+      // absent -- a direct semantic match, no formula adjustment needed. Postgres has no `instr` builtin at
+      // all (unlike substr, which is SQL-standard and needs no translation) -- every instr() call reaching
+      // Postgres untranslated fails outright with "function instr(...) does not exist", which the codebase's
+      // fail-safe read paths (e.g. computeContributorGateEval-style try/catch) silently swallow to an empty
+      // result rather than surfacing. Used to parse a `repo#123`-shaped target_id/target_key in several
+      // review/public-stats query builders (e.g. public-stats.ts, contributor-gate-history-backfill.ts).
+      .replace(/instr\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)/gi, `strpos($1, $2)`)
   );
+}
+
+/** Quote a bare camelCase `AS` alias so Postgres preserves its case. Unquoted identifiers are case-folded to
+ *  lowercase by Postgres (both at DEFINITION and at SELECT-list ALIAS time) -- SQLite/D1 preserves whatever
+ *  case the query wrote. The codebase's query builders read result rows by camelCase property access
+ *  (`row.targetId`, `row.authorLogin`, ...) expecting the alias verbatim; unquoted on Postgres, `AS targetId`
+ *  comes back as the key `targetid`, so every such field silently reads as `undefined` -- a fail-safe read
+ *  path (try/catch → empty result) swallows this without ever surfacing an error. Only bare (unquoted, no
+ *  leading digit) aliases containing at least one uppercase letter need quoting; an all-lowercase or
+ *  already-quoted alias is left untouched. Scoped to `AS <ident>` specifically (never a plain column/table
+ *  reference elsewhere) since that's the only place this codebase's queries introduce a camelCase name. */
+export function quoteCamelCaseAliases(sql: string): string {
+  return sql.replace(/\bAS\s+([a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*)\b/g, (_full, ident: string) => `AS "${ident}"`);
 }
 
 /** Translate SQLite's `rowid` pseudo-column to Postgres's `ctid` system column. Both give a stable,
@@ -114,7 +135,7 @@ export function stripConflictTargetQualifiers(sql: string): string {
 
 /** Translate a runtime query (SQLite → Postgres). */
 export function translateSql(sql: string): string {
-  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateRowid(translateFunctions(translateInsertOr(sql)))));
+  return toNumberedPlaceholders(stripConflictTargetQualifiers(translateRowid(quoteCamelCaseAliases(translateFunctions(translateInsertOr(sql))))));
 }
 
 /** Migrations are applied as whole multi-statement files via exec(), so the statement-anchored

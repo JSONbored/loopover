@@ -9,6 +9,7 @@ import { createPgAdapter, tuneGithubRateLimitObservationsAutovacuum } from "../.
 import { pruneExpiredRecords } from "../../src/db/retention";
 import { processJob } from "../../src/queue/processors";
 import { getGateBlockOutcome, markGateOutcomeOverridden, recordGateBlockOutcome } from "../../src/db/repositories";
+import { backfillContributorGateHistory } from "../../src/review/contributor-gate-history-backfill";
 
 const URL = process.env.PG_TEST_URL;
 const suite = URL ? describe : describe.skip;
@@ -44,6 +45,22 @@ suite("Postgres backend (#977) — real Postgres", () => {
     const row = await db.prepare("SELECT COUNT(*) AS n FROM system_flags WHERE updated_at > datetime('now', ?)").bind("-30 days").first<{ n: number }>();
     expect(typeof row?.n).toBe("number");
     expect(row?.n).toBeGreaterThanOrEqual(1);
+  });
+
+  it("REGRESSION: backfillContributorGateHistory's instr()/substr() target_id parsing works against real Postgres (Postgres has no `instr` builtin -- SELECT instr(...) is a hard 'function instr(...) does not exist' error, previously swallowed silently by every fail-safe read path using it)", async () => {
+    const db = createPgAdapter(pool);
+    await db.prepare(`INSERT INTO pull_requests (id, repo_full_name, number, title, state, author_login) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind("pr-instr-1", "owner/instr-repo", 42, "pg instr regression", "open", "octocat")
+      .run();
+    await db.prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, ?, ?, 'gate_decision', 'merge', 'gittensory-native', ?)`)
+      .bind("gd-instr-1", "owner/instr-repo", "owner/instr-repo#42", new Date().toISOString())
+      .run();
+
+    const result = await backfillContributorGateHistory({ DB: db } as unknown as Env);
+    expect(result).toEqual({ scanned: 1, inserted: 1, skippedNoAuthor: 0, hasMore: false });
+
+    const row = await db.prepare(`SELECT login, project, target_id FROM contributor_gate_history WHERE target_id = ?`).bind("owner/instr-repo#42").first<{ login: string; project: string; target_id: string }>();
+    expect(row).toEqual({ login: "octocat", project: "owner/instr-repo", target_id: "owner/instr-repo#42" });
   });
 
   it("batch is transactional (rolls back on error)", async () => {

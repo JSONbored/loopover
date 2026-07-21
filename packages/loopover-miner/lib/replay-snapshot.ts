@@ -67,6 +67,7 @@ function normalizeDbPath(dbPath: string): string {
 
 const FIELD_SEP = "\x1f";
 const README_NAME_PATTERN = /^readme(\.\w+)?$/i;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
 function normalizeRepoFullName(repoFullName: string): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
@@ -77,7 +78,9 @@ function normalizeRepoFullName(repoFullName: string): string {
 
 function normalizeCommitSha(commitSha: string): string {
   if (typeof commitSha !== "string" || !commitSha.trim()) throw new Error("invalid_commit_sha");
-  return commitSha.trim();
+  const trimmed = commitSha.trim();
+  if (!COMMIT_SHA_PATTERN.test(trimmed)) throw new Error("invalid_commit_sha");
+  return trimmed.toLowerCase();
 }
 
 /** Worktree exports live under this dir inside the repo, mirroring worktree-allocator.ts's WORKTREE_SUBDIR. */

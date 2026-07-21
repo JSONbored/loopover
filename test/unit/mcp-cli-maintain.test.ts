@@ -95,6 +95,20 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(scoped).toMatch(/Gate precision for owner\/repo \(last 30d\)/);
   });
 
+  it("selftune-audit reports the override audit trail (plain + json), passing --limit through (#7798)", async () => {
+    const e = await env();
+    const out = await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo"], e);
+    expect(out).toMatch(/Self-tune override audit for owner\/repo: 3 event\(s\)\./);
+    expect(out).toMatch(/override_promoted/);
+    expect(out).toMatch(/override_shadowed/);
+    const json = JSON.parse(await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo", "--json"], e)) as {
+      audit: Array<{ eventType: string }>;
+    };
+    expect(json.audit).toHaveLength(3);
+    const limited = await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo", "--limit", "1"], e);
+    expect(limited).toMatch(/Self-tune override audit for owner\/repo: 1 event\(s\)\./);
+  });
+
   it("generate-issue-drafts dry-runs by default and never forwards create (#6757)", async () => {
     const bodies: Array<{ dryRun?: boolean; create?: boolean; limit?: number }> = [];
     const e = await env({ onIssueDraftRequest: (b) => bodies.push(b) });

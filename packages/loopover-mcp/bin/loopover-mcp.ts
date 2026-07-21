@@ -999,6 +999,12 @@ const STDIO_TOOL_DESCRIPTORS = [
       "Return the currently-authoritative live gate thresholds for a repo (confidence floor and scope caps) as a field-limited snake_case AMS probe. Live override wins; soaking shadow fills in only when live is absent. Metadata-only; takes owner and repo.",
   },
   {
+    name: "loopover_get_gate_config_effective",
+    category: "maintainer",
+    description:
+      "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap files/lines) plus whether a shadow override is still soaking. Read-only.",
+  },
+  {
     name: "loopover_preflight_pr",
     category: "discovery",
     description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
@@ -1575,6 +1581,21 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver activation preview.", await apiGet(`${prefix}/activation-preview`));
+  },
+);
+
+// (#7800) CLI stdio mirror of the remote loopover_get_gate_config_effective — thin GET proxy of the already
+// allowlist-scoped /v1/repos/:owner/:repo/gate-config/effective route (same ownerRepoShape + apiGet pattern
+// as activation_preview). No human CLI verb.
+registerStdioTool(
+  "loopover_get_gate_config_effective",
+  {
+    description: stdioToolDescription("loopover_get_gate_config_effective"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
   },
 );
 

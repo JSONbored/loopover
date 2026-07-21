@@ -1028,6 +1028,15 @@ const gatePrecisionOutputSchema = {
   signals: z.array(z.string()).optional(),
 };
 
+// #7800 - effective self-tuned gate thresholds (REST gate-config/effective mirror). Fields optional so
+// the forbidden branch ({ status, repoFullName }) and the success shape both validate.
+const gateConfigEffectiveOutputSchema = {
+  status: z.string().optional(),
+  repoFullName: z.string().optional(),
+  effective: z.unknown().optional(),
+  shadowPending: z.boolean().optional(),
+};
+
 // #5825 - maintainer-authenticated skipped-PR audit trail, mirroring GET /v1/app/skipped-pr-audit's
 // filters (all optional: a bare call returns the caller's own repo-scoped feed). No owner/repo shape
 // here on purpose: unlike ownerRepoShape tools this report can legitimately span every repo the caller
@@ -1871,6 +1880,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_outcome_patterns: "maintainer",
   loopover_get_outcome_calibration: "maintainer",
   loopover_get_gate_precision: "maintainer",
+  loopover_get_gate_config_effective: "maintainer",
   loopover_get_skipped_pr_audit: "maintainer",
   loopover_get_fleet_analytics: "maintainer",
   loopover_get_recommendation_quality: "maintainer",
@@ -2101,6 +2111,17 @@ export class LoopoverMcp {
         outputSchema: gatePrecisionOutputSchema,
       },
       async (input) => this.toolResult(await this.getGatePrecision(input)),
+    );
+
+    register(
+      "loopover_get_gate_config_effective",
+      {
+        description:
+          "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap files/lines) plus whether a shadow override is still soaking. Read-only; same auth boundary as the REST gate-config/effective route.",
+        inputSchema: ownerRepoShape,
+        outputSchema: gateConfigEffectiveOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getGateConfigEffective(input)),
     );
 
     register(
@@ -3494,6 +3515,39 @@ export class LoopoverMcp {
     return {
       summary: `Live gate thresholds for ${fullName}.`,
       data: { repoFullName: fullName, ...fields } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7800 - thin MCP surface over GET /v1/repos/:owner/:repo/gate-config/effective. Same canAccessRepo /
+  // isMcpReadRepoAllowed boundary as getPrReviewability; same loadOverride/loadShadowOverride pair the REST
+  // route already uses — no new persistence or auth path.
+  private async getGateConfigEffective(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access effective gate config for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
+    const storageEnv = this.env as unknown as StorageEnv;
+    const [override, shadow] = await Promise.all([
+      loadOverride(storageEnv, fullName),
+      loadShadowOverride(storageEnv, fullName),
+    ]);
+    const data = {
+      repoFullName: fullName,
+      effective: {
+        confidenceFloor: override?.confidenceFloor ?? null,
+        scopeCap: {
+          files: override?.scopeCap?.files ?? null,
+          lines: override?.scopeCap?.lines ?? null,
+        },
+      },
+      shadowPending: shadow !== null,
+    };
+    return {
+      summary: `LoopOver effective gate config for ${fullName}: confidenceFloor=${data.effective.confidenceFloor ?? "unset"}, shadowPending=${data.shadowPending}.`,
+      data: data as unknown as Record<string, unknown>,
     };
   }
 

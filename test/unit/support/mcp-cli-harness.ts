@@ -583,6 +583,19 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/gate-config/effective" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          effective: {
+            confidenceFloor: 0.9,
+            scopeCap: { files: 12, lines: 400 },
+          },
+          shadowPending: true,
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/outcome-patterns" && request.method === "GET") {
       response.end(
         JSON.stringify({

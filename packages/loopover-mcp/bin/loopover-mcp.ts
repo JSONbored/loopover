@@ -1110,6 +1110,12 @@ const STDIO_TOOL_DESCRIPTORS = [
       "Route a freeform idea through the intake bridge into a claim/code/submit-loop plan (#4799): validates the submission, builds the scored task-graph, and returns which constituent issues the loop can claim now vs. defer vs. skip — dependency-ordered so a prerequisite is always claimed before its dependents. Deterministic and source-free; it decides what to claim, it does not claim or run anything. Computed in-process; no API round-trip.",
   },
   {
+    name: "loopover_get_automation_state",
+    category: "agent",
+    description:
+      "Return a repo's derived agent automation state: the per-action autonomy levels, kill-switch / dry-run mode, GitHub write-permission readiness, and how many approval-gated actions are awaiting a maintainer decision. Metadata-only; takes owner and repo.",
+  },
+  {
     name: "loopover_check_issue_slop",
     category: "review",
     description: "Assess the deterministic slop risk of an issue from its title + body alone (no repo data) — flags clearly low-effort issues (empty body, an unfilled template) for triage. Returns slopRisk (0-100), band, findings, and the rubric. Advisory-only.",
@@ -1644,6 +1650,21 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
+  },
+);
+
+// #7752: local stdio mirror of the remote loopover_get_automation_state tool and the `maintain automation-state`
+// CLI. All three proxy the same GET {repoBase}/automation-state route so the derived mode / permission-readiness /
+// acting-classes / pending-count view stays computed one way and cannot drift across surfaces.
+registerStdioTool(
+  "loopover_get_automation_state",
+  {
+    description: stdioToolDescription("loopover_get_automation_state"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver agent automation state.", await apiGet(`${prefix}/automation-state`));
   },
 );
 

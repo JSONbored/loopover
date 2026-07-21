@@ -18,6 +18,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_activation_preview",
   "loopover_get_live_gate_thresholds",
   "loopover_get_gate_config_effective",
+  "loopover_get_automation_state",
   "loopover_get_repo_focus_manifest",
   "loopover_get_label_audit",
   "loopover_get_maintainer_lane",
@@ -164,6 +165,13 @@ describe("MCP output schema discovery", () => {
     const focusManifest = byName.get("loopover_get_repo_focus_manifest");
     const focusManifestProps = Object.keys((focusManifest?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(focusManifestProps).toEqual(expect.arrayContaining(["repoFullName", "manifest", "policy"]));
+
+    // #7752 — the derived agent automation-state read surface (mode / readiness / acting-classes / pending count).
+    const automationState = byName.get("loopover_get_automation_state");
+    const automationStateProps = Object.keys((automationState?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(automationStateProps).toEqual(
+      expect.arrayContaining(["repoFullName", "autonomy", "mode", "permissionReadiness", "actingActionClasses", "pendingActionCount"]),
+    );
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {

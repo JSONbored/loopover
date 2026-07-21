@@ -8,7 +8,8 @@
     {
       "repoFullName": "expressjs/express",
       "stackHint": "nodejs",
-      "requireTestCommand": true
+      "requireTestCommand": true,
+      "fullExecution": true
     },
     {
       "repoFullName": "pallets/flask",
@@ -28,7 +29,8 @@
     {
       "repoFullName": "lodash/lodash",
       "stackHint": "nodejs",
-      "requireTestCommand": true
+      "requireTestCommand": true,
+      "fullExecution": true
     }
   ]
 }

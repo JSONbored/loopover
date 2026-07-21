@@ -33,6 +33,8 @@ bare `"owner/repo"` string or an object:
 - **`stackHint`** — documentation only (not used by the evaluator)
 - **`requireTestCommand`** — when `true`, stack detection must infer a test command or the repo fails with
   `execution_gap`
+- **`fullExecution`** — when `true`, this entry is part of the full-execution subset (#7634): a bare
+  `--full-execution` run drives the live attempt against every entry flagged `true` (see below)
 
 Malformed manifest fields degrade to documented defaults with warnings (same tolerant-parser convention as the
 fleet run-manifest).
@@ -60,6 +62,43 @@ fleet run-manifest).
    - `--repo owner/repo` — evaluate a single manifest entry
    - `--manifest path/to/manifest.json` — alternate benchmark set (e.g. a fixture manifest in tests)
    - `--require-majority` — exit `1` unless a strict majority of repos pass (for CI-style gating)
+   - `--full-execution` — run the live attempt loop instead of the readiness check (see below)
+
+## Full-execution mode (#7634)
+
+Readiness answers *"can the miner form a plan for this repo."* **Full-execution mode** answers the real question
+behind [#4810](https://github.com/JSONbored/loopover/issues/4810)'s launch-readiness bar — *"does the miner
+actually produce working, correct code for this repo"* — by driving the live **discover → plan → code → test**
+loop against a subset of the same benchmark repos:
+
+```bash
+# Runs every manifest entry flagged "fullExecution": true; --repo overrides and runs one entry.
+MINER_CODING_AGENT_PROVIDER=... node packages/loopover-miner/scripts/cross-repo-evaluation.mjs --full-execution
+```
+
+It is **dry-run only**, the same read/execute-locally-and-discard posture as the readiness harness, one step
+further: the coding agent edits a **throwaway local clone**, the harness captures the resulting diff with `git`
+and runs the target repo's **own** build + test commands (from stack detection) locally. There is **no live
+GitHub PR submission, no write access to the third-party repos, and no credentials beyond the local clone** — a
+PR that adds real PR-submission against a benchmark repo does not satisfy this mode.
+
+Each subset repo still receives one **pass/fail** line in the same report format. A repo **passes** only when the
+agent produced a real (non-empty) diff, it built, and the target test suite passed. The failure taxonomy extends
+the readiness categories with execution-specific ones:
+
+| Category | Meaning |
+| --- | --- |
+| `execution_no_diff` | The agent ran (or could not be launched) but produced no usable diff |
+| `execution_compile_gap` | The generated diff did not build |
+| `execution_test_failure` | The diff built but the target repo's own test suite failed |
+| `execution_noop_diff` | Tests passed only because the diff was a no-op (no file changes) |
+
+Readiness-stage failures (`stack_detection_gap`, `clone_setup`, `loopover_assumption`, `execution_gap`) still
+apply and short-circuit before the agent runs — a repo the miner cannot even plan for never reaches execution.
+
+Library entry points: `executeRepoAttempt(entry, options)` and `runCrossRepoExecution(parsed, options)` classify
+the outcome; the coding-agent step, build, and test runners are all injectable (the CLI wires the real
+driver-backed executor; unit tests inject fakes).
 
 ## Library API
 
@@ -73,6 +112,8 @@ Pure functions live in [`lib/cross-repo-evaluation.js`](../lib/cross-repo-evalua
 
 ## Wiring
 
-This harness is **readiness-only**: it does not run the coding agent, open PRs, or call forge APIs. A green report
-means the miner’s repo-agnostic stack-detection and coding-task-spec path is prepared for the benchmark repo; a live
-attempt still needs credentials, governor policy, and queue state as documented in [`DEPLOYMENT.md`](../DEPLOYMENT.md).
+The default mode is **readiness-only**: it does not run the coding agent, open PRs, or call forge APIs. A green
+report means the miner’s repo-agnostic stack-detection and coding-task-spec path is prepared for the benchmark
+repo. `--full-execution` (#7634) goes one step further and runs the agent locally against a throwaway clone, but
+still opens no PRs and performs no forge writes. A production attempt against a real target still needs
+credentials, governor policy, and queue state as documented in [`DEPLOYMENT.md`](../DEPLOYMENT.md).

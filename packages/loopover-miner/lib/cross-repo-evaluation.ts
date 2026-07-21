@@ -4,6 +4,7 @@
 // resolveMinerGoalSpec, buildCodingTaskSpec) and failures are categorized as stack-detection gaps, execution
 // readiness gaps, leaked loopover assumptions in agent instructions, clone/setup problems, or other.
 
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { buildCodingTaskSpec } from "./coding-task-spec.js";
@@ -12,18 +13,30 @@ import { isValidRepoSegment, resolveRepoCloneDir } from "./repo-clone.js";
 import { detectRepoStack } from "./stack-detection.js";
 import type { RepoStackResult } from "./stack-detection.js";
 
-/** Failure taxonomy surfaced in per-repo reports (#4788). */
+/** Failure taxonomy surfaced in per-repo reports. Readiness-mode categories (#4788) plus the full-execution
+ *  categories (#7634) that classify how a live discover → plan → code → test attempt fell short. */
 export const CROSS_REPO_FAILURE_CATEGORY: Readonly<{
   STACK_DETECTION: "stack_detection_gap";
   EXECUTION: "execution_gap";
   GITTENSOR_ASSUMPTION: "loopover_assumption";
   CLONE_SETUP: "clone_setup";
+  EXECUTION_NO_DIFF: "execution_no_diff";
+  EXECUTION_COMPILE: "execution_compile_gap";
+  EXECUTION_TEST: "execution_test_failure";
+  EXECUTION_NOOP: "execution_noop_diff";
   OTHER: "other";
 }> = Object.freeze({
   STACK_DETECTION: "stack_detection_gap",
   EXECUTION: "execution_gap",
   GITTENSOR_ASSUMPTION: "loopover_assumption",
   CLONE_SETUP: "clone_setup",
+  // Full-execution taxonomy (#7634): the plan formed and the coding agent ran, but the attempt failed at a
+  // later stage — the agent produced no usable diff, the diff didn't build, the target test suite failed, or
+  // the tests passed only because the diff was a no-op.
+  EXECUTION_NO_DIFF: "execution_no_diff",
+  EXECUTION_COMPILE: "execution_compile_gap",
+  EXECUTION_TEST: "execution_test_failure",
+  EXECUTION_NOOP: "execution_noop_diff",
   OTHER: "other",
 });
 
@@ -45,6 +58,9 @@ export type CrossRepoEvaluationManifestRepo = {
   stackHint?: string;
   requireTestCommand?: boolean;
   fixturePath?: string;
+  /** Opt this entry into full-execution mode (#7634): `--full-execution` runs the live attempt against every
+   *  entry flagged `true` (a `--repo` filter overrides the flag and runs that one entry regardless). */
+  fullExecution?: boolean;
 };
 
 export type ParsedCrossRepoEvaluationManifest = {
@@ -85,6 +101,58 @@ type EvaluateRepoReadinessOptions = {
     verdict?: string;
     instructions?: string;
   };
+};
+
+/** Result of running a local shell command (build/test) during a full-execution attempt (#7634). */
+export type LocalCommandResult = {
+  ok: boolean;
+  /** True when there was no command to run (e.g. the stack inferred no build command) — treated as a pass. */
+  skipped?: boolean;
+  code?: number | null;
+  output?: string;
+};
+
+/** Everything a coding-agent executor needs to run one benchmark repo's live attempt (#7634). */
+export type CodingAttemptContext = {
+  repoFullName: string;
+  repoPath: string;
+  stack: RepoStackResult;
+  instructions: string;
+  attemptId: string;
+  maxTurns: number;
+};
+
+/** What a coding-agent executor reports back: the real unified diff it produced (empty string when it made no
+ *  change), plus whether the agent itself considered the run successful (#7634). */
+export type CodingAttemptOutcome = {
+  ok: boolean;
+  diff: string;
+  summary?: string;
+  error?: string;
+};
+
+export type ExecuteRepoAttemptOptions = EvaluateRepoReadinessOptions & {
+  /** Discover → plan → code step: run the coding agent against the clone and return its diff. The CLI injects a
+   *  real driver-backed executor; unit tests inject a fake. Left unset, the harness reports `execution_no_diff`
+   *  rather than pretending an agent ran. */
+  runCodingAttempt?: (context: CodingAttemptContext) => CodingAttemptOutcome | Promise<CodingAttemptOutcome>;
+  /** Build/compile the clone after the diff is applied. Defaults to running `stack.buildCommand` locally. */
+  compileRepo?: (context: { repoPath: string; stack: RepoStackResult }) => LocalCommandResult | Promise<LocalCommandResult>;
+  /** Run the target repo's own test suite locally. Defaults to running `stack.testCommand`. */
+  runRepoTests?: (context: { repoPath: string; stack: RepoStackResult }) => LocalCommandResult | Promise<LocalCommandResult>;
+  /** Shared spawn used by the default compile/test runners; defaults to a real `spawnSync` in the clone dir. */
+  runLocalCommand?: (command: string, context: { cwd: string; env?: NodeJS.ProcessEnv }) => LocalCommandResult;
+  /** Turn budget handed to the coding agent (CLI default: 30). */
+  maxTurns?: number;
+};
+
+export type CrossRepoExecutionResult = CrossRepoEvaluationResult & {
+  /** False when the attempt never reached the live agent (readiness gated it out). */
+  executed: boolean;
+  compilePassed?: boolean | null;
+  testsPassed?: boolean | null;
+  /** Character length of the produced diff (0 for a no-op); null when no agent ran. */
+  diffChars?: number | null;
 };
 
 // True UTF-8 byte count for the size guard (#7223): JS string `.length` is UTF-16 code units, which under-counts
@@ -153,6 +221,7 @@ function normalizeRepoList(value: unknown, warnings: string[]): CrossRepoEvaluat
     let stackHint: string | null = null;
     let requireTestCommand = false;
     let fixturePath: string | null = null;
+    let fullExecution = false;
     if (typeof entry === "string") {
       repoFullName = normalizeCrossRepoFullName(entry);
     } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
@@ -161,6 +230,7 @@ function normalizeRepoList(value: unknown, warnings: string[]): CrossRepoEvaluat
       stackHint = normalizeOptionalString(record.stackHint, "stackHint", warnings);
       requireTestCommand = normalizeBoolean(record.requireTestCommand, "requireTestCommand", false, warnings);
       fixturePath = normalizeOptionalString(record.fixturePath, "fixturePath", warnings);
+      fullExecution = normalizeBoolean(record.fullExecution, "fullExecution", false, warnings);
     } else {
       warnings.push(`CrossRepoEvaluationManifest "repos" skipped a non-string, non-mapping entry.`);
       continue;
@@ -177,6 +247,7 @@ function normalizeRepoList(value: unknown, warnings: string[]): CrossRepoEvaluat
     const normalized: CrossRepoEvaluationManifestRepo = { repoFullName, requireTestCommand };
     if (stackHint) normalized.stackHint = stackHint;
     if (fixturePath) normalized.fixturePath = fixturePath;
+    if (fullExecution) normalized.fullExecution = true;
     result.push(normalized);
   }
   return result;
@@ -276,6 +347,31 @@ function defaultClaimLedger(repoFullName: string): { listClaims: () => never[] }
   return { listClaims: () => [] };
 }
 
+type BuildCodingTaskSpecImpl = NonNullable<EvaluateRepoReadinessOptions["buildCodingTaskSpec"]>;
+
+/** Compose the synthetic coding-task spec both readiness and full-execution evaluate against, so the two modes
+ *  drive the exact same discover/plan surface a real attempt would (#7634). */
+function buildEvaluationCodingTaskSpec(
+  repoFullName: string,
+  repoPath: string,
+  buildSpecImpl: BuildCodingTaskSpecImpl,
+  detectImpl: (repoPath: string) => RepoStackResult,
+): ReturnType<BuildCodingTaskSpecImpl> {
+  return buildSpecImpl({
+    repoFullName,
+    issue: {
+      number: 1,
+      title: "Cross-repo evaluation harness smoke issue",
+      body: "Synthetic issue used only by the cross-repo evaluation harness.",
+      labels: ["bug"],
+    },
+    context: { issues: [{ number: 1 }], pullRequests: [] },
+    claimLedger: defaultClaimLedger(repoFullName),
+    workingDirectory: repoPath,
+    detectRepoStack: detectImpl,
+  });
+}
+
 /**
  * Evaluate one benchmark repo's miner readiness without running a live coding agent (#4788).
  */
@@ -332,19 +428,7 @@ export function evaluateRepoReadiness(
 
   let specResult;
   try {
-    specResult = buildSpecImpl({
-      repoFullName,
-      issue: {
-        number: 1,
-        title: "Cross-repo evaluation harness smoke issue",
-        body: "Synthetic issue used only by the cross-repo evaluation harness.",
-        labels: ["bug"],
-      },
-      context: { issues: [{ number: 1 }], pullRequests: [] },
-      claimLedger: defaultClaimLedger(repoFullName),
-      workingDirectory: repoPath,
-      detectRepoStack: detectImpl,
-    });
+    specResult = buildEvaluationCodingTaskSpec(repoFullName, repoPath, buildSpecImpl, detectImpl);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return buildFailure(repoFullName, CROSS_REPO_FAILURE_CATEGORY.OTHER, message, {
@@ -388,6 +472,210 @@ export function runCrossRepoEvaluation(
   for (const entry of repos) {
     if (options.repoFilter && entry.repoFullName !== options.repoFilter) continue;
     results.push(evaluateRepoReadiness(entry, options));
+  }
+  return results;
+}
+
+/** First non-empty line of command output, trimmed and length-capped, for a compact failure reason (#7634). */
+function firstOutputLine(output: string | undefined): string {
+  if (typeof output !== "string") return "";
+  const line = output.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line;
+}
+
+/** Real default local-command runner: a synchronous `sh -c` in the clone dir, resolve-not-throw so a non-zero
+ *  exit becomes `ok: false` with its captured output rather than an exception (#7634). */
+function defaultRunLocalCommand(
+  command: string,
+  context: { cwd: string; env?: NodeJS.ProcessEnv },
+): LocalCommandResult {
+  const result = spawnSync("sh", ["-c", command], {
+    cwd: context.cwd,
+    env: context.env ?? process.env,
+    encoding: "utf8",
+  });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if (result.error) {
+    return { ok: false, code: null, output: result.error.message };
+  }
+  return { ok: result.status === 0, code: result.status, output };
+}
+
+function runStackCommand(
+  command: string | null,
+  context: { repoPath: string; stack: RepoStackResult },
+  runLocalCommand: NonNullable<ExecuteRepoAttemptOptions["runLocalCommand"]>,
+  options: ExecuteRepoAttemptOptions,
+): LocalCommandResult {
+  if (!command) return { ok: true, skipped: true };
+  return runLocalCommand(command, {
+    cwd: context.repoPath,
+    ...(options.env !== undefined ? { env: options.env } : {}),
+  });
+}
+
+function executionResult(
+  base: CrossRepoEvaluationResult,
+  extra: Partial<CrossRepoExecutionResult>,
+): CrossRepoExecutionResult {
+  return { ...base, executed: true, compilePassed: null, testsPassed: null, diffChars: null, ...extra };
+}
+
+/**
+ * Run one benchmark repo's full-execution attempt (#7634): gate on readiness, then run the live discover → plan
+ * → code → test loop against the local clone and classify the outcome. Dry-run only — no forge writes, no PR
+ * submission; the agent edits a throwaway clone and the diff/results are discarded by the caller.
+ *
+ * The pipeline mirrors the failure taxonomy the issue calls for, in order:
+ *   1. readiness fails            → the existing readiness category (attempt never starts; `executed: false`)
+ *   2. agent errors / no diff     → `execution_no_diff`
+ *   3. diff doesn't build         → `execution_compile_gap`
+ *   4. builds but tests fail      → `execution_test_failure`
+ *   5. tests pass but diff no-op  → `execution_noop_diff`
+ *   6. tests pass, real diff      → PASS
+ */
+export async function executeRepoAttempt(
+  entry: CrossRepoEvaluationManifestRepo,
+  options: ExecuteRepoAttemptOptions = {},
+): Promise<CrossRepoExecutionResult> {
+  const readiness = evaluateRepoReadiness(entry, options);
+  if (!readiness.passed) {
+    return { ...readiness, executed: false };
+  }
+  const repoFullName = readiness.repoFullName;
+  const repoPath = resolveEvaluationRepoPath(entry, options);
+  const stack = readiness.stack as RepoStackResult;
+
+  const detectImpl = options.detectRepoStack ?? detectRepoStack;
+  const buildSpecImpl: BuildCodingTaskSpecImpl =
+    options.buildCodingTaskSpec ?? (buildCodingTaskSpec as unknown as BuildCodingTaskSpecImpl);
+  const runLocalCommand = options.runLocalCommand ?? defaultRunLocalCommand;
+  const compileImpl =
+    options.compileRepo ?? ((context) => runStackCommand(context.stack.detected ? context.stack.buildCommand : null, context, runLocalCommand, options));
+  const testImpl =
+    options.runRepoTests ?? ((context) => runStackCommand(context.stack.detected ? context.stack.testCommand : null, context, runLocalCommand, options));
+
+  // Re-derive the same coding-task instructions readiness already validated, to hand the live agent (#7634).
+  let instructions = "";
+  try {
+    instructions = buildEvaluationCodingTaskSpec(repoFullName, repoPath, buildSpecImpl, detectImpl).instructions ?? "";
+  } catch {
+    instructions = "";
+  }
+
+  // Stage 2 — discover → plan → code. Without an injected executor the harness will not fabricate a run.
+  if (typeof options.runCodingAttempt !== "function") {
+    return executionResult(
+      buildFailure(
+        repoFullName,
+        CROSS_REPO_FAILURE_CATEGORY.EXECUTION_NO_DIFF,
+        "No coding-agent executor configured for full-execution mode (set MINER_CODING_AGENT_PROVIDER and run via the CLI).",
+        { stackDetected: true, usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack },
+      ),
+      { diffChars: null },
+    );
+  }
+
+  let attempt: CodingAttemptOutcome;
+  try {
+    attempt = await options.runCodingAttempt({
+      repoFullName,
+      repoPath,
+      stack,
+      instructions,
+      attemptId: `cross-repo-exec-${repoFullName.replace("/", "__")}`,
+      maxTurns: Number.isFinite(options.maxTurns) ? (options.maxTurns as number) : 30,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return executionResult(
+      buildFailure(repoFullName, CROSS_REPO_FAILURE_CATEGORY.EXECUTION_NO_DIFF, `Coding agent did not run: ${message}`, {
+        stackDetected: true,
+        usedDefaultGoalSpec: readiness.usedDefaultGoalSpec,
+        stack,
+      }),
+      { diffChars: null },
+    );
+  }
+
+  const diff = typeof attempt?.diff === "string" ? attempt.diff : "";
+  if (!attempt || (attempt.ok === false && diff.trim().length === 0)) {
+    return executionResult(
+      buildFailure(
+        repoFullName,
+        CROSS_REPO_FAILURE_CATEGORY.EXECUTION_NO_DIFF,
+        attempt?.error ?? "Coding agent reported failure and produced no diff.",
+        { stackDetected: true, usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack },
+      ),
+      { diffChars: diff.length },
+    );
+  }
+
+  // Stage 3 — the produced diff must still build.
+  const compile = await compileImpl({ repoPath, stack });
+  if (!compile.ok) {
+    return executionResult(
+      buildFailure(
+        repoFullName,
+        CROSS_REPO_FAILURE_CATEGORY.EXECUTION_COMPILE,
+        `Generated diff did not build${firstOutputLine(compile.output) ? `: ${firstOutputLine(compile.output)}` : "."}`,
+        { stackDetected: true, usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack },
+      ),
+      { compilePassed: false, diffChars: diff.length },
+    );
+  }
+
+  // Stage 4 — the target repo's own test suite must pass.
+  const test = await testImpl({ repoPath, stack });
+  if (!test.ok) {
+    return executionResult(
+      buildFailure(
+        repoFullName,
+        CROSS_REPO_FAILURE_CATEGORY.EXECUTION_TEST,
+        `Target test suite failed${firstOutputLine(test.output) ? `: ${firstOutputLine(test.output)}` : "."}`,
+        { stackDetected: true, usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack },
+      ),
+      { compilePassed: true, testsPassed: false, diffChars: diff.length },
+    );
+  }
+
+  // Stage 5 — a passing run with no actual change is a no-op, not a success.
+  if (diff.trim().length === 0) {
+    return executionResult(
+      buildFailure(
+        repoFullName,
+        CROSS_REPO_FAILURE_CATEGORY.EXECUTION_NOOP,
+        "Tests passed but the coding agent produced a no-op diff (no file changes).",
+        { stackDetected: true, usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack },
+      ),
+      { compilePassed: true, testsPassed: true, diffChars: 0 },
+    );
+  }
+
+  return executionResult(buildPass(repoFullName, { usedDefaultGoalSpec: readiness.usedDefaultGoalSpec, stack }), {
+    compilePassed: true,
+    testsPassed: true,
+    diffChars: diff.length,
+  });
+}
+
+/**
+ * Run the full-execution harness across a parsed manifest (#7634). Without a `repoFilter`, only entries flagged
+ * `fullExecution: true` run (the curated subset); a `repoFilter` overrides the flag and runs that one entry.
+ */
+export async function runCrossRepoExecution(
+  parsed: ParsedCrossRepoEvaluationManifest,
+  options: { repoFilter?: string } & ExecuteRepoAttemptOptions = {},
+): Promise<CrossRepoExecutionResult[]> {
+  const repos = parsed?.manifest?.repos ?? [];
+  const results: CrossRepoExecutionResult[] = [];
+  for (const entry of repos) {
+    if (options.repoFilter) {
+      if (entry.repoFullName !== options.repoFilter) continue;
+    } else if (entry.fullExecution !== true) {
+      continue;
+    }
+    results.push(await executeRepoAttempt(entry, options));
   }
   return results;
 }

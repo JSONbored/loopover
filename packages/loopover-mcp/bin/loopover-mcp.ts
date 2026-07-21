@@ -2,9 +2,10 @@
 // Phase 3 of #7291 / #7330 — design decision: single-file 1:1 JS→TS conversion (not a split).
 // Seams exist, but splitting would be a separate refactor; this PR only routes the CLI through tsc.
 import { createHash } from "node:crypto";
-import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
@@ -72,6 +73,27 @@ const decisionPackCacheMaxBytes = 512 * 1024;
 const cliTextFileMaxBytes = 1024 * 1024;
 const changelogPath = new URL("../CHANGELOG.md", import.meta.url);
 const cliArgs = process.argv.slice(2);
+
+// #7764: true only when this file is the process entrypoint (`node .../loopover-mcp.js`, incl. via the npm
+// `.bin` symlink -- realpathSync resolves it), false when it is imported in-process (e.g. by a vitest unit
+// test that exercises the CLI dispatcher + stdio tools directly). The two top-level side effects below -- the
+// CLI dispatch and the stdio `server.connect()` -- are gated on it so an in-process importer neither hijacks
+// the test runner's argv into runCli() nor binds a StdioServerTransport to the shared stdin. This is the same
+// "testable-export refactor" path bin/loopover-miner-mcp.ts's createMinerMcpServer already took (see
+// codecov.yml's CLI-dispatcher note); subprocess invocation is unchanged (argv[1] is this file, so it stays
+// true) and every mcp-cli-*.test.ts harness run continues to hit the real dispatcher.
+function isProcessEntrypoint() {
+  const entry = process.argv[1];
+  /* v8 ignore next -- argv[1] is always populated for a spawned Node process; the guard is belt-and-suspenders */
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    /* v8 ignore next -- defensive: a realpath failure (renamed/removed entry) just means "not the launched CLI" */
+    return false;
+  }
+}
+const runAsCliEntrypoint = isProcessEntrypoint();
 const defaultProfileName = "default";
 // Single source of truth for shell-completion: top-level command -> its subcommands (if any).
 const CLI_COMMAND_SPEC = {
@@ -107,7 +129,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts"],
+  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -915,6 +937,20 @@ const gatePrecisionShape = {
   windowDays: z.number().int().positive().optional(),
 };
 
+// #7764: mirrors the remote loopover_plan_repo_issues tool's input (src/mcp/server.ts's planRepoIssuesShape),
+// minus the create-only `milestone` which this proxy (and the `maintain plan-issues` CLI) does not expose --
+// forwarded to POST /v1/repos/:owner/:repo/issue-plan-drafts/generate. `goal` is the required maintainer
+// planning goal; dryRun/create carry the route's create-safety (create alone is rejected there). `limit` is
+// capped at 10, matching the route, because every draft costs real LLM spend.
+const planRepoIssuesShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  goal: z.string().min(1).max(2000),
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(10).optional().default(5),
+};
+
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
@@ -1292,6 +1328,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
   },
   {
+    name: "loopover_plan_repo_issues",
+    category: "maintainer",
+    description:
+      "AI-plan a small set of concrete GitHub issue drafts for a repo from a maintainer-supplied free-form goal, same as `loopover-mcp maintain plan-issues --goal ...`. Dry-run BY DEFAULT: only previews the drafted title/body/labels unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Maintainer access required.",
+  },
+  {
     name: "loopover_open_pr",
     category: "agent",
     description:
@@ -1362,7 +1404,9 @@ function stdioToolDescription(name: any) {
   return tool.description;
 }
 
-if (cliArgs[0] && cliArgs[0] !== "--stdio") {
+/* v8 ignore next 8 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
+   unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
+if (runAsCliEntrypoint && cliArgs[0] && cliArgs[0] !== "--stdio") {
   try {
     const exitCode = await runCli(cliArgs);
     process.exit(typeof exitCode === "number" ? exitCode : 0);
@@ -1371,7 +1415,7 @@ if (cliArgs[0] && cliArgs[0] !== "--stdio") {
   }
 }
 
-const server = new McpServer({
+export const server = new McpServer({
   name: "loopover-local",
   version: packageVersion,
 });
@@ -2597,6 +2641,25 @@ registerStdioTool(
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
   );
+
+registerStdioTool(
+  "loopover_plan_repo_issues",
+  {
+    description: stdioToolDescription("loopover_plan_repo_issues"),
+    inputSchema: planRepoIssuesShape,
+  },
+  async ({ owner, repo, goal, dryRun, create, limit }: any) => {
+    // #7764: proxies POST {repoBase}/issue-plan-drafts/generate (the REST mirror of this same tool id). The
+    // route re-applies its own explicit_create_requires_dry_run_false guard, so forwarding the schema-defaulted
+    // dryRun/create verbatim keeps the create-safety exact: `create` alone (dryRun still true) is rejected;
+    // only an explicit {create:true, dryRun:false} reaches the write path.
+    const payload = await apiPost(`${toolRepoBase(owner, repo)}/issue-plan-drafts/generate`, { goal, dryRun, create, limit });
+    return toolResult(
+      `Issue plan for ${owner}/${repo} (status=${payload.status}, dryRun=${payload.dryRun}): ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created.`,
+      payload,
+    );
+  },
+);
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.
@@ -3141,7 +3204,10 @@ server.registerPrompt(
   }),
 );
 
-await server.connect(new StdioServerTransport());
+// #7764: only bind the shared stdin/stdout transport when actually launched as the CLI/stdio process. An
+// in-process unit-test importer holds the exported `server` and connects it to an in-memory transport instead.
+/* v8 ignore next -- only the launched stdio process binds the real transport; unit tests connect in-memory. */
+if (runAsCliEntrypoint) await server.connect(new StdioServerTransport());
 
 async function withClientWorkspaceRoots(input: any) {
   return withWorkspaceRoots(input, await clientWorkspaceRoots());
@@ -3202,6 +3268,9 @@ function printMaintainHelp() {
       "  generate-issue-drafts        Preview contributor issue drafts (dry-run). Never creates without --create.",
       "             [--create]        Actually open the drafted issues (requires repo write access).",
       "             [--limit N]       Cap the drafts generated (1-20, default 5).",
+      '  plan-issues --goal "..."     AI-plan issue drafts from a free-form goal (dry-run). Never creates without --create.',
+      "             [--create]        Actually open the drafted issues (requires repo write access).",
+      "             [--limit N]       Cap the drafts generated (1-10, default 5).",
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",
@@ -3210,7 +3279,7 @@ function printMaintainHelp() {
 
 // #784 maintainer CLI controls — thin proxies over the agent approval-queue API (#779) and the maintainer
 // settings kill-switch (#130). The API enforces maintainer authorization; the CLI never decides locally.
-async function maintainCli(args: any) {
+export async function maintainCli(args: any) {
   const subcommand = args[0];
   if (!subcommand || subcommand === "--help" || subcommand === "help") return printMaintainHelp();
   const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
@@ -3439,8 +3508,32 @@ async function maintainCli(args: any) {
     emit(payload, lines.join("\n"));
     return;
   }
+  if (subcommand === "plan-issues") {
+    // #7764: session-authenticated mirror of POST {repoBase}/issue-plan-drafts/generate (and the remote
+    // loopover_plan_repo_issues tool). Requires --goal (the maintainer's free-form planning goal). Dry-run BY
+    // DEFAULT — only a bare `--create` opts into the write path, forwarded as {create:true, dryRun:false}, the
+    // exact shape the route's explicit_create_requires_dry_run_false guard demands. A plain `plan-issues` can
+    // never create.
+    const goal = typeof options.goal === "string" ? options.goal.trim() : "";
+    if (!goal) throw new Error('Pass the planning goal: loopover-mcp maintain plan-issues --repo owner/repo --goal "...".');
+    const create = options.create === true;
+    const parsedLimit = Number(options.limit);
+    const body = { goal, create, dryRun: !create, ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}) };
+    const payload = await apiPost(`${repoBase}/issue-plan-drafts/generate`, body);
+    const mode = payload.dryRun ? "dry-run" : "create";
+    const lines = [
+      `Issue plan for ${repoFullName} (${mode}, status=${sanitizePlainTextTerminalOutput(payload.status)}): ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created, ${payload.skippedDuplicate ?? 0} duplicate, ${payload.skippedDeclined ?? 0} declined, ${payload.skippedUnsafe ?? 0} unsafe, ${payload.skippedCreateFailed ?? 0} create-failed.`,
+      // draft.title/body are AI-generated free text, so the plain-text path is sanitized (#6261).
+      ...(payload.drafts ?? []).map((draft: any) => {
+        const ref = draft.issue ? ` -> #${draft.issue.number} ${draft.issue.url}` : "";
+        return `- [${sanitizePlainTextTerminalOutput(draft.status)}] ${sanitizePlainTextTerminalOutput(draft.title)}${sanitizePlainTextTerminalOutput(ref)}`;
+      }),
+    ];
+    emit(payload, lines.join("\n"));
+    return;
+  }
   throw new Error(
-    `Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts.`,
+    `Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts | plan-issues.`,
   );
 }
 

@@ -187,6 +187,7 @@ export async function startFixtureServer(
     prTextLintStatus?: number;
     onPacketRequest?: (body: unknown) => void;
     onIssueDraftRequest?: (body: { dryRun?: boolean; create?: boolean; limit?: number }) => void;
+    onPlanIssuesRequest?: (body: { goal?: string; dryRun?: boolean; create?: boolean; limit?: number }) => void;
     onWatchRequest?: (req: { method: string; body: { repoFullName?: string; labels?: string[] } }) => void;
     onApiRequest?: (request: IncomingMessage) => void;
     validateConfigWarnings?: string[];
@@ -698,6 +699,45 @@ export async function startFixtureServer(
               status: "proposed",
               title: "Add [31mcursor[0m pagination",
               ...(requestBody.create ? { issue: { number: 42, url: "https://github.com/owner/repo/issues/42" } } : {}),
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    // #7764: issue-plan-drafts generation. Echoes the forwarded {goal, dryRun, create, limit} so the CLI/stdio
+    // test can assert the exact body it sent. The draft title carries an ANSI escape to prove the plain-text
+    // path is sanitized (#6261); a created run returns the issue ref like the contributor handler above.
+    if (request.url === "/v1/repos/owner/repo/issue-plan-drafts/generate" && request.method === "POST") {
+      const requestBody = (await readJsonRequest(request)) as { goal?: string; dryRun?: boolean; create?: boolean; limit?: number };
+      options.onPlanIssuesRequest?.(requestBody);
+      // Sentinel goal "__bare__" returns a minimal disabled-posture response (no counts/drafts), so the CLI +
+      // stdio proxies' defensive `?? 0` / `?? []` fallbacks are exercised (the service really can short-circuit
+      // to a countless `disabled`/`unavailable` posture when AI is off).
+      if (requestBody.goal === "__bare__") {
+        response.end(JSON.stringify({ repoFullName: "owner/repo", generatedAt: "2026-05-30T00:00:00.000Z", status: "disabled", dryRun: true, createRequested: false }));
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          status: "ok",
+          dryRun: requestBody.dryRun ?? true,
+          createRequested: requestBody.create ?? false,
+          proposed: requestBody.create ? 0 : 1,
+          skippedDuplicate: 0,
+          skippedDeclined: 0,
+          skippedUnsafe: 0,
+          created: requestBody.create ? 1 : 0,
+          skippedCreateFailed: 0,
+          drafts: [
+            {
+              status: requestBody.create ? "created" : "proposed",
+              title: "Add [31mcursor[0m pagination",
+              body: "body",
+              labels: [],
+              ...(requestBody.create ? { issue: { number: 51, url: "https://github.com/owner/repo/issues/51" } } : {}),
             },
           ],
         }),

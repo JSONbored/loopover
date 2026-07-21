@@ -10,7 +10,13 @@ import { createApp } from "./app.js";
 import { TtlCache } from "./cache.js";
 import { DEFAULT_CACHE_TTL_MS } from "./discovery-query.js";
 import { GitHubClient } from "./github-client.js";
+import { captureUnhandledError, flushSentry, initSentry, resolveSentryEnvironment } from "./sentry.js";
 import { DEFAULT_SOFT_CLAIM_TTL_MS, SoftClaimStore } from "./soft-claim.js";
+
+const sentryEnabled = await initSentry(process.env);
+if (sentryEnabled) {
+  console.log(JSON.stringify({ event: "discovery_index_sentry", environment: resolveSentryEnvironment(process.env) }));
+}
 
 const githubToken = process.env.DISCOVERY_INDEX_GITHUB_TOKEN ?? "";
 const configuredCacheTtlMs = Number(process.env.DISCOVERY_INDEX_CACHE_TTL_MS);
@@ -33,8 +39,17 @@ serve({ fetch: app.fetch, port }, (info) => {
   console.log(JSON.stringify({ event: "discovery_index_listening", port: info.port }));
 });
 
+process.on("unhandledRejection", (reason) => {
+  captureUnhandledError(reason, { event: "discovery_index_unhandled_rejection" });
+});
+
+process.on("uncaughtException", (error) => {
+  captureUnhandledError(error, { event: "discovery_index_uncaught_exception" });
+  void flushSentry().finally(() => process.exit(1));
+});
+
 process.on("SIGTERM", () => {
-  process.exit(0);
+  void flushSentry().finally(() => process.exit(0));
 });
 
 export { app };

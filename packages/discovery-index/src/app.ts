@@ -15,6 +15,7 @@ import { normalizeSharedSecret, verifyBearer } from "./auth.js";
 import type { TtlCache } from "./cache.js";
 import { runDiscoveryQuery, type GitHubClientLike } from "./discovery-query.js";
 import { incr, observe, renderMetrics } from "./metrics.js";
+import { captureRouteError } from "./sentry.js";
 import { parseSoftClaimRequest, softClaimKey, type SoftClaimStoreLike } from "./soft-claim.js";
 
 export interface AppDeps {
@@ -48,6 +49,7 @@ export function createApp(deps: AppDeps): Hono {
     // Hono's ErrorHandler type guarantees `error: Error | HTTPResponseError` -- both carry `.message` -- so
     // there is no non-Error case here to guard against, unlike a bare `catch (error: unknown)`.
     console.error(JSON.stringify({ event: "discovery_index_error", route: c.req.path, message: error.message }));
+    captureRouteError(error, { route: c.req.path, method: c.req.method });
     return c.json({ error: "internal_error" }, 500);
   });
 

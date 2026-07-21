@@ -34,9 +34,20 @@ export class DiscoveryIndexContainer extends Container {
   // long enough that normal miner query cadence (cache TTL is 5 minutes, per README.md) doesn't constantly
   // pay a cold-start penalty between requests.
   override sleepAfter = "10m";
+  // Sentry vars (#4934) are forwarded whether or not they're actually configured -- initSentry/
+  // upload-sourcemaps.ts (both running inside the container, not this Worker) already no-op cleanly on an
+  // empty/unset SENTRY_DSN/SENTRY_AUTH_TOKEN; nothing here needs to conditionally omit them. Container.envVars
+  // requires Record<string, string> (no undefined) -- SENTRY_RELEASE/SENTRY_AUTH_TOKEN are optional (env.d.ts),
+  // so they're coerced to "" here, which initSentry's own nonBlank() already treats identically to unset.
   override envVars = {
     DISCOVERY_INDEX_SHARED_SECRET: env.DISCOVERY_INDEX_SHARED_SECRET,
     DISCOVERY_INDEX_GITHUB_TOKEN: env.DISCOVERY_INDEX_GITHUB_TOKEN,
+    SENTRY_DSN: env.SENTRY_DSN,
+    SENTRY_ENVIRONMENT: env.SENTRY_ENVIRONMENT,
+    SENTRY_RELEASE: env.SENTRY_RELEASE ?? "",
+    SENTRY_AUTH_TOKEN: env.SENTRY_AUTH_TOKEN ?? "",
+    SENTRY_ORG: env.SENTRY_ORG,
+    SENTRY_PROJECT: env.SENTRY_PROJECT,
   };
 }
 
@@ -45,6 +56,12 @@ interface WorkerEnv {
   DISCOVERY_INDEX_RATE_LIMITER: DurableObjectNamespace<DiscoveryIndexRateLimiter>;
   DISCOVERY_INDEX_SHARED_SECRET: string;
   DISCOVERY_INDEX_GITHUB_TOKEN: string;
+  SENTRY_DSN: string;
+  SENTRY_ENVIRONMENT: string;
+  SENTRY_RELEASE: string;
+  SENTRY_AUTH_TOKEN: string;
+  SENTRY_ORG: string;
+  SENTRY_PROJECT: string;
 }
 
 // /health, /ready, /metrics are cheap liveness/monitoring routes a legitimate uptime checker may poll

@@ -11,6 +11,15 @@ declare global {
     DISCOVERY_INDEX_SHARED_SECRET: string;
     /** This service's own GitHub token, isolated from any other component's. */
     DISCOVERY_INDEX_GITHUB_TOKEN: string;
+    /** Full Sentry API access (releases, source-map upload) -- unlike SENTRY_DSN/ORG/PROJECT (wrangler.jsonc
+     *  `vars`, non-sensitive), this is genuinely sensitive and stays a secret. Optional: upload-sourcemaps.ts
+     *  no-ops with a log line when unset, never fails the boot. */
+    SENTRY_AUTH_TOKEN?: string;
+    /** The deploy's release identifier (loopover-discovery-index@<sha>) -- deliberately NOT a static
+     *  wrangler.jsonc var since it must change every deploy; set via `wrangler deploy --var
+     *  SENTRY_RELEASE:...` (see wrangler.jsonc's own header comment). Optional: initSentry falls back to
+     *  deriving one from SENTRY_COMMIT_SHA, else omits release tagging entirely. */
+    SENTRY_RELEASE?: string;
   }
 
   // `import { env } from "cloudflare:workers"` (used in worker.ts's Container class field initializers,
@@ -20,6 +29,8 @@ declare global {
     interface Env {
       DISCOVERY_INDEX_SHARED_SECRET: string;
       DISCOVERY_INDEX_GITHUB_TOKEN: string;
+      SENTRY_AUTH_TOKEN?: string;
+      SENTRY_RELEASE?: string;
     }
   }
 }

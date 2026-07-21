@@ -27,6 +27,17 @@ Soft-claim design note: the shipped client payload never carries caller identity
 | `DISCOVERY_INDEX_CACHE_TTL_MS`      | TTL for cached query results, per unique `(repos, orgs, searchTerms)` scope. Default `300000` (5 minutes). |
 | `DISCOVERY_INDEX_SOFT_CLAIM_TTL_MS` | TTL for a soft claim before it's reclaimable. Default `1800000` (30 minutes).                   |
 | `PORT`                              | HTTP port. Default `8080`.                                                                      |
+| `SENTRY_DSN`                        | Error tracking (#4934), reporting into the shared `metagraphed` Sentry project. Unset ⇒ Sentry stays inert (no-op) everywhere, matching this repo's other services. Non-sensitive (write-only ingest URL) — set as a plain `wrangler.jsonc` var, not a secret. |
+| `SENTRY_ENVIRONMENT`                | Sentry environment tag. Default `production`.                                                   |
+| `SENTRY_RELEASE`                    | This deploy's release identifier (`loopover-discovery-index@<sha>`). Set per-deploy via `wrangler deploy --var`, not a static config value — see `wrangler.jsonc`'s header comment. Falls back to deriving one from `SENTRY_COMMIT_SHA` if unset. |
+| `SENTRY_AUTH_TOKEN`                 | Full Sentry API token, used only by `upload-sourcemaps.ts` at container startup to upload this build's source maps and manage the release. Genuinely sensitive — always a `wrangler secret`. Unset ⇒ source-map upload skips itself with a log line; never fails the boot. |
+| `SENTRY_ORG` / `SENTRY_PROJECT`     | Sentry org/project slugs for source-map upload. Same non-sensitive/plain-var treatment as `SENTRY_DSN`. |
+
+## Error tracking & releases (#4934)
+
+Runtime errors (route handler failures, unhandled rejections/exceptions) report into the shared **`metagraphed`** Sentry project (`jsonbored` org) that this repo's other infra/operational pieces already flow into — not a separate project. See `src/sentry.ts` for the full redaction rules (secret-named fields and GitHub-token-shaped values are always filtered before anything leaves the process) and `OPERATIONS.md`'s Monitoring section for how this fits alongside `/metrics`.
+
+Source maps and release/deploy tracking are handled by `src/upload-sourcemaps.ts`, which runs as the **first step of the container's runtime `CMD`** (not at Docker build time — `SENTRY_AUTH_TOKEN` is a runtime-only secret, never baked into an image layer): it creates the Sentry release, associates commits, uploads and validates source maps, then records a deploy and finalizes the release, before deleting the `.map` files it just uploaded and starting `server.ts`. Any step failing is non-fatal to the boot unless `DISCOVERY_INDEX_SENTRY_UPLOAD_STRICT=true` is set. Mirrors `review-enrichment/src/upload-sourcemaps.ts`'s identical design.
 
 ## Deployment
 

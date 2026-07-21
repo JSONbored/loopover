@@ -14,6 +14,7 @@ COPY packages/loopover-engine packages/loopover-engine
 COPY packages/discovery-index packages/discovery-index
 RUN npm run build --workspace @loopover/engine \
   && npm run build --workspace @loopover/discovery-index \
+  && npm run validate:sourcemaps --workspace @loopover/discovery-index \
   && npm prune --omit=dev --workspace @loopover/discovery-index
 
 FROM node:22-slim AS runtime
@@ -32,5 +33,13 @@ USER discovery-index
 ENV PORT=8080
 EXPOSE 8080
 # Provide at runtime (NOT baked into the image): DISCOVERY_INDEX_SHARED_SECRET (bearer auth for callers),
-# DISCOVERY_INDEX_GITHUB_TOKEN (this service's own GitHub token, isolated from any other component's).
-CMD ["node", "dist/server.js"]
+# DISCOVERY_INDEX_GITHUB_TOKEN (this service's own GitHub token, isolated from any other component's),
+# SENTRY_DSN/SENTRY_ENVIRONMENT/SENTRY_RELEASE (error tracking, #4934 -- optional, no-op when SENTRY_DSN is
+# unset), and for source-map upload specifically: SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT (also
+# optional -- upload-sourcemaps.ts skips itself with a log line, never fails the boot, when any is unset).
+#
+# upload-sourcemaps.js runs FIRST, at container startup (not baked into the image at build time, since
+# SENTRY_AUTH_TOKEN is a runtime-only secret) -- deletes the .map files it just uploaded before the server
+# starts, so they're never served or left on disk in the running container. Mirrors
+# review-enrichment/Dockerfile's identical CMD shape.
+CMD ["sh", "-c", "node dist/upload-sourcemaps.js && find dist -type f -name '*.map' -delete && node dist/server.js"]

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "validate:sourcemaps": "node scripts/validate-sourcemaps.mjs",
     "start": "node dist/server.js",
     "dev": "node --experimental-strip-types --watch src/server.ts",
     "cf:dev": "wrangler dev",
@@ -20,6 +21,8 @@
     "@cloudflare/containers": "^0.3.7",
     "@hono/node-server": "^1.19.14",
     "@loopover/engine": "^3.4.0",
+    "@sentry/cli": "^3.6.0",
+    "@sentry/node": "^10.63.0",
     "hono": "^4.12.27"
   },
   "devDependencies": {

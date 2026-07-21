@@ -8,6 +8,12 @@
     "rootDir": "src",
     "outDir": "dist",
     "noEmit": false,
+    // Sentry source-map upload (upload-sourcemaps.ts, #4934) needs real, embedded original source --
+    // inlineSources embeds src/*.ts content directly into the .map files, matching review-enrichment's
+    // identical setup, so Sentry can render the actual TypeScript in a stack trace without a separate
+    // source upload step.
+    "sourceMap": true,
+    "inlineSources": true,
     // Without this, the inherited root value (tsconfig.json:24, "./.tsbuildinfo") resolves relative to the
     // ROOT config's location, not this one -- this package's build and the root Typecheck step would then
     // read/write the exact same cache file at the repo root and corrupt each other's incremental state,

@@ -4,12 +4,29 @@
   // running the SAME, unmodified Docker image the existing Dockerfile already builds and the Node
   // entrypoint (src/server.ts) already runs on port 8080.
   //
-  // Before first deploy, set both real secrets (never commit real values, and never put them in this file):
+  // Before first deploy, set the real secrets (never commit real values, and never put them in this file):
   //   npx wrangler secret put DISCOVERY_INDEX_SHARED_SECRET
   //   npx wrangler secret put DISCOVERY_INDEX_GITHUB_TOKEN
+  //   npx wrangler secret put SENTRY_AUTH_TOKEN   (only needed for source-map upload; omit to skip it --
+  //                                                 upload-sourcemaps.ts no-ops cleanly when unset)
+  //
+  // SENTRY_RELEASE is deliberately NOT a static var below -- it should be the actual deploy's git commit
+  // (loopover-discovery-index@<sha>), which changes every release. Set per-deploy:
+  //   npx wrangler deploy --var SENTRY_RELEASE:loopover-discovery-index@$(git rev-parse HEAD)
   "name": "loopover-discovery-index",
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-21",
+  "vars": {
+    // Error tracking (#4934) reports into the shared "metagraphed" Sentry project other infra/operational
+    // pieces already flow into (jsonbored org) -- not a new, separate project. SENTRY_DSN is write-only
+    // (submits events, cannot read account data) -- safe to commit, the same way it's commonly embedded in
+    // public client-side bundles; SENTRY_AUTH_TOKEN (full API access, used only for source-map upload) is
+    // the one genuinely sensitive value and stays a wrangler secret, never here.
+    "SENTRY_ORG": "jsonbored",
+    "SENTRY_PROJECT": "metagraphed",
+    "SENTRY_DSN": "https://998bd096e2c9f1d81781ed3a88fed0b9@o4511631313666048.ingest.us.sentry.io/4511749777588224",
+    "SENTRY_ENVIRONMENT": "production"
+  },
   "observability": {
     "enabled": true,
     "logs": {

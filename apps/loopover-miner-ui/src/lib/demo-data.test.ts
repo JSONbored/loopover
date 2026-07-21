@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEMO_LEDGERS_SUMMARY,
   DEMO_PORTFOLIO_QUEUE_SUMMARY,
+  DEMO_RANKED_CANDIDATES,
   DEMO_RUN_STATES,
   getDemoGovernorState,
   getDemoPortfolioQueueItems,
@@ -36,6 +37,16 @@ describe("demo fixtures shape (#5963)", () => {
     expect(DEMO_RUN_STATES.length).toBeGreaterThan(0);
     for (const row of DEMO_RUN_STATES) {
       expect(["idle", "discovering", "planning", "preparing"]).toContain(row.state);
+    }
+  });
+
+  it("DEMO_RANKED_CANDIDATES is non-empty and every row's scores fall in the valid 0..1 fraction range", () => {
+    expect(DEMO_RANKED_CANDIDATES.length).toBeGreaterThan(0);
+    for (const row of DEMO_RANKED_CANDIDATES) {
+      for (const score of [row.rankScore, row.laneFit, row.freshness, row.potential, row.feasibility, row.dupRisk]) {
+        expect(score).toBeGreaterThanOrEqual(0);
+        expect(score).toBeLessThanOrEqual(1);
+      }
     }
   });
 

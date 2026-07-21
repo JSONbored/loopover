@@ -20,6 +20,7 @@ function RootComponent() {
 const NAV_ITEMS = [
   { to: "/", label: "Overview", exact: true },
   { to: "/run-history", label: "Run history" },
+  { to: "/ranked-candidates", label: "Ranked candidates" },
   { to: "/portfolio", label: "Portfolio" },
   { to: "/ledgers", label: "Ledgers" },
   // #7673: layout reservation only — the route is an empty placeholder until settlement data exists.

@@ -5,10 +5,11 @@
 // build-time constant, so the "off" branch (the real fetch calls) is dead-code-eliminated from a demo bundle and
 // vice versa -- a production self-host build never carries this module's data.
 //
-// Scope: the five REST fetchers backing the three main dashboard routes (run-history, ledgers, portfolio +
-// its queue actions, governor). discover/attempt/chat are NOT covered here -- those trigger a real coding-agent
-// iteration or ground against a live MCP connection, and fabricating a convincing multi-minute agent run is a
-// separate, much larger content-design task than tabular summary data (tracked as follow-up work, not this PR).
+// Scope: the six REST fetchers backing the four main dashboard routes (run-history, ledgers, portfolio + its
+// queue actions, governor, ranked-candidates (#7675)). discover/attempt/chat are NOT covered here -- those
+// trigger a real coding-agent iteration or ground against a live MCP connection, and fabricating a convincing
+// multi-minute agent run is a separate, much larger content-design task than tabular summary data (tracked as
+// follow-up work, not this PR).
 //
 // Every value below is entirely synthetic -- no real repo, run, ledger entry, or account referenced anywhere.
 
@@ -17,6 +18,7 @@ import type { LedgersSummary } from "./ledgers";
 import type { PortfolioQueueSummary } from "./portfolio-queue";
 import type { PortfolioQueueActionItem } from "./portfolio-queue-actions";
 import type { GovernorPauseState } from "./governor";
+import type { RankedCandidateRow } from "./ranked-candidates";
 
 export function isDemoMode(): boolean {
   return import.meta.env.VITE_DEMO_MODE === "1";
@@ -46,6 +48,48 @@ export const DEMO_RUN_STATES: RunStateRow[] = [
     repoFullName: "northwind/inventory",
     state: "planning",
     updatedAt: "2026-07-18T12:30:00.000Z",
+  },
+];
+
+export const DEMO_RANKED_CANDIDATES: RankedCandidateRow[] = [
+  {
+    repoFullName: "acme/widgets",
+    issueNumber: 214,
+    title: "Add retry helper for flaky forge requests",
+    htmlUrl: "https://github.com/acme/widgets/issues/214",
+    rankScore: 0.87,
+    laneFit: 0.92,
+    freshness: 0.81,
+    potential: 0.88,
+    feasibility: 0.79,
+    dupRisk: 0.05,
+    rankedAt: "2026-07-18T14:05:00.000Z",
+  },
+  {
+    repoFullName: "acme/api-gateway",
+    issueNumber: 58,
+    title: "Cache the OpenAPI schema between requests",
+    htmlUrl: "https://github.com/acme/api-gateway/issues/58",
+    rankScore: 0.74,
+    laneFit: 0.7,
+    freshness: 0.66,
+    potential: 0.8,
+    feasibility: 0.72,
+    dupRisk: 0.12,
+    rankedAt: "2026-07-18T13:50:00.000Z",
+  },
+  {
+    repoFullName: "northwind/inventory",
+    issueNumber: 133,
+    title: "Fix pagination cursor drift on the audit feed",
+    htmlUrl: null,
+    rankScore: 0.52,
+    laneFit: 0.48,
+    freshness: 0.55,
+    potential: 0.6,
+    feasibility: 0.5,
+    dupRisk: 0.35,
+    rankedAt: "2026-07-18T12:20:00.000Z",
   },
 ];
 

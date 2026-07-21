@@ -33,6 +33,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      backendConfig: ${{ steps.filter.outputs.backendConfig }}
       ui: ${{ steps.filter.outputs.ui }}
       uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
@@ -98,6 +99,30 @@ jobs:
               # ONLY a composite action file (touching nothing else backend matches) would skip both
               # "Lint workflows" and "Lint composite actions" below entirely, with zero CI signal on a
               # broken edit until the next push-triggered full run.
+              - '.github/actions/**'
+              - 'wrangler.jsonc'
+              - 'worker-configuration.d.ts'
+              - '.loopover.yml'
+              - '.nvmrc'
+              - '.release-please-manifest.json'
+              - 'release-please-config.json'
+            # The subset of `backend` above that ISN'T plain src/**+test/** TypeScript -- config, migrations,
+            # and workflow/tooling files with no import-graph edge a test file could ever have to them. Exists
+            # solely to gate scoped test selection (#ci-scoped-test-selection, validate-tests below): that
+            # verification covered only plain .ts source-file diffs replayed against real historical commits,
+            # never a migration or a package.json/tsconfig/workflow change, and `--changed`'s dependency
+            # tracing has no mechanism to connect a non-JS/TS file to the tests that would need to catch a
+            # regression in it (a migration's coverage comes from a migration-runner test that reads the
+            # migrations/ directory at runtime, not from a static `import` of the changed .sql file). A PR
+            # matching this stays on the full unscoped suite even if it also touches src/**.
+            backendConfig:
+              - 'vitest*.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'scripts/**'
+              - 'migrations/**'
+              - '.github/workflows/**'
               - '.github/actions/**'
               - 'wrangler.jsonc'
               - 'worker-configuration.d.ts'
@@ -832,21 +857,45 @@ jobs:
           # `minerTestHarness` filter comments in the `changes` job above for the full rationale.
           SKIP_MCP_CLI_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliHarness != 'true' }}
           SKIP_MINER_TEST_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.minerTestHarness != 'true' }}
-          # Scoped test selection (#ci-scoped-test-selection): a PR confined to miner/mcp/discoveryIndex --
-          # none of backend/rees/engine -- runs vitest's own --changed against origin/main instead of the
-          # full ~2,900-test suite, since the same 6-shard fan-out this job exists for (see header comment)
-          # is otherwise massive overkill for a diff touching one file. engine is deliberately EXCLUDED from
-          # this fast path: it's the one package other code imports through a built, gitignored dist/ that
+          # Scoped test selection (#ci-scoped-test-selection): a PR touching miner/mcp/discoveryIndex/backend --
+          # never rees or engine -- runs vitest's own --changed against origin/main instead of the full
+          # ~2,900+-test suite, since the same 6-shard fan-out this job exists for (see header comment) is
+          # otherwise massive overkill for a diff touching a handful of files. engine is deliberately EXCLUDED
+          # from this fast path: it's the one package other code imports through a built, gitignored dist/ that
           # --changed's import-graph analysis can't safely trace across a node_modules/package.json-exports
           # boundary -- verified by reproducing a real missed regression (editing packages/loopover-engine/
           # src/ directly, --changed failed to select the miner-side wrapper-integration tests that actually
-          # exercise it). miner/mcp/discoveryIndex don't have that exposure: nothing else in the repo imports
-          # them as libraries, so their tests are reached via direct same-package imports, verified to trace
+          # exercise it). rees stays excluded too (unreviewed, no evidence gathered either way -- narrower
+          # scope of caution costs little since it's a small slice of PRs).
+          #
+          # backend (src/**) was added to this fast path after direct verification, not by assumption: 5 real
+          # historical single/few-file src/**-only commits (spanning orb, review, api, db, selfhost -- see
+          # loopover#7590-era CI investigation) were replayed with the target commit actually checked out and
+          # --changed run against its parent. Every one correctly included its own direct dependent test
+          # file(s); zero false negatives found. Selection size scaled sensibly with how foundational the file
+          # was (a leaf module: ~0.1% of the suite; the shared DB repositories layer: ~31%) -- always less than
+          # the unscoped 100%, never more. That verification covered plain .ts source-file diffs only -- never
+          # a migration, package.json/tsconfig/vitest.config, or workflow/tooling change, none of which have
+          # any import-graph edge a test file could trace to them. `backendConfig` (the `changes` job above)
+          # captures exactly that non-traceable subset of `backend` and is required false here so a PR
+          # touching one still gets the full unscoped suite even if it also touches src/**. The one
+          # deliberately-unfiltered wide-fan-out file,
+          # test/unit/mcp-output-schemas.test.ts (imports src/mcp/server.ts, which alone directly imports ~40
+          # other src/ modules -- see the `mcpCliHarness` filter comment in the `changes` job above), is NOT
+          # given special-casing here: unlike the static path-filter that comment describes, --changed is a
+          # live, same-source-tree import-graph trace, which this batch of verification confirmed handles
+          # direct in-repo imports correctly (only the engine dist/ package-boundary case above is unsafe).
+          # Confirmed live: combining --changed with an explicit positional filename NARROWS the selection
+          # (intersection) rather than unioning it, so that composition was deliberately NOT used to force this
+          # file in -- doing so would have silently dropped every other selected file instead.
+          #
+          # miner/mcp/discoveryIndex don't have engine's exposure either: nothing else in the repo imports them
+          # as libraries, so their tests are reached via direct same-package imports, verified to trace
           # correctly. Every push to main still runs the full unscoped suite unconditionally (this job's own
-          # top-level `if:` above is unchanged), so a scoped miss is caught within minutes of merge, not
-          # never. Kill switch: set the repo variable SCOPED_TEST_SELECTION_ENABLED to "false" to force the
-          # full suite for every PR (e.g. if a gap is ever found) without a revert PR.
-          SCOPED_TEST_SELECTION: ${{ github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.backend != 'true' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.engine != 'true' && (needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true') }}
+          # top-level `if:` above is unchanged), so a scoped miss is caught within minutes of merge, not never.
+          # Kill switch: set the repo variable SCOPED_TEST_SELECTION_ENABLED to "false" to force the full suite
+          # for every PR (e.g. if a gap is ever found) without a revert PR.
+          SCOPED_TEST_SELECTION: ${{ github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true') }}
         run: |
           EXCLUDE_ARGS=()
           if [ "$SKIP_MCP_CLI_HARNESS" = "true" ]; then
@@ -865,7 +914,7 @@ jobs:
           fi
           SCOPE_ARGS=()
           if [ "$SCOPED_TEST_SELECTION" = "true" ]; then
-            echo "Scoped test selection: PR confined to miner/mcp/discoveryIndex -- running vitest --changed=origin/main instead of the full suite."
+            echo "Scoped test selection: no rees/engine paths changed -- running vitest --changed=origin/main instead of the full suite."
             # This job's checkout already uses fetch-depth: 0 (full history, for Codecov's merge-base
             # resolution), which should make origin/main resolvable already -- fetch it explicitly anyway
             # as a cheap, idempotent guarantee rather than relying on that as an assumption.

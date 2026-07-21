@@ -175,3 +175,119 @@ describe("env_put (#7766 -- atomic write + mode preservation)", () => {
     }
   });
 });
+
+// Generic seam for the remaining library functions (#7769): source the lib in a scratch dir, invoke one
+// function with the given args, and return its status/stdout/stderr -- the same spawn-a-real-bash approach as
+// createHarness above, but parameterized so env_get/compose_file_args/require_cmd can each be driven directly.
+function runLibFn(call: string, options: { env?: Record<string, string>; files?: Record<string, string> } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "loopover-selfhost-deploy-common-fn-"));
+  try {
+    for (const [name, contents] of Object.entries(options.files ?? {})) {
+      writeFileSync(join(dir, name), contents);
+    }
+    const scriptPath = join(dir, "run.sh");
+    // set -u is deliberately NOT enabled: env_get/compose_file_args read optional vars (ENV_FILE,
+    // SELFHOST_COMPOSE_FILES) with their own `${VAR:-default}` guards, exactly as the real deploy scripts do.
+    writeFileSync(scriptPath, `#!/usr/bin/env bash\nset -eo pipefail\n. "${libPath.replace(/\\/g, "/")}"\n${call}\n`);
+    chmodSync(scriptPath, 0o755);
+    return spawnSync("bash", [scriptPath], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, ...(options.env ?? {}) },
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("require_cmd (#7769)", () => {
+  it("succeeds silently when the command exists", () => {
+    // `bash` is guaranteed present (we're running under it); require_cmd must return 0 and print nothing.
+    const result = runLibFn("require_cmd bash");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("fails with exit 1 and a clear error when the command is missing", () => {
+    const result = runLibFn("require_cmd loopover-definitely-not-a-real-command");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("required command not found: loopover-definitely-not-a-real-command");
+  });
+});
+
+describe("env_get (#7769)", () => {
+  it("returns a plain unquoted value for a matching key", () => {
+    const result = runLibFn('env_get FOO "$PWD/.env"', { files: { ".env": "FOO=bar\n" } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("bar\n");
+  });
+
+  it("strips surrounding double and single quotes from the value", () => {
+    const dq = runLibFn('env_get FOO "$PWD/.env"', { files: { ".env": 'FOO="quoted value"\n' } });
+    expect(dq.status, dq.stderr).toBe(0);
+    expect(dq.stdout).toBe("quoted value\n");
+
+    const sq = runLibFn('env_get FOO "$PWD/.env"', { files: { ".env": "FOO='single quoted'\n" } });
+    expect(sq.status, sq.stderr).toBe(0);
+    expect(sq.stdout).toBe("single quoted\n");
+  });
+
+  it("skips comment and blank lines and returns the first matching key", () => {
+    const result = runLibFn('env_get FOO "$PWD/.env"', { files: { ".env": "# a comment\n\n  FOO = spaced\nFOO=second\n" } });
+    expect(result.status, result.stderr).toBe(0);
+    // Leading indentation and the spaces around `=` are trimmed; the FIRST match wins (awk exits on it).
+    expect(result.stdout).toBe("spaced\n");
+  });
+
+  it("returns exit 1 when the key is absent from the file", () => {
+    const result = runLibFn('env_get MISSING "$PWD/.env"', { files: { ".env": "FOO=bar\n" } });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+  });
+
+  it("returns exit 1 when the file does not exist", () => {
+    const result = runLibFn('env_get FOO "$PWD/does-not-exist.env"');
+    expect(result.status).toBe(1);
+  });
+
+  it("falls back to $ENV_FILE when no file argument is given", () => {
+    const result = runLibFn("env_get FOO", { files: { ".env": "FOO=from-env-file\n" }, env: { ENV_FILE: ".env" } });
+    expect(result.status, result.stderr).toBe(0);
+    // The awk reads $ENV_FILE relative to cwd (the scratch dir), where we wrote .env.
+    expect(result.stdout).toBe("from-env-file\n");
+  });
+});
+
+describe("compose_file_args (#7769)", () => {
+  it("emits -f docker-compose.yml by default when only the base compose file exists", () => {
+    const result = runLibFn("compose_file_args", { files: { "docker-compose.yml": "services: {}\n" } });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("-f\ndocker-compose.yml\n");
+  });
+
+  it("adds the override file when docker-compose.override.yml is present", () => {
+    const result = runLibFn("compose_file_args", {
+      files: { "docker-compose.yml": "services: {}\n", "docker-compose.override.yml": "services: {}\n" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("-f\ndocker-compose.yml\n-f\ndocker-compose.override.yml\n");
+  });
+
+  it("uses SELFHOST_COMPOSE_FILES verbatim when set, overriding the default discovery", () => {
+    const result = runLibFn("compose_file_args", {
+      files: { "a.yml": "services: {}\n", "b.yml": "services: {}\n" },
+      env: { SELFHOST_COMPOSE_FILES: "a.yml b.yml" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("-f\na.yml\n-f\nb.yml\n");
+  });
+
+  it("fails with exit 1 and a clear error when a listed compose file is missing", () => {
+    const result = runLibFn("compose_file_args", {
+      files: { "a.yml": "services: {}\n" },
+      env: { SELFHOST_COMPOSE_FILES: "a.yml missing.yml" },
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("compose file not found: missing.yml");
+  });
+});

@@ -14,6 +14,7 @@ import { createTestEnv } from "../helpers/d1";
 const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_repo_context",
   "loopover_get_maintainer_noise",
+  "loopover_get_ams_miner_cohort",
   "loopover_get_activation_preview",
   "loopover_get_live_gate_thresholds",
   "loopover_get_gate_config_effective",
@@ -302,6 +303,41 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(typeof data.level).toBe("string");
     expect(Array.isArray(data.noiseSources)).toBe(true);
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("loopover_get_ams_miner_cohort returns a cohort comparison for a repo (#7797)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "loopover_get_ams_miner_cohort", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(typeof data.present).toBe("boolean");
+    expect(data.amsCohort).toBeDefined();
+    expect(data.humanCohort).toBeDefined();
+    expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward|trust.?score/i);
+  });
+
+  it("loopover_get_ams_miner_cohort denies cached member-only session access (#7797)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "private-repo", full_name: "victim-org/private-repo", private: true, owner: { login: "victim-org" }, default_branch: "main" });
+    const { client } = await connectTestClient(env, {
+      kind: "session",
+      actor: "read-only-member",
+      session: {
+        id: "session-read-only-member",
+        tokenHash: "hash",
+        login: "read-only-member",
+        scopes: [],
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      },
+    });
+    const result = await client.callTool({ name: "loopover_get_ams_miner_cohort", arguments: { owner: "victim-org", repo: "private-repo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    expect(result.structuredContent).toBeUndefined();
   });
 
   it("loopover_get_activation_preview returns a structured activation preview for a repo (#7799)", async () => {

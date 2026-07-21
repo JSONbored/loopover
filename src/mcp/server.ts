@@ -111,6 +111,7 @@ import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../servi
 import { buildRecommendationQualityReport } from "../services/recommendation-quality-report";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
+import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
 import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
@@ -903,6 +904,15 @@ const maintainerNoiseOutputSchema = {
   maintainerActions: z.array(z.string()).optional(),
   queueHealth: z.unknown().optional(),
   summary: z.string().optional(),
+};
+
+const amsMinerCohortOutputSchema = {
+  present: z.boolean().optional(),
+  windowDays: z.number().optional(),
+  totalSubmitterCount: z.number().optional(),
+  checkedSubmitterCount: z.number().optional(),
+  amsCohort: z.unknown().optional(),
+  humanCohort: z.unknown().optional(),
 };
 
 // (#7799) Repo-specific "here's what LoopOver would have surfaced" activation preview over recent PRs.
@@ -1868,6 +1878,7 @@ export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "
 export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_context: "maintainer",
   loopover_get_maintainer_noise: "maintainer",
+  loopover_get_ams_miner_cohort: "maintainer",
   loopover_get_activation_preview: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
@@ -2003,6 +2014,17 @@ export class LoopoverMcp {
         outputSchema: maintainerNoiseOutputSchema,
       },
       async (input) => this.toolResult(await this.getMaintainerNoise(input)),
+    );
+
+    register(
+      "loopover_get_ams_miner_cohort",
+      {
+        description:
+          "Return the AMS-vs-human contributor-mix cohort comparison for a repo: submitter counts, PR volume, acceptance rate, review-cycle, and time-to-merge metrics for AMS-tracked vs human submitters. Maintainer-authenticated; advisory only.",
+        inputSchema: ownerRepoShape,
+        outputSchema: amsMinerCohortOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getAmsMinerCohort(input)),
     );
 
     register(
@@ -3251,6 +3273,20 @@ export class LoopoverMcp {
     const report = await loadMaintainerNoiseReport(this.env, fullName);
     return {
       summary: maintainerNoiseSummary(report),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getAmsMinerCohort(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    // Mirrors GET /v1/repos/:owner/:repo/ams-miner-cohort: same maintainer gate as getMaintainerNoise
+    // (requireRepoApprovalQueueAccess) and the same buildAmsMinerCohortComparison service the REST route uses.
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoApprovalQueueAccess(fullName);
+    const report = await buildAmsMinerCohortComparison(this.env, fullName);
+    return {
+      summary: report.present
+        ? `LoopOver AMS miner cohort for ${fullName}: ${report.amsCohort.submitterCount} AMS / ${report.humanCohort.submitterCount} human submitter(s) (checked ${report.checkedSubmitterCount}/${report.totalSubmitterCount}).`
+        : `LoopOver AMS miner cohort for ${fullName}: no cohort comparison available.`,
       data: report as unknown as Record<string, unknown>,
     };
   }

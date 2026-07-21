@@ -988,6 +988,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
   },
   {
+    name: "loopover_get_ams_miner_cohort",
+    category: "maintainer",
+    description:
+      "Return the AMS-vs-human contributor-mix cohort comparison for a repo: submitter counts, PR volume, acceptance rate, review-cycle, and time-to-merge metrics for AMS-tracked vs human submitters. Maintainer-authenticated; advisory only.",
+  },
+  {
     name: "loopover_get_activation_preview",
     category: "maintainer",
     description: "Return the repo's maintainer activation preview: a deterministic run of the advisory engine over recent PRs (evaluated/with-findings counts, distinct finding codes, per-PR samples, current review-check mode, and the single recommended next action). Maintainer-authenticated; advisory only.",
@@ -1566,6 +1572,18 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
+  },
+);
+
+registerStdioTool(
+  "loopover_get_ams_miner_cohort",
+  {
+    description: stdioToolDescription("loopover_get_ams_miner_cohort"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver AMS miner cohort.", await apiGet(`${prefix}/ams-miner-cohort`));
   },
 );
 

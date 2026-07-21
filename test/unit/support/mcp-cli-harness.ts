@@ -554,6 +554,20 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7797: AMS-vs-human contributor-mix cohort comparison (mirrors maintainer-noise auth).
+    if (request.url === "/v1/repos/owner/repo/ams-miner-cohort" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          present: true,
+          windowDays: 30,
+          totalSubmitterCount: 2,
+          checkedSubmitterCount: 2,
+          amsCohort: { submitterCount: 1, prVolume: 10, acceptanceRate: 0.7, avgReviewCycleCount: 1.2, avgTimeToMergeMs: 86_400_000 },
+          humanCohort: { submitterCount: 1, prVolume: 4, acceptanceRate: 0.5, avgReviewCycleCount: 2.0, avgTimeToMergeMs: 172_800_000 },
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/activation-preview" && request.method === "GET") {
       response.end(
         JSON.stringify({

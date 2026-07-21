@@ -351,6 +351,17 @@ describe("opportunity metadata signals", () => {
     ).toBe(0);
   });
 
+  it("skips the source issue even when its echoed-back peer row has a differently-cased repoFullName (#7731)", () => {
+    // The peer list contains the source issue itself, but the API echoed its repoFullName back with different
+    // casing/whitespace. The self-skip must normalize (like the same-repo guard two lines below it) so the source
+    // is excluded rather than counted as a duplicate of itself -- otherwise its identical title inflates dupRisk.
+    const echoedSelf = { ...base, repoFullName: "  ACME/Widgets  ", title: base.title };
+    expect(computeMetadataDupRisk(base, [echoedSelf])).toBe(0);
+    // Sanity: a genuine same-repo peer with an overlapping title (also differently cased) still counts.
+    const realPeer = { ...base, issueNumber: 11, repoFullName: "ACME/Widgets", title: base.title };
+    expect(computeMetadataDupRisk(base, [realPeer])).toBeGreaterThan(0);
+  });
+
   it("potential covers neutral-only and positive-only label branches", () => {
     expect(computeMetadataPotential({ labels: [] })).toBeCloseTo(0.45, 5);
     expect(computeMetadataPotential({ labels: ["enhancement"] })).toBeCloseTo(0.8, 5);

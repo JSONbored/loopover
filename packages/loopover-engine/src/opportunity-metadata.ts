@@ -181,7 +181,7 @@ export function computeMetadataDupRisk(
   let overlaps = 0;
   for (const peer of peers) {
     /* v8 ignore next -- Self-peer rows are skipped when scanning the shared batch list. */
-    if (peer.issueNumber === issue.issueNumber && peer.repoFullName === issue.repoFullName) continue;
+    if (peer.issueNumber === issue.issueNumber && peer.repoFullName.trim().toLowerCase() === issue.repoFullName.trim().toLowerCase()) continue;
     /* v8 ignore next -- Cross-repo peers are ignored when scanning for overlap inside a batch. */
     if (peer.repoFullName.trim().toLowerCase() !== issue.repoFullName.trim().toLowerCase()) continue;
     /* v8 ignore next -- Overlap hits are counted only for same-repo peers with shared title segments. */

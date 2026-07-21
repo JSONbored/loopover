@@ -37,6 +37,23 @@ describe("backfillContributorGateHistory (#fairness-analytics)", () => {
     expect(rows[0]).toMatchObject({ login: "octocat", project: "owner/repo", target_id: "owner/repo#7", decision: "merge", head_sha: "sha1", source: "gittensory-native" });
   });
 
+  it("REGRESSION: stamps the reconstructed row with the ORIGINAL review_audit created_at, not the time the backfill ran", async () => {
+    const env = createTestEnv();
+    await insertPullRequest(env, "owner/repo", 40, "octocat");
+    const originalCreatedAt = "2026-06-25T12:00:00.000Z"; // well before "now" (mocked D1 helper uses real Date)
+    await insertGateDecision(env, { project: "owner/repo", targetId: "owner/repo#40", decision: "merge", headSha: "sha40", createdAt: originalCreatedAt });
+
+    const before = Date.now();
+    const result = await backfillContributorGateHistory(env);
+    expect(result).toEqual({ scanned: 1, inserted: 1, skippedNoAuthor: 0, hasMore: false });
+
+    const rows = await rawAll(env, "SELECT * FROM contributor_gate_history");
+    expect(rows[0]!.created_at).toBe(originalCreatedAt);
+    // Sanity: the original timestamp really is far in the past relative to "now", so this assertion couldn't
+    // pass by coincidence if the bug (binding nowIso() instead) were reintroduced.
+    expect(Date.parse(originalCreatedAt)).toBeLessThan(before - 1000);
+  });
+
   it("backfills a candidate with a null head_sha (unlike recordContributorGateDecision, no parity self-join to protect)", async () => {
     const env = createTestEnv();
     await insertPullRequest(env, "owner/repo", 30, "octocat");

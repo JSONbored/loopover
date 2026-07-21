@@ -11,8 +11,12 @@
 //
 // SCOPE: inherits contributor-gate-eval.ts's design note -- the rows this writes are the SAME
 // contributor_gate_history table, never rendered on any public surface, never wired into exportOrbBatch.
+//
+// TIMESTAMP FIDELITY: each reconstructed row's created_at is the ORIGINAL review_audit row's created_at, not
+// the time this backfill ran -- computeContributorGateEval's `created_at >= ?` rolling-window filter (and any
+// day-bucketed view) needs the true historical date to age rows out correctly.
 
-import { errorMessage, nowIso } from "../utils/json";
+import { errorMessage } from "../utils/json";
 
 export interface ContributorGateHistoryBackfillResult {
   /** review_audit gate_decision rows examined in this batch (bounded by opts.limit). */
@@ -39,12 +43,12 @@ const MAX_BATCH_LIMIT = 5000;
 export async function backfillContributorGateHistory(env: Env, opts: { limit?: number } = {}): Promise<ContributorGateHistoryBackfillResult> {
   const limit = Number.isFinite(opts.limit) && (opts.limit as number) > 0 ? Math.min(opts.limit as number, MAX_BATCH_LIMIT) : DEFAULT_BATCH_LIMIT;
 
-  type Candidate = { project: string; targetId: string; decision: string; headSha: string | null; source: string; authorLogin: string | null };
+  type Candidate = { project: string; targetId: string; decision: string; headSha: string | null; source: string; authorLogin: string | null; createdAt: string };
   let candidates: Candidate[] = [];
   try {
     const res = await env.DB.prepare(
       `SELECT ra.project AS project, ra.target_id AS targetId, ra.decision AS decision, ra.head_sha AS headSha,
-              ra.source AS source, pr.author_login AS authorLogin
+              ra.source AS source, pr.author_login AS authorLogin, ra.created_at AS createdAt
          FROM review_audit ra
          LEFT JOIN pull_requests pr
            ON pr.repo_full_name = ra.project
@@ -83,7 +87,7 @@ export async function backfillContributorGateHistory(env: Env, opts: { limit?: n
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
-        .bind(`contrib:${login}:${c.source}:${c.targetId}@${c.headSha ?? "none"}`, login, c.source, c.project, c.targetId, c.decision, c.headSha, nowIso())
+        .bind(`contrib:${login}:${c.source}:${c.targetId}@${c.headSha ?? "none"}`, login, c.source, c.project, c.targetId, c.decision, c.headSha, c.createdAt)
         .run();
       inserted += 1;
     } catch (error) {

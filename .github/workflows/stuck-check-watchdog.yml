@@ -8,7 +8,7 @@ name: Stuck required-check watchdog
 # nothing surfacing that fact anywhere. This can't fix a stuck check (nothing on this repo's side can,
 # for a third-party check it doesn't control), it just makes the situation visible fast: flags any open
 # PR where a required check has been running past a threshold, via a single idempotent PR comment (see
-# scripts/check-stuck-required-checks.mjs for the detection logic and why the required-check list is
+# scripts/check-stuck-required-checks.ts for the detection logic and why the required-check list is
 # hardcoded rather than read live from branch protection).
 
 on:
@@ -44,4 +44,4 @@ jobs:
       - name: Check for stuck required checks
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/check-stuck-required-checks.mjs${{ inputs.dry_run && ' --dry-run' || '' }}
+        run: node --experimental-strip-types scripts/check-stuck-required-checks.ts${{ inputs.dry_run && ' --dry-run' || '' }}

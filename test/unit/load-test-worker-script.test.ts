@@ -11,7 +11,7 @@ import {
   requestOnce,
   runConcurrencyLevel,
   runLoadTest,
-} from "../../scripts/load-test-worker.mjs";
+} from "../../scripts/load-test-worker.js";
 
 describe("worker load-test script (#4913)", () => {
   afterEach(() => {
@@ -178,7 +178,8 @@ describe("worker load-test script (#4913)", () => {
     const result = spawnSync(
       process.execPath,
       [
-        "scripts/load-test-worker.mjs",
+        "--experimental-strip-types",
+        "scripts/load-test-worker.ts",
         "--origin",
         "http://127.0.0.1:1",
         "--levels",

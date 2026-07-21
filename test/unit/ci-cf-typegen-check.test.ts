@@ -30,7 +30,7 @@ describe("cf-typegen staleness guard (#2557)", () => {
     const pkg = record(JSON.parse(readFileSync("package.json", "utf8")), "package.json");
     const scripts = record(pkg.scripts, "package.json.scripts");
 
-    expect(scripts["cf-typegen:check"]).toBe("node scripts/gen-cf-typegen.mjs --check");
+    expect(scripts["cf-typegen:check"]).toBe("node --experimental-strip-types scripts/gen-cf-typegen.ts --check");
     expect(String(scripts["test:ci"])).toContain("npm run cf-typegen:check");
     // Must run before typecheck, mirroring db:migrations:check's position -- a drift-check failure should
     // surface before the more expensive type/test/build steps run.

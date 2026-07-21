@@ -1,9 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
+// tsx, not plain node: check-mcp-package.mjs imports forbidden-content.ts and mcp-package-allowlist.ts
+// directly, so plain node can't resolve those local .ts imports.
+const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
 function runChecker(env: Record<string, string | undefined> = {}): { status: number; out: string } {
   try {
-    const stdout = execFileSync(process.execPath, ["scripts/check-mcp-package.mjs"], {
+    const stdout = execFileSync(TSX_BIN, ["scripts/check-mcp-package.mjs"], {
       encoding: "utf8",
       env: { ...process.env, ...env },
     });

@@ -12,11 +12,11 @@ import {
   listActualTables,
   RAW_SQL_ONLY_TABLES,
   replayMigrations,
-} from "../../scripts/check-schema-drift.mjs";
+} from "../../scripts/check-schema-drift.js";
 import * as realSchema from "../../src/db/schema";
 
 // #2565: the script imports src/db/schema.ts (a .ts module), so -- like check-migrations.mjs and
-// check-openapi-settings-parity.mjs -- it must run via `tsx`, the same binary package.json's
+// check-openapi-settings-parity.ts -- it must run via `tsx`, the same binary package.json's
 // db:schema-drift:check uses, rather than plain `node`.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
@@ -37,7 +37,7 @@ describe("check-schema-drift script (#2565)", () => {
   });
 
   it("prints a clean summary for the real repo state when run as a subprocess", () => {
-    const output = execFileSync(TSX_BIN, ["scripts/check-schema-drift.mjs"], { encoding: "utf8" });
+    const output = execFileSync(TSX_BIN, ["scripts/check-schema-drift.ts"], { encoding: "utf8" });
 
     expect(output).toMatch(/src\/db\/schema\.ts matches migrations\/ -- \d+ Drizzle tables OK/);
   });
@@ -88,7 +88,7 @@ describe("check-schema-drift script (#2565)", () => {
     const db = replayMigrations(dir);
     const mismatches = diffSchemaAgainstMigrations(db, {});
 
-    expect(mismatches).toContain('table "undeclared_thing" exists in migrations/ but has no src/db/schema.ts declaration and is not in RAW_SQL_ONLY_TABLES (scripts/check-schema-drift.mjs)');
+    expect(mismatches).toContain('table "undeclared_thing" exists in migrations/ but has no src/db/schema.ts declaration and is not in RAW_SQL_ONLY_TABLES (scripts/check-schema-drift.ts)');
   });
 
   it("does not flag a migrated table that is on the raw-SQL-only allowlist", () => {
@@ -135,7 +135,7 @@ describe("check-schema-drift script (#2565)", () => {
     // without needing to fake-import a schema module through the CLI entrypoint.
     writeFileSync(join(dir, "0001_stub.sql"), "CREATE TABLE stub_only (id INTEGER PRIMARY KEY);\n");
     try {
-      execFileSync(TSX_BIN, ["scripts/check-schema-drift.mjs"], {
+      execFileSync(TSX_BIN, ["scripts/check-schema-drift.ts"], {
         encoding: "utf8",
         env: { ...process.env, CHECK_SCHEMA_DRIFT_DIR: dir },
       });

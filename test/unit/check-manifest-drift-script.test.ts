@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkManifestDrift } from "../../scripts/check-manifest-drift.mjs";
+import { checkManifestDrift } from "../../scripts/check-manifest-drift.js";
 import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../../src/config/loopover-repo-focus-manifest";
 
 // The script imports src/config/loopover-repo-focus-manifest.ts (a .ts module), so -- like
-// check-schema-drift.mjs, check-migrations.mjs, and check-openapi-settings-parity.mjs -- it must run via
+// check-schema-drift.ts, check-migrations.mjs, and check-openapi-settings-parity.ts -- it must run via
 // `tsx`, the same binary package.json's manifest:drift-check uses, rather than plain `node`.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
@@ -88,7 +88,7 @@ describe("check-manifest-drift script", () => {
   });
 
   it("prints a clean summary and exits 0 for the real repo state when run as a subprocess", () => {
-    const output = execFileSync(TSX_BIN, ["scripts/check-manifest-drift.mjs"], { encoding: "utf8" });
+    const output = execFileSync(TSX_BIN, ["scripts/check-manifest-drift.ts"], { encoding: "utf8" });
 
     expect(output).toMatch(/Manifest-drift check ok: \.loopover\.yml and LOOPOVER_REPO_FOCUS_MANIFEST_YAML agree\./);
   });

@@ -5,7 +5,7 @@
   "description": "Maintainer-facing browser extension overlay for GitHub pull requests and issues.",
   "type": "module",
   "scripts": {
-    "build": "node ../../scripts/build-extension.mjs",
+    "build": "tsx ../../scripts/build-extension.ts",
     "lint": "node --check auth.js && node --check background.js && node --check content.js && node --check options.js",
     "typecheck": "npm run lint"
   }

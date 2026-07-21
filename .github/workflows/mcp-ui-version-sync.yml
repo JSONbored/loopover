@@ -1,7 +1,7 @@
 # Keeps apps/loopover-ui/src/lib/mcp-package.ts's MCP_PACKAGE_KNOWN_LATEST_VERSION -- the client-side
 # graceful-degradation fallback shown when the live npm-registry fetch (useMcpPackageMetadata) fails or hasn't
 # resolved yet -- in sync with @loopover/mcp's real npm dist-tags.latest, without ever requiring a human/agent
-# to notice a new release and manually edit the constant (#6580). scripts/check-ui-mcp-version-copy.mjs's
+# to notice a new release and manually edit the constant (#6580). scripts/check-ui-mcp-version-copy.ts's
 # --write mode does the actual sync; this just runs it on a schedule and keeps a standing PR up to date, the
 # same shape as orb-stable-release-pr.yml. Nothing ships until a maintainer reviews and merges the PR -- this
 # workflow never pushes to main directly.
@@ -38,7 +38,7 @@ jobs:
 
       # No npm ci -- the script only imports Node built-ins.
       - name: Sync the known-latest constant
-        run: node scripts/check-ui-mcp-version-copy.mjs --write
+        run: node --experimental-strip-types scripts/check-ui-mcp-version-copy.ts --write
 
       - name: Check for a diff
         id: diff

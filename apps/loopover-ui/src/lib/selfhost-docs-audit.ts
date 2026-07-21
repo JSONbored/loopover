@@ -103,7 +103,7 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
   {
     topic: "Env vars (exhaustive list)",
     runtimeSources: [
-      "scripts/gen-selfhost-env-reference.mjs",
+      "scripts/gen-selfhost-env-reference.ts",
       "apps/loopover-ui/src/lib/selfhost-env-reference.ts",
     ],
     docsPath: "/docs/self-hosting-configuration",
@@ -187,7 +187,7 @@ export const SELFHOST_SOURCE_OF_TRUTH_ROWS: readonly SelfHostSourceOfTruthRow[] 
     topic: "OTEL metrics/traces and Grafana dashboards",
     runtimeSources: [
       "src/selfhost/otel.ts",
-      "scripts/validate-observability-configs.mjs",
+      "scripts/validate-observability-configs.ts",
       "grafana/dashboards/",
       "prometheus/rules/alerts.yml",
     ],

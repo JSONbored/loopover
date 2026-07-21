@@ -10,7 +10,7 @@ import {
   checkTokenlessPublish,
   expectedReleaseTag,
   redactSensitive,
-} from "./mcp-release-candidate-core.mjs";
+} from "./mcp-release-candidate-core.js";
 
 const PACKAGE_DIR = "packages/loopover-mcp";
 const WORKSPACE = "@loopover/mcp";

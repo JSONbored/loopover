@@ -1,10 +1,10 @@
 // Computes whether a new ORB (self-host container image) beta snapshot is due, and what its tag would be.
 // Read-only / side-effect-free by design: this script only REPORTS -- the actual `git tag` + `push` (the
 // consequential action) happens as explicit, auditable steps in .github/workflows/orb-beta-release.yml, not
-// hidden inside this script. See scripts/orb-release-core.mjs for the underlying logic and rationale.
+// hidden inside this script. See scripts/orb-release-core.ts for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag } from "./orb-release-core.mjs";
+import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag } from "./orb-release-core.js";
 
 const MANIFEST_PATH = "orb-manifest.json";
 

@@ -12,7 +12,7 @@ import {
   parseReleaseTag,
   redactSensitive,
   unexpectedTarballFiles,
-} from "../../scripts/mcp-release-candidate-core.mjs";
+} from "../../scripts/mcp-release-candidate-core.js";
 
 const FORBIDDEN_PUBLIC_LANGUAGE = /\b(wallet|hotkey|coldkey|raw trust|trust score|payout|reward estimate|farming|private reviewability|public score estimate)\b/i;
 

@@ -11,7 +11,7 @@ import {
   parseOrbBetaVersion,
   parseSemver,
   selectImageRelevantCommits,
-} from "../../scripts/orb-release-core.mjs";
+} from "../../scripts/orb-release-core.js";
 
 type TestCommit = { sha: string; subject: string; body?: string; files: string[] };
 

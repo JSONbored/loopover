@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { main, syncLockfileVersions } from "../../scripts/sync-release-lockfile-versions.mjs";
+import { main, syncLockfileVersions } from "../../scripts/sync-release-lockfile-versions.js";
 
 const SAMPLE_LOCK = `{
   "name": "loopover",

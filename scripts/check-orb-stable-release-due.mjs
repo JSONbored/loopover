@@ -2,10 +2,10 @@
 // Read-only / side-effect-free by design, mirroring check-orb-release-due.mjs's own reasoning: the actual
 // orb-manifest.json bump + `git tag` + PR create/update (the consequential actions) happen as explicit,
 // auditable steps in .github/workflows/orb-stable-release-pr.yml, not hidden inside this script. See
-// scripts/orb-release-core.mjs's buildOrbStableReleaseReport for the underlying logic and rationale.
+// scripts/orb-release-core.ts's buildOrbStableReleaseReport for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { buildOrbStableReleaseReport } from "./orb-release-core.mjs";
+import { buildOrbStableReleaseReport } from "./orb-release-core.js";
 
 function main() {
   const args = parseArgs(process.argv.slice(2));

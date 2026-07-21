@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { main, MANIFEST_PATH, syncManifestVersions } from "../../scripts/sync-release-manifest.mjs";
+import { main, MANIFEST_PATH, syncManifestVersions } from "../../scripts/sync-release-manifest.js";
 
 const SAMPLE_MANIFEST = JSON.stringify(
   {

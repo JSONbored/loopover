@@ -67,7 +67,7 @@ validate the real publishable artifact still compiles and packs cleanly.
 Every `vitest.config.ts` in the repo (root, `vitest.workers.config.ts`, and every workspace with its own
 config) wires this as `globalSetup`, so it runs once before any test file regardless of how vitest was
 invoked — including a direct `npx vitest run test/unit/<file>.test.ts`, which this doc's own §6 ("Iterate,
-then verify") recommends for fast iteration. `scripts/check-node-version.mjs`'s `pretest*` hooks
+then verify") recommends for fast iteration. `scripts/check-node-version.ts`'s `pretest*` hooks
 (`package.json`) only cover 5 high-traffic npm script names (`test`, `test:ci`, `test:coverage`,
 `test:workers`, `ui:test`) as a genuinely-faster fail there (before npm even spawns vitest) — they are a
 nicety on top of the globalSetup guarantee, not a substitute for it. An earlier version of this guard was

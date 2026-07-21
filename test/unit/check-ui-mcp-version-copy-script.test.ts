@@ -13,10 +13,10 @@ import {
   SCAN_TARGETS,
   SOURCE_LATEST_PATH,
   writeKnownLatestVersion,
-} from "../../scripts/check-ui-mcp-version-copy.mjs";
+} from "../../scripts/check-ui-mcp-version-copy.js";
 
 const root = process.cwd();
-const SCRIPT_PATH = "scripts/check-ui-mcp-version-copy.mjs";
+const SCRIPT_PATH = "scripts/check-ui-mcp-version-copy.ts";
 const sourceText = readFileSync(join(root, SOURCE_LATEST_PATH), "utf8");
 
 function declaredConstant(name: string): string {
@@ -157,7 +157,7 @@ describe("check-ui-mcp-version-copy script (#6292)", () => {
 
   it("passes cleanly against the real repo docs with the registry check stubbed offline", () => {
     const knownLatest = declaredConstant("MCP_PACKAGE_KNOWN_LATEST_VERSION");
-    const out = execFileSync(process.execPath, [SCRIPT_PATH], {
+    const out = execFileSync(process.execPath, ["--experimental-strip-types", SCRIPT_PATH], {
       encoding: "utf8",
       env: { ...process.env, LOOPOVER_MCP_LATEST_VERSION: knownLatest },
     });
@@ -232,7 +232,7 @@ describe("check-ui-mcp-version-copy script (#6292)", () => {
       tempDir = seedTempRepo("0.6.0");
       const out = execFileSync(
         process.execPath,
-        [join(process.cwd(), SCRIPT_PATH), "--write"],
+        ["--experimental-strip-types", join(process.cwd(), SCRIPT_PATH), "--write"],
         { encoding: "utf8", cwd: tempDir, env: { ...process.env, LOOPOVER_MCP_LATEST_VERSION: "0.9.0" } },
       );
       expect(out).toContain("updated known latest 0.6.0 -> 0.9.0");
@@ -244,7 +244,7 @@ describe("check-ui-mcp-version-copy script (#6292)", () => {
       tempDir = seedTempRepo("0.9.0");
       const out = execFileSync(
         process.execPath,
-        [join(process.cwd(), SCRIPT_PATH), "--write"],
+        ["--experimental-strip-types", join(process.cwd(), SCRIPT_PATH), "--write"],
         { encoding: "utf8", cwd: tempDir, env: { ...process.env, LOOPOVER_MCP_LATEST_VERSION: "0.9.0" } },
       );
       expect(out).not.toContain("updated known latest");

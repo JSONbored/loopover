@@ -22,7 +22,7 @@ Then, in another terminal:
 ```sh
 npm run loadtest:worker
 # or with explicit flags:
-node scripts/load-test-worker.mjs --origin http://127.0.0.1:8787 --path /health --levels 1,8,32,128 --requests-per-level 64
+node --experimental-strip-types scripts/load-test-worker.ts --origin http://127.0.0.1:8787 --path /health --levels 1,8,32,128 --requests-per-level 64
 ```
 
 This prints a short text report to stdout and exits `0`. It does not fail the build or a CI job on its

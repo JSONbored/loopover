@@ -10,7 +10,7 @@ import {
   findStuckChecksForPr,
   minutesSince,
   runStuckCheckWatchdog,
-} from "../../scripts/check-stuck-required-checks.mjs";
+} from "../../scripts/check-stuck-required-checks.js";
 
 // #7455: findStuckChecksForPr's stuck/threshold decision and the watchdog's dry-run + marker-idempotency
 // only ran inside the un-guarded live-GitHub driver. With githubApi injected and the driver behind an

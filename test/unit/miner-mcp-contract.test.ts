@@ -11,7 +11,7 @@ import {
 import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger.js";
 // The SAME secret-shape matcher the miner pack validator uses — imported from its single source of truth (rather
 // than hand-duplicated here) so the two stay byte-for-byte in sync instead of relying on manual vigilance.
-import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.mjs";
+import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.js";
 
 // Shared contract/parity suite (#5199) across every read-only AMS MCP tool — mirrors the spirit of the engine's
 // driver-parity suite (#4296). One parameterized table enforces, for ALL tools at once, the invariants that

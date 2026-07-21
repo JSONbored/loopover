@@ -12,7 +12,7 @@ on:
       - "src/selfhost/**"
       - "src/server.ts"
       - "scripts/build-selfhost.mjs"
-      - "scripts/validate-selfhost-sourcemap.mjs"
+      - "scripts/validate-selfhost-sourcemap.ts"
       - "Dockerfile"
       - "docker-compose.yml"
       - "migrations/**"
@@ -28,7 +28,7 @@ on:
       - "src/selfhost/**"
       - "src/server.ts"
       - "scripts/build-selfhost.mjs"
-      - "scripts/validate-selfhost-sourcemap.mjs"
+      - "scripts/validate-selfhost-sourcemap.ts"
       - "Dockerfile"
       - "docker-compose.yml"
       - "migrations/**"
@@ -100,7 +100,7 @@ jobs:
         run: node scripts/build-selfhost.mjs
 
       - name: Validate self-host source map
-        run: node scripts/validate-selfhost-sourcemap.mjs
+        run: node scripts/validate-selfhost-sourcemap.ts
 
       - name: Validate docker-compose.yml
         run: |

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { diffFieldSets, extractRepoSettingsPreviewFieldNames, extractRepositorySettingsFieldNames, SETTINGS_PREVIEW_PATH, TYPES_PATH } from "../../scripts/check-openapi-settings-parity.mjs";
+import { diffFieldSets, extractRepoSettingsPreviewFieldNames, extractRepositorySettingsFieldNames, SETTINGS_PREVIEW_PATH, TYPES_PATH } from "../../scripts/check-openapi-settings-parity.js";
 import { RepoSettingsPreviewSchema, RepositorySettingsSchema } from "../../src/openapi/schemas";
 
 // #2556: RepositorySettingsSchema (hand-authored Zod) can silently drift from the RepositorySettings TS

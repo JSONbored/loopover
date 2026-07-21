@@ -24,15 +24,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version-file: .nvmrc
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
 
       - name: Check MCP release status
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/check-mcp-release-due.mjs --json --output mcp-release-due.json --upsert-issue
+        # check-mcp-release-due.ts imports mcp-release-core.ts directly, so it needs tsx (not plain node) to
+        # resolve that local .ts import.
+        run: npx tsx scripts/check-mcp-release-due.ts --json --output mcp-release-due.json --upsert-issue
 
       - name: Summarize MCP release status
         run: |

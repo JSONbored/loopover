@@ -3,9 +3,9 @@ import {
   fetchGtLogoSvg,
   fetchJson,
   GITTENSOR_IMPACT_CARD_FETCH_TIMEOUT_MS,
-} from "../../scripts/gittensor-impact-card.mjs";
+} from "../../scripts/gittensor-impact-card.js";
 
-describe("gittensor-impact-card.mjs (#7231)", () => {
+describe("gittensor-impact-card.ts (#7231)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

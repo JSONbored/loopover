@@ -23,7 +23,7 @@ RUN npm --workspace @loopover/engine run build
 # --all: bundle every dependency into one self-contained dist/server.mjs, so the runtime image needs no
 # node_modules (≈10× smaller). The bundle has zero `cloudflare:*` imports (stubbed at build), so no loader.
 RUN node scripts/build-selfhost.mjs --all
-RUN node scripts/validate-selfhost-sourcemap.mjs
+RUN node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
 
 # --- runtime base: slim, non-root -----------------------------------------------------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS runtime-base

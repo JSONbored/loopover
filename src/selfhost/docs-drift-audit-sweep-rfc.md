@@ -1,7 +1,7 @@
 # Scheduled docs-drift audit sweep — design doc (#3048)
 
 Part of #1819 (self-host docs accuracy audit). Siblings: the mechanical presence/shape drift lint
-(`scripts/check-docs-drift.mjs`, "Phase 1") and schema-anchored examples ("Phase 2"). This RFC covers
+(`scripts/check-docs-drift.ts`, "Phase 1") and schema-anchored examples ("Phase 2"). This RFC covers
 the catch-all Phase 3: a recurring, low-noise sweep that catches **behavioral/prose** drift — a docs
 claim that was true when written and quietly stopped being true — which neither sibling can catch
 mechanically. Per the issue's own deliverables, this doc is the first step; the actual scheduled job
@@ -9,11 +9,11 @@ lands once the design below is agreed.
 
 ## What the two mechanical siblings already catch (and don't)
 
-`scripts/check-docs-drift.mjs` cross-checks five enumerable **presence** surfaces against specific docs
+`scripts/check-docs-drift.ts` cross-checks five enumerable **presence** surfaces against specific docs
 pages/examples: `LOOPOVER_REVIEW_*` feature flags (`src/env.d.ts`), `@loopover` command catalogs
 (`src/github/commands.ts`), `*GateMode` fields (`src/types.ts`'s `RepositorySettings`), and the full
 `RepositorySettings` + `FocusManifest` field surface against `.loopover.yml.example`
-(`check-docs-drift.mjs:1-11`). It answers "does every flag/command/field that exists in code also appear
+(`check-docs-drift.ts:1-11`). It answers "does every flag/command/field that exists in code also appear
 somewhere in docs?" — a shape/presence check, anchored on declaration syntax (`extractLoopOverReviewFlags`,
 `extractGateModeFields`, etc.), not on whether the *prose describing* that surface is still accurate.
 

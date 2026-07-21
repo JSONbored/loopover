@@ -10,7 +10,7 @@ import {
   FOCUS_MANIFEST_ALIAS_MANIFEST,
   GATE_MODE_MANIFEST,
   SETTINGS_ALIAS_MANIFEST,
-} from "../../scripts/check-docs-drift.mjs";
+} from "../../scripts/check-docs-drift.js";
 
 describe("check-docs-drift script", () => {
   describe("extractLoopOverReviewFlags", () => {
@@ -555,7 +555,7 @@ describe("check-docs-drift script", () => {
     });
 
     it("prints a clean summary and exits 0 for the real repo state when run as a subprocess", () => {
-      const output = execFileSync("node", ["scripts/check-docs-drift.mjs"], { encoding: "utf8" });
+      const output = execFileSync("node", ["--experimental-strip-types", "scripts/check-docs-drift.ts"], { encoding: "utf8" });
 
       expect(output).toMatch(
         /Docs-drift check ok: \d+ feature flags, \d+ commands, \d+ gate-mode fields, \d+ RepositorySettings fields, \d+ FocusManifest fields all documented\./,

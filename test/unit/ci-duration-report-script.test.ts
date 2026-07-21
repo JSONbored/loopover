@@ -4,9 +4,9 @@ import {
   durationSeconds,
   percentile,
   summarize,
-} from "../../scripts/ci-duration-report.mjs";
+} from "../../scripts/ci-duration-report.js";
 
-// #7456: percentile/summarize/durationSeconds are the non-obvious pure logic in ci-duration-report.mjs
+// #7456: percentile/summarize/durationSeconds are the non-obvious pure logic in ci-duration-report.ts
 // (a specific nearest-rank percentile with a floor clamp; a summarize() that excludes `cancelled` runs from
 // both the duration set and the failure-rate denominator, while treating `skipped` as a success). Importing
 // the module must not trigger its live-fetch driver -- the entrypoint guard now keeps that behind `main()`,

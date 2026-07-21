@@ -253,7 +253,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/check-ui-mcp-version-copy.mjs --write
+          node --experimental-strip-types scripts/check-ui-mcp-version-copy.ts --write
           if git diff --quiet apps/loopover-ui/src/lib/mcp-package.ts; then
             echo "Already in sync, nothing to do."
             exit 0

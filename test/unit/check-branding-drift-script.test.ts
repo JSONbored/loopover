@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { diffBrandingBaseline, scanBrandingHits } from "../../scripts/check-branding-drift.mjs";
+import { diffBrandingBaseline, scanBrandingHits } from "../../scripts/check-branding-drift.js";
 
 describe("scanBrandingHits", () => {
   it("parses git grep -c output into a { file: count } map", () => {
@@ -122,7 +122,7 @@ describe("check-branding-drift script (real repo state)", () => {
   // now. If this fails, real drift landed (or a cleanup did) without regenerating the baseline -- either way,
   // fix it with `npm run branding-drift:update`, don't weaken this test.
   it("the committed baseline matches the real current repo state (regression guard)", () => {
-    const output = execFileSync("node", ["scripts/check-branding-drift.mjs"], { encoding: "utf8" });
+    const output = execFileSync(process.execPath, ["--experimental-strip-types", "scripts/check-branding-drift.ts"], { encoding: "utf8" });
 
     expect(output).toMatch(/Branding-drift check ok: \d+ file\(s\) match the recorded baseline\./);
   });

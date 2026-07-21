@@ -138,7 +138,7 @@ jobs:
         run: node scripts/build-selfhost.mjs --all
 
       - name: Validate release source map
-        run: node scripts/validate-selfhost-sourcemap.mjs
+        run: node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
 
       - name: Detect Sentry release token
         id: sentry
@@ -189,7 +189,7 @@ jobs:
             -d "$(node -e "process.stdout.write(JSON.stringify({commits:[{repository: process.env.SENTRY_REPOSITORY, id: process.env.SENTRY_COMMIT_SHA}]}))")" \
             >/dev/null
           npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist
-          node scripts/validate-selfhost-sourcemap.mjs
+          node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
           npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" --validate --wait --strict dist
 
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4

@@ -138,7 +138,7 @@
     // apps/loopover-ui/public/downloads/loopover-extension.zip, ran `turbo run build --filter=@loopover/ui`
     // against a warm cache, the zip never came back -- a cache HIT replays logs but restores nothing when
     // no outputs are declared). This build's real output crosses a package boundary
-    // (apps/loopover-ui/public/downloads/loopover-extension.zip, written by scripts/build-extension.mjs),
+    // (apps/loopover-ui/public/downloads/loopover-extension.zip, written by scripts/build-extension.ts),
     // and Turborepo's docs are silent on whether cross-package "outputs" globs are honored on restore --
     // rather than rely on undocumented behavior, this task is never cached at all, so it always actually
     // executes (cheap, a handful of files) whenever something depends on it. That's what actually closes

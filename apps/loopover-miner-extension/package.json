@@ -5,7 +5,7 @@
   "description": "Contributor-facing browser extension for GitHub issue opportunity signals.",
   "type": "module",
   "scripts": {
-    "build": "node ../../scripts/build-miner-extension.mjs",
+    "build": "tsx ../../scripts/build-miner-extension.ts",
     "lint": "node --check background.js && node --check content.js && node --check opportunity-badge.js && node --check options.js && node --check toolbar-badge.js",
     "typecheck": "npm run lint",
     "test": "vitest run --coverage"

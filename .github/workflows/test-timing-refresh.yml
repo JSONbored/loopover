@@ -1,7 +1,7 @@
 name: Test timing refresh
 
 # Pulls per-test-file historical duration data from Codecov's Test Analytics API (see
-# scripts/fetch-test-timing.mjs) and caches it for validate-tests' duration-aware shard bin-packer
+# scripts/fetch-test-timing.ts) and caches it for validate-tests' duration-aware shard bin-packer
 # (scripts/compute-test-shards.mjs, ci.yml's "Test with coverage" step) to consume. Runs on a schedule
 # rather than per-PR: Codecov doesn't publish a numeric rate limit for this read endpoint, and this
 # repo's PR volume (hundreds/day) makes "query fresh on every PR" a real risk of hitting one, for data
@@ -34,7 +34,7 @@ jobs:
       - name: Fetch test timing from Codecov
         env:
           CODECOV_API_TOKEN: ${{ secrets.CODECOV_API_TOKEN }}
-        run: node scripts/fetch-test-timing.mjs --output=test-timing.json
+        run: node --experimental-strip-types scripts/fetch-test-timing.ts --output=test-timing.json
       # Run_id-suffixed key (always a fresh entry, never a re-save of an existing one) + prefix
       # restore-keys fallback on the consuming side (ci.yml's "Restore test timing cache" step) -- same
       # accumulating-cache pattern already used for .turbo/cache and .tsbuildinfo elsewhere in this repo,

@@ -202,7 +202,7 @@ Run the matching command(s) and **commit the regenerated file(s)** — CI fails 
 | A Cloudflare binding/var in `wrangler.jsonc` | `npm run cf-typegen` | `worker-configuration.d.ts` |
 | Drizzle schema (`src/db/schema.ts`) | `npm run drizzle:generate` | the new `migrations/NNNN_*.sql` |
 | Added a raw-SQL migration | (none — just author it) | next **contiguous** `migrations/NNNN_snake.sql` |
-| `src/selfhost/**` (or a few other scanned files — see `scripts/gen-selfhost-env-reference.mjs`'s `DEFAULT_SOURCE_ROOTS`) adding/removing an `env.SOMETHING` read | `npm run selfhost:env-reference` | `apps/loopover-ui/src/lib/selfhost-env-reference.ts` — the doc cites the file only (not `file:line`, deliberately, so an unrelated line shift elsewhere in the file never makes this go stale) |
+| `src/selfhost/**` (or a few other scanned files — see `scripts/gen-selfhost-env-reference.ts`'s `DEFAULT_SOURCE_ROOTS`) adding/removing an `env.SOMETHING` read | `npm run selfhost:env-reference` | `apps/loopover-ui/src/lib/selfhost-env-reference.ts` — the doc cites the file only (not `file:line`, deliberately, so an unrelated line shift elsewhere in the file never makes this go stale) |
 | CLI command surface | `npm run command-reference` | the generated command-reference doc |
 | UI files (`apps/loopover-ui/**`) | `npm --workspace @loopover/ui run format` | formatted files |
 

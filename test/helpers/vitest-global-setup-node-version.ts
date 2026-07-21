@@ -1,8 +1,8 @@
-import { checkNodeVersion } from "../../scripts/check-node-version.mjs";
+import { checkNodeVersion } from "../../scripts/check-node-version.js";
 
 /**
  * Vitest `globalSetup` -- the only mechanism that covers *every* vitest invocation path, not just
- * specific npm script names. scripts/check-node-version.mjs's `pretest*` hooks (package.json) only fire
+ * specific npm script names. scripts/check-node-version.ts's `pretest*` hooks (package.json) only fire
  * for the exact npm script names they're wired to -- they can never cover a direct
  * `npx vitest run test/unit/<file>.test.ts` invocation, which the contributing skill docs explicitly
  * recommend for fast iteration (reference.md, SKILL.md). A globalSetup runs once before any test file,

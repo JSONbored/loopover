@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // container/GitHub endpoints that a unit test can't stand up.
 
 it("check-mcp-release-due's githubRequest fetch carries an AbortSignal timeout", () => {
-  const src = readFileSync("scripts/check-mcp-release-due.mjs", "utf8");
+  const src = readFileSync("scripts/check-mcp-release-due.ts", "utf8");
   const fetchCount = (src.match(/\bfetch\(/g) ?? []).length;
   const timeoutCount = (src.match(/AbortSignal\.timeout\(/g) ?? []).length;
   expect(fetchCount).toBe(1);

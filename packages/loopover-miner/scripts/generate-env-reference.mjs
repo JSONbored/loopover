@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { collectSelfHostEnvVars } from "../../../scripts/gen-selfhost-env-reference.mjs";
+import { collectSelfHostEnvVars } from "../../../scripts/gen-selfhost-env-reference.js";
 
 export const DEFAULT_OUTPUT_PATH = "packages/loopover-miner/docs/env-reference.md";
 export const DEFAULT_MODULE_OUTPUT_PATH = "apps/loopover-ui/src/lib/ams-env-reference.ts";
@@ -105,7 +105,7 @@ export function writeMinerEnvReference({
   return { changed, outputPath, rows };
 }
 
-// Mirrors scripts/gen-selfhost-env-reference.mjs's renderSelfHostEnvReferenceModule -- same shape
+// Mirrors scripts/gen-selfhost-env-reference.ts's renderSelfHostEnvReferenceModule -- same shape
 // (a typed rows array plus a pre-joined markdown string), so docs.ams-env-reference.tsx's content
 // can import AMS_ENV_REFERENCE_MARKDOWN and render it exactly the way
 // docs.self-hosting-configuration.tsx already renders SELFHOST_ENV_REFERENCE_MARKDOWN. The

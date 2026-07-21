@@ -143,8 +143,8 @@ jobs:
               - 'apps/loopover-extension/**'
               - 'apps/loopover-miner-extension/**'
               - 'packages/loopover-ui-kit/**'
-              - 'scripts/build-extension.mjs'
-              - 'scripts/build-miner-extension.mjs'
+              - 'scripts/build-extension.ts'
+              - 'scripts/build-miner-extension.ts'
               - 'package.json'
               - 'package-lock.json'
             # Backend changes that can drift the OpenAPI contract the UI type-checks against, but say
@@ -399,7 +399,7 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.observability == 'true' }}
         env:
           NODE_OPTIONS: ""
-        run: node scripts/validate-observability-configs.mjs
+        run: node --experimental-strip-types scripts/validate-observability-configs.ts
       # Runs ahead of Typecheck AND "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts
       # (root backend, since #2281/#3985) imports packages/loopover-miner/lib/opportunity-fanout.js --
       # a .js-suffixed specifier esbuild/Vite resolve straight to the real (gitignored, uncompiled)
@@ -552,7 +552,7 @@ jobs:
       - name: Miner package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run test:miner-pack
-      # scripts/check-miner-deployment-docs.mjs reads packages/loopover-engine/src/miner/**/*.ts
+      # scripts/check-miner-deployment-docs.ts reads packages/loopover-engine/src/miner/**/*.ts
       # (ENGINE_MINER_DIR) to build the registered-commands list checked against DEPLOYMENT.md, so an
       # engine-only PR touching that directory used to skip this audit entirely.
       - name: Miner deployment docs audit

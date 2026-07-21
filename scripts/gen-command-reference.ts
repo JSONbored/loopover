@@ -1,0 +1,165 @@
+#!/usr/bin/env node
+// Generates the @loopover command reference from its single source of truth --
+// src/github/commands.ts's PUBLIC_MENTION_COMMAND_CATALOG and MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG
+// -- so docs pages render the real command list instead of hand-copying it (a hand-copy is exactly how
+// the 9-command maintainer-only queue-digest family went completely undocumented; see #3046). Mirrors
+// scripts/gen-selfhost-env-reference.ts's generate/--check dual-mode convention.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+export const DEFAULT_SOURCE_PATH = "src/github/commands.ts";
+export const DEFAULT_OUTPUT_PATH = "apps/loopover-ui/src/lib/command-reference.ts";
+
+const PUBLIC_CATALOG_NAME = "PUBLIC_MENTION_COMMAND_CATALOG";
+const MAINTAINER_CATALOG_NAME = "MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG";
+const ACTION_CATALOG_NAME = "LOOPOVER_ACTION_COMMAND_CATALOG";
+
+// Self-defense floor: 10 public + 9 maintainer-only commands exist today. If extraction ever finds fewer
+// than 15 total entries across both catalogs, the extraction regex is almost certainly broken -- fail
+// loudly instead of silently writing an empty/tiny reference (mirrors check-docs-drift.mjs's own floor).
+const MIN_TOTAL_COMMANDS = 15;
+
+export type CommandCatalogEntry = {
+  id: string;
+  title: string;
+  description: string;
+};
+
+export type CommandCatalogOptions = {
+  rootDir?: string;
+  sourcePath?: string;
+};
+
+export type WriteCommandReferenceOptions = CommandCatalogOptions & {
+  outputPath?: string;
+  check?: boolean;
+};
+
+/** Find the array literal assigned to `const <catalogConstName> = [ ... ] as const;` (non-greedy up to
+ *  the FIRST `] as const;` after the const name -- catalogs in commands.ts never nest another
+ *  `] as const;` inside themselves, so the first close is always the right one) and extract every
+ *  `{ id: "...", title: "...", description: "..." }` entry from within that slice, in source order.
+ *  Scoped to the named catalog's own slice so two catalogs in the same file never bleed into each
+ *  other's entries. */
+export function extractCatalogEntries(sourceText: string, catalogConstName: string): CommandCatalogEntry[] {
+  const catalogPattern = new RegExp(`const\\s+${catalogConstName}\\s*=\\s*\\[([\\s\\S]*?)\\]\\s*as\\s*const;`);
+  const catalogMatch = catalogPattern.exec(sourceText);
+  if (!catalogMatch) return [];
+  const entryPattern = /id:\s*"([^"]+)"\s*,\s*title:\s*"([^"]+)"\s*,\s*description:\s*"([^"]+)"/g;
+  return [...catalogMatch[1]!.matchAll(entryPattern)].map((match) => ({
+    id: match[1]!,
+    title: match[2]!,
+    description: match[3]!,
+  }));
+}
+
+/** Renders a catalog's entries as the same `@loopover <id>` line format the docs pages already
+ *  hand-write, newline-joined, in catalog order. */
+export function renderCommandList(entries: readonly CommandCatalogEntry[]): string {
+  return entries.map((entry) => `@loopover ${entry.id}`).join("\n");
+}
+
+const PRETTIER_PRINT_WIDTH = 100;
+
+function renderDescriptionField(description: string): string {
+  const inline = `    description: ${JSON.stringify(description)},`;
+  if (inline.length <= PRETTIER_PRINT_WIDTH) {
+    return inline;
+  }
+  return `    description:\n      ${JSON.stringify(description)},`;
+}
+
+function renderCommandEntries(entries: readonly CommandCatalogEntry[]): string {
+  const rows = entries.map(
+    (entry) => `  {\n    id: ${JSON.stringify(entry.id)},\n    title: ${JSON.stringify(entry.title)},\n${renderDescriptionField(entry.description)}\n  },`,
+  );
+  return `[\n${rows.join("\n")}\n]`;
+}
+
+export function collectCommandCatalogs({ rootDir = process.cwd(), sourcePath = DEFAULT_SOURCE_PATH }: CommandCatalogOptions = {}): {
+  publicCommands: CommandCatalogEntry[];
+  maintainerCommands: CommandCatalogEntry[];
+  actionCommands: CommandCatalogEntry[];
+} {
+  const sourceText = readFileSync(resolve(rootDir, sourcePath), "utf8");
+  const publicCommands = extractCatalogEntries(sourceText, PUBLIC_CATALOG_NAME);
+  const maintainerCommands = extractCatalogEntries(sourceText, MAINTAINER_CATALOG_NAME);
+  const actionCommands = extractCatalogEntries(sourceText, ACTION_CATALOG_NAME);
+  const total = publicCommands.length + maintainerCommands.length;
+  if (total < MIN_TOTAL_COMMANDS) {
+    throw new Error(
+      `gen-command-reference: extraction found only ${total} total @loopover command(s) across both catalogs in ${sourcePath} -- expected ${MIN_TOTAL_COMMANDS}+; the extraction regex may be broken`,
+    );
+  }
+  if (actionCommands.length < 7) {
+    throw new Error(
+      `gen-command-reference: extraction found only ${actionCommands.length} PR action command(s) in ${sourcePath} -- expected 7; the extraction regex may be broken`,
+    );
+  }
+  return { publicCommands, maintainerCommands, actionCommands };
+}
+
+export function renderCommandReferenceModule({
+  publicCommands,
+  maintainerCommands,
+  actionCommands,
+}: {
+  publicCommands: readonly CommandCatalogEntry[];
+  maintainerCommands: readonly CommandCatalogEntry[];
+  actionCommands: readonly CommandCatalogEntry[];
+}): string {
+  const body = `// Generated by scripts/gen-command-reference.ts. Do not edit manually.
+// Regenerate via \`npm run command-reference\`.
+export const PUBLIC_COMMAND_ENTRIES = ${renderCommandEntries(publicCommands)} as const;
+
+export const PUBLIC_COMMAND_LIST =
+  ${JSON.stringify(renderCommandList(publicCommands))};
+
+export const MAINTAINER_COMMAND_ENTRIES = ${renderCommandEntries(maintainerCommands)} as const;
+
+export const MAINTAINER_COMMAND_LIST =
+  ${JSON.stringify(renderCommandList(maintainerCommands))};
+
+export const ACTION_COMMAND_ENTRIES = ${renderCommandEntries(actionCommands)} as const;
+
+export const ACTION_COMMAND_LIST =
+  ${JSON.stringify(renderCommandList(actionCommands))};
+`;
+  return body;
+}
+
+export function writeCommandReference({ rootDir = process.cwd(), sourcePath = DEFAULT_SOURCE_PATH, outputPath = DEFAULT_OUTPUT_PATH, check = false }: WriteCommandReferenceOptions = {}): {
+  changed: boolean;
+  outputPath: string;
+  publicCommands: CommandCatalogEntry[];
+  maintainerCommands: CommandCatalogEntry[];
+  actionCommands: CommandCatalogEntry[];
+} {
+  const { publicCommands, maintainerCommands, actionCommands } = collectCommandCatalogs({ rootDir, sourcePath });
+  const output = renderCommandReferenceModule({ publicCommands, maintainerCommands, actionCommands });
+  const absOutput = resolve(rootDir, outputPath);
+  const current = existsSync(absOutput) ? readFileSync(absOutput, "utf8") : null;
+  const changed = current !== output;
+  if (!check && changed) {
+    mkdirSync(dirname(absOutput), { recursive: true });
+    writeFileSync(absOutput, output);
+  }
+  return { changed, outputPath, publicCommands, maintainerCommands, actionCommands };
+}
+
+function main(argv: readonly string[]) {
+  const check = argv.includes("--check");
+  const result = writeCommandReference({ check });
+  if (check && result.changed) {
+    process.stderr.write(`gen-command-reference: ${result.outputPath} is stale; run npm run command-reference.\n`);
+    process.exit(1);
+  }
+  process.stdout.write(
+    `gen-command-reference: ${check ? "checked" : "wrote"} ${result.publicCommands.length} public + ${result.maintainerCommands.length} maintainer-only + ${result.actionCommands.length} action command references in ${result.outputPath}\n`,
+  );
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main(process.argv.slice(2));
+}

@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.mjs";
+import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.js";
 
-// forbidden-content.mjs calls itself the single source of truth for the packaged secret-shape detector, but
+// forbidden-content.ts calls itself the single source of truth for the packaged secret-shape detector, but
 // nothing enforced it: check-mcp-package.mjs re-declared the regex as its own local constant and the two could
 // drift apart unnoticed (#6290). These assertions pin both halves of the claim -- the structural one (each
 // checker imports the constant rather than owning a copy) and the behavioral one (each checker actually rejects
@@ -23,7 +24,11 @@ const SECRET_SHAPED_PROBE = ["PROBE", "_", "SECRET", "=", "value"].join("");
 
 // Run a checker as a subprocess (never import it): both scripts run `npm pack` at import time, and neither has a
 // .d.mts, so importing them from TS would also break the typecheck gate. Their env seams let a single file drive
-// the whole file list + content.
+// the whole file list + content. Run via tsx, not plain node: both scripts import forbidden-content.ts (and
+// check-mcp-package.mjs also imports mcp-package-allowlist.ts) directly, so plain node can't resolve those
+// local .ts imports.
+const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
+
 function runChecker(
   checker: string,
   files: string[],
@@ -36,7 +41,7 @@ function runChecker(
     [isMiner ? "CHECK_MINER_PACK_TEST_CONTENT" : "CHECK_MCP_PACK_TEST_CONTENT"]: content,
   };
   try {
-    return { status: 0, out: execFileSync(process.execPath, [checker], { encoding: "utf8", env }) };
+    return { status: 0, out: execFileSync(TSX_BIN, [checker], { encoding: "utf8", env }) };
   } catch (err) {
     const e = err as { status?: number; stdout?: string; stderr?: string };
     return { status: e.status ?? 1, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
@@ -46,7 +51,7 @@ function runChecker(
 describe("FORBIDDEN_CONTENT is the single source of truth (#6290)", () => {
   it.each(PACKAGE_CHECKERS)("%s imports the shared constant instead of re-declaring it", (checker) => {
     const source = readFileSync(checker, "utf8");
-    expect(source).toContain('import { FORBIDDEN_CONTENT } from "./forbidden-content.mjs";');
+    expect(source).toContain('import { FORBIDDEN_CONTENT } from "./forbidden-content.js";');
     expect(source).toContain("FORBIDDEN_CONTENT.test(");
     // The drift this guards against: a checker owning its own copy of the detector.
     expect(source).not.toMatch(/const\s+FORBIDDEN_CONTENT\s*=/);

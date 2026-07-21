@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { closeResolvedIssueIfPresent, isReleaseWatchIssue } from "../../scripts/check-mcp-release-due.mjs";
-import { buildMcpReleaseIssue, buildMcpReleaseReport, renderMcpChangelog, selectMcpReleaseCommits } from "../../scripts/mcp-release-core.mjs";
+import { closeResolvedIssueIfPresent, isReleaseWatchIssue } from "../../scripts/check-mcp-release-due.js";
+import { buildMcpReleaseIssue, buildMcpReleaseReport, renderMcpChangelog, selectMcpReleaseCommits } from "../../scripts/mcp-release-core.js";
 
 type TestCommit = {
   sha: string;

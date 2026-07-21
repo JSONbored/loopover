@@ -1,6 +1,6 @@
 # Automated ORB (self-host container image, ghcr.io/jsonbored/loopover-selfhost) beta channel.
 # Daily (or on demand via workflow_dispatch), checks whether any image-relevant commit has landed
-# since the last orb-v tag (scripts/check-orb-release-due.mjs / scripts/orb-release-core.mjs) and,
+# since the last orb-v tag (scripts/check-orb-release-due.mjs / scripts/orb-release-core.ts) and,
 # if so, cuts the next `orb-vX.Y.Z-beta.N` tag and dispatches release-selfhost.yml to build + publish
 # it -- fully unattended: that workflow's `environment:` routes an actual beta version to
 # `release-beta` (no required reviewers), while a stable/rc version still requires the human-gated
@@ -8,7 +8,7 @@
 # a maintainer -- this workflow never bumps orb-manifest.json's version or cuts a non-beta tag.
 #
 # Deliberately independent of the MCP package's release automation (mcp-release-watch.yml /
-# mcp-release-core.mjs) -- see scripts/orb-release-core.mjs's own header for why.
+# mcp-release-core.ts) -- see scripts/orb-release-core.ts's own header for why.
 name: orb-beta-release
 
 on:
@@ -35,16 +35,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version-file: .nvmrc
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
 
       - name: Check whether an ORB beta is due
         id: report
+        # check-orb-release-due.mjs imports orb-release-core.ts directly, so it needs tsx (not plain node) to
+        # resolve that local .ts import.
         run: |
           set -euo pipefail
-          node scripts/check-orb-release-due.mjs --json --output orb-release-due.json
+          npx tsx scripts/check-orb-release-due.mjs --json --output orb-release-due.json
           node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync("orb-release-due.json", "utf8"));
@@ -60,7 +60,7 @@ jobs:
       # relying on this push alone. Mirrors publish-engine.yml / publish-mcp.yml's identical reasoning
       # and tagging idiom.
       # Exposes created=true/false so the dispatch step below never fires against a tag this run didn't
-      # actually just create -- a defense-in-depth backstop (independent of orb-release-core.mjs's own
+      # actually just create -- a defense-in-depth backstop (independent of orb-release-core.ts's own
       # correctness) against ever re-triggering a build for an already-published version/tag.
       - name: Tag the new beta
         id: tag

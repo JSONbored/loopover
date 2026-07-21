@@ -50,12 +50,12 @@ describe("observability config CI guard", () => {
     expect(setupWorkspaceStep).toBeDefined();
     expect(setupWorkspaceStep!.uses).toBe("./.github/actions/setup-workspace");
     expect(validateStep).toBeDefined();
-    // Not gated on `backend`: scripts/validate-observability-configs.mjs only ever reads
+    // Not gated on `backend`: scripts/validate-observability-configs.ts only ever reads
     // grafana/dashboards/*.json and prometheus/rules/alerts.yml, both fully covered by the
     // `observability` filter checked above -- a `backend` clause had no structural justification and ran
     // this on every backend PR (the highest-volume PR shape in the repo) for nothing.
     expect(String(validateStep!.if)).toBe("${{ github.event_name == 'push' || needs.changes.outputs.observability == 'true' }}");
     expect(record(validateStep!.env, "validateStep.env").NODE_OPTIONS).toBe("");
-    expect(validateStep!.run).toBe("node scripts/validate-observability-configs.mjs");
+    expect(validateStep!.run).toBe("node --experimental-strip-types scripts/validate-observability-configs.ts");
   });
 });

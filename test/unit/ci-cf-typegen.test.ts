@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatCfTypegenOutput, resolveLocalWranglerBin } from "../../scripts/gen-cf-typegen.mjs";
+import { formatCfTypegenOutput, resolveLocalWranglerBin } from "../../scripts/gen-cf-typegen.js";
 
 // #1667-followup: wrangler's own `wrangler types` output packs every declared env var into ONE long
 // single-line `Pick<Cloudflare.Env, "A" | "B" | ...>>` union. Two independent PRs that each add a DIFFERENT

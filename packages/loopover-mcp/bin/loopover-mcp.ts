@@ -971,6 +971,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the reviewability report for an open PR: how ready it is to review/merge, the blocking or advisory signals against it, and its lane/duplicate/linked-issue context. Metadata-only, no GitHub writes.",
   },
   {
+    name: "loopover_get_gate_config_effective",
+    category: "maintainer",
+    description: "Return a repo's CURRENT effective self-tuned gate thresholds (confidence floor + file/line scope cap) and whether a shadow recommendation is soaking. Resolved effective values only — no override audit history or queued shadow recommendation. Metadata-only, no GitHub writes.",
+  },
+  {
     name: "loopover_get_pr_ai_review_findings",
     category: "review",
     description:
@@ -1492,6 +1497,20 @@ registerStdioTool(
   async ({ owner, repo, number }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
+  },
+);
+
+// #7800: CLI mirror of the remote server's loopover_get_gate_config_effective. The route is the single source
+// of truth; this tool proxies owner/repo to GET /v1/repos/:owner/:repo/gate-config/effective via apiGet.
+registerStdioTool(
+  "loopover_get_gate_config_effective",
+  {
+    description: stdioToolDescription("loopover_get_gate_config_effective"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
   },
 );
 

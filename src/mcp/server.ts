@@ -189,6 +189,7 @@ import { buildFindingTaxonomyDocument, FINDING_TAXONOMY_URI } from "../review/fi
 import { buildEnrichmentAnalyzersTaxonomyDocument, ENRICHMENT_ANALYZERS_URI } from "../review/enrichment-analyzers-taxonomy";
 import { recordPredictedGateCall } from "../review/predicted-gate-calls";
 import { computeContributorCalibration } from "../review/predicted-gate-calibration-ledger";
+import { loadOverride, loadShadowOverride, type StorageEnv } from "../review/auto-apply";
 
 type AppContext = Context<{ Bindings: Env }>;
 type ToolPayload = {
@@ -986,6 +987,21 @@ const freshnessResponseOutputSchema = {
   freshness: z.string().optional(),
   generatedAt: z.string().optional(),
   report: z.unknown().optional(),
+};
+
+// #7800 — read-only view of a repo's CURRENT effective self-tuned gate thresholds. Mirrors the shape the
+// GET /v1/repos/:owner/:repo/gate-config/effective route returns: the resolved effective values only (never
+// the raw override_audit history or the shadow's queued recommendation), plus a flag that a shadow is soaking.
+const gateConfigEffectiveOutputSchema = {
+  status: z.string().optional(),
+  repoFullName: z.string().optional(),
+  effective: z
+    .object({
+      confidenceFloor: z.number().nullable().optional(),
+      scopeCap: z.object({ files: z.number().nullable().optional(), lines: z.number().nullable().optional() }).optional(),
+    })
+    .optional(),
+  shadowPending: z.boolean().optional(),
 };
 
 const maintainerMeasurementReportOutputSchema = {
@@ -1856,6 +1872,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_upstream_drift: "utility",
   loopover_get_issue_quality: "maintainer",
   loopover_get_pr_reviewability: "review",
+  loopover_get_gate_config_effective: "maintainer",
   loopover_validate_linked_issue: "discovery",
   loopover_check_before_start: "discovery",
   loopover_find_opportunities: "discovery",
@@ -2384,6 +2401,17 @@ export class LoopoverMcp {
         outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getPrReviewability(input)),
+    );
+
+    register(
+      "loopover_get_gate_config_effective",
+      {
+        description:
+          "Return a repo's CURRENT effective self-tuned gate thresholds (confidence floor + file/line scope cap) and whether a shadow recommendation is soaking. Resolved effective values only — never the override audit history or the queued shadow recommendation. Repo-scoped, metadata-only, no GitHub writes.",
+        inputSchema: ownerRepoShape,
+        outputSchema: gateConfigEffectiveOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getGateConfigEffective(input)),
     );
 
     register(
@@ -3333,6 +3361,36 @@ export class LoopoverMcp {
         generatedAt: report.generatedAt,
         report,
       } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7800 — the MCP mirror of GET /v1/repos/:owner/:repo/gate-config/effective. Same repo-scoped read gating
+  // the reviewability tool uses (canAccessRepo scopes the shared static mcp identity to MCP_READ_REPO_ALLOWLIST);
+  // returns the identical resolved-effective shape the route does by calling the same loadOverride +
+  // loadShadowOverride, never the raw override audit history or the queued shadow recommendation.
+  private async getGateConfigEffective(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access gate config for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
+    const storageEnv = this.env as unknown as StorageEnv;
+    const [override, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
+    return {
+      summary: `LoopOver effective gate config for ${fullName}.`,
+      data: {
+        repoFullName: fullName,
+        effective: {
+          confidenceFloor: override?.confidenceFloor ?? null,
+          scopeCap: {
+            files: override?.scopeCap?.files ?? null,
+            lines: override?.scopeCap?.lines ?? null,
+          },
+        },
+        shadowPending: shadow !== null,
+      },
     };
   }
 

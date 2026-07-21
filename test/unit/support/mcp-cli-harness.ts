@@ -859,6 +859,17 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ repoFullName: "acme/widgets", summary: "Ranked 2 scenarios.", scenarios: [{ id: "close_stale", rank: 1 }] }));
       return;
     }
+    // #7800: read-only effective self-tuned gate thresholds. Mirrors the route's resolved-effective shape.
+    if (request.url === "/v1/repos/owner/repo/gate-config/effective" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          effective: { confidenceFloor: 0.85, scopeCap: { files: 20, lines: 400 } },
+          shadowPending: false,
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/pulls/7/reviewability" && request.method === "GET") {
       response.end(
         JSON.stringify({

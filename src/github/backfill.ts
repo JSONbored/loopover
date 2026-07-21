@@ -3280,20 +3280,25 @@ export async function fetchLiveBaseBranchAdvancedAt(
 }
 
 /**
- * How many commits the repo's CURRENT default branch has landed since this PR's own base commit, via REST
- * `GET /compare/{baseSha}...{defaultBranchRef}` (`ahead_by` from `baseSha`'s perspective — #review-grounding
- * stale-base fact). `mergeable_state: "behind"` (the signal `prReadyForReview`'s auto-rebase-before-review path
- * already uses) only ever fires when the repo's branch protection has "require branches to be up to date before
- * merging" enabled — a repo without that setting can have a branch genuinely dozens of commits behind and GitHub
- * will still never report it as "behind". This compare-API read is unconditional: it works regardless of branch
- * protection config, so it can ground the AI reviewer in the TRUE fact even on a repo where the mergeable_state
- * signal never fires. Best-effort: any fetch/shape error returns undefined so the caller degrades to "unknown"
- * (no stale-base fact rendered) rather than throwing or asserting a wrong number.
+ * How many commits the repo's CURRENT default branch has landed that a PR's HEAD commit doesn't have, via REST
+ * `GET /compare/{prHeadSha}...{defaultBranchRef}` (`ahead_by` from `prHeadSha`'s perspective — #review-grounding
+ * stale-base fact). Deliberately anchored on the PR's HEAD, not its `base.sha` -- GitHub updates `base.sha` to
+ * track the LIVE tip of the target branch as it moves, so comparing THAT against the current default branch
+ * would read ~0 regardless of how stale the PR's actual code is; `headSha` is the PR's real current code, and
+ * the compare API computes the true git merge-base against it, independent of any GitHub-side metadata timing.
+ * `mergeable_state: "behind"` (the signal `prReadyForReview`'s auto-rebase-before-review path already uses)
+ * only ever fires when the repo's branch protection has "require branches to be up to date before merging"
+ * enabled — a repo without that setting can have a branch genuinely dozens of commits behind and GitHub will
+ * still never report it as "behind". This compare-API read is unconditional: it works regardless of branch
+ * protection config, so it can ground the AI reviewer (or gate the auto-rebase path) in the TRUE fact even on a
+ * repo where the mergeable_state signal never fires. Best-effort: any fetch/shape error returns undefined so
+ * the caller degrades to "unknown" (no stale-base fact rendered / no forced rebase) rather than throwing or
+ * asserting a wrong number.
  */
 export async function fetchBaseAheadBy(
   env: Env,
   repoFullName: string,
-  baseSha: string,
+  prHeadSha: string,
   defaultBranchRef: string,
   token: string | undefined,
   admissionKey?: GitHubRateLimitAdmissionKey,
@@ -3301,7 +3306,7 @@ export async function fetchBaseAheadBy(
   const result = await githubJsonWithHeaders<{ ahead_by?: number | null }>(
     env,
     repoFullName,
-    `/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(defaultBranchRef)}`,
+    `/compare/${encodeURIComponent(prHeadSha)}...${encodeURIComponent(defaultBranchRef)}`,
     token,
     githubRateLimitOptions(admissionKey),
   ).catch(() => undefined);

@@ -161,6 +161,15 @@ describe("maintainer AI-review config route", () => {
     expect((await getRepositorySettings(env, REPO)).requireFreshRebaseWindowMinutes).toBe(15);
   });
 
+  it("round-trips staleBaseAheadByThreshold through the maintainer settings PUT route (#review-grounding stale-base fact)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+    const res = await app.request(`/v1/repos/${REPO}/settings`, { method: "PUT", headers: apiHeaders(env), body: JSON.stringify({ staleBaseAheadByThreshold: 10 }) }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ staleBaseAheadByThreshold: 10 });
+    expect((await getRepositorySettings(env, REPO)).staleBaseAheadByThreshold).toBe(10);
+  });
+
   it("lets the internal full settings route persist closeOwnerAuthors", async () => {
     const app = createApp();
     const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });

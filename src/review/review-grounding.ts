@@ -54,10 +54,11 @@ export interface PullRequestFile {
 export interface ReviewGrounding {
   checks?: ReviewCiSummary;
   changedFileContents?: ChangedFileContent[];
-  /** How many commits the repo's CURRENT default branch has landed since this PR's own base commit (#review-
-   *  grounding stale-base fact, metagraphed #7305-class incident) — a TRUE, deterministic fact the reviewer can
-   *  cite instead of guessing a content-level cause for an undetailed CI failure. Undefined when unreadable or
-   *  zero (nothing to say); the caller only sets this when it is a positive number worth surfacing. */
+  /** How many commits the repo's CURRENT default branch has landed that this PR's HEAD commit doesn't have
+   *  (#review-grounding stale-base fact, metagraphed #7305-class incident) — a TRUE, deterministic fact the
+   *  reviewer can cite instead of guessing a content-level cause for an undetailed CI failure. Undefined when
+   *  unreadable or zero (nothing to say); the caller only sets this when it is a positive number worth
+   *  surfacing. */
   baseAheadBy?: number;
 }
 

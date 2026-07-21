@@ -287,6 +287,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     dryRun: "dryRun:",
     premergeContentRecheck: "premergeContentRecheck:",
     requireFreshRebaseWindowMinutes: "requireFreshRebaseWindow:",
+    staleBaseAheadByThreshold: "staleBaseAheadByThreshold:",
     claMode: "claMode:",
     claConsentPhrase: "consentPhrase:",
     claCheckRunName: "checkRunName:",
@@ -936,7 +937,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
@@ -1101,7 +1102,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness, round-trips it, and warns on a bad value (#822)", () => {
@@ -5762,6 +5763,40 @@ describe("gate.requireFreshRebaseWindow force-rebase-before-merge config (#2552)
     const db = { requireFreshRebaseWindowMinutes: 15 } as unknown as RepositorySettings;
     const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
     expect(eff.requireFreshRebaseWindowMinutes).toBe(15);
+  });
+});
+
+describe("gate.staleBaseAheadByThreshold stale-base auto-rebase config (#review-grounding stale-base fact)", () => {
+  it("parses gate.staleBaseAheadByThreshold, sets present, round-trips, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { staleBaseAheadByThreshold: 10 } });
+    expect(m.gate.staleBaseAheadByThreshold).toBe(10);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ staleBaseAheadByThreshold: 10 });
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.staleBaseAheadByThreshold).toBe(10);
+  });
+
+  it("defaults to unset/undefined when omitted — byte-identical to today (never forces via this path)", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.staleBaseAheadByThreshold).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.staleBaseAheadByThreshold).toBeUndefined();
+  });
+
+  it("warns and drops a fractional/non-positive value rather than silently coercing it", () => {
+    const fractional = parseFocusManifest({ gate: { staleBaseAheadByThreshold: 2.5 } });
+    expect(fractional.gate.staleBaseAheadByThreshold).toBeNull();
+    expect(fractional.warnings.some((w) => /gate\.staleBaseAheadByThreshold/i.test(w))).toBe(true);
+
+    const nonPositive = parseFocusManifest({ gate: { staleBaseAheadByThreshold: 0 } });
+    expect(nonPositive.gate.staleBaseAheadByThreshold).toBeNull();
+    expect(nonPositive.warnings.some((w) => /gate\.staleBaseAheadByThreshold/i.test(w))).toBe(true);
+  });
+
+  it("lets the DB value pass through when the manifest doesn't override it", () => {
+    const db = { staleBaseAheadByThreshold: 8 } as unknown as RepositorySettings;
+    const eff = resolveEffectiveSettings(db, parseFocusManifest(null));
+    expect(eff.staleBaseAheadByThreshold).toBe(8);
   });
 });
 

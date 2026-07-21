@@ -311,6 +311,7 @@ export type FocusManifestGateConfig = {
   dryRun: boolean | null;
   premergeContentRecheck: boolean | null;
   requireFreshRebaseWindowMinutes: number | null;
+  staleBaseAheadByThreshold: number | null;
   claMode: GateRuleMode | null;
   claConsentPhrase: string | null;
   claCheckRunName: string | null;

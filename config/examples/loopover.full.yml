@@ -357,6 +357,16 @@ gate:
   # DB-backed (dashboard-settable too); this overrides the stored value.
   requireFreshRebaseWindow: 10
 
+  # Stale-base auto-rebase threshold. When the repository's current default branch is at least this many
+  # commits ahead of a PR's own base commit, the pre-review readiness gate forces an update_branch before
+  # review runs — independent of GitHub's own mergeable_state "behind" signal, which only fires when the
+  # repo's branch protection requires branches to be up to date before merging (a repo without that setting
+  # can have a branch genuinely dozens of commits behind and never see it auto-rebased otherwise). Positive
+  # integer (commit count), or omit/null. Default: null (never force via this path). Costs one extra GitHub
+  # compare-API call per non-"behind" readiness check, so it is opt-in rather than a new default.
+  # DB-backed (dashboard-settable too); this overrides the stored value.
+  staleBaseAheadByThreshold: 10
+
   # AI maintainer review. Opt-in; the AI capabilities are switched on at the
   # deployment level.
   aiReview:

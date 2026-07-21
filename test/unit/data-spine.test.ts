@@ -354,6 +354,16 @@ describe("data spine repositories", () => {
     // contributorOpenPrCap above -- it must NOT inherit that unrelated cap's 100 ceiling.
     await upsertRepositorySettings(env, { repoFullName: "owner/rebasewindowrepo", requireFreshRebaseWindowMinutes: 500 });
     expect((await getRepositorySettings(env, "owner/rebasewindowrepo")).requireFreshRebaseWindowMinutes).toBe(500);
+    // #review-grounding stale-base fact: no row and no override both default to null (never force via this path).
+    expect((await getRepositorySettings(env, "missing/repo")).staleBaseAheadByThreshold).toBeNull();
+    expect((await getRepositorySettings(env, "owner/defaultpack")).staleBaseAheadByThreshold).toBeNull();
+    // Round-trips on insert and persists on update; a fractional/non-positive value drops to null.
+    await upsertRepositorySettings(env, { repoFullName: "owner/stalebaserepo", staleBaseAheadByThreshold: 5 });
+    expect((await getRepositorySettings(env, "owner/stalebaserepo")).staleBaseAheadByThreshold).toBe(5);
+    await upsertRepositorySettings(env, { repoFullName: "owner/stalebaserepo", staleBaseAheadByThreshold: 20 });
+    expect((await getRepositorySettings(env, "owner/stalebaserepo")).staleBaseAheadByThreshold).toBe(20); // update persists
+    await upsertRepositorySettings(env, { repoFullName: "owner/stalebaserepo", staleBaseAheadByThreshold: 2.5 as never });
+    expect((await getRepositorySettings(env, "owner/stalebaserepo")).staleBaseAheadByThreshold).toBeNull();
     // #1936/loopover#6445: minimum account-age gate moved off the DB entirely -- config-as-code only via
     // .loopover.yml's settings: block now. No row and no override both default to null (never enforced);
     // a caller-supplied DB override is ignored; resolveRepositorySettings honors a manifest override

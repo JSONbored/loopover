@@ -1188,6 +1188,13 @@ export type RepositorySettings = {
    *  force -- a `mergeable_state: clean` read is trusted exactly as it is today. Layered like every other
    *  settings field (`.loopover.yml` `gate.requireFreshRebaseWindow` > DB > `null`). */
   requireFreshRebaseWindowMinutes?: number | null | undefined;
+  /** Stale-base auto-rebase threshold (#review-grounding stale-base fact): a commit count. When the repo's
+   *  current default branch is at least this many commits ahead of a PR's own base commit, the pre-review
+   *  readiness gate (`prReadyForReview`) forces an `update_branch`, independent of GitHub's own
+   *  `mergeableState: "behind"` signal (which only fires when the repo's branch protection requires branches
+   *  to be up to date before merging). `null`/undefined (default) = never force via this path. Layered like
+   *  every other settings field (`.loopover.yml` `gate.staleBaseAheadByThreshold` > DB > `null`). */
+  staleBaseAheadByThreshold?: number | null | undefined;
   /** Account-age throttle (#2561, anti-abuse): an account younger than this many days gets the
    *  {@link newAccountLabel} and a tighter effective contributor cap — friction/visibility, NEVER an
    *  automatic close on account age alone. `null`/undefined (default) = off. Never fires for the repo

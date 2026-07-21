@@ -71,6 +71,10 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // Force-rebase-before-merge window in minutes (#2552): null = never force (default). Enforcement lands in
   // runAgentMaintenancePlanAndExecute, not here.
   requireFreshRebaseWindowMinutes: integer("require_fresh_rebase_window_minutes"),
+  // Stale-base auto-rebase threshold (#review-grounding stale-base fact): a commit count; null = never force
+  // via this path (default). Independent of mergeableState's own "behind" signal -- enforcement lands in
+  // prReadyForReview, not here.
+  staleBaseAheadByThreshold: integer("stale_base_ahead_by_threshold"),
   // Draft-PR close policy (#draft-pr-close-policy): off by default -- enforces on ANY draft (including the
   // first one, before a review has run), so a maintainer opts in deliberately rather than getting it on by
   // default.

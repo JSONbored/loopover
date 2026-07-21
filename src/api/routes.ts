@@ -891,6 +891,7 @@ const maintainerSettingsSchema = z
     agentPaused: z.boolean(),
     agentDryRun: z.boolean(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable(),
+    staleBaseAheadByThreshold: z.number().int().positive().nullable(),
     commandAuthorization: z.object({
       default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
       commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),

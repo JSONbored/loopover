@@ -244,12 +244,12 @@ describe("queue processors", () => {
     vi.restoreAllMocks();
   });
 
-  async function seedBehindRepo(env: Env, over: { autonomy?: Record<string, string>; agentPaused?: boolean; perms?: Record<string, string>; noInstall?: boolean } = {}) {
+  async function seedBehindRepo(env: Env, over: { autonomy?: Record<string, string>; agentPaused?: boolean; perms?: Record<string, string>; noInstall?: boolean; defaultBranch?: string; staleBaseAheadByThreshold?: number | null } = {}) {
     await persistRegistrySnapshot(
       asCloudEnv(env),
       normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"),
     );
-    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" }, ...(over.defaultBranch !== undefined ? { default_branch: over.defaultBranch } : {}) }, 123);
     if (!over.noInstall) {
       await upsertInstallation(env, {
         installation: {
@@ -267,6 +267,7 @@ describe("queue processors", () => {
       autoLabelEnabled: false,
       autonomy: over.autonomy ?? { merge: "auto", update_branch: "auto" },
       agentPaused: over.agentPaused ?? false,
+      ...(over.staleBaseAheadByThreshold !== undefined ? { staleBaseAheadByThreshold: over.staleBaseAheadByThreshold } : {}),
     });
     await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { reviewCheckMode: "required", commentMode: "off", publicSurface: "off", checkRunMode: "off" } });
   }
@@ -311,6 +312,32 @@ describe("queue processors", () => {
     expect(merge?.n).toBe(0);
   });
 
+  it("auto-maintain (#1092): a BEHIND-base PR is not rebased when update_branch autonomy isn't granted (falls through to review on the stale head)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    // update_branch is absent from the autonomy policy → resolveAutonomy denies-by-default (observe), so the
+    // executor never issues the write even though the "behind" check itself still fires.
+    await seedBehindRepo(env, { autonomy: { merge: "auto" } });
+    let updateBranchCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/48/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({}, { status: 202 });
+      }
+      if (/\/pulls\/48(?:\?|$)/.test(url)) return Response.json({ number: 48, state: "open", head: { sha: "behindsha" }, mergeable_state: "behind" });
+      // Not rebased (denied) → prReadyForReview falls through to the CI gate on the original head.
+      if (url.includes("/commits/behindsha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "in_progress", conclusion: null }] });
+      if (url.includes("/commits/behindsha/status")) return Response.json({ state: "pending", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, behindWebhook());
+
+    expect(updateBranchCalls).toBe(0); // update_branch autonomy not granted → the executor denies the write; falls through
+  });
+
   it("auto-maintain (#1092): a behind PR is not rebased when the installation lacks pull_requests:write (falls through)", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await seedBehindRepo(env, { noInstall: true });
@@ -336,6 +363,169 @@ describe("queue processors", () => {
     await processJob(env, { type: "recapture-preview", deliveryId: "rp-48", installationId: 123, repoFullName: "JSONbored/gittensory", prNumber: 48, attempt: 1 });
 
     expect(updateBranchCalls).toBe(0); // no installation perms → the executor denies the write; the block falls through
+  });
+
+  // #review-grounding stale-base fact companion (metagraphed #7305-class incident): mergeable_state only ever
+  // reports "behind" when the repo's branch protection requires branches to be up to date before merging -- a
+  // repo without that setting reads "clean" here even though it is genuinely stale. A repo that opts into
+  // gate.staleBaseAheadByThreshold gets a compare-API fallback that catches this regardless.
+  function staleBaseWebhook() {
+    return {
+      type: "github-webhook" as const,
+      deliveryId: "stale-base-update-branch",
+      eventName: "pull_request" as const,
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 49, title: "Stale base", state: "open", user: { login: "contributor" }, head: { sha: "stalesha" }, labels: [], body: "x" },
+      },
+    };
+  }
+
+  it("auto-maintain (stale-base threshold): a NOT-'behind' PR still forces update-branch via the compare-API fallback once ahead_by meets the configured threshold", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env, { defaultBranch: "main", staleBaseAheadByThreshold: 5 });
+    let updateBranchCalls = 0;
+    let compareCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({ message: "Updating pull request branch." }, { status: 202 });
+      }
+      if (url.includes("/compare/stalesha...main")) {
+        compareCalls += 1;
+        return Response.json({ ahead_by: 10, behind_by: 0 });
+      }
+      if (/\/pulls\/49(?:\?|$)/.test(url)) return Response.json({ number: 49, state: "open", head: { sha: "stalesha" }, mergeable_state: "clean" });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, staleBaseWebhook());
+
+    expect(compareCalls).toBe(1);
+    expect(updateBranchCalls).toBe(1); // 10 >= the configured threshold of 5
+    const ub = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("agent.action.update_branch").first<{ outcome: string }>();
+    expect(ub?.outcome).toBe("completed");
+    const merge = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?").bind("agent.action.merge").first<{ n: number }>();
+    expect(merge?.n).toBe(0); // deferred for the rebase → no gate verdict published on the stale head
+  });
+
+  it("auto-maintain (stale-base threshold): does not force update-branch when ahead_by is below the configured threshold", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env, { defaultBranch: "main", staleBaseAheadByThreshold: 5 });
+    let updateBranchCalls = 0;
+    let compareCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({}, { status: 202 });
+      }
+      if (url.includes("/compare/stalesha...main")) {
+        compareCalls += 1;
+        return Response.json({ ahead_by: 3, behind_by: 0 });
+      }
+      if (/\/pulls\/49(?:\?|$)/.test(url)) return Response.json({ number: 49, state: "open", head: { sha: "stalesha" }, mergeable_state: "clean" });
+      // Not rebased → prReadyForReview proceeds to the CI gate on the original head; green CI so it doesn't defer forever.
+      if (url.includes("/commits/stalesha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "completed", conclusion: "success" }] });
+      if (url.includes("/commits/stalesha/status")) return Response.json({ state: "success", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, staleBaseWebhook());
+
+    expect(compareCalls).toBe(1); // the threshold IS configured, so the fallback check still runs
+    expect(updateBranchCalls).toBe(0); // 3 < the configured threshold of 5 → no forced rebase
+  });
+
+  it("auto-maintain (stale-base threshold): never attempts the compare-API fallback when no threshold is configured (zero added cost, byte-identical to before this feature existed)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env, { defaultBranch: "main" }); // staleBaseAheadByThreshold left unset (null, the default)
+    let compareCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/compare/")) {
+        compareCalls += 1;
+        return Response.json({ ahead_by: 999, behind_by: 0 });
+      }
+      if (/\/pulls\/49(?:\?|$)/.test(url)) return Response.json({ number: 49, state: "open", head: { sha: "stalesha" }, mergeable_state: "clean" });
+      if (url.includes("/commits/stalesha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "completed", conclusion: "success" }] });
+      if (url.includes("/commits/stalesha/status")) return Response.json({ state: "success", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, staleBaseWebhook());
+
+    expect(compareCalls).toBe(0);
+  });
+
+  it("auto-maintain (stale-base threshold): a threshold configured but no stored default branch skips the compare read entirely (nothing to compare against)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await seedBehindRepo(env, { staleBaseAheadByThreshold: 5 }); // defaultBranch left unset (no stored repos.default_branch row)
+    let compareCalls = 0;
+    let updateBranchCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({}, { status: 202 });
+      }
+      if (url.includes("/compare/")) {
+        compareCalls += 1;
+        return Response.json({ ahead_by: 999, behind_by: 0 });
+      }
+      if (/\/pulls\/49(?:\?|$)/.test(url)) return Response.json({ number: 49, state: "open", head: { sha: "stalesha" }, mergeable_state: "clean" });
+      if (url.includes("/commits/stalesha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "completed", conclusion: "success" }] });
+      if (url.includes("/commits/stalesha/status")) return Response.json({ state: "success", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, staleBaseWebhook());
+
+    expect(compareCalls).toBe(0); // no defaultBranchRef to compare against → the fallback short-circuits before any GitHub call
+    expect(updateBranchCalls).toBe(0);
+  });
+
+  it("auto-maintain (stale-base threshold): a met threshold still falls through to review when update_branch autonomy isn't granted", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    // update_branch is absent from the autonomy policy → resolveAutonomy denies-by-default (observe), so the
+    // executor never issues the write even though the threshold check itself still ran and found it stale.
+    await seedBehindRepo(env, { defaultBranch: "main", staleBaseAheadByThreshold: 5, autonomy: { merge: "auto" } });
+    let compareCalls = 0;
+    let updateBranchCalls = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/49/update-branch")) {
+        updateBranchCalls += 1;
+        return Response.json({}, { status: 202 });
+      }
+      if (url.includes("/compare/")) {
+        compareCalls += 1;
+        return Response.json({ ahead_by: 10, behind_by: 0 });
+      }
+      if (/\/pulls\/49(?:\?|$)/.test(url)) return Response.json({ number: 49, state: "open", head: { sha: "stalesha" }, mergeable_state: "clean" });
+      // Not rebased (denied) → prReadyForReview falls through to the CI gate on the original head.
+      if (url.includes("/commits/stalesha/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "CI build", status: "in_progress", conclusion: null }] });
+      if (url.includes("/commits/stalesha/status")) return Response.json({ state: "pending", statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, staleBaseWebhook());
+
+    expect(compareCalls).toBe(1); // the threshold check still ran and found the branch stale (10 >= 5)
+    expect(updateBranchCalls).toBe(0); // update_branch autonomy not granted → the executor denies the write; falls through
   });
 
   it("recapture-preview (#1158): a clean PR re-review threads previewPollAttempt into the public-surface publish", async () => {

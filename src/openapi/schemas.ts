@@ -751,6 +751,7 @@ export const RepositorySettingsSchema = z
     gateDryRun: z.boolean().optional(),
     premergeContentRecheck: z.boolean().optional(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),
+    staleBaseAheadByThreshold: z.number().int().positive().nullable().optional(),
     mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
     manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),
     selfAuthoredLinkedIssueGateMode: z.enum(["off", "advisory", "block"]),

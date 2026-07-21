@@ -298,15 +298,18 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
 
   // #review-grounding stale-base fact (metagraphed #7305-class incident): buildReviewGroundingText's OWN
   // wiring of the compare-API staleness read, on top of review-grounding.ts's already-covered pure logic.
+  // Anchored on `headSha` (the PR's real current code), NOT a `baseSha` field -- GitHub keeps a PR's own
+  // `base.sha` pointed at the live target-branch tip as it moves, so comparing THAT against the current
+  // default branch would read ~0 regardless of how stale the PR's actual code is.
   describe("buildReviewGroundingText baseAheadBy wiring", () => {
     const failingNoDetailCheck = check({ name: "test", conclusion: "failure", payload: {} as Record<string, JsonValue> });
 
-    it("folds BASE BRANCH STATUS into the prompt when baseSha/defaultBranchRef resolve a positive ahead_by", async () => {
+    it("folds BASE BRANCH STATUS into the prompt when headSha/defaultBranchRef resolve a positive ahead_by", async () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
         const u = String(url);
         if (u.includes("/compare/")) {
-          expect(u).toBe("https://api.github.com/repos/acme/widgets/compare/abc123...main");
+          expect(u).toBe("https://api.github.com/repos/acme/widgets/compare/sha7...main");
           return Response.json({ ahead_by: 12 });
         }
         return new Response("not found", { status: 404 });
@@ -317,7 +320,6 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
         files: [],
         checks: [failingNoDetailCheck],
         installationId: null,
-        baseSha: "abc123",
         defaultBranchRef: "main",
       });
       expect(out.promptSection).toContain("BASE BRANCH STATUS");
@@ -325,7 +327,7 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
       fetchSpy.mockRestore();
     });
 
-    it("omits BASE BRANCH STATUS when baseSha/defaultBranchRef are not provided (back-compat) — no compare fetch attempted", async () => {
+    it("omits BASE BRANCH STATUS when defaultBranchRef is not provided (back-compat) — no compare fetch attempted", async () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
       const out = await buildReviewGroundingText(env, {
@@ -341,6 +343,22 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
       fetchSpy.mockRestore();
     });
 
+    it("omits BASE BRANCH STATUS when headSha is not provided — no compare fetch attempted", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: null,
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: null,
+        defaultBranchRef: "main",
+      });
+      expect(out.promptSection).not.toContain("BASE BRANCH STATUS");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
     it("fail-safe: a failing compare fetch degrades to no BASE BRANCH STATUS section, CI grounding still present", async () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("server error", { status: 500 }));
@@ -350,7 +368,6 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
         files: [],
         checks: [failingNoDetailCheck],
         installationId: null,
-        baseSha: "abc123",
         defaultBranchRef: "main",
       });
       expect(out.promptSection).toContain("CI STATUS");
@@ -375,7 +392,6 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
         files: [],
         checks: [failingNoDetailCheck],
         installationId: 12345,
-        baseSha: "abc123",
         defaultBranchRef: "main",
       });
       expect(sawAuth).toBe("Bearer install-token");
@@ -384,7 +400,7 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
       fetchSpy.mockRestore();
     });
 
-    it("does not attempt a compare read when the flag is off, even with baseSha/defaultBranchRef set", async () => {
+    it("does not attempt a compare read when the flag is off, even with headSha/defaultBranchRef set", async () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "false" });
       const fetchSpy = vi.spyOn(globalThis, "fetch");
       const out = await buildReviewGroundingText(env, {
@@ -393,7 +409,6 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
         files: [],
         checks: [failingNoDetailCheck],
         installationId: null,
-        baseSha: "abc123",
         defaultBranchRef: "main",
       });
       expect(out).toEqual({ systemSuffix: "", promptSection: "" });

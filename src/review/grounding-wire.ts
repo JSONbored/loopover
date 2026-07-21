@@ -273,11 +273,15 @@ export async function buildReviewGroundingText(
     files: PullRequestFileRecord[];
     checks: CheckSummaryRecord[];
     installationId: number | null | undefined;
-    // #review-grounding stale-base fact (metagraphed #7305-class incident): when both are readable, an
-    // additional BASE BRANCH STATUS fact is folded into the SAME ciGrounding-gated section so an undetailed CI
-    // failure has a true, deterministic explanation available instead of an unverified guess. Either absent ⇒
-    // this fact is simply skipped (byte-identical to before it existed) — it is additive, never required.
-    baseSha?: string | null | undefined;
+    // #review-grounding stale-base fact (metagraphed #7305-class incident): when readable, an additional BASE
+    // BRANCH STATUS fact is folded into the SAME ciGrounding-gated section so an undetailed CI failure has a
+    // true, deterministic explanation available instead of an unverified guess. Absent ⇒ this fact is simply
+    // skipped (byte-identical to before it existed) — it is additive, never required. Deliberately NOT the
+    // PR's own `base.sha` -- that field tracks the LIVE tip of the target branch (GitHub updates it as the
+    // branch moves), so comparing it against the current default branch would read ~0 regardless of how stale
+    // the PR's actual code is. `headSha` (the PR's real current code, already a required param above) compared
+    // against the live default branch is the unambiguous git merge-base computation for "how far behind is
+    // this PR's actual content," independent of any GitHub-side metadata timing.
     defaultBranchRef?: string | null | undefined;
   },
 ): Promise<ReviewGroundingText> {
@@ -287,13 +291,13 @@ export async function buildReviewGroundingText(
     const aggregate = buildCheckAggregate(args.checks);
     const fetcher = await makeGithubFileFetcher(env, args.repoFullName, args.installationId);
     const fileContents = await fetchFullFileContents(flags, args.headSha ?? undefined, toGroundingFiles(args.files), fetcher);
-    const baseSha = args.baseSha;
+    const headSha = args.headSha;
     const defaultBranchRef = args.defaultBranchRef;
     const baseAheadBy =
-      flags.ciGrounding && baseSha && defaultBranchRef
+      flags.ciGrounding && headSha && defaultBranchRef
         ? await (async () => {
             const { token, admissionKey } = await resolveGroundingToken(env, args.installationId);
-            return fetchBaseAheadBy(env, args.repoFullName, baseSha, defaultBranchRef, token, admissionKey);
+            return fetchBaseAheadBy(env, args.repoFullName, headSha, defaultBranchRef, token, admissionKey);
           })()
         : undefined;
     const grounding = buildGrounding(flags, aggregate, fileContents, baseAheadBy);

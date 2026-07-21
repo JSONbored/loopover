@@ -99,6 +99,7 @@ import {
 import {
   backfillRepositorySegment,
   fetchAndStorePullRequestFilesForReview,
+  fetchBaseAheadBy,
   fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
   invalidateCiStateCache,
@@ -3511,11 +3512,15 @@ async function prReadyForReview(
     )) ?? env.GITHUB_PUBLIC_TOKEN;
   if (!token) return true;
   const admissionKey = githubAdmissionKeyForToken(env, installationId, token);
-  // 1) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. The
-  // request-local facts may already be seeded from the sweep's resync payload, and the fallback live merge-state
-  // fetch fails open internally (swallows its own fetch errors → undefined).
-  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token, admissionKey);
-  if (liveMergeState === "behind") {
+  // Narrowed to a local const so it stays narrowed to `string` inside the forceUpdateBranch closure below --
+  // TS's control-flow narrowing of the `!pr.headSha` guard above does not persist through a property access
+  // captured by a nested function (only a local const binding does).
+  const headSha = pr.headSha;
+  // Shared by both "is this PR behind base" paths below (1a/1b): force an update_branch (merges the current
+  // base into head, re-triggering CI on the rebased result) and report whether it actually fired. Not
+  // authorized, staged, dry-run, or failed (conflict/transient) → false, and the caller falls through to
+  // review without mutating.
+  const forceUpdateBranch = async (reason: string): Promise<boolean> => {
     const autonomyLevel = resolveAutonomy(settings.autonomy, "update_branch");
     const installation = await getInstallation(env, installationId);
     const [outcome] = await executeAgentMaintenanceActions(
@@ -3524,7 +3529,7 @@ async function prReadyForReview(
         installationId,
         repoFullName,
         pullNumber: pr.number,
-        headSha: pr.headSha,
+        headSha,
         autonomy: settings.autonomy,
         agentPaused: settings.agentPaused,
         agentDryRun: settings.agentDryRun,
@@ -3535,15 +3540,40 @@ async function prReadyForReview(
         {
           actionClass: "update_branch",
           requiresApproval: autonomyRequiresApproval(autonomyLevel),
-          reason: "behind base; update-branch before review",
-          expectedHeadSha: pr.headSha,
+          reason,
+          expectedHeadSha: headSha,
         },
       ],
     );
-    if (outcome?.outcome === "completed") {
+    return outcome?.outcome === "completed";
+  };
+  // 1a) rebase if BEHIND base — the synchronize on the new head re-triggers this flow on the merged result. The
+  // request-local facts may already be seeded from the sweep's resync payload, and the fallback live merge-state
+  // fetch fails open internally (swallows its own fetch errors → undefined).
+  const liveMergeState = await cachedLiveMergeState(env, repoFullName, liveFacts, pr.number, token, admissionKey);
+  if (liveMergeState === "behind") {
+    if (await forceUpdateBranch("behind base; update-branch before review")) {
       return false; // the rebase fires a synchronize → fresh review runs on the new head
     }
-    // Not authorized, staged, dry-run, or failed (conflict/transient) → fall through and review without mutating.
+  } else if (typeof settings.staleBaseAheadByThreshold === "number") {
+    // 1b) #review-grounding stale-base fact companion (metagraphed #7305-class incident): mergeable_state only
+    // ever reports "behind" when the repo's branch protection requires branches to be up to date before
+    // merging -- a repo without that setting can have a branch genuinely dozens of commits behind and GitHub
+    // will never surface it here. A repo that has explicitly opted into a threshold falls back to the SAME
+    // compare-API read #review-grounding already uses (fetchBaseAheadBy, anchored on the PR's real HEAD, never
+    // its live-tracking base.sha) and forces the identical update_branch action once the repo's current
+    // default branch has advanced at least that many commits beyond it. Costs one extra GitHub call per
+    // non-"behind" readiness check on an opted-in repo, which is exactly why this is opt-in rather than a new
+    // default (mirrors requireFreshRebaseWindowMinutes's own opt-in-for-cost rationale).
+    const repo = await getRepository(env, repoFullName);
+    const defaultBranchRef = repo?.defaultBranch;
+    const aheadBy = defaultBranchRef ? await fetchBaseAheadBy(env, repoFullName, headSha, defaultBranchRef, token, admissionKey) : undefined;
+    if (typeof aheadBy === "number" && aheadBy >= settings.staleBaseAheadByThreshold) {
+      const reason = `default branch is ${aheadBy} commits ahead of this PR's head (threshold ${settings.staleBaseAheadByThreshold}); update-branch before review`;
+      if (await forceUpdateBranch(reason)) {
+        return false; // the rebase fires a synchronize → fresh review runs on the new head
+      }
+    }
   }
   // 2) wait for CI to finish before running the LoopOver review. Required contexts still define which failures
   // block/close, but hasPending tracks any visible non-bot CI that is not settled yet.

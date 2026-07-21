@@ -170,6 +170,19 @@ export type FocusManifestGateConfig = {
    *  (byte-identical to today) — a discrete positive-minutes count, not a score, so it is neither clamped
    *  nor rounded; an invalid value (fractional, non-positive, non-finite) is dropped with a warning. */
   requireFreshRebaseWindowMinutes: number | null;
+  /** `gate.staleBaseAheadByThreshold` (#review-grounding stale-base fact): a commit count. When the repo's
+   *  current default branch is at least this many commits ahead of a PR's own base commit, the pre-review
+   *  readiness gate forces an `update_branch` (same action class as the existing `mergeableState: "behind"`
+   *  path in `prReadyForReview`), independent of whether GitHub itself reports `mergeableState: "behind"` —
+   *  that signal only ever fires when the repo's branch protection has "require branches up to date before
+   *  merging" enabled, so a repo without that setting can have a branch genuinely dozens of commits behind
+   *  and never see it auto-rebased before review otherwise. null (unset) ⇒ never force via this path
+   *  (byte-identical to today) — this costs one extra GitHub compare-API call per non-"behind" readiness
+   *  check, so it is opt-in rather than a new default, mirroring requireFreshRebaseWindowMinutes's own
+   *  opt-in-for-cost rationale directly above. A discrete positive-commit count, not a score, so it is
+   *  neither clamped nor rounded; an invalid value (fractional, non-positive, non-finite) is dropped with a
+   *  warning, same validation as requireFreshRebaseWindowMinutes. */
+  staleBaseAheadByThreshold: number | null;
   /** `gate.claMode` (#2564): off/advisory/block. null (unset) ⇒ off (byte-identical to today) — a repo must
    *  explicitly opt in before any CLA consent check runs. */
   claMode: GateRuleMode | null;
@@ -1243,6 +1256,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   dryRun: null,
   premergeContentRecheck: null,
   requireFreshRebaseWindowMinutes: null,
+  staleBaseAheadByThreshold: null,
   claMode: null,
   claConsentPhrase: null,
   claCheckRunName: null,
@@ -1712,6 +1726,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     premergeContentRecheck: normalizeOptionalBoolean(record.premergeContentRecheck, "gate.premergeContentRecheck", warnings),
     requireFreshRebaseWindowMinutes: normalizeOptionalPositiveInteger(record.requireFreshRebaseWindow, "gate.requireFreshRebaseWindow", warnings),
+    staleBaseAheadByThreshold: normalizeOptionalPositiveInteger(record.staleBaseAheadByThreshold, "gate.staleBaseAheadByThreshold", warnings),
     claMode: normalizeOptionalGateMode(record.claMode, "gate.claMode", warnings),
     claConsentPhrase: parsePublicSafeText(claRecord?.consentPhrase, "gate.cla.consentPhrase", warnings),
     claCheckRunName: parsePublicSafeText(claRecord?.checkRunName, "gate.cla.checkRunName", warnings),
@@ -1767,6 +1782,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.dryRun !== null ||
     gate.premergeContentRecheck !== null ||
     gate.requireFreshRebaseWindowMinutes !== null ||
+    gate.staleBaseAheadByThreshold !== null ||
     gate.claMode !== null ||
     gate.claConsentPhrase !== null ||
     gate.claCheckRunName !== null ||
@@ -1848,6 +1864,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
   if (gate.requireFreshRebaseWindowMinutes !== null) out.requireFreshRebaseWindow = gate.requireFreshRebaseWindowMinutes;
+  if (gate.staleBaseAheadByThreshold !== null) out.staleBaseAheadByThreshold = gate.staleBaseAheadByThreshold;
   if (gate.claMode !== null) out.claMode = gate.claMode;
   if (gate.claConsentPhrase !== null || gate.claCheckRunName !== null || gate.claCheckRunAppSlug !== null) {
     const cla: Record<string, JsonValue> = {};

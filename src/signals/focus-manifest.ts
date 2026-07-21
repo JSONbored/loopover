@@ -523,6 +523,7 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   if (gate.dryRun !== null) effective.gateDryRun = gate.dryRun;
   if (gate.premergeContentRecheck !== null) effective.premergeContentRecheck = gate.premergeContentRecheck;
   if (gate.requireFreshRebaseWindowMinutes !== null) effective.requireFreshRebaseWindowMinutes = gate.requireFreshRebaseWindowMinutes;
+  if (gate.staleBaseAheadByThreshold !== null) effective.staleBaseAheadByThreshold = gate.staleBaseAheadByThreshold;
   if (gate.claMode !== null) effective.claGateMode = gate.claMode;
   if (gate.claConsentPhrase !== null) effective.claConsentPhrase = gate.claConsentPhrase;
   if (gate.claCheckRunName !== null) effective.claCheckRunName = gate.claCheckRunName;

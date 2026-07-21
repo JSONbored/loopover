@@ -547,10 +547,10 @@ export async function runAiReviewForAdvisory(
                 args.pr.number,
               ),
               installationId: repo?.installationId ?? null,
-              // #review-grounding stale-base fact (metagraphed #7305-class incident): both are additive — either
-              // absent (no baseSha on a rare malformed webhook record, or an unregistered repo with no stored
-              // defaultBranch) just skips the BASE BRANCH STATUS fact, same as before it existed.
-              baseSha: args.pr.baseSha,
+              // #review-grounding stale-base fact (metagraphed #7305-class incident): additive — reuses the
+              // SAME headSha already passed above (the PR's real current code, not its base.sha, which GitHub
+              // keeps pointed at the live target-branch tip regardless of staleness). An unregistered repo with
+              // no stored defaultBranch just skips the BASE BRANCH STATUS fact, same as before it existed.
               defaultBranchRef: repo?.defaultBranch,
             });
           })()

@@ -1041,7 +1041,16 @@ jobs:
             # write output at all if that's ever violated, so a bug here fails this step loudly rather
             # than silently dropping a test file from CI.
             node --experimental-strip-types scripts/compute-test-shards.ts --shards=3 --timing=test-timing.json --output=shard-assignment.json
-            mapfile -t SHARD_FILES < <(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")
+            # #7767: capture via a checked assignment so a throw in the node one-liner (bad matrix.shard
+            # value, corrupt/missing shard-assignment.json) actually aborts this step -- the old
+            # `mapfile -t SHARD_FILES < <(node -e ...)` ran node in a subshell whose non-zero exit was
+            # swallowed (mapfile itself returns 0), leaving SHARD_FILES empty and silently making vitest
+            # run the entire suite instead of its slice. Same fix idiom as compose_file_args (#7765).
+            if ! SHARD_FILES_RAW="$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")"; then
+              echo "::error::failed to resolve shard file list for shard ${{ matrix.shard }}"
+              exit 1
+            fi
+            mapfile -t SHARD_FILES <<< "$SHARD_FILES_RAW"
             npm run test:coverage -- --maxWorkers=4 "${SHARD_FILES[@]}" --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
           fi
       - name: Test failure guidance

@@ -61,35 +61,46 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(async () => {
-    const apiBase = repoApiBase(repoFullName);
-    if (!apiBase) return;
-    setMessage(null);
-    setLoading(true);
-    const [settings, key] = await Promise.all([
-      apiFetch<RepoSettingsResponse>(`${apiBase}/settings`, {
-        label: "AI review settings",
-        credentials: "include",
-        silentStatus: true,
-      }),
-      apiFetch<AiKeyStatus>(`${apiBase}/ai-key`, {
-        label: "AI key status",
-        credentials: "include",
-        silentStatus: true,
-      }),
-    ]);
-    if (settings.ok) {
-      setMode(settings.data.aiReviewMode ?? "off");
-      setByok(settings.data.aiReviewByok ?? false);
-      setProvider(settings.data.aiReviewProvider ?? "anthropic");
-      setModel(settings.data.aiReviewModel ?? "");
-    }
-    setKeyStatus(key.ok ? key.data : null);
-    setLoading(false);
-  }, [repoFullName]);
+  // isCancelled guards against an out-of-order response: a keystroke replaces repoFullName (and re-runs the
+  // effect) before an earlier request resolves, so an older fetch must not overwrite the newer repo's settings
+  // and key status (#7784). Same cancelled-flag idiom as use-polled-fetch.ts -- flipped in the effect cleanup.
+  const load = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      const apiBase = repoApiBase(repoFullName);
+      if (!apiBase) return;
+      setMessage(null);
+      setLoading(true);
+      const [settings, key] = await Promise.all([
+        apiFetch<RepoSettingsResponse>(`${apiBase}/settings`, {
+          label: "AI review settings",
+          credentials: "include",
+          silentStatus: true,
+        }),
+        apiFetch<AiKeyStatus>(`${apiBase}/ai-key`, {
+          label: "AI key status",
+          credentials: "include",
+          silentStatus: true,
+        }),
+      ]);
+      if (isCancelled()) return;
+      if (settings.ok) {
+        setMode(settings.data.aiReviewMode ?? "off");
+        setByok(settings.data.aiReviewByok ?? false);
+        setProvider(settings.data.aiReviewProvider ?? "anthropic");
+        setModel(settings.data.aiReviewModel ?? "");
+      }
+      setKeyStatus(key.ok ? key.data : null);
+      setLoading(false);
+    },
+    [repoFullName],
+  );
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   async function saveKey() {

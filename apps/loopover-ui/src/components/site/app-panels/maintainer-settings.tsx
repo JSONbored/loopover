@@ -145,32 +145,43 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(async () => {
-    const apiBase = repoApiBase(repoFullName);
-    if (!apiBase) return;
-    setMessage(null);
-    setLoading(true);
-    const result = await apiFetch<MaintainerSettings>(`${apiBase}/settings`, {
-      label: "Repository settings",
-      credentials: "include",
-      silentStatus: true,
-    });
-    // Default the agent-layer fields defensively so the editor renders even against an older response shape.
-    setSettings(
-      result.ok
-        ? {
-            ...result.data,
-            autonomy: result.data.autonomy ?? {},
-            agentPaused: result.data.agentPaused ?? false,
-            agentDryRun: result.data.agentDryRun ?? false,
-          }
-        : null,
-    );
-    setLoading(false);
-  }, [repoFullName]);
+  // isCancelled guards against an out-of-order response: a keystroke replaces repoFullName (and re-runs the
+  // effect) before an earlier request resolves, so an older fetch must not overwrite the newer repo's settings
+  // (#7784). Same cancelled-flag idiom as use-polled-fetch.ts -- flipped in the effect cleanup.
+  const load = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      const apiBase = repoApiBase(repoFullName);
+      if (!apiBase) return;
+      setMessage(null);
+      setLoading(true);
+      const result = await apiFetch<MaintainerSettings>(`${apiBase}/settings`, {
+        label: "Repository settings",
+        credentials: "include",
+        silentStatus: true,
+      });
+      if (isCancelled()) return;
+      // Default the agent-layer fields defensively so the editor renders even against an older response shape.
+      setSettings(
+        result.ok
+          ? {
+              ...result.data,
+              autonomy: result.data.autonomy ?? {},
+              agentPaused: result.data.agentPaused ?? false,
+              agentDryRun: result.data.agentDryRun ?? false,
+            }
+          : null,
+      );
+      setLoading(false);
+    },
+    [repoFullName],
+  );
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   function setField<K extends keyof MaintainerSettings>(key: K, value: MaintainerSettings[K]) {
@@ -520,21 +531,32 @@ function FocusManifestEditor({ base }: { base: string | null }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
 
-  const load = useCallback(async () => {
-    if (!base) return;
-    setLoading(true);
-    setMessage(null);
-    const result = await apiFetch<FocusManifestResponse>(`${base}/focus-manifest`, {
-      label: "Focus manifest",
-      credentials: "include",
-      silentStatus: true,
-    });
-    setText(result.ok ? JSON.stringify(result.data.manifest, null, 2) : "");
-    setLoading(false);
-  }, [base]);
+  // isCancelled guards against an out-of-order response: `base` changes as the parent's repoFullName is typed
+  // (and re-runs the effect) before an earlier request resolves, so an older fetch must not overwrite the newer
+  // repo's manifest text (#7784). Same cancelled-flag idiom as use-polled-fetch.ts -- flipped in the cleanup.
+  const load = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      if (!base) return;
+      setLoading(true);
+      setMessage(null);
+      const result = await apiFetch<FocusManifestResponse>(`${base}/focus-manifest`, {
+        label: "Focus manifest",
+        credentials: "include",
+        silentStatus: true,
+      });
+      if (isCancelled()) return;
+      setText(result.ok ? JSON.stringify(result.data.manifest, null, 2) : "");
+      setLoading(false);
+    },
+    [base],
+  );
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   async function save() {

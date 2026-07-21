@@ -65,31 +65,42 @@ export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(async () => {
-    const apiBase = repoApiBase(repoFullName);
-    if (!apiBase) {
-      setPreview(null);
+  // isCancelled guards against an out-of-order response: a keystroke replaces repoFullName (and re-runs the
+  // effect) before an earlier request resolves, so an older fetch must not overwrite the newer repo's state
+  // (#7784). Same cancelled-flag idiom as use-polled-fetch.ts -- the flag is flipped in the effect cleanup.
+  const load = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      const apiBase = repoApiBase(repoFullName);
+      if (!apiBase) {
+        setPreview(null);
+        setLoadError(null);
+        return;
+      }
       setLoadError(null);
-      return;
-    }
-    setLoadError(null);
-    setLoading(true);
-    const result = await apiFetch<ActivationPreviewResponse>(`${apiBase}/activation-preview`, {
-      label: "Activation preview",
-      credentials: "include",
-      silentStatus: true,
-    });
-    if (result.ok) {
-      setPreview(result.data);
-    } else {
-      setPreview(null);
-      setLoadError(result.message);
-    }
-    setLoading(false);
-  }, [repoFullName]);
+      setLoading(true);
+      const result = await apiFetch<ActivationPreviewResponse>(`${apiBase}/activation-preview`, {
+        label: "Activation preview",
+        credentials: "include",
+        silentStatus: true,
+      });
+      if (isCancelled()) return;
+      if (result.ok) {
+        setPreview(result.data);
+      } else {
+        setPreview(null);
+        setLoadError(result.message);
+      }
+      setLoading(false);
+    },
+    [repoFullName],
+  );
 
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    void load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   return (

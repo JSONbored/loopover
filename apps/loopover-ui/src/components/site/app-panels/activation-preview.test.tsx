@@ -133,4 +133,52 @@ describe("ActivationPreview", () => {
     });
     expect(screen.getByText(/Settings are unavailable for this repository\./i)).toBeTruthy();
   });
+
+  it("ignores a stale earlier response that resolves after a newer repo was typed (#7784)", async () => {
+    // Per-repo deferred responses keyed off the request URL, so we can resolve them out of order: the FIRST
+    // repo's (slow) request is resolved LAST, after the SECOND repo's request already landed. The stale first
+    // response must not overwrite the second repo's rendered preview.
+    const resolvers: Record<string, (value: unknown) => void> = {};
+    apiFetch.mockImplementation(
+      (url: string) =>
+        new Promise((resolve) => {
+          const repo = url.includes("/acme/first/")
+            ? "first"
+            : url.includes("/acme/second/")
+              ? "second"
+              : "other";
+          resolvers[repo] = resolve;
+        }),
+    );
+    render(<ActivationPreview reviewability={[{ pr: "acme/first#1" }]} />);
+
+    // Type the first repo (its request is now pending, unresolved).
+    fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+      target: { value: "acme/first" },
+    });
+    await waitFor(() => expect(resolvers.first).toBeTruthy());
+
+    // Type a second repo before the first resolves; its request is pending too.
+    fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+      target: { value: "acme/second" },
+    });
+    await waitFor(() => expect(resolvers.second).toBeTruthy());
+
+    // The SECOND (newest) request resolves first with the second repo's summary.
+    resolvers.second({
+      ok: true,
+      data: { ...BASE_PREVIEW, repoFullName: "acme/second", summary: "SECOND repo summary." },
+    });
+    await waitFor(() => expect(screen.getByText("SECOND repo summary.")).toBeTruthy());
+
+    // Now the STALE first request finally resolves. The cancelled-flag guard must drop it so the second repo's
+    // preview stays on screen rather than being clobbered by the first repo's now-outdated data.
+    resolvers.first({
+      ok: true,
+      data: { ...BASE_PREVIEW, repoFullName: "acme/first", summary: "FIRST repo summary (stale)." },
+    });
+    await Promise.resolve();
+    await waitFor(() => expect(screen.getByText("SECOND repo summary.")).toBeTruthy());
+    expect(screen.queryByText("FIRST repo summary (stale).")).toBeNull();
+  });
 });

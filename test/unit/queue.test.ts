@@ -4062,6 +4062,110 @@ describe("queue processors", () => {
     );
   });
 
+  it("sibling re-gate fan-out (#4005 / #7438-incident): a sibling sharing the merged PR's linked issue is woken FIRST, even ahead of lower-numbered unrelated siblings", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    // #10 is lower-numbered but shares no linked issue with the merged PR -- under the OLD ascending-by-number
+    // order it would win the one available slot. #999 is higher-numbered but closes the SAME issue (#500) the
+    // merged PR itself closes -- a real duplicate-cluster sibling, exactly the #7438-incident shape.
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 10, title: "Unrelated sibling", state: "open", user: { login: "contributor" }, head: { sha: "sib10" }, labels: [], body: "No linked issue.", created_at: "2026-07-01T00:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 999, title: "Duplicate-cluster sibling", state: "open", user: { login: "contributor" }, head: { sha: "sib999" }, labels: [], body: "Closes #500", created_at: "2026-07-02T00:00:00.000Z" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/files")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-merge-fanout-linked-priority",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" } },
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 1000, title: "Merged PR", state: "closed", merged_at: "2026-07-08T00:00:00.000Z", user: { login: "contributor" }, head: { sha: "mergedsha" }, labels: [], body: "Closes #500" },
+      } as never,
+    });
+
+    const regateJobs = sent.filter(({ message }) => message.type === "agent-regate-pr");
+    // #999 (linked) is dispatched immediately (index 0, no delay); #10 (unrelated fallback) is pushed to index 1.
+    expect(regateJobs.map(({ message }) => (message as { prNumber: number }).prNumber)).toEqual([999, 10]);
+    expect(regateJobs.map(({ options }) => options)).toEqual([undefined, { delaySeconds: 10 }]);
+  });
+
+  it("sibling re-gate fan-out (#4005 / #7438-incident): every linked-issue sibling survives the cap, displacing the highest-numbered fallback siblings first", async () => {
+    const sent: Array<{ message: import("../../src/types").JobMessage; options?: QueueSendOptions }> = [];
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_REPOS: "owner/agent-repo",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage, options?: QueueSendOptions) {
+          sent.push(options ? { message, options } : { message });
+        },
+      } as unknown as Queue,
+    });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: {}, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    // MERGE_WAKE_MAX_PRS lower-numbered, unrelated open siblings -- on their own, this is exactly the pre-existing
+    // "capped" scenario above and would fill every available slot.
+    for (let number = 1; number <= MERGE_WAKE_MAX_PRS; number += 1) {
+      await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number, title: `Unrelated sibling ${number}`, state: "open", user: { login: "contributor" }, head: { sha: `sib${number}` }, labels: [], body: "No linked issue." });
+    }
+    // Two HIGHER-numbered siblings that share the merged PR's linked issue -- under the old order these would
+    // never be reached at all (positions 100/101 of a list capped at MERGE_WAKE_MAX_PRS).
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 100, title: "Duplicate-cluster sibling A", state: "open", user: { login: "contributor" }, head: { sha: "sib100" }, labels: [], body: "Closes #500" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 101, title: "Duplicate-cluster sibling B", state: "open", user: { login: "contributor" }, head: { sha: "sib101" }, labels: [], body: "Closes #500" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/check-runs")) return Response.json({ id: 900 }, { status: 201 });
+      if (url.includes("/files")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "sibling-merge-fanout-linked-priority-capped",
+      eventName: "pull_request",
+      payload: {
+        action: "closed",
+        installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" } },
+        repository: { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } },
+        pull_request: { number: 1000, title: "Merged PR", state: "closed", merged_at: "2026-07-08T00:00:00.000Z", user: { login: "contributor" }, head: { sha: "mergedsha" }, labels: [], body: "Closes #500" },
+      } as never,
+    });
+
+    const regateJobs = sent.filter(({ message }) => message.type === "agent-regate-pr");
+    expect(regateJobs).toHaveLength(MERGE_WAKE_MAX_PRS);
+    // Both linked siblings (100, 101) come first, regardless of number; the fallback tier fills the remaining
+    // MERGE_WAKE_MAX_PRS - 2 slots with the LOWEST-numbered unrelated siblings (1..MERGE_WAKE_MAX_PRS - 2) --
+    // #14 and #15 are the ones displaced out of the cap.
+    expect(regateJobs.map(({ message }) => (message as { prNumber: number }).prNumber)).toEqual([
+      100,
+      101,
+      ...Array.from({ length: MERGE_WAKE_MAX_PRS - 2 }, (_, index) => index + 1),
+    ]);
+  });
+
   it("REGRESSION (#2371): a coalesced issue-side signal schedules a trailing re-review so an add-then-remove sequence is never lost", async () => {
     // Unlike CI-completion events, same-PR issue-side events are NOT interchangeable within the window: a
     // label ADD immediately followed by a REMOVE carries genuinely different states. The first event's

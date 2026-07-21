@@ -1321,9 +1321,24 @@ async function maybeEnqueueRagReindexForMergedPr(
  * own merge check just above). Scoped to the SAME repos the re-gate sweep already covers (self-host convergence-
  * allowlisted OR hosted agent-configured) -- this closes the "stale sibling" latency gap for repos already
  * getting proactive re-gates, not a scope expansion to repos that never were. `otherOpenPullRequests` is the
- * caller's already-fetched, already-bounded (100-row, ascending-by-number) sibling list — reused as-is rather than
- * re-querying, so the lowest-numbered open siblings are re-gated first, same tie-break the duplicate-winner
- * election uses elsewhere. Best-effort: enqueue failures are logged by the caller, never surfaced to the gate.
+ * caller's already-fetched, already-bounded (100-row, ascending-by-number) sibling list — reused as-is rather
+ * than re-querying, so the fallback tier below still returns the lowest-numbered open siblings, same tie-break
+ * the duplicate-winner election uses elsewhere. Best-effort: enqueue failures are logged by the caller, never
+ * surfaced to the gate.
+ *
+ * #7438-incident: `otherOpenPullRequests`'s ascending-by-number order exists for duplicate-winner election
+ * (the lowest number IS the winner), not for THIS function's own relevance question -- reused as-is, it meant
+ * the woken set was always "the MERGE_WAKE_MAX_PRS oldest open PRs in the repo", with zero relation to which
+ * PRs this specific merge could actually invalidate. On a repo with that many older open PRs already sitting
+ * around (increasingly likely once one carries a maintainer-only manual-review hold that nothing auto-clears),
+ * a genuinely-affected, newer duplicate-cluster sibling could be silently excluded from ever being woken --
+ * exactly the shape of a real incident (a duplicate-cluster loser left stuck open, its own regate landing on
+ * the wrong side of the winner's merge by seconds, with no fast follow-up look). `mergedPullRequestLinkedIssues`
+ * -- the just-merged PR's own linked issues -- lets this function put every sibling that shares one of them
+ * FIRST, ahead of the generic oldest-first fallback: those are the ones a duplicate-cluster-winner or
+ * linked-issue-cap change can concretely affect, so they must never lose a slot to an unrelated older PR. The
+ * fallback tier (any other open PR, oldest first) is preserved unchanged for the "newly-conflicting base"
+ * case, where no single relevance signal exists and PR age remains as reasonable a heuristic as any.
  */
 async function maybeEnqueueSiblingRegateForMergedPr(
   env: Env,
@@ -1334,13 +1349,18 @@ async function maybeEnqueueSiblingRegateForMergedPr(
   installationId: number,
   settings: RepositorySettings,
   otherOpenPullRequests: readonly PullRequestRecord[],
+  mergedPullRequestLinkedIssues: readonly number[],
 ): Promise<void> {
   // action is only ever undefined before shouldProcessPullRequestPublicSurface's own action-set check has
   // already passed at the call site, so a direct comparison (no nullish fallback needed) keeps this line's
   // branches exhaustively reachable -- unlike maybeEnqueueRagReindexForMergedPr's `?? ""`, which predates this.
   if (action !== "closed" || !mergedAt) return;
   if (!(isConvergenceRepoAllowed(env, repoFullName) || isAgentConfigured(settings.autonomy))) return;
-  const siblings = otherOpenPullRequests.slice(0, MERGE_WAKE_MAX_PRS);
+  const linkedIssueSet = new Set(mergedPullRequestLinkedIssues);
+  const linkedSiblings = linkedIssueSet.size === 0 ? [] : otherOpenPullRequests.filter((sibling) => sibling.linkedIssues.some((issue) => linkedIssueSet.has(issue)));
+  const linkedSiblingNumbers = new Set(linkedSiblings.map((sibling) => sibling.number));
+  const fallbackSiblings = linkedSiblingNumbers.size === 0 ? otherOpenPullRequests : otherOpenPullRequests.filter((sibling) => !linkedSiblingNumbers.has(sibling.number));
+  const siblings = [...linkedSiblings, ...fallbackSiblings].slice(0, MERGE_WAKE_MAX_PRS);
   for (const [index, sibling] of siblings.entries()) {
     const job: JobMessage = {
       type: "agent-regate-pr",
@@ -6521,6 +6541,7 @@ async function handlePullRequestWebhookEvent(
         installationId,
         settings,
         otherOpenPullRequests,
+        pr.linkedIssues,
       ).catch((error) => {
         /* v8 ignore next -- best-effort: a sibling re-gate enqueue failure is logged, never surfaced to the gate. */
         console.error(

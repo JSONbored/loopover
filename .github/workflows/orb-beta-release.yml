@@ -66,7 +66,16 @@ jobs:
         id: tag
         if: steps.report.outputs.due == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # A tag pointing at a commit that touches any .github/workflows/* file needs a token with the
+          # `workflow` OAuth scope (classic PAT) / "Workflows: write" (fine-grained PAT) to push -- GitHub
+          # hardcodes this against the default GITHUB_TOKEN regardless of this job's own `permissions:`
+          # block; there is no permissions-block setting that lifts it (confirmed live: the push failed with
+          # "refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without
+          # `workflows` permission" even with contents/actions both set to write above). ORB_RELEASE_WORKFLOW_TOKEN
+          # is an OPTIONAL repo secret (a fine-grained PAT scoped to Contents: write + Workflows: write on
+          # this repo only) for exactly that case -- falls back to the default token when the secret is
+          # unset, which still works fine for any cut whose commits don't happen to touch a workflow file.
+          GH_TOKEN: ${{ secrets.ORB_RELEASE_WORKFLOW_TOKEN || github.token }}
           TAG: ${{ steps.report.outputs.tag }}
           VERSION: ${{ steps.report.outputs.version }}
         run: |

@@ -22,10 +22,11 @@ export type PlanStep = {
 export type PlanDag = { steps: PlanStep[] };
 
 // Stable topological order: emit steps whose in-plan dependencies are already emitted, ties broken by the plan's
-// original order. A dependency id not present in the plan is treated as satisfied. Any steps left in a cycle are
-// appended in original order so nothing is dropped and the function always terminates.
+// original order. A dependency id not present in the plan is treated as UNsatisfied (it can never be emitted), so a
+// step with a dangling dependsOn is deferred like a cyclic one and appended at the end -- matching nextReadySteps in
+// plan-step-readiness.ts, which treats an absent dependency id as "pending" (#7729). Any steps left in a cycle (or
+// waiting on a dangling id) are appended in original order so nothing is dropped and the function always terminates.
 function orderByDependency(steps: PlanStep[]): PlanStep[] {
-  const present = new Set(steps.map((step) => step.id));
   const emitted = new Set<string>();
   const ordered: PlanStep[] = [];
   const remaining = [...steps];
@@ -34,7 +35,7 @@ function orderByDependency(steps: PlanStep[]): PlanStep[] {
     progressed = false;
     for (let i = 0; i < remaining.length; ) {
       const step = remaining[i]!;
-      const ready = step.dependsOn.every((dep) => !present.has(dep) || emitted.has(dep));
+      const ready = step.dependsOn.every((dep) => emitted.has(dep));
       if (ready) {
         ordered.push(step);
         emitted.add(step.id);

@@ -53,9 +53,18 @@ describe("renderPlanAsMarkdown", () => {
     expect(md).toBe("- [ ] A — pending\n- [ ] B — pending");
   });
 
-  it("treats an unknown dependency id as already satisfied", () => {
-    const md = renderPlanAsMarkdown({ steps: [step({ id: "a", title: "A", dependsOn: ["ghost"] })] });
-    expect(md).toBe("- [ ] A — pending");
+  it("treats an unknown dependency id as unsatisfied, deferring the step to the end (#7729)", () => {
+    // 'a' depends on a dangling id 'ghost'. Previously that counted as already satisfied (so 'a' was emitted
+    // first); now a dangling dependency can never be satisfied, so 'a' is deferred like a cyclic step and appended
+    // after 'b' (which has no unmet dependency). This matches nextReadySteps in plan-step-readiness.ts, which
+    // reports the same dangling id as still "pending".
+    const md = renderPlanAsMarkdown({
+      steps: [
+        step({ id: "a", title: "A", dependsOn: ["ghost"] }),
+        step({ id: "b", title: "B" }),
+      ],
+    });
+    expect(md).toBe("- [ ] B — pending\n- [ ] A — pending");
   });
 
   it("appends steps caught in a dependency cycle in original order instead of dropping or looping", () => {

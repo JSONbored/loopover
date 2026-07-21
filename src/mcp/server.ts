@@ -172,6 +172,7 @@ import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
+import { loadOverride, loadShadowOverride, type StorageEnv } from "../review/auto-apply";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
 import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
@@ -1837,6 +1838,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_outcome_patterns: "maintainer",
   loopover_get_outcome_calibration: "maintainer",
   loopover_get_gate_precision: "maintainer",
+  loopover_get_gate_config_effective: "maintainer",
   loopover_get_skipped_pr_audit: "maintainer",
   loopover_get_fleet_analytics: "maintainer",
   loopover_get_recommendation_quality: "maintainer",
@@ -2064,6 +2066,16 @@ export class LoopoverMcp {
         outputSchema: gatePrecisionOutputSchema,
       },
       async (input) => this.toolResult(await this.getGatePrecision(input)),
+    );
+
+    register(
+      "loopover_get_gate_config_effective",
+      {
+        description:
+          "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap files/lines) plus whether a shadow override is still soaking. Read-only; same auth boundary as the REST gate-config/effective route.",
+        inputSchema: ownerRepoShape,
+      },
+      async (input) => this.toolResult(await this.getGateConfigEffective(input)),
     );
 
     register(
@@ -3356,6 +3368,39 @@ export class LoopoverMcp {
         generatedAt: report.generatedAt,
         report,
       } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7800 - thin MCP surface over GET /v1/repos/:owner/:repo/gate-config/effective. Same canAccessRepo /
+  // isMcpReadRepoAllowed boundary as getPrReviewability; same loadOverride/loadShadowOverride pair the REST
+  // route already uses — no new persistence or auth path.
+  private async getGateConfigEffective(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access effective gate config for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
+    const storageEnv = this.env as unknown as StorageEnv;
+    const [override, shadow] = await Promise.all([
+      loadOverride(storageEnv, fullName),
+      loadShadowOverride(storageEnv, fullName),
+    ]);
+    const data = {
+      repoFullName: fullName,
+      effective: {
+        confidenceFloor: override?.confidenceFloor ?? null,
+        scopeCap: {
+          files: override?.scopeCap?.files ?? null,
+          lines: override?.scopeCap?.lines ?? null,
+        },
+      },
+      shadowPending: shadow !== null,
+    };
+    return {
+      summary: `LoopOver effective gate config for ${fullName}: confidenceFloor=${data.effective.confidenceFloor ?? "unset"}, shadowPending=${data.shadowPending}.`,
+      data: data as unknown as Record<string, unknown>,
     };
   }
 

@@ -5526,6 +5526,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("loopover_get_outcome_calibration");
     expect(toolNames).toContain("loopover_get_registry_changes");
     expect(toolNames).toContain("loopover_get_registry_snapshot");
+    expect(toolNames).toContain("loopover_get_gate_config_effective");
     expect(toolNames).toContain("loopover_get_upstream_drift");
     expect(toolNames).toContain("loopover_explain_review_risk");
     expect(toolNames).toContain("loopover_compare_pr_variants");
@@ -5799,6 +5800,7 @@ describe("api routes", () => {
       ],
       ["loopover_get_registry_changes", {}],
       ["loopover_get_registry_snapshot", {}],
+      ["loopover_get_gate_config_effective", { owner: "entrius", repo: "allways-ui" }],
       ["loopover_get_upstream_drift", {}],
       [
         "loopover_preview_local_pr_score",

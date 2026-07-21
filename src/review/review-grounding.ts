@@ -54,6 +54,11 @@ export interface PullRequestFile {
 export interface ReviewGrounding {
   checks?: ReviewCiSummary;
   changedFileContents?: ChangedFileContent[];
+  /** How many commits the repo's CURRENT default branch has landed since this PR's own base commit (#review-
+   *  grounding stale-base fact, metagraphed #7305-class incident) — a TRUE, deterministic fact the reviewer can
+   *  cite instead of guessing a content-level cause for an undetailed CI failure. Undefined when unreadable or
+   *  zero (nothing to say); the caller only sets this when it is a positive number worth surfacing. */
+  baseAheadBy?: number;
 }
 
 // Budgets so the full-file block fits the 120B context alongside the diff + RAG + project knowledge.
@@ -84,6 +89,8 @@ const GROUNDING_GUIDANCE = [
   "",
   "GROUNDING — verify every concern against the provided reality before raising it (you are a smaller model; do not guess):",
   "- CI has ALREADY finished on this commit; its results are given below as 'CI STATUS'. NEVER predict a CI / build / typecheck / test outcome. If a check is under PASSED, that path is verified — do not claim the change breaks it. Treat something as a CI failure ONLY if it appears under FAILED.",
+  "- A FAILED check marked '(no detail provided)' means you were given only its name, not its actual error output — you cannot know WHY it failed. Do not fill that gap with a guess. Writing something 'likely' failed for a specific content reason, or naming an example cause 'not visible in this diff', is STILL an unverified guess wearing a hedge — it is FORBIDDEN as a blocker, exactly like asserting a defect on a file you cannot see. State plainly that the check failed and its cause could not be verified from what you were given; do not name any hypothetical cause, hedged or not.",
+  "- If a 'BASE BRANCH STATUS' section is present below, this PR's branch is a KNOWN, measured number of commits behind the default branch. For an undetailed FAILED check, prefer citing that TRUE fact as the likely cause (and suggest rebasing onto the latest default branch) over guessing a content-level defect — this is a verified fact, not a guess, so it is the correct thing to say instead of staying silent about the cause.",
   "- The FULL post-change content of the changed files is given below as 'FULL FILE CONTENT'. Before claiming any symbol, import, type, or export is undefined / unused / missing / wrong-signature, CHECK that file — only flag it if it is genuinely absent there.",
   "- If verifying a concern needs a file that is NOT provided, say you could not verify it; do NOT assert a defect on code you cannot see.",
 ].join("\n");
@@ -107,11 +114,16 @@ export function toCiSummary(all: CheckAggregate): ReviewCiSummary {
 }
 
 /** Assemble the grounding the prompt renders from a lane's ALREADY-fetched CI (`checks`) + the centrally
- *  fetched full file contents (`fileContents`), each gated by its flag. No I/O — pure. */
-export function buildGrounding(f: GroundingFlags, checks?: CheckAggregate, fileContents?: ChangedFileContent[]): ReviewGrounding {
+ *  fetched full file contents (`fileContents`) + the base-branch staleness fact (`baseAheadBy`), each gated by
+ *  its flag. `baseAheadBy` rides the SAME `ciGrounding` flag as `checks` and additionally requires `checks` to
+ *  be present too — it explains a CI STATUS section (formatBaseBranchSection reads "see CI STATUS above"), so
+ *  rendering it with no CI section to point at would dangle. Only included when a positive number (0/undefined
+ *  ⇒ nothing worth telling the reviewer). No I/O — pure. */
+export function buildGrounding(f: GroundingFlags, checks?: CheckAggregate, fileContents?: ChangedFileContent[], baseAheadBy?: number): ReviewGrounding {
   return {
     ...(f.ciGrounding && checks ? { checks: toCiSummary(checks) } : {}),
     ...(f.fullFileContext && fileContents?.length ? { changedFileContents: fileContents } : {}),
+    ...(f.ciGrounding && checks && typeof baseAheadBy === "number" && baseAheadBy > 0 ? { baseAheadBy } : {}),
   };
 }
 
@@ -244,14 +256,31 @@ export function formatGroundingSections(g?: ReviewGrounding): string {
   if (!g) return "";
   const parts: string[] = [];
   if (g.checks) parts.push(formatCiSection(g.checks));
+  if (typeof g.baseAheadBy === "number" && g.baseAheadBy > 0) parts.push(formatBaseBranchSection(g.baseAheadBy));
   if (g.changedFileContents?.length) parts.push(formatFilesSection(g.changedFileContents));
   return parts.join("\n\n");
+}
+
+/** BASE BRANCH STATUS section (metagraphed #7305-class incident): a TRUE, deterministic fact — this PR's base
+ *  commit is measurably behind the repo's current default branch — that the reviewer can cite as the likely
+ *  cause of an undetailed CI failure instead of guessing a content-level defect. Only rendered when the caller
+ *  supplied a positive count (see buildGrounding). */
+function formatBaseBranchSection(aheadBy: number): string {
+  return [
+    "BASE BRANCH STATUS:",
+    `- This PR's branch is based on a commit that is ${aheadBy} commit${aheadBy === 1 ? "" : "s"} behind the repository's current default branch.`,
+    "- A CI failure (see CI STATUS above) on a branch this far behind is frequently caused by code that landed on the default branch AFTER this PR's branch diverged — not a defect in this PR's own changes.",
+  ].join("\n");
 }
 
 function formatCiSection(c: ReviewCiSummary): string {
   if (c.state === "pending") return "CI STATUS: checks still running on this commit — do not assume an outcome.";
   const passed = c.passing.length ? c.passing.join(", ") : "(none)";
-  const failed = c.failing.length ? c.failing.map((x) => (x.summary ? `${x.name} — ${x.summary}` : x.name)).join("; ") : "(none)";
+  // A failing check with no `summary` means the caller never got the check's own error output (e.g. a generic
+  // CI runner's check-run carries no output.title/summary beyond pass/fail) — mark that gap explicitly, in-line
+  // next to the fact itself, rather than relying on the model to remember a rule stated once in the system
+  // prompt. This is what GROUNDING_GUIDANCE's "(no detail provided)" instruction below reacts to.
+  const failed = c.failing.length ? c.failing.map((x) => (x.summary ? `${x.name} — ${x.summary}` : `${x.name} (no detail provided)`)).join("; ") : "(none)";
   const verdict = c.state === "passed" ? "ALL checks PASSED — the build/typecheck/tests already succeeded on this exact commit." : "Some checks FAILED.";
   return ["CI STATUS (already finished on this commit — do NOT predict CI):", `- ${verdict}`, `- PASSED: ${passed}`, `- FAILED: ${failed}`].join("\n");
 }

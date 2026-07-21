@@ -39,6 +39,7 @@ import {
   enqueueRepositoryOpenDataBackfill,
   enrichInstallationHealth,
   fetchAndStorePullRequestFilesForReview,
+  fetchBaseAheadBy,
   fetchLinkedIssueClosedByPullRequest,
   fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
@@ -312,6 +313,36 @@ describe("GitHub backfill", () => {
     // The bypass contract is neither READ nor WRITE: a live-freshness read must not land in the
     // persistent rate-limit-observation state either (#2762 gate finding).
     expect(await listLatestGitHubRateLimitObservations(env)).toEqual([]);
+  });
+
+  it("fetches how far the default branch has advanced beyond this PR's base commit via the compare API", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("https://api.github.com/repos/JSONbored/gittensory/compare/abc123...main");
+      return Response.json({ ahead_by: 47, behind_by: 0 });
+    });
+
+    await expect(
+      fetchBaseAheadBy(env, "JSONbored/gittensory", "abc123", "main", "tok", githubRateLimitAdmissionKeyForInstallation(123)),
+    ).resolves.toBe(47);
+  });
+
+  it("returns undefined (fails open) when the compare fetch errors", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => new Response("not found", { status: 404 }));
+
+    await expect(
+      fetchBaseAheadBy(env, "JSONbored/gittensory", "abc123", "main", "tok", githubRateLimitAdmissionKeyForInstallation(123)),
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns undefined when the response has no numeric ahead_by", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => Response.json({ behind_by: 0 }));
+
+    await expect(
+      fetchBaseAheadBy(env, "JSONbored/gittensory", "abc123", "main", "tok", githubRateLimitAdmissionKeyForInstallation(123)),
+    ).resolves.toBeUndefined();
   });
 
   it("stores bounded repo metadata, labels, issues, PR details, recent merges, and contributor stats", async () => {

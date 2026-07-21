@@ -12,6 +12,7 @@
 // fail-safe: any missing CI data / fetch error degrades to "no grounding" and the review proceeds on the diff.
 
 import { createInstallationToken } from "../github/app";
+import { fetchBaseAheadBy } from "../github/backfill";
 import { githubRateLimitAdmissionKeyForToken, PRODUCT_USER_AGENT, timeoutFetch, type GitHubRateLimitAdmissionKey } from "../github/client";
 import { getCachedGroundingFileContent, putCachedGroundingFileContent, recordAuditEvent } from "../db/repositories";
 import type { CheckSummaryRecord, PullRequestFileRecord } from "../types";
@@ -122,21 +123,34 @@ function toGroundingFiles(files: PullRequestFileRecord[]): PullRequestFile[] {
 }
 
 /**
+ * Resolve (best-effort) the token to authenticate a grounding-wire GitHub read with: installation token > public
+ * token > none. `admissionKey` is derived from the FINAL token (#regression-safe-propagation), after the
+ * public-token fallback is applied -- computing it before that fallback (against the pre-fallback
+ * `installationId`-only branch) left every fallback call with `admissionKey: undefined` even though the actual
+ * token used (`GITHUB_PUBLIC_TOKEN`) has a perfectly nameable scope, silently dropping every such call into
+ * `key_scope="unknown"` on any rate-limited response. Shared by makeGithubFileFetcher's Contents-API reads and
+ * the base-branch staleness read (#review-grounding stale-base fact) so both authenticate identically without
+ * duplicating the fallback logic.
+ */
+async function resolveGroundingToken(
+  env: Env,
+  installationId: number | null | undefined,
+): Promise<{ token: string | undefined; admissionKey: GitHubRateLimitAdmissionKey | undefined }> {
+  let token: string | undefined;
+  if (installationId) token = await createInstallationToken(env, installationId).catch(() => undefined);
+  token = token ?? env.GITHUB_PUBLIC_TOKEN;
+  const admissionKey: GitHubRateLimitAdmissionKey | undefined = githubRateLimitAdmissionKeyForToken(env, token, installationId);
+  return { token, admissionKey };
+}
+
+/**
  * A {@link FileFetcher} backed by the GitHub Contents API. Authenticates with an installation token (so it
  * reads private repos), falling back to the public token, then to unauthenticated. Returns the raw file text,
  * or null on any non-OK / binary / oversized / error response. NEVER throws — the grounding engine already
  * treats null as "skip this file" and degrades to no-grounding when nothing is readable.
  */
 export async function makeGithubFileFetcher(env: Env, repoFullName: string, installationId: number | null | undefined): Promise<FileFetcher> {
-  // Resolve the token once (best-effort): installation token > public token > none. `admissionKey` is derived
-  // from the FINAL token (#regression-safe-propagation), after the public-token fallback is applied -- computing
-  // it before that fallback (against the pre-fallback `installationId`-only branch) left every fallback call
-  // with `admissionKey: undefined` even though the actual token used (`GITHUB_PUBLIC_TOKEN`) has a perfectly
-  // nameable scope, silently dropping every such call into `key_scope="unknown"` on any rate-limited response.
-  let token: string | undefined;
-  if (installationId) token = await createInstallationToken(env, installationId).catch(() => undefined);
-  token = token ?? env.GITHUB_PUBLIC_TOKEN;
-  const admissionKey: GitHubRateLimitAdmissionKey | undefined = githubRateLimitAdmissionKeyForToken(env, token, installationId);
+  const { token, admissionKey } = await resolveGroundingToken(env, installationId);
   const { owner, name } = repoParts(repoFullName);
   return {
     async getFileContent(path: string, ref: string, maxChars = 24_001): Promise<string | null> {
@@ -259,6 +273,12 @@ export async function buildReviewGroundingText(
     files: PullRequestFileRecord[];
     checks: CheckSummaryRecord[];
     installationId: number | null | undefined;
+    // #review-grounding stale-base fact (metagraphed #7305-class incident): when both are readable, an
+    // additional BASE BRANCH STATUS fact is folded into the SAME ciGrounding-gated section so an undetailed CI
+    // failure has a true, deterministic explanation available instead of an unverified guess. Either absent ⇒
+    // this fact is simply skipped (byte-identical to before it existed) — it is additive, never required.
+    baseSha?: string | null | undefined;
+    defaultBranchRef?: string | null | undefined;
   },
 ): Promise<ReviewGroundingText> {
   const flags = groundingFlags(env);
@@ -267,7 +287,16 @@ export async function buildReviewGroundingText(
     const aggregate = buildCheckAggregate(args.checks);
     const fetcher = await makeGithubFileFetcher(env, args.repoFullName, args.installationId);
     const fileContents = await fetchFullFileContents(flags, args.headSha ?? undefined, toGroundingFiles(args.files), fetcher);
-    const grounding = buildGrounding(flags, aggregate, fileContents);
+    const baseSha = args.baseSha;
+    const defaultBranchRef = args.defaultBranchRef;
+    const baseAheadBy =
+      flags.ciGrounding && baseSha && defaultBranchRef
+        ? await (async () => {
+            const { token, admissionKey } = await resolveGroundingToken(env, args.installationId);
+            return fetchBaseAheadBy(env, args.repoFullName, baseSha, defaultBranchRef, token, admissionKey);
+          })()
+        : undefined;
+    const grounding = buildGrounding(flags, aggregate, fileContents, baseAheadBy);
     const promptSection = formatGroundingSections(grounding);
     // Only attach the grounding-discipline system suffix when we actually produced grounding to verify
     // against; otherwise the prompt stays unchanged (no point telling the model to "check the file" with

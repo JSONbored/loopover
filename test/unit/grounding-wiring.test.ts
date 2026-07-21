@@ -296,6 +296,112 @@ describe("review-grounding wired into the AI reviewer (flag LOOPOVER_REVIEW_GROU
     fetchSpy.mockRestore();
   });
 
+  // #review-grounding stale-base fact (metagraphed #7305-class incident): buildReviewGroundingText's OWN
+  // wiring of the compare-API staleness read, on top of review-grounding.ts's already-covered pure logic.
+  describe("buildReviewGroundingText baseAheadBy wiring", () => {
+    const failingNoDetailCheck = check({ name: "test", conclusion: "failure", payload: {} as Record<string, JsonValue> });
+
+    it("folds BASE BRANCH STATUS into the prompt when baseSha/defaultBranchRef resolve a positive ahead_by", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+        const u = String(url);
+        if (u.includes("/compare/")) {
+          expect(u).toBe("https://api.github.com/repos/acme/widgets/compare/abc123...main");
+          return Response.json({ ahead_by: 12 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: "sha7",
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: null,
+        baseSha: "abc123",
+        defaultBranchRef: "main",
+      });
+      expect(out.promptSection).toContain("BASE BRANCH STATUS");
+      expect(out.promptSection).toContain("12 commits behind");
+      fetchSpy.mockRestore();
+    });
+
+    it("omits BASE BRANCH STATUS when baseSha/defaultBranchRef are not provided (back-compat) — no compare fetch attempted", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }));
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: "sha7",
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: null,
+      });
+      expect(out.promptSection).toContain("CI STATUS");
+      expect(out.promptSection).not.toContain("BASE BRANCH STATUS");
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it("fail-safe: a failing compare fetch degrades to no BASE BRANCH STATUS section, CI grounding still present", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("server error", { status: 500 }));
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: "sha7",
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: null,
+        baseSha: "abc123",
+        defaultBranchRef: "main",
+      });
+      expect(out.promptSection).toContain("CI STATUS");
+      expect(out.promptSection).not.toContain("BASE BRANCH STATUS");
+      fetchSpy.mockRestore();
+    });
+
+    it("resolves an installation token for the compare read when installationId is set (mint success)", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_public" });
+      const tokenSpy = vi.spyOn(githubApp, "createInstallationToken").mockResolvedValue("install-token");
+      let sawAuth: string | null = null;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        if (String(url).includes("/compare/")) {
+          sawAuth = new Headers(init?.headers).get("authorization");
+          return Response.json({ ahead_by: 3 });
+        }
+        return new Response("not found", { status: 404 });
+      });
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: "sha7",
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: 12345,
+        baseSha: "abc123",
+        defaultBranchRef: "main",
+      });
+      expect(sawAuth).toBe("Bearer install-token");
+      expect(out.promptSection).toContain("3 commits behind");
+      tokenSpy.mockRestore();
+      fetchSpy.mockRestore();
+    });
+
+    it("does not attempt a compare read when the flag is off, even with baseSha/defaultBranchRef set", async () => {
+      const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "false" });
+      const fetchSpy = vi.spyOn(globalThis, "fetch");
+      const out = await buildReviewGroundingText(env, {
+        repoFullName: "acme/widgets",
+        headSha: "sha7",
+        files: [],
+        checks: [failingNoDetailCheck],
+        installationId: null,
+        baseSha: "abc123",
+        defaultBranchRef: "main",
+      });
+      expect(out).toEqual({ systemSuffix: "", promptSection: "" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+  });
+
   it("FLAG-ON e2e: full-file content is fetched (capped/prioritized) and inlined into the prompt", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_GROUNDING: "true", GITHUB_PUBLIC_TOKEN: "ghp_test" });
     // Stub the GitHub Contents API so the real FileFetcher returns deterministic file text.

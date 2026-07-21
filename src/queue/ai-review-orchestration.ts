@@ -535,19 +535,25 @@ export async function runAiReviewForAdvisory(
     // byte-identical to today. Fully fail-safe.
     const grounding =
       groundingActive
-        ? await buildReviewGroundingText(env, {
-            repoFullName: args.repoFullName,
-            headSha: args.advisory.headSha,
-            files,
-            checks: await listCheckSummaries(
-              env,
-              args.repoFullName,
-              args.pr.number,
-            ),
-            installationId:
-              (await getRepository(env, args.repoFullName))?.installationId ??
-              null,
-          })
+        ? await (async () => {
+            const repo = await getRepository(env, args.repoFullName);
+            return buildReviewGroundingText(env, {
+              repoFullName: args.repoFullName,
+              headSha: args.advisory.headSha,
+              files,
+              checks: await listCheckSummaries(
+                env,
+                args.repoFullName,
+                args.pr.number,
+              ),
+              installationId: repo?.installationId ?? null,
+              // #review-grounding stale-base fact (metagraphed #7305-class incident): both are additive — either
+              // absent (no baseSha on a rare malformed webhook record, or an unregistered repo with no stored
+              // defaultBranch) just skips the BASE BRANCH STATUS fact, same as before it existed.
+              baseSha: args.pr.baseSha,
+              defaultBranchRef: repo?.defaultBranch,
+            });
+          })()
         : undefined;
     // RAG retrieval (convergence, flag-gated by LOOPOVER_REVIEW_RAG). Query the codebase vector index for code/docs
     // semantically related to the changed files and append them as additive reference context — exactly like

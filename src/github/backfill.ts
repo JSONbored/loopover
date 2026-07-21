@@ -3279,6 +3279,36 @@ export async function fetchLiveBaseBranchAdvancedAt(
   return result?.data.commit?.committer?.date ?? undefined;
 }
 
+/**
+ * How many commits the repo's CURRENT default branch has landed since this PR's own base commit, via REST
+ * `GET /compare/{baseSha}...{defaultBranchRef}` (`ahead_by` from `baseSha`'s perspective — #review-grounding
+ * stale-base fact). `mergeable_state: "behind"` (the signal `prReadyForReview`'s auto-rebase-before-review path
+ * already uses) only ever fires when the repo's branch protection has "require branches to be up to date before
+ * merging" enabled — a repo without that setting can have a branch genuinely dozens of commits behind and GitHub
+ * will still never report it as "behind". This compare-API read is unconditional: it works regardless of branch
+ * protection config, so it can ground the AI reviewer in the TRUE fact even on a repo where the mergeable_state
+ * signal never fires. Best-effort: any fetch/shape error returns undefined so the caller degrades to "unknown"
+ * (no stale-base fact rendered) rather than throwing or asserting a wrong number.
+ */
+export async function fetchBaseAheadBy(
+  env: Env,
+  repoFullName: string,
+  baseSha: string,
+  defaultBranchRef: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<number | undefined> {
+  const result = await githubJsonWithHeaders<{ ahead_by?: number | null }>(
+    env,
+    repoFullName,
+    `/compare/${encodeURIComponent(baseSha)}...${encodeURIComponent(defaultBranchRef)}`,
+    token,
+    githubRateLimitOptions(admissionKey),
+  ).catch(() => undefined);
+  const aheadBy = result?.data.ahead_by;
+  return typeof aheadBy === "number" && Number.isFinite(aheadBy) ? aheadBy : undefined;
+}
+
 /** The PR's LIVE state ("open" / "closed") via REST `GET /pulls/{n}`. The stored open-PR cache lags GitHub, so a
  *  sibling closed/merged on GitHub can still read `open` locally; the duplicate-winner election (#dup-winner /
  *  audit #15) confirms a lower sibling's live state before treating this PR as a cluster loser. Best-effort:

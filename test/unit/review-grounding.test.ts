@@ -42,6 +42,30 @@ describe("review-grounding (#review-grounding)", () => {
     expect(filesOnly.changedFileContents).toEqual(files);
   });
 
+  describe("buildGrounding baseAheadBy (metagraphed #7305-class stale-base fact)", () => {
+    const checks = checksAgg({ state: "failed", failingDetails: [{ name: "test" }] });
+
+    it("includes baseAheadBy when ciGrounding is on, checks are present, and the count is positive", () => {
+      expect(buildGrounding({ ciGrounding: true, fullFileContext: false }, checks, undefined, 47).baseAheadBy).toBe(47);
+    });
+
+    it("omits baseAheadBy when it is zero (nothing to say)", () => {
+      expect(buildGrounding({ ciGrounding: true, fullFileContext: false }, checks, undefined, 0).baseAheadBy).toBeUndefined();
+    });
+
+    it("omits baseAheadBy when it is undefined (unreadable)", () => {
+      expect(buildGrounding({ ciGrounding: true, fullFileContext: false }, checks, undefined, undefined).baseAheadBy).toBeUndefined();
+    });
+
+    it("omits baseAheadBy when ciGrounding is off, even with a positive count", () => {
+      expect(buildGrounding({ ciGrounding: false, fullFileContext: true }, checks, undefined, 47).baseAheadBy).toBeUndefined();
+    });
+
+    it("omits baseAheadBy when there are no checks to explain (nothing for it to dangle off of)", () => {
+      expect(buildGrounding({ ciGrounding: true, fullFileContext: false }, undefined, undefined, 47).baseAheadBy).toBeUndefined();
+    });
+  });
+
   it("toCiSummary maps passing names + failing reasons", () => {
     const s = toCiSummary(checksAgg({ state: "failed", passing: ["build"], failingDetails: [{ name: "codecov/patch", summary: "60% of diff hit (target 97%)" }] }));
     expect(s.state).toBe("failed");
@@ -61,6 +85,50 @@ describe("review-grounding (#review-grounding)", () => {
     const out = formatGroundingSections({ checks: toCiSummary(checksAgg({ state: "failed", passing: ["build"], failingDetails: [{ name: "test", summary: "3 tests failed" }] })) });
     expect(out).toContain("Some checks FAILED");
     expect(out).toContain("FAILED: test — 3 tests failed");
+  });
+
+  // Regression (metagraphed #7305-class incident): a generic CI runner's check-run carries no output.title/
+  // summary beyond pass/fail, so `summary` is absent here. Before this fix that rendered as the bare check name
+  // ("FAILED: test"), giving the model no explicit signal that it has NO real error detail to reason from — it
+  // would fill the gap with a guessed, confidently-hedged content diagnosis instead. Marking the gap in-line,
+  // next to the fact itself, is what GROUNDING_GUIDANCE's forbidding rule below reacts to.
+  it("formatGroundingSections marks a failing check with no summary as having no detail provided", () => {
+    const out = formatGroundingSections({ checks: toCiSummary(checksAgg({ state: "failed", passing: ["build"], failingDetails: [{ name: "test" }] })) });
+    expect(out).toContain("FAILED: test (no detail provided)");
+  });
+
+  it("groundingSystemSuffix forbids a hedged guess about why a no-detail CI failure happened", () => {
+    const suffix = groundingSystemSuffix({ ciGrounding: true, fullFileContext: false });
+    expect(suffix).toContain("no detail provided");
+    expect(suffix).toContain("FORBIDDEN");
+  });
+
+  it("groundingSystemSuffix tells the reviewer to prefer a known BASE BRANCH STATUS fact over guessing", () => {
+    expect(groundingSystemSuffix({ ciGrounding: true, fullFileContext: false })).toContain("BASE BRANCH STATUS");
+  });
+
+  it("formatGroundingSections renders BASE BRANCH STATUS after CI STATUS when the PR is behind", () => {
+    const out = formatGroundingSections({
+      checks: toCiSummary(checksAgg({ state: "failed", failingDetails: [{ name: "test" }] })),
+      baseAheadBy: 47,
+    });
+    expect(out).toContain("BASE BRANCH STATUS");
+    expect(out).toContain("47 commits behind");
+    expect(out.indexOf("CI STATUS")).toBeLessThan(out.indexOf("BASE BRANCH STATUS"));
+  });
+
+  it("formatGroundingSections uses singular 'commit' for exactly one", () => {
+    const out = formatGroundingSections({
+      checks: toCiSummary(checksAgg({ state: "failed", failingDetails: [{ name: "test" }] })),
+      baseAheadBy: 1,
+    });
+    expect(out).toContain("1 commit behind");
+    expect(out).not.toContain("1 commits behind");
+  });
+
+  it("formatGroundingSections omits BASE BRANCH STATUS when baseAheadBy is absent or zero", () => {
+    const out = formatGroundingSections({ checks: toCiSummary(checksAgg({ state: "passed" })) });
+    expect(out).not.toContain("BASE BRANCH STATUS");
   });
 
   it("formatGroundingSections inlines full file content + marks truncated files", () => {

@@ -5286,6 +5286,13 @@ export async function getLatestPublishedLinkedIssueSatisfaction(
  *  miss. Unlike linked_issue_satisfaction_cache, every stored row is durable with NO input-fingerprint
  *  dimension -- file content at an immutable head SHA has exactly one correct value, so a hit is always safe
  *  to reuse verbatim. A nullish head SHA is always a miss (mirrors the sibling caches' contract). */
+// #7481-class fix: bounds how long a row can be served once written, as a safety net against a caller passing
+// a mutable ref (a branch name) instead of a genuine commit SHA -- see schema.ts's fuller comment on
+// groundingFileContentCache. Generous enough that it never affects the cache's real purpose (reusing a
+// commit's content across review lanes / re-runs within the same PR, which happens within minutes), but bounds
+// worst-case staleness for a misused mutable ref to hours, not indefinitely.
+const GROUNDING_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
 export async function getCachedGroundingFileContent(
   env: Env,
   repoFullName: string,
@@ -5294,10 +5301,13 @@ export async function getCachedGroundingFileContent(
 ): Promise<string | null> {
   if (!headSha) return null;
   const row = await env.DB
-    .prepare("SELECT content FROM grounding_file_content_cache WHERE repo_full_name = ? AND path = ? AND head_sha = ?")
+    .prepare("SELECT content, fetched_at FROM grounding_file_content_cache WHERE repo_full_name = ? AND path = ? AND head_sha = ?")
     .bind(repoFullName, path, headSha)
-    .first<{ content: string }>();
-  return row?.content ?? null;
+    .first<{ content: string; fetched_at: string }>();
+  if (!row) return null;
+  const fetchedMs = Date.parse(row.fetched_at);
+  if (!Number.isFinite(fetchedMs) || Date.now() - fetchedMs > GROUNDING_CACHE_TTL_MS) return null;
+  return row.content;
 }
 
 /** #4499 (grounding-file-content-cache): upsert the fetched file content for (repo, path, head SHA). A

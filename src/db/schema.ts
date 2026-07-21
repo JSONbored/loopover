@@ -1426,6 +1426,15 @@ export const linkedIssueSatisfactionCache = sqliteTable(
 // immutable commit, so it's safe to cache durably. NOT scoped to pullNumber (unlike linkedIssueSatisfactionCache
 // above) -- file content at a given head SHA is universal, not PR-specific. Only a successful fetch is ever
 // stored; a transient failure must never be cached as if it were a confirmed-permanent one.
+// #7481-class fix: that immutability assumption holds only when `headSha` is genuinely a commit SHA -- a caller
+// that instead passes a mutable ref (content-lane-wire.ts's base-content check uses the PR's base BRANCH NAME
+// when no commit SHA is known) can poison a row forever, since the literal ref string never itself changes as
+// the branch advances (confirmed empirically: a real metagraphed registry-file row keyed by the branch name
+// "main" sat stale for over a week on the ORB server, silently serving every subsequent PR's base-content check
+// a snapshot from before that window). getCachedGroundingFileContent now enforces a TTL (GROUNDING_CACHE_TTL_MS)
+// at read time as a safety net against ANY caller violating the immutability assumption, current or future --
+// harmless for a true SHA (an occasional extra re-fetch of content that never changes), but bounds the
+// worst-case staleness for a mutable ref to that TTL instead of indefinitely.
 export const groundingFileContentCache = sqliteTable(
   "grounding_file_content_cache",
   {

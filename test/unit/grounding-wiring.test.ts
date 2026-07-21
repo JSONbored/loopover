@@ -992,6 +992,47 @@ describe("grounding_file_content_cache repository helpers", () => {
     await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "export const a = 2; // updated");
     expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("export const a = 2; // updated");
   });
+
+  // #7481-class fix: a real metagraphed registry file's cache row keyed by the branch name "main" (from
+  // content-lane-wire.ts's base-content check, which has no true commit SHA to key on) sat stale on the ORB
+  // server for over a week, since the literal string "main" never itself changes as the branch advances, so
+  // the row was NEVER naturally invalidated. These pin the TTL safety net that now bounds that staleness for
+  // ANY ref -- current callers or future ones -- instead of trusting every caller to only ever pass a genuine
+  // immutable commit SHA.
+  it("REGRESSION (#7481-class fix): a cache row older than the TTL reads as a miss, not a stale hit", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "registry/subnets/foo.json", "main", "stale pre-merge content");
+    const staleFetchedAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25h ago > the 24h TTL
+    await env.DB.prepare(
+      "UPDATE grounding_file_content_cache SET fetched_at = ? WHERE repo_full_name = ? AND path = ? AND head_sha = ?",
+    )
+      .bind(staleFetchedAt, "acme/widgets", "registry/subnets/foo.json", "main")
+      .run();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "registry/subnets/foo.json", "main")).toBeNull();
+  });
+
+  it("a row just inside the TTL window still reads as a hit (the safety net doesn't defeat the cache's real purpose)", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "still fresh");
+    const recentFetchedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago, well under the 24h TTL
+    await env.DB.prepare(
+      "UPDATE grounding_file_content_cache SET fetched_at = ? WHERE repo_full_name = ? AND path = ? AND head_sha = ?",
+    )
+      .bind(recentFetchedAt, "acme/widgets", "src/a.ts", "sha7")
+      .run();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBe("still fresh");
+  });
+
+  it("a malformed/unparseable fetched_at is treated as a miss rather than throwing", async () => {
+    const env = createTestEnv();
+    await putCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7", "content");
+    await env.DB.prepare(
+      "UPDATE grounding_file_content_cache SET fetched_at = ? WHERE repo_full_name = ? AND path = ? AND head_sha = ?",
+    )
+      .bind("not-a-real-timestamp", "acme/widgets", "src/a.ts", "sha7")
+      .run();
+    expect(await getCachedGroundingFileContent(env, "acme/widgets", "src/a.ts", "sha7")).toBeNull();
+  });
 });
 
 // ── checkSummaryText empty fallback + outer-catch fail-safe ─────────────────────────────────────────

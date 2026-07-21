@@ -3,6 +3,7 @@ import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckEvaluation } from "../../src/r
 import { applySurfaceGate, evaluateWithSurfaceLane, resolveSurfaceRefs, runRegistrySurfaceGate, surfaceVerdictToGate } from "../../src/review/content-lane-wire";
 import type { SurfaceReviewInput } from "../../src/review/content-lane/orchestrator";
 import { METAGRAPHED_LANE_SPEC } from "../../src/review/content-lane/registry-logic";
+import { MAX_FETCH_CHARS } from "../../src/review/review-grounding";
 import { parseFocusManifest, type FocusManifest } from "../../src/signals/focus-manifest";
 import type { AdvisoryFinding } from "../../src/types";
 
@@ -286,6 +287,50 @@ describe("runRegistrySurfaceGate (injected loader — adapter logic)", () => {
     const out = await run([{ path: SUBNET, status: "modified" }], { [`head:${SUBNET}`]: doc([existing, newEntry, copy]), [`base:${SUBNET}`]: doc([existing]) }, advisory);
     expect(out?.conclusion).toBe("failure");
     expect(advisory.findings.map((f) => f.code)).toEqual(["surface_lane_reject"]);
+  });
+});
+
+// #7481-class fix: metagraphed PR #7481 was wrongly auto-closed with "must append at least one new surfaces[]
+// entry" despite genuinely appending 35 entries, because the REAL GitHub loader (no loadFileOverride, hitting
+// makeGithubFileFetcher directly) fetched HEAD content with no size cap, defaulting to 24_001 chars -- PR
+// #7481's actual zipcode.json HEAD body was 67,085 bytes. The truncated (but non-null) prefix failed to
+// parse as JSON, silently reading as "surfaces: null", which the existing null-only unreadable check never
+// caught (a truncated fetch returns a real, non-null string). These tests exercise the REAL githubLoad path
+// (not the injected-loader `run` helper above, which bypasses it entirely) via a stubbed global fetch, mirroring
+// evaluateWithSurfaceLane's own "real GitHub loader" test.
+describe("runRegistrySurfaceGate (#7481-class fix: oversized HEAD fetch defers instead of misreading as empty)", () => {
+  const stubFetchWithBodies = (bodies: Record<string, string>) => {
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      const m = /\/contents\/(.+)\?ref=(.+)$/.exec(String(url));
+      if (!m) return new Response("nope", { status: 404 });
+      const path = m[1]!.split("/").map(decodeURIComponent).join("/");
+      const body = bodies[`${decodeURIComponent(m[2]!)}:${path}`];
+      return body === undefined ? new Response("missing", { status: 404 }) : new Response(body);
+    });
+  };
+  const runReal = () =>
+    runRegistrySurfaceGate(env, METAGRAPHED_LANE_SPEC, {
+      installationId: 0,
+      repoFullName: REPO,
+      pr: { headSha: "HEAD", baseRef: "BASE" },
+      advisory: { findings: [] },
+      files: [{ path: SUBNET, status: "modified" }],
+    });
+
+  it("an oversized HEAD fetch (past MAX_FETCH_CHARS) DEFERS rather than closing on a misread 'zero entries appended'", async () => {
+    stubFetchWithBodies({ [`HEAD:${SUBNET}`]: "a".repeat(MAX_FETCH_CHARS + 1000), [`BASE:${SUBNET}`]: doc([existing]) });
+    expect(await runReal()).toBeNull();
+  });
+
+  it("an oversized BASE fetch on a MODIFIED file also DEFERS (same truncation risk on the other side of the diff)", async () => {
+    stubFetchWithBodies({ [`HEAD:${SUBNET}`]: doc([existing, newEntry]), [`BASE:${SUBNET}`]: "b".repeat(MAX_FETCH_CHARS + 1000) });
+    expect(await runReal()).toBeNull();
+  });
+
+  it("a HEAD fetch within MAX_FETCH_CHARS still parses and merges normally (no false-positive deferral)", async () => {
+    stubFetchWithBodies({ [`HEAD:${SUBNET}`]: doc([existing, newEntry]), [`BASE:${SUBNET}`]: doc([existing]) });
+    const out = await runReal();
+    expect(out?.conclusion).toBe("success");
   });
 });
 

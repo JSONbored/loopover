@@ -42,6 +42,7 @@ import { runSurfaceReview, type SurfaceReviewInput, type SurfaceReviewResult } f
 import type { RegistryLaneSpec } from "./content-lane/registry-logic";
 import { registeredValidatorIds, resolveRegistryLaneSpec, unregisteredValidatorId } from "./content-lane/spec-resolver";
 import { makeGithubFileFetcher } from "./grounding-wire";
+import { MAX_FETCH_CHARS } from "./review-grounding";
 import type { FocusManifest } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import type { AdvisoryFinding, AdvisorySeverity } from "../types";
@@ -184,7 +185,19 @@ export async function runRegistrySurfaceGate(
   const githubLoad = async (path: string, ref: "head" | "base"): Promise<string | null> => {
     fetcherPromise ??= makeGithubFileFetcher(env, args.repoFullName, args.installationId);
     const fetcher = await fetcherPromise;
-    return fetcher.getFileContent(path, ref === "head" ? args.pr.headSha : args.pr.baseRef);
+    const content = await fetcher.getFileContent(path, ref === "head" ? args.pr.headSha : args.pr.baseRef, MAX_FETCH_CHARS);
+    // #7481-class fix: unlike AI-review grounding (which tolerates a partial sample), this lane parses the
+    // fetched body as JSON and diffs its surfaces[] array deterministically -- a TRUNCATED body (the fetcher's
+    // maxChars+1-length signal, same convention patchless-secret-scan.ts relies on) is invalid JSON, which
+    // safeParseJson silently swallows into `null`, which reads as "surfaces: null" -- indistinguishable from a
+    // genuinely malformed submission. Without MAX_FETCH_CHARS above, the fetcher's small 24_001-char default
+    // truncated any registry file past that size (a metagraphed subnet manifest routinely exceeds it once it
+    // accumulates enough entries), and this file's own null-only unreadable check below never caught it, since
+    // a truncated fetch returns a non-null (just incomplete) string -- so a fully valid, large surfaces[] append
+    // silently misread as "zero entries appended" and one-shot closed. Converting it to a null return here
+    // routes it through the SAME defer-to-generic-gate guard as a real unreadable fetch, instead of a wrong close.
+    if (content !== null && content.length > MAX_FETCH_CHARS) return null;
+    return content;
   };
   const baseLoad = loadFileOverride ?? githubLoad;
   const statusByPath = new Map(args.files.map((file) => [file.path, file.status ?? null]));

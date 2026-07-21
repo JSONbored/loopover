@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The TanStack Router lib is not under test here — RootShell's own rail-state persistence is. Stub Link so the
@@ -13,6 +14,15 @@ vi.mock("@tanstack/react-router", async () => {
       react.createElement("a", { href: typeof to === "string" ? to : "#", ...rest }, children),
   };
 });
+
+// Stateful stub so the #7792 close/reopen test can assert in-rail React state survives the mobile sheet cycle
+// without standing up the real chat backend / streaming stack.
+vi.mock("./components/chat/conversation", () => ({
+  ChatConversation: () => {
+    const [draft, setDraft] = React.useState("");
+    return <input aria-label="chat draft" value={draft} onChange={(event) => setDraft(event.target.value)} />;
+  },
+}));
 
 import { ChatRail } from "./components/chat-rail";
 import { RootShell } from "./routes/__root";
@@ -80,6 +90,25 @@ describe("ChatRail (#6513)", () => {
 
     expect(screen.getByRole("dialog")).toBeTruthy(); // Sheet content
     expect(screen.queryByRole("complementary")).toBeNull(); // never the docked panel on mobile
+  });
+
+  it("preserves chat draft state across a mobile sheet close/reopen cycle (#7792)", () => {
+    setViewport(400);
+    const onOpenChange = vi.fn();
+    const { rerender } = render(<ChatRail open onOpenChange={onOpenChange} />);
+
+    const draft = screen.getByRole("textbox", { name: /chat draft/i });
+    fireEvent.change(draft, { target: { value: "still typing…" } });
+    expect((draft as HTMLInputElement).value).toBe("still typing…");
+
+    // Close the sheet (same open=false transition accidental tap-outside / Escape / toggle would cause).
+    rerender(<ChatRail open={false} onOpenChange={onOpenChange} />);
+    // forceMount keeps the dialog content in the tree even while closed.
+    expect(screen.getByRole("dialog", { hidden: true })).toBeTruthy();
+
+    // Reopen — draft must still be there (RailBody never unmounted).
+    rerender(<ChatRail open onOpenChange={onOpenChange} />);
+    expect((screen.getByRole("textbox", { name: /chat draft/i }) as HTMLInputElement).value).toBe("still typing…");
   });
 });
 

@@ -429,6 +429,14 @@ export function LedgersPage({
   const [pauseState, setPauseState] = useState<GovernorPauseStateResult | null>(null);
   const [lastPolledPauseState, setLastPolledPauseState] = useState<GovernorPauseStateResult | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  // A pause/resume POST is an independent request that doesn't share the poll GET's single-flight guard, so a
+  // poll that was already in flight when the operator acted can resolve AFTER the action and clobber its fresh
+  // result with a stale pre-action value (#7791). `skipNextPollSync` marks that the very next poll-sync after an
+  // action lands must be ignored: that poll may have started before the action, so its result is not newer.
+  // Later ticks (started after the action) sync normally, mirroring the generation/cancellation discipline
+  // usePolledFetch/useStreamingText use internally. It's state (not a ref) so the render-phase sync below can
+  // read it without touching a ref during render.
+  const [skipNextPollSync, setSkipNextPollSync] = useState(false);
 
   // Join the app's shared live-refresh cadence so newly-recorded claims/events appear without a manual reload,
   // matching the Overview page's claims card that reads the same data source (#7082).
@@ -440,12 +448,19 @@ export function LedgersPage({
   const { result: polledPauseState } = usePolledFetch(loadGovernorPauseState, pollIntervalMs);
   if (polledPauseState !== lastPolledPauseState) {
     setLastPolledPauseState(polledPauseState);
-    setPauseState(polledPauseState);
+    // Consume this poll result (so lastPolledPauseState advances and we don't keep skipping), but don't let a
+    // stale in-flight poll overwrite an action's just-applied result (#7791).
+    if (skipNextPollSync) {
+      setSkipNextPollSync(false);
+    } else {
+      setPauseState(polledPauseState);
+    }
   }
 
   const runGovernorAction = (action: () => Promise<GovernorPauseStateResult>) => {
     setActionPending(true);
     void action().then((next) => {
+      setSkipNextPollSync(true);
       setPauseState(next);
       setActionPending(false);
     });

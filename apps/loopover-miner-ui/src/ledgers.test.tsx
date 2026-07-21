@@ -367,6 +367,50 @@ describe("LedgersPage (#4855)", () => {
       await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("connection refused"));
       expect(screen.getByText(/No ledger activity yet/i)).toBeTruthy();
     });
+
+    it("does not let a stale in-flight poll response revert a just-applied pause action (#7791)", async () => {
+      // The exact race from the bug report: a poll GET is already in flight when the operator clicks Pause, the
+      // action POST resolves first, and only THEN does the stale pre-pause poll resolve. The first (mount) poll
+      // resolves "not paused" so the Pause button renders; the SECOND poll tick is a deferred left in flight
+      // while we click and let the action land, then resolved by hand with the stale pre-pause state.
+      let resolveStalePoll: (value: GovernorPauseStateResult) => void = () => undefined;
+      let pollCall = 0;
+      const loadGovernorPauseState = vi.fn((): Promise<GovernorPauseStateResult> => {
+        pollCall += 1;
+        if (pollCall === 1) return Promise.resolve({ ok: true, pauseState: defaultGovernorPauseState() });
+        return new Promise<GovernorPauseStateResult>((resolve) => {
+          resolveStalePoll = resolve;
+        });
+      });
+      const pauseGovernorAction = vi.fn(async (): Promise<GovernorPauseStateResult> => ({
+        ok: true,
+        pauseState: { paused: true, reason: null, pausedAt: "2026-07-13T12:30:00.000Z" },
+      }));
+      render(
+        <LedgersPage
+          loadLedgers={loadLedgersEmpty}
+          loadGovernorPauseState={loadGovernorPauseState}
+          pauseGovernorAction={pauseGovernorAction}
+          pollIntervalMs={20}
+        />,
+      );
+
+      // First poll resolved "not paused" -> the Pause button is shown.
+      await waitFor(() => expect(screen.getByRole("button", { name: "Pause governor" })).toBeTruthy());
+      // Let the next poll tick fire and leave its GET in flight (deferred, unresolved).
+      await waitFor(() => expect(pollCall).toBeGreaterThanOrEqual(2));
+
+      // Operator clicks Pause; the action POST resolves first -> UI reflects "paused" (Resume button shown).
+      fireEvent.click(screen.getByRole("button", { name: "Pause governor" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+
+      // Now the STALE second poll (started before the action) finally resolves with the pre-pause "not paused"
+      // state. Without the ordering guard this clobbers the action's result; with it, the UI stays paused.
+      resolveStalePoll({ ok: true, pauseState: defaultGovernorPauseState() });
+      await Promise.resolve();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Resume governor" })).toBeTruthy());
+      expect(screen.queryByRole("button", { name: "Pause governor" })).toBeNull();
+    });
   });
 
   describe("live refresh (#7082)", () => {

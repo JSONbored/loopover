@@ -11,6 +11,7 @@ import * as repositoriesModule from "../../src/db/repositories";
 import * as backfillModule from "../../src/github/backfill";
 import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
+import * as focusManifestLoaderModule from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 const SELF_REPO = "JSONbored/loopover";
@@ -175,6 +176,41 @@ describe("runActiveReviewReconciliation (#webhook-reorder-clobber)", () => {
 
     expect(reconciled).toEqual([]);
     expect(liveSpy).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: an explicit review.activeReviewReconciliation: false excludes an otherwise-eligible repo's rows from the scan entirely", async () => {
+    const env = createTestEnv();
+    await seedStaleActiveRow(env, "owner/opted-out", 9, 9507, STALE_ACTIVE_REVIEW_MIN_AGE_MS + 60_000);
+    await upsertRepoFocusManifest(env, "owner/opted-out", { review: { activeReviewReconciliation: false } });
+    const liveSpy = vi.spyOn(backfillModule, "fetchLivePullRequestState");
+
+    const reconciled = await runActiveReviewReconciliation(env);
+
+    expect(reconciled).toEqual([]);
+    expect(liveSpy).not.toHaveBeenCalled(); // opted-out before any GitHub call is ever spent
+    expect(await hasActiveReviewForHeadSha(env, "owner/opted-out", 9, "sha1")).toBe(true); // row untouched
+  });
+
+  it("an explicit review.activeReviewReconciliation: true is a no-op -- the repo's rows are scanned exactly as when unset", async () => {
+    const env = createTestEnv();
+    await seedStaleActiveRow(env, "owner/opted-in", 10, 9508, STALE_ACTIVE_REVIEW_MIN_AGE_MS + 60_000);
+    await upsertRepoFocusManifest(env, "owner/opted-in", { review: { activeReviewReconciliation: true } });
+    vi.spyOn(backfillModule, "fetchLivePullRequestState").mockResolvedValueOnce("closed");
+
+    const reconciled = await runActiveReviewReconciliation(env);
+
+    expect(reconciled).toEqual([{ repoFullName: "owner/opted-in", pullNumber: 10 }]);
+  });
+
+  it("fails OPEN on a manifest-load error for the row's own repo -- a config-read blip must never silently exclude a row from reconciliation", async () => {
+    const env = createTestEnv();
+    await seedStaleActiveRow(env, "owner/manifest-errors", 11, 9509, STALE_ACTIVE_REVIEW_MIN_AGE_MS + 60_000);
+    vi.spyOn(focusManifestLoaderModule, "loadRepoFocusManifest").mockRejectedValueOnce(new Error("manifest load failed"));
+    vi.spyOn(backfillModule, "fetchLivePullRequestState").mockResolvedValueOnce("closed");
+
+    const reconciled = await runActiveReviewReconciliation(env);
+
+    expect(reconciled).toEqual([{ repoFullName: "owner/manifest-errors", pullNumber: 11 }]);
   });
 
   it("fails safe per-row: an error on one row is logged and the scan continues to the next row", async () => {

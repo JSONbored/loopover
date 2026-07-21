@@ -22,6 +22,7 @@
 // (#6747 registered the loopover_pr_outcome CLI mirror, taking the count from 77 to 78.)
 // (#6980 registered the loopover_explain_review_risk CLI mirror, taking the count from 78 to 79.)
 // (#7798 registered the loopover_get_selftune_override_audit CLI mirror, taking the count from 79 to 80.)
+// (#7758 registered the loopover_get_outcome_calibration stdio tool, taking the count from 79 to 80.)
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdtempSync, rmSync } from "node:fs";

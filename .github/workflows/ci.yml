@@ -1141,6 +1141,17 @@ jobs:
   # vitest.config.ts's own comment describes; Codecov's patch gate (changed-lines only) doesn't cover a
   # whole-repo regression outside the diff, so this is what actually restores that backstop for CI, using
   # vitest's own --mergeReports against each shard's uploaded blob report.
+  #
+  # That "merged = whole-suite" assumption breaks when scoped test selection (#ci-scoped-test-selection,
+  # see the shard job's own SCOPED_TEST_SELECTION comment above) was active for this run: all 3 shards then
+  # ran the SAME narrow `--changed=origin/main` subset (not a partition of the ~2,900-test full suite), so
+  # merging them still only reconstructs that narrow slice's coverage -- correctly high for the files it
+  # touches, but the threshold judges the WHOLE include set, so it false-fails even a fully-tested scoped
+  # PR (confirmed live: a 3-file packages/loopover-mcp-only PR with 100% coverage on its own two touched
+  # test files still reported 0%/80% and failed). This job disables the threshold in that same case, via
+  # the identical SCOPED_TEST_SELECTION condition -- Codecov's patch gate already enforces real per-line
+  # coverage on a scoped PR's actual diff regardless, so nothing is lost by skipping the whole-suite
+  # backstop specifically when it can't see the whole suite.
   validate-tests-merge:
     name: validate-tests-merge
     needs: [changes, validate-tests]
@@ -1169,6 +1180,12 @@ jobs:
           path: all-blob-reports
           merge-multiple: true
       - name: Merge shard coverage and check the global threshold
+        env:
+          # Mirrors validate-tests' own SCOPED_TEST_SELECTION condition exactly (this job already has
+          # `needs.changes` available). vitest.config.ts checks this var for TRUTHINESS, not `=== 'true'`,
+          # so the false branch must be an empty string (falsy), not the literal string "false" (which JS
+          # treats as truthy) -- that's why this is a `&& 'true' || ''` expression, not a bare boolean.
+          COVERAGE_NO_THRESHOLDS: ${{ (github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.controlPlane != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true')) && 'true' || '' }}
         run: npx vitest run --coverage --mergeReports=all-blob-reports
 
   # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.

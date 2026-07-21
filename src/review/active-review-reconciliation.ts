@@ -98,6 +98,12 @@ export async function runActiveReviewReconciliation(env: Env, nowMs: number = Da
       try {
         const repo = await getRepository(env, row.repoFullName);
         if (!repo || typeof repo.installationId !== "number") continue;
+        // Per-repo opt-out (#webhook-reorder-clobber): mirrors pr-reconciliation.ts's watchedRepos() FORCE-OFF
+        // exactly -- an explicit per-repo `review.activeReviewReconciliation: false` excludes just this repo's
+        // rows from the sweep even though the fleet-wide gate is on. A manifest-load error fails OPEN (the
+        // row stays eligible), matching the surrounding scan's own settings-blip fail-safe.
+        const manifest = await loadRepoFocusManifest(env, row.repoFullName).catch(() => null);
+        if (manifest?.review.activeReviewReconciliation === false) continue;
         const token = (await createInstallationToken(env, repo.installationId).catch(() => undefined)) ?? env.GITHUB_PUBLIC_TOKEN;
         const admissionKey = githubRateLimitAdmissionKeyForToken(env, token, repo.installationId);
         const liveState = await fetchLivePullRequestState(env, row.repoFullName, row.pullNumber, token, admissionKey);

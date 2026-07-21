@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -914,6 +914,19 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(existsSync(join(workspace.path, "package.json"))).toBe(true);
       workspace.cleanup();
       expect(existsSync(workspace.path)).toBe(false);
+    });
+
+    // REGRESSION: on macOS, os.tmpdir() resolves under a symlink (/var/folders/... -> /private/var/folders/...),
+    // so a raw mkdtempSync path and coding-task-spec.ts's own realpathSync(workingDirectory) (a deliberate
+    // containment-check canonicalization in writeAcceptanceCriteriaFile) used to disagree on which string names
+    // the same directory. That made a plain acceptanceCriteriaPath.startsWith(workingDirectory) check fail even
+    // though the file genuinely was inside the working directory ("hands the agent a task rooted in a REAL
+    // discardable scratch copy" below). Asserted directly here, independent of that whole orchestration, so a
+    // regression is attributable to defaultPrepareExecutionWorkspace itself rather than rediscovered downstream.
+    it("REGRESSION: workspace.path is already realpath-canonical — no symlink hop for a downstream caller to trip on", () => {
+      const workspace = defaultPrepareExecutionWorkspace(nodeFixture());
+      expect(workspace.path).toBe(realpathSync(workspace.path));
+      workspace.cleanup();
     });
 
     it("createDefaultCrossRepoExecutionRunCommand reports exit codes, output, timeouts, and spawn errors", async () => {

@@ -5,7 +5,7 @@
 // readiness gaps, leaked loopover assumptions in agent instructions, clone/setup problems, or other.
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // Already a transitive dependency via coding-task-spec.js's own engine imports -- this adds no load weight.
@@ -553,9 +553,17 @@ export type EvaluateRepoExecutionOptions = EvaluateRepoReadinessOptions & {
 };
 
 /** Copy the benchmark clone into a discardable temp tree — the agent and the repo's test suite only ever touch
- *  the copy, so the clone stays pristine and cleanup is a single recursive remove. */
+ *  the copy, so the clone stays pristine and cleanup is a single recursive remove. realpathSync's the fresh
+ *  mkdtemp directory immediately: on macOS, os.tmpdir() resolves under a symlink (/var/folders/... ->
+ *  /private/var/folders/...), so without this, the raw mkdtempSync path and coding-task-spec.ts's own
+ *  realpathSync(workingDirectory) (a deliberate containment-check canonicalization in writeAcceptanceCriteriaFile,
+ *  not something to remove) disagree on which string names the same directory -- acceptanceCriteriaPath then
+ *  fails a plain acceptanceCriteriaPath.startsWith(workingDirectory) check even though the file genuinely is
+ *  inside the working directory. Resolving once here, at the source, keeps every downstream path (workspace.path,
+ *  task.workingDirectory, the acceptance-criteria path) in the same canonical form with no further changes
+ *  needed. A no-op on Linux CI runners, where /tmp is not itself a symlink. */
 export function defaultPrepareExecutionWorkspace(repoPath: string): CrossRepoExecutionWorkspace {
-  const scratchRoot = mkdtempSync(join(tmpdir(), "loopover-cross-repo-exec-"));
+  const scratchRoot = realpathSync(mkdtempSync(join(tmpdir(), "loopover-cross-repo-exec-")));
   const path = join(scratchRoot, "repo");
   cpSync(repoPath, path, { recursive: true });
   return {

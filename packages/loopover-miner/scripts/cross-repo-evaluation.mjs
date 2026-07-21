@@ -7,6 +7,7 @@ import {
   formatCrossRepoEvaluationReport,
   parseCrossRepoEvaluationManifest,
   runCrossRepoEvaluation,
+  runCrossRepoFullExecution,
   summarizeCrossRepoEvaluation,
 } from "../lib/cross-repo-evaluation.js";
 
@@ -22,6 +23,7 @@ export function parseCrossRepoEvaluationArgs(argv) {
   let json = false;
   let repoFilter = null;
   let requireMajority = false;
+  let fullExecution = false;
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
     if (token === "--json") {
@@ -30,6 +32,10 @@ export function parseCrossRepoEvaluationArgs(argv) {
     }
     if (token === "--require-majority") {
       requireMajority = true;
+      continue;
+    }
+    if (token === "--full-execution") {
+      fullExecution = true;
       continue;
     }
     if (token === "--manifest") {
@@ -51,7 +57,7 @@ export function parseCrossRepoEvaluationArgs(argv) {
     }
     return { error: `Unknown argument: ${token}` };
   }
-  return { manifestPath, json, repoFilter, requireMajority };
+  return { manifestPath, json, repoFilter, requireMajority, fullExecution };
 }
 
 export function loadCrossRepoEvaluationManifest(manifestPath) {
@@ -62,6 +68,15 @@ export function loadCrossRepoEvaluationManifest(manifestPath) {
 export function runCrossRepoEvaluationCli(options = {}) {
   const parsed = options.parsed ?? loadCrossRepoEvaluationManifest(options.manifestPath ?? resolveDefaultManifestPath());
   const results = runCrossRepoEvaluation(parsed, { repoFilter: options.repoFilter ?? null });
+  const summary = summarizeCrossRepoEvaluation(results);
+  return { parsed, results, summary };
+}
+
+/** Full-execution counterpart of runCrossRepoEvaluationCli (#7634) — same shape, async because agent runs and
+ *  the benchmark repos' own test suites are. Dry-run: see runCrossRepoFullExecution. */
+export async function runCrossRepoFullExecutionCli(options = {}) {
+  const parsed = options.parsed ?? loadCrossRepoEvaluationManifest(options.manifestPath ?? resolveDefaultManifestPath());
+  const results = await runCrossRepoFullExecution(parsed, { repoFilter: options.repoFilter ?? null });
   const summary = summarizeCrossRepoEvaluation(results);
   return { parsed, results, summary };
 }
@@ -77,6 +92,9 @@ function printHelp() {
       "Options:",
       "  --manifest <path>     Benchmark manifest (default: benchmarks/cross-repo/manifest.json)",
       "  --repo <owner/repo>     Evaluate a single benchmark entry",
+      "  --full-execution        Past readiness, run the coding agent + the repo's own test suite in a",
+      "                          discardable scratch copy (dry-run: no PRs, no writes to the clone).",
+      "                          Requires MINER_CODING_AGENT_PROVIDER to be configured.",
       "  --json                  Emit machine-readable JSON on stdout",
       "  --require-majority      Exit 1 unless a strict majority of repos pass",
       "  -h, --help              Show this help",
@@ -86,7 +104,7 @@ function printHelp() {
   );
 }
 
-function main() {
+async function main() {
   const parsedArgs = parseCrossRepoEvaluationArgs();
   if (parsedArgs.help) {
     printHelp();
@@ -97,7 +115,9 @@ function main() {
     return 2;
   }
 
-  const { parsed, results, summary } = runCrossRepoEvaluationCli(parsedArgs);
+  const { parsed, results, summary } = parsedArgs.fullExecution
+    ? await runCrossRepoFullExecutionCli(parsedArgs)
+    : runCrossRepoEvaluationCli(parsedArgs);
   if (parsedArgs.json) {
     console.log(JSON.stringify({ warnings: parsed.warnings, results, summary }, null, 2));
   } else {
@@ -112,5 +132,5 @@ function main() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  process.exitCode = main();
+  process.exitCode = await main();
 }

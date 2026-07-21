@@ -65,6 +65,7 @@ type EvaluateRepoReadinessOptions = {
         ready: boolean;
         verdict?: string;
         instructions?: string;
+        acceptanceCriteriaPath?: string;
     };
 };
 /** Canonical `owner/repo` with exactly one slash and safe segments; anything else → null. */
@@ -100,4 +101,87 @@ export declare function summarizeCrossRepoEvaluation(results: CrossRepoEvaluatio
  * Human-readable pass/fail report for one evaluation run (#4788).
  */
 export declare function formatCrossRepoEvaluationReport(results: CrossRepoEvaluationResult[], summary?: CrossRepoEvaluationSummary): string;
+/** Execution-specific failure taxonomy (#7634), extending — not replacing — CROSS_REPO_FAILURE_CATEGORY. */
+export declare const CROSS_REPO_EXECUTION_FAILURE_CATEGORY: Readonly<{
+    AGENT_RUN: "agent_run_failed";
+    NOOP_DIFF: "noop_diff";
+    BUILD: "build_failed";
+    TEST: "test_failed";
+}>;
+/** A benchmark attempt works a small synthetic issue, so a modest turn cap keeps dry-runs bounded without
+ *  starving a real agent; callers tune via options.maxTurns. */
+export declare const DEFAULT_CROSS_REPO_EXECUTION_MAX_TURNS: number;
+/** Per-command (build, then test) wall-clock cap — generous enough for a cold dependency install on the larger
+ *  benchmark repos, small enough that a hung suite cannot wedge the whole run. */
+export declare const DEFAULT_CROSS_REPO_EXECUTION_COMMAND_TIMEOUT_MS: number;
+export type CrossRepoExecutionCommandResult = {
+    code: number | null;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+};
+export type CrossRepoExecutionRunCommandFn = (command: string, options: {
+    cwd: string;
+    timeoutMs: number;
+}) => Promise<CrossRepoExecutionCommandResult>;
+export type CrossRepoExecutionWorkspace = {
+    path: string;
+    cleanup: () => void;
+};
+/** Structural mirror of the engine's CodingAgentDriver contract — kept local so this module only loads the real
+ *  driver construction (and its engine dependency) lazily, on the one path that actually runs an agent. */
+export type CrossRepoExecutionDriver = {
+    run(task: {
+        attemptId: string;
+        workingDirectory: string;
+        acceptanceCriteriaPath: string;
+        instructions: string;
+        maxTurns: number;
+    }): Promise<{
+        ok: boolean;
+        changedFiles: readonly string[];
+        summary: string;
+        error?: string | undefined;
+    }>;
+};
+export type CrossRepoExecutionDetails = {
+    attempted: boolean;
+    changedFileCount: number | null;
+    buildRan: boolean;
+    testRan: boolean;
+};
+export type CrossRepoExecutionEvaluationResult = CrossRepoEvaluationResult & {
+    execution: CrossRepoExecutionDetails | null;
+};
+export type EvaluateRepoExecutionOptions = EvaluateRepoReadinessOptions & {
+    driver?: CrossRepoExecutionDriver;
+    prepareExecutionWorkspace?: (repoPath: string) => CrossRepoExecutionWorkspace;
+    runCommand?: CrossRepoExecutionRunCommandFn;
+    maxTurns?: number;
+    commandTimeoutMs?: number;
+};
+/** Copy the benchmark clone into a discardable temp tree — the agent and the repo's test suite only ever touch
+ *  the copy, so the clone stays pristine and cleanup is a single recursive remove. */
+export declare function defaultPrepareExecutionWorkspace(repoPath: string): CrossRepoExecutionWorkspace;
+/** Command runner for the stack's inferred build/test commands. detectRepoStack only ever emits simple
+ *  `tool subcommand` forms ("npm test", "cargo build", "npm run build"), so the command is tokenized on
+ *  whitespace and exec'd DIRECTLY -- deliberately no `shell: true`, so nothing in a benchmark repo's manifest
+ *  can smuggle shell metacharacters into an interpreted shell line. Mirrors coding-agent-construction's
+ *  createRealCliSubprocessSpawn otherwise: capture both streams and RESOLVE (never reject) on timeout or spawn
+ *  error, so partial output stays diagnosable. Promise resolution is idempotent, so a `close` firing after the
+ *  timeout already resolved needs no guard. */
+export declare function createDefaultCrossRepoExecutionRunCommand(): CrossRepoExecutionRunCommandFn;
+/**
+ * Run the full discover -> plan -> code -> test loop for one benchmark repo, dry-run (#7634). Readiness gates
+ * first (its failures pass through unchanged); execution then happens entirely inside a scratch copy that is
+ * discarded in every outcome.
+ */
+export declare function evaluateRepoExecution(entry: CrossRepoEvaluationManifestRepo, options?: EvaluateRepoExecutionOptions): Promise<CrossRepoExecutionEvaluationResult>;
+/**
+ * Run full-execution mode across every repo in a parsed manifest (#7634), sequentially — agent runs and test
+ * suites are heavyweight, so no parallel fan-out.
+ */
+export declare function runCrossRepoFullExecution(parsed: ParsedCrossRepoEvaluationManifest, options?: {
+    repoFilter?: string;
+} & EvaluateRepoExecutionOptions): Promise<CrossRepoExecutionEvaluationResult[]>;
 export {};

@@ -1,11 +1,12 @@
 import type {
   CrossRepoEvaluationResult,
   CrossRepoEvaluationSummary,
+  CrossRepoExecutionEvaluationResult,
   ParsedCrossRepoEvaluationManifest,
 } from "../lib/cross-repo-evaluation.js";
 
 export type CrossRepoEvaluationCliArgs =
-  | { manifestPath: string; json: boolean; repoFilter: string | null; requireMajority: boolean }
+  | { manifestPath: string; json: boolean; repoFilter: string | null; requireMajority: boolean; fullExecution: boolean }
   | { error: string }
   | { help: true };
 
@@ -26,3 +27,9 @@ export declare function runCrossRepoEvaluationCli(options?: CrossRepoEvaluationC
   results: CrossRepoEvaluationResult[];
   summary: CrossRepoEvaluationSummary;
 };
+
+export declare function runCrossRepoFullExecutionCli(options?: CrossRepoEvaluationCliOptions): Promise<{
+  parsed: ParsedCrossRepoEvaluationManifest;
+  results: CrossRepoExecutionEvaluationResult[];
+  summary: CrossRepoEvaluationSummary;
+}>;

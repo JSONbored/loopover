@@ -1,5 +1,7 @@
 {
   "apps/loopover-ui/src/components/site/api/try-it.tsx": 1,
+  "apps/loopover-ui/src/components/site/app-panels/onboarding-preview-card.tsx": 2,
+  "apps/loopover-ui/src/components/site/notification-readiness-card.tsx": 2,
   "apps/loopover-ui/src/routes/app.index.tsx": 1,
   "apps/loopover-ui/src/routes/app.runs.tsx": 1,
   "apps/loopover-ui/src/routes/app.workbench.tsx": 1,

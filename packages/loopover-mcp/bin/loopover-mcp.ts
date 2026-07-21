@@ -1158,6 +1158,16 @@ const STDIO_TOOL_DESCRIPTORS = [
     description:
       "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
   },
+  // #7761: local stdio counterpart of the remote loopover_list_notifications tool (src/mcp/server.ts) and the
+  // existing `notifications` CLI mirror (#6745) -- reuses getNotifications, the same apiGet call the CLI already
+  // makes, so there is exactly one HTTP call site for this route. Category matches the remote server's own
+  // MCP_TOOL_CATEGORIES entry for this tool name, same reasoning as the #6152 maintain-surface tools above.
+  {
+    name: "loopover_list_notifications",
+    category: "utility",
+    description:
+      "Return a contributor's own LoopOver notifications (e.g. changes requested on their PRs) and unread badge count. Self-scoped: only the authenticated login's notifications.",
+  },
   {
     name: "loopover_compare_pr_variants",
     category: "branch",
@@ -2128,6 +2138,20 @@ registerStdioTool(
   async ({ login, limit }: any) => {
     const payload = await getPrOutcomes(login, limit);
     return toolResult(prOutcomesToolSummary(login, payload), payload);
+  },
+);
+
+// #7761: reuses getNotifications(login) -- the exact same apiGet call notificationsCli already makes -- so
+// the stdio tool and the CLI's `notifications` command share one HTTP call site, no duplicated REST logic.
+registerStdioTool(
+  "loopover_list_notifications",
+  {
+    description: stdioToolDescription("loopover_list_notifications"),
+    inputSchema: loginShape,
+  },
+  async ({ login }: any) => {
+    const payload = await getNotifications(login);
+    return toolResult(`LoopOver notifications for ${login}: ${payload.unreadCount} unread.`, payload);
   },
 );
 

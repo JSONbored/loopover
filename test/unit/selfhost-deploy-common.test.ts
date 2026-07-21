@@ -227,3 +227,89 @@ printf 'REACHED_END args=[%s]\\n' "\${compose_args[*]}"
     expect(result.stderr).toContain("compose file not found: missing.yml");
   });
 });
+
+describe("env_get (#7769)", () => {
+  // Source the lib and invoke env_get directly with (key, file) positional args.
+  function runEnvGet(key: string, file: string) {
+    const script = `set -euo pipefail; . "${libPath.replace(/\\/g, "/")}"; env_get "$1" "$2"`;
+    return spawnSync("bash", ["-c", script, "bash", key, file], { encoding: "utf8" });
+  }
+
+  function tempEnvFile(contents: string): { dir: string; file: string } {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-env-get-"));
+    const file = join(dir, ".env");
+    writeFileSync(file, contents);
+    return { dir, file };
+  }
+
+  it("prints the value of an existing key", () => {
+    const { dir, file } = tempEnvFile("FOO=1\nBAR=hello\n");
+    try {
+      const r = runEnvGet("BAR", file);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.trim()).toBe("hello");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("strips surrounding single or double quotes from the value", () => {
+    const { dir, file } = tempEnvFile('FOO="quoted value"\nBAR=\'single\'\n');
+    try {
+      expect(runEnvGet("FOO", file).stdout.trim()).toBe("quoted value");
+      expect(runEnvGet("BAR", file).stdout.trim()).toBe("single");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores comment/blank lines and matches the key exactly, not as a prefix", () => {
+    const { dir, file } = tempEnvFile("# FOO = commented, not this\n\nFOOBAR=wrong\nFOO=right\n");
+    try {
+      const r = runEnvGet("FOO", file);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.trim()).toBe("right"); // not FOOBAR's value, not the comment
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns non-zero for a key that is not present", () => {
+    const { dir, file } = tempEnvFile("FOO=1\n");
+    try {
+      expect(runEnvGet("MISSING", file).status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns non-zero when the file does not exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-env-get-"));
+    try {
+      expect(runEnvGet("FOO", join(dir, "absent.env")).status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("require_cmd (#7769)", () => {
+  // `; echo REACHED_END` marks whether execution continued past require_cmd (it exits 1 on a missing command).
+  function runRequireCmd(cmd: string) {
+    const script = `set -euo pipefail; . "${libPath.replace(/\\/g, "/")}"; require_cmd "$1"; echo REACHED_END`;
+    return spawnSync("bash", ["-c", script, "bash", cmd], { encoding: "utf8" });
+  }
+
+  it("succeeds silently for a command that is on PATH", () => {
+    const r = runRequireCmd("bash");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("REACHED_END");
+  });
+
+  it("exits non-zero with an actionable error for a missing command", () => {
+    const r = runRequireCmd("loopover-definitely-not-a-real-command-xyz");
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).not.toContain("REACHED_END");
+    expect(r.stderr).toContain("required command not found: loopover-definitely-not-a-real-command-xyz");
+  });
+});

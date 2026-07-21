@@ -62,6 +62,8 @@ export function printHelp(input: { packageName: string }): void {
       "  loopover-miner tenant create <name> [--product <product>] [--json]  Provision a hosted tenant via the control-plane API",
       "  loopover-miner tenant list [--json]                         List hosted tenants",
       "  loopover-miner tenant destroy <name> [--json]               Tear down a hosted tenant",
+      "  loopover-miner pr-outcomes --login <github-login> [--limit <1-100>] [--json]",
+      "                                                                 Show the miner's own merged-PR outcomes from the hosted API",
       "  loopover-miner purge --repo <owner/repo> [--dry-run] [--json]",
       "                                                                 Right-to-be-forgotten: delete a repo's rows from every local store",
       "",

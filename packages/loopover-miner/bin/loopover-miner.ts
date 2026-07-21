@@ -19,6 +19,7 @@ import { runPurge } from "../lib/purge-cli.js";
 import { runQueueCli } from "../lib/portfolio-queue-cli.js";
 import { runOrbExportCli } from "../lib/orb-export.js";
 import { runTenantCli } from "../lib/tenant-cli.js";
+import { runPrOutcomes } from "../lib/pr-outcomes-cli.js";
 import { installCliSignalHandlers } from "../lib/process-lifecycle.js";
 import { captureMinerErrorAndFlush, initMinerSentry } from "../lib/sentry.js";
 import { runStateCli } from "../lib/run-state-cli.js";
@@ -124,6 +125,13 @@ if (cliArgs[0] === "orb" && cliArgs[1] === "export") {
 // network command) rather than the strictly-local commands; it fails loud on any control-plane error.
 if (cliArgs[0] === "tenant") {
   process.exit(await runTenantCli(cliArgs[1], cliArgs.slice(2)));
+}
+
+// `pr-outcomes` (#7658) reads the current miner's own post-merge PR-outcome history from the hosted
+// `GET /v1/contributors/:login/pr-outcomes` endpoint; a network command like `orb export`/`tenant` above, it
+// fails loud on any backend error and needs an authenticated loopover-mcp session.
+if (cliArgs[0] === "pr-outcomes") {
+  process.exit(await runPrOutcomes(cliArgs.slice(1)));
 }
 
 if (cliArgs[0] === "claim") {

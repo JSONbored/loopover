@@ -51,9 +51,14 @@ env_put() {
   local key="$1"
   local value="$2"
   local file="${3:-$ENV_FILE}"
-  local dir base tmp
+  local dir base tmp mode
 
   touch "$file"
+  # Preserve the target file's mode across the atomic rename below. mktemp creates $tmp at 0600, so a bare
+  # `mv "$tmp" "$file"` would silently narrow $file's permissions to 0600 on every write (#7766). Capture the
+  # existing mode first and re-apply it to $tmp before the swap. GNU stat with a BSD `stat -f` fallback,
+  # matching backup-metrics.sh's own stat-portability idiom.
+  mode="$(stat -c '%a' "$file" 2>/dev/null || stat -f '%Lp' "$file")"
   dir="$(dirname "$file")"
   base="$(basename "$file")"
   tmp="$(mktemp "$dir/.${base}.tmp.XXXXXX")"
@@ -75,8 +80,11 @@ env_put() {
       }
     }
   ' "$file" >"$tmp"
-  cat "$tmp" >"$file"
-  rm -f "$tmp"
+  # Atomic swap: a rename can't leave $file truncated/corrupted if the process is killed mid-write, unlike the
+  # previous `cat "$tmp" >"$file"` truncate-then-copy the same-directory temp file was always meant to enable
+  # (#7766). chmod first so the rename preserves the target's original mode (see the stat above).
+  chmod "$mode" "$tmp"
+  mv "$tmp" "$file"
 }
 
 # Optional Infisical wrapper (#5120): when SELFHOST_USE_INFISICAL=1 (opt-in, off by default), prefixes the

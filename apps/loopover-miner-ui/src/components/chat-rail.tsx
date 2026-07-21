@@ -47,7 +47,10 @@ export function ChatRail({ open, onOpenChange }: ChatRailProps) {
           Chat
         </Button>
         <Sheet open={open} onOpenChange={onOpenChange}>
-          <SheetContent id={RAIL_PANEL_ID} side="right" className="w-[380px] p-0">
+          {/* forceMount: keep RailBody mounted when the sheet closes so chat state survives, matching the
+              desktop `<aside hidden={!open}>` contract (#7792). SheetContent already forwards unknown props
+              onto Radix Dialog.Content, which honors forceMount. */}
+          <SheetContent id={RAIL_PANEL_ID} side="right" className="w-[380px] p-0" forceMount>
             <SheetHeader className="sr-only">
               <SheetTitle>Chat</SheetTitle>
               <SheetDescription>Ask about this miner&rsquo;s local state.</SheetDescription>

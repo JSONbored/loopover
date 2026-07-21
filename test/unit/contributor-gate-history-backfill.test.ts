@@ -149,6 +149,36 @@ describe("backfillContributorGateHistory (#fairness-analytics)", () => {
     warn.mockRestore();
   });
 
+  it("REGRESSION: does not count an ON CONFLICT DO NOTHING no-op toward inserted", async () => {
+    const candidate = {
+      project: "owner/repo",
+      targetId: "owner/repo#50",
+      decision: "merge",
+      headSha: "sha50",
+      source: "gittensory-native",
+      authorLogin: "octocat",
+      createdAt: "2026-06-25T12:00:00.000Z",
+    };
+    const env = {
+      DB: {
+        prepare: (sql: string) => ({
+          bind: (..._args: unknown[]) => {
+            if (/FROM review_audit/.test(sql)) {
+              return { all: async () => ({ results: [candidate] }) };
+            }
+            if (/INSERT INTO contributor_gate_history/.test(sql)) {
+              return { run: async () => ({ meta: { changes: 0 } }) };
+            }
+            throw new Error(`unexpected sql: ${sql}`);
+          },
+        }),
+      },
+    } as unknown as Env;
+
+    const result = await backfillContributorGateHistory(env);
+    expect(result).toEqual({ scanned: 1, inserted: 0, skippedNoAuthor: 0, hasMore: false });
+  });
+
   it("is best-effort per row: a write failure on one candidate is logged and does not stop the rest of the batch", async () => {
     const env = createTestEnv();
     await insertPullRequest(env, "owner/repo", 20, "octocat");

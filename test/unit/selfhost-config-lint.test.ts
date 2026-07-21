@@ -150,6 +150,14 @@ reviewRecap:
     expect(result.recognizedFields).toEqual(["prReconciliation"]);
   });
 
+  it("recognizes a standalone top-level activeReviewReconciliation: block instead of flagging it as unknown (#webhook-reorder-clobber)", () => {
+    const result = lintManifestText("activeReviewReconciliation:\n  enabled: true\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["activeReviewReconciliation"]);
+  });
+
   it("recognizes a standalone top-level federatedIntelligence: block instead of flagging it as unknown (#6998)", () => {
     const result = lintManifestText("federatedIntelligence:\n  enabled: true\n");
 

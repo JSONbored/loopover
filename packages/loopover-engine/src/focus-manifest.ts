@@ -495,6 +495,20 @@ export type FocusManifestPrReconciliationConfig = {
 };
 
 /**
+ * Config-as-code override for the active_review_tracking reconciliation sweep
+ * (LOOPOVER_ACTIVE_REVIEW_RECONCILIATION), declared under top-level `activeReviewReconciliation:`
+ * (#webhook-reorder-clobber). Same shape and precedence as `prReconciliation:` above -- the sweep re-checks
+ * `active_review_tracking` rows a delayed webhook job left stuck "active" for a PR that already closed.
+ * Not present ⇒ the caller falls back to the LOOPOVER_ACTIVE_REVIEW_RECONCILIATION env var. Distinct from
+ * the per-repo FORCE-OFF under `review.activeReviewReconciliation` (which only excludes one repo's rows
+ * from the scan set once this fleet-wide gate is ON).
+ */
+export type FocusManifestActiveReviewReconciliationConfig = {
+  present: boolean;
+  enabled: boolean;
+};
+
+/**
  * Config-as-code opt-in for the federated fleet intelligence export (#1970), declared under
  * `federatedIntelligence:`. Gates buildFederatedBundle (src/orb/federated-bundle.ts), which packages this
  * instance's own anonymized calibration signals into a signed bundle an operator can hand to a peer -- like
@@ -781,6 +795,14 @@ export type FocusManifestReviewConfig = {
    *  above, for the identical reason. A manifest-load error fails OPEN (the repo stays watched). null/true
    *  (default, absent) ⇒ no change to today's watched-repo-set behavior. */
   prReconciliation: boolean | null;
+  /** `review.activeReviewReconciliation` (#webhook-reorder-clobber): explicit per-repo FORCE-OFF for the
+   *  active-review-tracking reconciliation sweep (`runActiveReviewReconciliation`,
+   *  `src/review/active-review-reconciliation.ts`) — `false` excludes this repo's stale `active_review_tracking`
+   *  rows from the sweep's scan even though the global `LOOPOVER_ACTIVE_REVIEW_RECONCILIATION` kill-switch is
+   *  on. Deliberately FORCE-OFF-ONLY (no `true` override), mirroring `selftune`/`sweepWatchdog`/`prReconciliation`
+   *  above, for the identical reason. A manifest-load error fails OPEN (the repo's rows stay eligible). null/true
+   *  (default, absent) ⇒ no change to today's scanned-row-set behavior. */
+  activeReviewReconciliation: boolean | null;
   /** `review.memory` (#2179, config slice of #1964): when true, gates repeat-false-positive SUPPRESSION —
    *  before an advisory (non-blocking) AI finding is surfaced in the unified review comment, it is matched
    *  against this repo's stored `review_suppression` signals (a maintainer's own past false-positive
@@ -1194,6 +1216,7 @@ export type FocusManifest = {
   upstreamDriftIssues: FocusManifestUpstreamDriftIssuesConfig;
   sweepWatchdog: FocusManifestSweepWatchdogConfig;
   prReconciliation: FocusManifestPrReconciliationConfig;
+  activeReviewReconciliation: FocusManifestActiveReviewReconciliationConfig;
   federatedIntelligence: FocusManifestFederatedIntelligenceConfig;
   warnings: string[];
 };
@@ -1374,6 +1397,11 @@ const EMPTY_PR_RECONCILIATION_CONFIG: FocusManifestPrReconciliationConfig = {
   enabled: false,
 };
 
+const EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG: FocusManifestActiveReviewReconciliationConfig = {
+  present: false,
+  enabled: false,
+};
+
 const EMPTY_FEDERATED_INTELLIGENCE_CONFIG: FocusManifestFederatedIntelligenceConfig = {
   present: false,
   enabled: false,
@@ -1394,7 +1422,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   publicNotes: [],
   gate: { ...EMPTY_GATE_CONFIG },
   settings: {},
-  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+  review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
   features: { ...EMPTY_FEATURES_CONFIG },
   experimental: { ...EMPTY_EXPERIMENTAL_CONFIG },
   contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
@@ -1408,6 +1436,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
   sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
   prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+  activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
   federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   warnings: [],
 };
@@ -1434,7 +1463,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     warnings,
     gate: { ...EMPTY_GATE_CONFIG },
     settings: {},
-    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+    review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
     features: { ...EMPTY_FEATURES_CONFIG },
     experimental: { ...EMPTY_EXPERIMENTAL_CONFIG },
     contentLane: { ...EMPTY_CONTENT_LANE_CONFIG },
@@ -1448,6 +1477,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
     sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
     prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+    activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
     federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   };
 }
@@ -2329,6 +2359,29 @@ export function prReconciliationConfigToJson(config: FocusManifestPrReconciliati
 }
 
 /**
+ * Parse the optional top-level `activeReviewReconciliation:` mapping (#webhook-reorder-clobber). Mirrors
+ * {@link parsePrReconciliationConfig} exactly — `enabled` is the only field.
+ */
+function parseActiveReviewReconciliationConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestActiveReviewReconciliationConfig {
+  if (value === undefined || value === null) return { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "activeReviewReconciliation" must be a mapping; ignoring it.');
+    return { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "activeReviewReconciliation.enabled", warnings) ?? false;
+  return { present: true, enabled };
+}
+
+/** Serialize an activeReviewReconciliation config back into the parse-compatible shape so a cached snapshot
+ *  round-trips through {@link parseActiveReviewReconciliationConfig} unchanged. Returns null when nothing is
+ *  configured. */
+export function activeReviewReconciliationConfigToJson(config: FocusManifestActiveReviewReconciliationConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled };
+}
+
+/**
  * Parse the optional `federatedIntelligence:` mapping (#1970). Mirrors {@link parseUpstreamDriftIssuesConfig}
  * exactly -- `enabled` is the only field, defaulting to false, so the parsed value IS the effective value and
  * an absent block leaves the federated export off.
@@ -2894,7 +2947,7 @@ function parsePublicSafeText(value: JsonValue | undefined, field: string, warnin
  * throws; invalid/unsafe values are dropped with warnings.
  */
 function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestReviewConfig {
-  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
+  const empty: FocusManifestReviewConfig = { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { ...EMPTY_MAX_FINDINGS_CONFIG }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null };
   if (value === undefined || value === null) return empty;
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push(`Manifest field "review" must be a mapping; ignoring it.`);
@@ -2941,6 +2994,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
   const selftune = normalizeOptionalBoolean(r.selftune, "review.selftune", warnings);
   const sweepWatchdog = normalizeOptionalBoolean(r.sweepWatchdog, "review.sweepWatchdog", warnings);
   const prReconciliation = normalizeOptionalBoolean(r.prReconciliation, "review.prReconciliation", warnings);
+  const activeReviewReconciliation = normalizeOptionalBoolean(r.activeReviewReconciliation, "review.activeReviewReconciliation", warnings);
   const reviewMemory = normalizeOptionalBoolean(r.memory, "review.memory", warnings);
   const findingCategories = normalizeOptionalBoolean(r.finding_categories, "review.finding_categories", warnings);
   const inlineCommentsPerCategory = normalizeOptionalNonNegativeInt(
@@ -2985,6 +3039,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
       selftune !== null ||
       sweepWatchdog !== null ||
       prReconciliation !== null ||
+      activeReviewReconciliation !== null ||
       reviewMemory !== null ||
       findingCategories !== null ||
       inlineCommentsPerCategory !== null ||
@@ -3026,6 +3081,7 @@ function parseReviewConfig(value: JsonValue | undefined, warnings: string[]): Fo
     selftune,
     sweepWatchdog,
     prReconciliation,
+    activeReviewReconciliation,
     reviewMemory,
     findingCategories,
     inlineCommentsPerCategory,
@@ -3131,6 +3187,7 @@ function computeReviewConfigPresent(review: Omit<FocusManifestReviewConfig, "pre
     review.selftune !== null ||
     review.sweepWatchdog !== null ||
     review.prReconciliation !== null ||
+    review.activeReviewReconciliation !== null ||
     review.reviewMemory !== null ||
     review.findingCategories !== null ||
     review.inlineCommentsPerCategory !== null ||
@@ -3178,6 +3235,7 @@ export function overlayReviewConfig(
     selftune: pickOverlayNullable(override.selftune, base.selftune),
     sweepWatchdog: pickOverlayNullable(override.sweepWatchdog, base.sweepWatchdog),
     prReconciliation: pickOverlayNullable(override.prReconciliation, base.prReconciliation),
+    activeReviewReconciliation: pickOverlayNullable(override.activeReviewReconciliation, base.activeReviewReconciliation),
     reviewMemory: pickOverlayNullable(override.reviewMemory, base.reviewMemory),
     findingCategories: pickOverlayNullable(override.findingCategories, base.findingCategories),
     inlineCommentsPerCategory: pickOverlayNullable(override.inlineCommentsPerCategory, base.inlineCommentsPerCategory),
@@ -3753,6 +3811,7 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
   if (review.selftune !== null) out.selftune = review.selftune;
   if (review.sweepWatchdog !== null) out.sweepWatchdog = review.sweepWatchdog;
   if (review.prReconciliation !== null) out.prReconciliation = review.prReconciliation;
+  if (review.activeReviewReconciliation !== null) out.activeReviewReconciliation = review.activeReviewReconciliation;
   if (review.reviewMemory !== null) out.memory = review.reviewMemory;
   if (review.findingCategories !== null) out.finding_categories = review.findingCategories;
   if (review.inlineCommentsPerCategory !== null) out.inline_comments_per_category = review.inlineCommentsPerCategory;
@@ -3884,6 +3943,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     upstreamDriftIssues: parseUpstreamDriftIssuesConfig(record.upstreamDriftIssues, warnings),
     sweepWatchdog: parseSweepWatchdogConfig(record.sweepWatchdog, warnings),
     prReconciliation: parsePrReconciliationConfig(record.prReconciliation, warnings),
+    activeReviewReconciliation: parseActiveReviewReconciliationConfig(record.activeReviewReconciliation, warnings),
     federatedIntelligence: parseFederatedIntelligenceConfig(record.federatedIntelligence, warnings),
     warnings,
   };
@@ -3910,6 +3970,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.upstreamDriftIssues.present &&
     !manifest.sweepWatchdog.present &&
     !manifest.prReconciliation.present &&
+    !manifest.activeReviewReconciliation.present &&
     !manifest.federatedIntelligence.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");

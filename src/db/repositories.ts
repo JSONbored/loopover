@@ -1,5 +1,5 @@
 import { parsePullRequestTargetKey } from "@loopover/engine";
-import { and, asc, desc, eq, gte, inArray, isNotNull, not, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   activeReviewTracking,
@@ -350,7 +350,6 @@ export async function upsertPullRequestFromGitHub(
   const record = toPullRequestRecord(repoFullName, pr);
   const db = getDb(env.DB);
   const syncedAt = nowIso();
-  const lastSeenOpenAt = pr.state === "open" ? (options.seenOpenAt ?? syncedAt) : null;
   const existingClaimRows = await db
     .select({
       linkedIssuesJson: pullRequests.linkedIssuesJson,
@@ -359,6 +358,9 @@ export async function upsertPullRequestFromGitHub(
       bodyObservedAt: pullRequests.bodyObservedAt,
       headSha: pullRequests.headSha,
       headShaObservedAt: pullRequests.headShaObservedAt,
+      state: pullRequests.state,
+      mergedAt: pullRequests.mergedAt,
+      githubUpdatedAt: pullRequests.githubUpdatedAt,
     })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
@@ -371,6 +373,33 @@ export async function upsertPullRequestFromGitHub(
   // `linkedIssues.length === 0` branch) on any such upsert. Fall back to whatever is already stored in that
   // case; only a genuinely observed (possibly empty) body updates the claim. (#linked-issue-sparse-payload-preserve)
   const existingClaimRow = existingClaimRows[0];
+  // Out-of-order webhook guard (#webhook-reorder-clobber): a webhook for an OLDER event (e.g. `review_requested`)
+  // can be dequeued AFTER a NEWER event for the same PR (e.g. `closed`) already landed, if the older job was
+  // stuck behind queue backpressure -- its embedded `pull_request` snapshot is then stale and must not regress
+  // state/headSha/mergedAt back to what GitHub reported minutes ago (this is exactly how an already-closed PR's
+  // active_review_tracking row got resurrected: a delayed job re-saw `state: "open"` and restarted a review
+  // pass nothing ever terminalized). Compares GitHub's own `updated_at` against what this row last observed;
+  // `isStalePayload` is only ever true when BOTH sides have a real timestamp to compare AND the incoming one is
+  // strictly older -- a sparse payload (no `updated_at`) or a pre-migration/first-ever row (`githubUpdatedAt`
+  // absent) fails OPEN, applying the write exactly as before this guard existed. Decided in JS (not SQL), up
+  // front, so EVERY downstream computation below (lastSeenOpenAt, isReadyForReview, the headShaObservedAt clock,
+  // and this call's own RETURNED record) reasons from the same resolved values instead of the raw payload --
+  // otherwise a rejected-as-stale write could still corrupt those derived fields even though state/headSha/
+  // mergedAt themselves were protected. Deliberately NOT extended to `draft`/`isDraft` (isReadyForReview's other
+  // input): no reported failure mode implicates draft-status staleness, and doing so would need its own resolved
+  // field for no demonstrated benefit.
+  const incomingGithubUpdatedAt = pr.updated_at ?? null;
+  const isStalePayload =
+    incomingGithubUpdatedAt !== null &&
+    existingClaimRow?.githubUpdatedAt != null &&
+    incomingGithubUpdatedAt < existingClaimRow.githubUpdatedAt;
+  const resolvedState = isStalePayload ? existingClaimRow!.state : pr.state;
+  const resolvedHeadSha = isStalePayload ? (existingClaimRow!.headSha ?? undefined) : pr.head?.sha;
+  const resolvedMergedAt = isStalePayload ? (existingClaimRow!.mergedAt ?? undefined) : (pr.merged_at ?? undefined);
+  // No `?? undefined` fallback on the stale branch (unlike headSha/mergedAt above): isStalePayload's own
+  // definition already requires existingClaimRow.githubUpdatedAt to be non-null, so that branch is unreachable.
+  const resolvedGithubUpdatedAt = isStalePayload ? existingClaimRow!.githubUpdatedAt : (incomingGithubUpdatedAt ?? undefined);
+  const lastSeenOpenAt = resolvedState === "open" ? (options.seenOpenAt ?? syncedAt) : null;
   const preserveSparseBody = pr.body === undefined && existingClaimRow !== undefined;
   const existingPayload = preserveSparseBody ? parseJson<{ body?: string | null }>(existingClaimRow.payloadJson, {}) : undefined;
   const existingBody = existingPayload?.body ?? null;
@@ -396,11 +425,12 @@ export async function upsertPullRequestFromGitHub(
   // headSha change (including the PR's first-ever sync) always restarts the clock; an unchanged headSha keeps
   // whatever was already stored (including null, which self-heals the instant the PR leaves draft or gets a
   // fresh commit -- no backfill migration needed, mirrors bodyObservedAt's own non-backfill philosophy).
-  const isReadyForReview = pr.state === "open" && !(pr.draft ?? pr.isDraft ?? false);
-  const incomingHeadSha = pr.head?.sha;
-  const headShaChanged = incomingHeadSha !== undefined && incomingHeadSha !== existingClaimRow?.headSha;
+  // Reads resolvedState/resolvedHeadSha (not pr.state/pr.head?.sha directly) so a stale, rejected payload can't
+  // still reset this clock out from under the out-of-order webhook guard above (#webhook-reorder-clobber).
+  const isReadyForReview = resolvedState === "open" && !(pr.draft ?? pr.isDraft ?? false);
+  const headShaChanged = resolvedHeadSha !== undefined && resolvedHeadSha !== existingClaimRow?.headSha;
   const headShaObservedAt =
-    !isReadyForReview || incomingHeadSha === undefined
+    !isReadyForReview || resolvedHeadSha === undefined
       ? (existingClaimRow?.headShaObservedAt ?? null)
       : headShaChanged || !existingClaimRow?.headShaObservedAt
         ? syncedAt
@@ -412,13 +442,13 @@ export async function upsertPullRequestFromGitHub(
       repoFullName,
       number: pr.number,
       title: pr.title,
-      state: pr.state,
+      state: resolvedState,
       authorLogin: pr.user?.login,
       authorAssociation: pr.author_association,
-      headSha: pr.head?.sha,
+      headSha: resolvedHeadSha,
       headRef: pr.head?.ref,
       baseRef: pr.base?.ref,
-      mergedAt: pr.merged_at ?? undefined,
+      mergedAt: resolvedMergedAt,
       htmlUrl: pr.html_url,
       labelsJson: jsonString(record.labels),
       linkedIssuesJson,
@@ -427,6 +457,7 @@ export async function upsertPullRequestFromGitHub(
       headShaObservedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(payload),
+      githubUpdatedAt: resolvedGithubUpdatedAt,
       // GitHub's own PR creation time (see PullRequestRecord.createdAt's doc comment, src/types.ts) --
       // set ONLY here, on first insert, and deliberately absent from onConflictDoUpdate's `set` below so
       // a resync never overwrites it. `?? undefined` falls through to the column's own $defaultFn when a
@@ -438,13 +469,13 @@ export async function upsertPullRequestFromGitHub(
       target: [pullRequests.repoFullName, pullRequests.number],
       set: {
         title: pr.title,
-        state: pr.state,
+        state: resolvedState,
         authorLogin: pr.user?.login,
         authorAssociation: pr.author_association,
-        headSha: pr.head?.sha,
+        headSha: resolvedHeadSha,
         headRef: pr.head?.ref,
         baseRef: pr.base?.ref,
-        mergedAt: pr.merged_at ?? undefined,
+        mergedAt: resolvedMergedAt,
         htmlUrl: pr.html_url,
         labelsJson: jsonString(record.labels),
         linkedIssuesJson,
@@ -453,10 +484,11 @@ export async function upsertPullRequestFromGitHub(
         headShaObservedAt,
         lastSeenOpenAt,
         payloadJson: jsonString(payload),
+        githubUpdatedAt: resolvedGithubUpdatedAt,
         updatedAt: syncedAt,
       },
     });
-  return { ...record, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
+  return { ...record, state: resolvedState, headSha: resolvedHeadSha, mergedAt: resolvedMergedAt ?? null, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(
@@ -2908,6 +2940,57 @@ export async function countRecentAuditEventsForActorInRepoWithTargetSuffix(
   /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
   if (!row) return 0;
   return row.count;
+}
+
+// #orb-stale-recheck-priority: the THREE self-resolving "denied" detail strings the executor's live staleness
+// rechecks can produce (agent-action-executor.ts's "8) Live ... re-verification" block -- duplicateStaleReason /
+// mergeableStaleReason / threadStaleReason, each suffixed with " — action not executed" by that block's shared
+// `audit("denied", ...)` call). Deliberately NOT imported from agent-action-executor.ts: that module imports
+// FROM db/repositories.ts (installation tokens, PR records, ...), so importing back would create a real
+// module-load cycle -- same hazard agent-actions.ts's CONCRETE_EVIDENCE_BLOCKER_CODES comment documents for the
+// identical reason. A source-text parity test guards these three literals against producer-side drift instead.
+// Deliberately EXCLUDES a CI-staleness denial (ciStaleReason): CI flipping already re-triggers a fresh
+// evaluation via the check-run/status webhook that changed it, so it doesn't share the other three's "no
+// webhook ever reaches this PR" gap.
+const STALE_RECHECK_DENIAL_DETAIL_PATTERN =
+  /^(duplicate-cluster winner #\d+ is no longer open|the base-branch conflict that justified this close has since cleared|the review thread\(s\) that justified this close are now all resolved) — action not executed$/;
+
+/**
+ * PR numbers within `repoFullName` whose most recent `agent.action.close`/`agent.action.merge` attempt was
+ * DENIED by one of the executor's live staleness rechecks (duplicate-cluster winner / base-conflict / review-
+ * thread) within `sinceIso`, rather than by a durable, externally-actioned reason (a manual-review label, a
+ * merge-train wait, contributor-cap contention, ...). Those rechecks exist precisely because the fact that
+ * justified the close/merge can flip WITHOUT a webhook ever notifying THIS pr -- a duplicate-cluster sibling
+ * merging fires a webhook about the SIBLING, not this PR, so nothing naturally re-triggers a look here. Callers
+ * (surfaceRepairPriorityPullNumbers) fold this into the SAME priority set the outage-repair path already uses,
+ * so a matching PR gets a fast, prioritized re-look instead of waiting out the ordinary sweep cadence -- and
+ * inherits that path's existing per-head-SHA attempt cap for free, so a genuinely stuck PR still falls back to
+ * ordinary cadence rather than being re-selected forever. Reuses the same literal-prefix `LIKE ... ESCAPE`
+ * scoping as {@link countRecentAuditEventsForActorInRepo} so a repo name containing a SQL wildcard is matched
+ * literally.
+ */
+export async function recentStaleRecheckDeniedPullNumbers(env: Env, repoFullName: string, sinceIso: string): Promise<number[]> {
+  const db = getDb(env.DB);
+  const targetPrefixPattern = `${escapeSqlLikePattern(repoFullName)}#%`;
+  const rows = await db
+    .select({ targetKey: auditEvents.targetKey, detail: auditEvents.detail })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.actor, "loopover"),
+        inArray(auditEvents.eventType, ["agent.action.close", "agent.action.merge"]),
+        eq(auditEvents.outcome, "denied"),
+        sql`${auditEvents.targetKey} LIKE ${targetPrefixPattern} ESCAPE '\\'`,
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    );
+  const pullNumbers = new Set<number>();
+  for (const row of rows) {
+    if (!row.detail || !STALE_RECHECK_DENIAL_DETAIL_PATTERN.test(row.detail)) continue;
+    const target = parsePullRequestTargetKey(row.targetKey);
+    if (target) pullNumbers.add(target.pullNumber);
+  }
+  return [...pullNumbers];
 }
 
 /** #orb-ci-stuck-repeat / #orb-retry-storm ops-alerts signal: the single PR within `repoFullName` that published
@@ -5839,6 +5922,25 @@ export async function terminalizeActiveReviewTracking(
     .where(and(...conditions));
   /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
   return Number(result.meta.changes ?? 0) > 0;
+}
+
+/** Rows still `active` and older than `olderThanIso` -- candidates for runActiveReviewReconciliation
+ *  (src/review/active-review-reconciliation.ts) to verify against LIVE GitHub state before terminalizing. Age
+ *  alone is never sufficient to terminalize (a genuinely slow review must not be force-closed); the caller
+ *  confirms each row's PR is actually closed before acting. No index on (status, startedAt) -- a full scan is
+ *  fine at this table's current scale (low thousands of rows); worth an index if that changes materially. */
+export async function listStaleActiveReviewTracking(
+  env: Env,
+  olderThanIso: string,
+): Promise<Array<{ repoFullName: string; pullNumber: number; startedAt: string }>> {
+  return getDb(env.DB)
+    .select({
+      repoFullName: activeReviewTracking.repoFullName,
+      pullNumber: activeReviewTracking.pullNumber,
+      startedAt: activeReviewTracking.startedAt,
+    })
+    .from(activeReviewTracking)
+    .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, olderThanIso)));
 }
 
 // Review memory (#2178, data-model slice of #1964). Hard per-repo cap on stored suppression signals — mirrors

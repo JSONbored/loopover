@@ -9,7 +9,7 @@ import {
   runLint,
   validateActionFile,
   type Dirent,
-} from "../../scripts/lint-composite-actions.mjs";
+} from "../../scripts/lint-composite-actions.js";
 
 // #7459: findActionFiles, the schema check, and the shell:-presence check only ran inside the
 // disk-reading/process.exit driver. With readdir/readFile/validateSchema injected and the driver behind

@@ -47,6 +47,7 @@ import {
   upstreamDriftIssuesConfigToJson,
   sweepWatchdogConfigToJson,
   prReconciliationConfigToJson,
+  activeReviewReconciliationConfigToJson,
   federatedIntelligenceConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -410,6 +411,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     selftune: "selftune:",
     sweepWatchdog: "sweepWatchdog:",
     prReconciliation: "prReconciliation:",
+    activeReviewReconciliation: "activeReviewReconciliation:",
     reviewMemory: "memory:",
     findingCategories: "finding_categories:",
     inlineCommentsPerCategory: "inline_comments_per_category:",
@@ -942,7 +944,7 @@ describe("compileFocusManifestPolicy", () => {
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
       gate: { present: false, enabled: null, checkMode: null, pack: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
-      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
+      review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
       experimental: { present: false, gittensor: null },
       contentLane: { present: false, entryFileGlob: null, providerFileGlob: null, artifactGlob: null, collectionField: null, maxAppendedEntries: null, duplicateKeyFields: [], validatorId: null },
@@ -956,6 +958,7 @@ describe("compileFocusManifestPolicy", () => {
       upstreamDriftIssues: { present: false, enabled: false },
       sweepWatchdog: { present: false, enabled: false, staleAfterMinutes: null },
       prReconciliation: { present: false, enabled: false },
+      activeReviewReconciliation: { present: false, enabled: false },
       federatedIntelligence: { present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] },
       warnings: [],
     });
@@ -2266,6 +2269,54 @@ describe("parseFocusManifest gate config", () => {
 
     it("prReconciliationConfigToJson returns null for an absent config", () => {
       expect(prReconciliationConfigToJson(parseFocusManifest(null).prReconciliation)).toBeNull();
+    });
+  });
+
+  describe("activeReviewReconciliation: (#webhook-reorder-clobber, active-review-tracking reconciliation sweep config-as-code override)", () => {
+    it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.activeReviewReconciliation).toEqual({ present: false, enabled: false });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ activeReviewReconciliation: null }).activeReviewReconciliation).toEqual({ present: false, enabled: false });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ activeReviewReconciliation: "nope" as never });
+      expect(asString.activeReviewReconciliation.present).toBe(false);
+      expect(asString.warnings.some((w) => /"activeReviewReconciliation" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ activeReviewReconciliation: ["nope"] as never });
+      expect(asArray.activeReviewReconciliation.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"activeReviewReconciliation" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true, making the manifest present", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: true } });
+      expect(m.activeReviewReconciliation).toEqual({ present: true, enabled: true });
+      expect(m.present).toBe(true);
+    });
+
+    it("parses enabled: false explicitly, still marking the manifest present (present is a real override, off)", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: false } });
+      expect(m.activeReviewReconciliation).toEqual({ present: true, enabled: false });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: "yes" as unknown as boolean } });
+      expect(m.activeReviewReconciliation.enabled).toBe(false);
+      expect(m.warnings.some((w) => /activeReviewReconciliation\.enabled/.test(w))).toBe(true);
+    });
+
+    it("round-trips through activeReviewReconciliationConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: true } });
+      expect(parseFocusManifest({ activeReviewReconciliation: activeReviewReconciliationConfigToJson(m.activeReviewReconciliation) }).activeReviewReconciliation).toEqual(m.activeReviewReconciliation);
+    });
+
+    it("activeReviewReconciliationConfigToJson returns null for an absent config", () => {
+      expect(activeReviewReconciliationConfigToJson(parseFocusManifest(null).activeReviewReconciliation)).toBeNull();
     });
   });
 

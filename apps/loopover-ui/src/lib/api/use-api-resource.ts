@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getApiOrigin } from "./origin";
 import { apiFetch, type ApiFailureKind } from "./request";
@@ -34,7 +34,15 @@ export function useApiResource<T>(
     loadedAt: null,
   });
 
+  const requestIdRef = useRef(0);
+
   const load = useCallback(async () => {
+    // Guard against out-of-order responses (#7785): when `path` changes (pagination offsets, free-text repo input,
+    // window selection) a new load starts while an older apiFetch is still in flight. Tag each load and, after the
+    // await, drop the result if a newer load has since superseded it — otherwise a stale page's response resolves
+    // last and silently overwrites the current one while the surrounding UI reflects the newer request.
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     if (!enabled) {
       setState({ status: "error", data: null, error: "disabled", loadedAt: null });
       return;
@@ -47,6 +55,8 @@ export function useApiResource<T>(
       headers,
       credentials: "include",
     });
+    // A newer load superseded this one (the path changed mid-flight); drop this stale response entirely.
+    if (requestId !== requestIdRef.current) return;
     if (result.ok) {
       setState({ status: "ready", data: result.data, error: null, loadedAt: Date.now() });
     } else {

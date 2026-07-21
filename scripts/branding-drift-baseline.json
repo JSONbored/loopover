@@ -4,7 +4,6 @@
   "apps/loopover-ui/src/routes/app.runs.tsx": 1,
   "apps/loopover-ui/src/routes/app.workbench.tsx": 1,
   "packages/loopover-engine/src/signals/engine.ts": 2,
-  "packages/loopover-mcp/bin/loopover-mcp.js": 2,
   "packages/loopover-mcp/bin/loopover-mcp.ts": 2,
   "src/api/routes.ts": 2,
   "src/db/repositories.ts": 1,

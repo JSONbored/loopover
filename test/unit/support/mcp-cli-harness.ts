@@ -5,7 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-export const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+// packages/loopover-mcp ships .ts source only (no committed compiled output -- Vite/esbuild already
+// resolves .js-suffixed import specifiers to the sibling .ts by default, which is why in-process imports
+// never needed anything special either). Spawning the real CLI as a subprocess still needs a real runnable
+// entrypoint, so this runs the .ts directly via Node's own built-in type-stripping (--experimental-strip-
+// types, explicit rather than relying on its default-on state so this keeps working regardless of exactly
+// which supported Node 22.x patch is running) instead of requiring a prior `npm run build:mcp`. Type
+// STRIPPING, not full transformation or type-checking -- that's fine here since `npm run typecheck`/
+// `build:mcp` elsewhere in the gate already own type-correctness, and neither bin/lib file uses syntax
+// erasable-only stripping can't handle (enums, namespaces, constructor parameter properties): this harness
+// only needs the CLI to actually run. process.execPath (not a bare "node") mirrors scripts/check-syntax.mjs's
+// own convention -- guarantees the exact Node binary already running the test, not whatever "node" resolves
+// to on PATH.
+const NODE_STRIP_TYPES_ARGS = ["--experimental-strip-types"];
+export const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.ts");
 export const repoOnboardingPackFixture = {
   repoFullName: "owner/repo",
   accepted: true,
@@ -43,7 +56,7 @@ export async function closeFixtureServer() {
 
 export function run(args: string[], env: Record<string, string> = {}) {
   try {
-    return execFileSync("node", [bin, ...args], {
+    return execFileSync(process.execPath, [...NODE_STRIP_TYPES_ARGS, bin, ...args], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -65,8 +78,8 @@ export function run(args: string[], env: Record<string, string> = {}) {
 export function runAsync(args: string[], env: Record<string, string> = {}) {
   return new Promise<string>((resolve, reject) => {
     execFile(
-      "node",
-      [bin, ...args],
+      process.execPath,
+      [...NODE_STRIP_TYPES_ARGS, bin, ...args],
       {
         encoding: "utf8",
         env: {
@@ -91,7 +104,7 @@ export function runAsync(args: string[], env: Record<string, string> = {}) {
  *  for asserting the shape of the failure output itself (e.g. the --json `{ ok: false, error }` contract). */
 export function runExpectingFailure(args: string[], env: Record<string, string> = {}) {
   try {
-    execFileSync("node", [bin, ...args], {
+    execFileSync(process.execPath, [...NODE_STRIP_TYPES_ARGS, bin, ...args], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -105,7 +118,7 @@ export function runExpectingFailure(args: string[], env: Record<string, string> 
     const failure = error as NodeJS.ErrnoException & { status?: number | null; stdout?: string; stderr?: string };
     return { status: failure.status ?? null, stdout: failure.stdout ?? "", stderr: failure.stderr ?? "" };
   }
-  throw new Error(`expected \`node ${bin} ${args.join(" ")}\` to fail`);
+  throw new Error(`expected \`node --experimental-strip-types ${bin} ${args.join(" ")}\` to fail`);
 }
 
 export function git(cwd: string, ...args: string[]) {

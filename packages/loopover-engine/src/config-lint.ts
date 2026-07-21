@@ -25,6 +25,7 @@ const TOP_LEVEL_FIELDS = [
   "upstreamDriftIssues",
   "sweepWatchdog",
   "prReconciliation",
+  "activeReviewReconciliation",
   "federatedIntelligence",
 ] as const;
 

@@ -116,10 +116,18 @@ describe("deriveEligibilityPlan (#2092)", () => {
     });
   }
 
-  it("no linked issue + non-required branch → not_required summary, no projection", () => {
+  it("no linked issue + non-required branch → not_required summary, no projection, eligible:true (#7809)", () => {
     const plan = planFor({ liStatus: "not_required", brStatus: "not_required" });
     expect(plan.publicSummary).toContain("not required for this contribution type");
     expect(plan.linkedIssueProjection).toBeNull();
+    // The structured boolean must agree with the "not required" text: a confirmed branch with no required linked
+    // issue is eligible, not gated on the meaningless linkedIssueMultiplier.eligible (which is false here).
+    expect(plan.eligible).toBe(true);
+  });
+
+  it("no linked issue required + an eligible branch is also eligible:true (#7809)", () => {
+    const plan = planFor({ liStatus: "not_required", brStatus: "eligible" });
+    expect(plan.eligible).toBe(true);
   });
 
   it("validated link + eligible branch → eligible summary, eligible:true", () => {

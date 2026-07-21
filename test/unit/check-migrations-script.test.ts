@@ -15,14 +15,14 @@ afterEach(() => {
 // support.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
-// Run scripts/check-migrations.mjs over a throwaway fixture dir (via CHECK_MIGRATIONS_DIR) and normalize the
+// Run scripts/check-migrations.ts over a throwaway fixture dir (via CHECK_MIGRATIONS_DIR) and normalize the
 // pass/fail into { status, out }. On a non-zero exit execFileSync throws; the violation text is on stderr.
 function runCheck(files: Record<string, string>): { status: number; out: string } {
   const dir = mkdtempSync(join(tmpdir(), "gtmig-check-"));
   tmpDirs.push(dir);
   for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
   try {
-    const stdout = execFileSync(TSX_BIN, ["scripts/check-migrations.mjs"], {
+    const stdout = execFileSync(TSX_BIN, ["scripts/check-migrations.ts"], {
       encoding: "utf8",
       env: { ...process.env, CHECK_MIGRATIONS_DIR: dir },
     });
@@ -35,7 +35,7 @@ function runCheck(files: Record<string, string>): { status: number; out: string 
 
 describe("check-migrations script", () => {
   it("reports every grandfathered duplicate migration number in the success summary", () => {
-    const output = execFileSync(TSX_BIN, ["scripts/check-migrations.mjs"], { encoding: "utf8" });
+    const output = execFileSync(TSX_BIN, ["scripts/check-migrations.ts"], { encoding: "utf8" });
 
     expect(output).toContain("(5 grandfathered duplicates: 0015, 0017, 0074, 0090, 0156)");
   });

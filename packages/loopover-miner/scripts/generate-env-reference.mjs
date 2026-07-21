@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { collectSelfHostEnvVars } from "../../../scripts/gen-selfhost-env-reference.mjs";
+import { collectSelfHostEnvVars } from "../../../scripts/gen-selfhost-env-reference.js";
 
 export const DEFAULT_OUTPUT_PATH = "packages/loopover-miner/docs/env-reference.md";
 export const DEFAULT_MODULE_OUTPUT_PATH = "apps/loopover-ui/src/lib/ams-env-reference.ts";
@@ -105,7 +105,7 @@ export function writeMinerEnvReference({
   return { changed, outputPath, rows };
 }
 
-// Mirrors scripts/gen-selfhost-env-reference.mjs's renderSelfHostEnvReferenceModule -- same shape
+// Mirrors scripts/gen-selfhost-env-reference.ts's renderSelfHostEnvReferenceModule -- same shape
 // (a typed rows array plus a pre-joined markdown string), so docs.ams-env-reference.tsx's content
 // can import AMS_ENV_REFERENCE_MARKDOWN and render it exactly the way
 // docs.self-hosting-configuration.tsx already renders SELFHOST_ENV_REFERENCE_MARKDOWN. The
@@ -191,14 +191,25 @@ function sourceFiles(rootDir, sourceRoots) {
   return files;
 }
 
+const COMPILED_JS_EXTENSIONS = new Set([".js", ".mjs", ".cjs"]);
+
 function walkSourceFiles(dir) {
   const files = [];
   const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  // Same reasoning as gen-selfhost-env-reference.ts's identical guard: a same-basename .ts/.tsx sibling
+  // means the .js is that source's compiled output (gitignored, built on demand since #7290/#7291/#7705),
+  // so whether it exists on disk varies by environment -- skip it so the collected DEFAULT_PATTERNS
+  // defaults don't silently depend on whether a build happened to run first.
+  const tsBasenames = new Set(
+    entries.filter((entry) => entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))).map((entry) => entry.name.slice(0, entry.name.lastIndexOf("."))),
+  );
   for (const entry of entries) {
     const abs = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...walkSourceFiles(abs));
     } else if (entry.isFile() && isSupportedSourceFile(abs) && !entry.name.endsWith(".d.ts")) {
+      const ext = extname(entry.name);
+      if (COMPILED_JS_EXTENSIONS.has(ext) && tsBasenames.has(entry.name.slice(0, -ext.length))) continue;
       files.push(abs);
     }
   }

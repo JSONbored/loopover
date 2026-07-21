@@ -5,7 +5,7 @@ import { DEFAULT_METRIC_META } from "../../src/selfhost/metrics";
 
 // Regression check (#5816): a hand-authored alert annotation (summary/description/runbook) can reference a
 // `loopover_*` metric name that was never registered, or was renamed/removed, without any existing tooling
-// catching it -- scripts/validate-observability-configs.mjs only validates PromQL `expr` syntax, never
+// catching it -- scripts/validate-observability-configs.ts only validates PromQL `expr` syntax, never
 // free-text annotation prose. Scans every `loopover_*`-shaped token in every alert's annotation text and
 // asserts it is either a real registered metric (src/selfhost/metrics.ts's DEFAULT_METRIC_META) or matches
 // one of the documented external-source prefixes (the backup exporter, the opt-in Cloudflare D1 probe, and

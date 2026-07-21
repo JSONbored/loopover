@@ -1,5 +1,5 @@
 // Self-host replacement for src/review/visual/image-downscale.ts (#4370). Swapped in by
-// scripts/build-selfhost.mjs's esbuild plugin, the same mechanism used for @cloudflare/puppeteer and
+// scripts/build-selfhost.ts's esbuild plugin, the same mechanism used for @cloudflare/puppeteer and
 // ./pixel-diff — this file is only ever bundled into dist/server.mjs, never the Worker entry, so it's safe
 // to depend on sharp (a native binding) here. Unlike puppeteer-core, sharp is marked `external` in the
 // --all esbuild bundle (a native binding can't be bundled) and installed separately into the runtime Docker

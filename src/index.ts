@@ -11,6 +11,7 @@ import { isRecapEnabled, resolveMaintainerRecapManifestOverride, shouldFireMaint
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride } from "./review/sweep-watchdog";
 import { isLoopEscalationSweepEnabled } from "./review/loop-escalation-wire";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } from "./review/pr-reconciliation";
+import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
 import {
@@ -207,6 +208,18 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   if (selfHostedReviews && isReconciliationWindow) {
     const prReconciliationManifestOverride = await resolvePrReconciliationManifestOverride(env);
     if (isPrReconciliationEnabled(env, prReconciliationManifestOverride)) jobs.push({ type: "reconcile-open-prs", requestedBy: "schedule" });
+  }
+  // Self-heal (flag LOOPOVER_ACTIVE_REVIEW_RECONCILIATION). Same 10-minute cadence as reconcile-open-prs above
+  // — see isReconciliationWindow. Enable can ALSO be set as code via the loopover self-repo's `.loopover.yml
+  // activeReviewReconciliation:` block (config-as-code parity, #webhook-reorder-clobber) -- a present manifest
+  // block wins over the env var; absent, the env var decides exactly as before. Enqueued ONLY when enabled —
+  // flag-OFF (default) this job is never created, so the cron tick does ZERO new work and the enqueued set is
+  // byte-identical to today.
+  if (selfHostedReviews && isReconciliationWindow) {
+    const activeReviewReconciliationManifestOverride = await resolveActiveReviewReconciliationManifestOverride(env);
+    if (isActiveReviewReconciliationEnabled(env, activeReviewReconciliationManifestOverride)) {
+      jobs.push({ type: "reconcile-active-review-tracking", requestedBy: "schedule" });
+    }
   }
   if (isHourly) {
     // Isolation (#experimental-gittensor-plugin): on self-host, refresh-registry both FETCHES from and

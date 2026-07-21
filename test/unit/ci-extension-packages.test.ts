@@ -10,8 +10,8 @@ describe("browser extension workspace packages (#4866)", () => {
 
     expect(maintainer.name).toBe("@loopover/extension");
     expect(miner.name).toBe("@loopover/miner-extension");
-    expect(maintainer.scripts.build).toContain("build-extension.mjs");
-    expect(miner.scripts.build).toContain("build-miner-extension.mjs");
+    expect(maintainer.scripts.build).toContain("build-extension.ts");
+    expect(miner.scripts.build).toContain("build-miner-extension.ts");
     expect(miner.scripts.lint).toContain("node --check");
     expect(miner.scripts.typecheck).toBe("npm run lint");
   });
@@ -26,7 +26,7 @@ describe("browser extension workspace packages (#4866)", () => {
   it("includes both extensions in ci.yml's ui path filter and validate-code steps", () => {
     const workflow = read(".github/workflows/ci.yml");
     expect(workflow).toContain("apps/loopover-miner-extension/**");
-    expect(workflow).toContain("scripts/build-miner-extension.mjs");
+    expect(workflow).toContain("scripts/build-miner-extension.ts");
     expect(workflow).toContain("name: Extension lint");
     // Routed through Turborepo (turbo.json's @loopover/extension#lint/typecheck and
     // @loopover/miner-extension#lint/typecheck) -- see ci.yml's comment on these steps.

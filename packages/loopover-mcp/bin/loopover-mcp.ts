@@ -909,6 +909,12 @@ const setActionAutonomyShape = {
   level: z.enum(MAINTAIN_AUTONOMY_LEVELS),
 };
 
+const outcomeCalibrationShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  windowDays: z.number().int().positive().optional(),
+};
+
 const gatePrecisionShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -1285,6 +1291,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_set_action_autonomy",
     category: "agent",
     description: "Set the autonomy level for one action class via a read-merge-write, so the other classes are left untouched. Same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
+  },
+  {
+    name: "loopover_get_outcome_calibration",
+    category: "maintainer",
+    description: "Return slop-band and recommendation outcome calibration for a repo: whether higher-slop bands merge less often and how agent recommendations are panning out. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
   },
   {
     name: "loopover_get_gate_precision",
@@ -2580,6 +2591,21 @@ registerStdioTool(
     const autonomy = { ...(current.autonomy ?? {}), [action]: level };
     const payload = await apiFetch(`${base}/settings`, { method: "PUT", body: JSON.stringify({ autonomy }) });
     return toolResult(`Set ${action} autonomy to ${level} for ${owner}/${repo}.`, payload);
+  },
+);
+
+registerStdioTool(
+  "loopover_get_outcome_calibration",
+  {
+    description: stdioToolDescription("loopover_get_outcome_calibration"),
+    inputSchema: outcomeCalibrationShape,
+  },
+  async ({ owner, repo, windowDays }: any) => {
+    // The schema already rejects a non-positive windowDays, so an omitted window is the only way to full history
+    // -- matching the route's own behaviour when ?windowDays is absent.
+    const query = windowDays ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/outcome-calibration${query}`);
+    return toolResult(`Outcome calibration for ${owner}/${repo}.`, payload);
   },
 );
 

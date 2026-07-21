@@ -116,8 +116,13 @@ export function extractPreviewRepoOptions(reviewability: Array<{ pr: string }>):
 }
 
 export function splitRepoFullName(repoFullName: string): { owner: string; repo: string } | null {
-  const [owner, repo, extra] = repoFullName.trim().split("/");
-  if (!owner || !repo || extra) return null;
+  // Split into exactly two non-empty segments. The old `[owner, repo, extra]` destructuring only
+  // inspected the 3rd segment, so any input whose 3rd `/`-segment was empty ("owner/repo/",
+  // "owner/repo//stale") slipped through as a truncated owner/repo pair (#7783).
+  const parts = repoFullName.trim().split("/");
+  if (parts.length !== 2) return null;
+  const [owner, repo] = parts;
+  if (!owner || !repo) return null;
   return { owner, repo };
 }
 

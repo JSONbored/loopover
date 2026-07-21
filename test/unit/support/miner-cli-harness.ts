@@ -19,9 +19,22 @@ export type CliProcessResult = {
   output: string;
 };
 
+// packages/loopover-miner ships .ts source only (no committed compiled output -- Vite/esbuild already
+// resolves .js-suffixed import specifiers to the sibling .ts by default, which is why in-process imports
+// never needed anything special either). Spawning the real CLI as a subprocess still needs a real runnable
+// entrypoint, so this runs the .ts directly via Node's own built-in type-stripping (--experimental-strip-
+// types, explicit rather than relying on its default-on state so this keeps working regardless of exactly
+// which supported Node 22.x patch is running) instead of requiring a prior `npm run build:miner`. Type
+// STRIPPING, not full transformation or type-checking -- that's fine here since `npm run typecheck`/
+// `build:miner` elsewhere in the gate already own type-correctness, and neither bin/lib file uses syntax
+// erasable-only stripping can't handle (enums, namespaces, constructor parameter properties): this harness
+// only needs the CLI to actually run. process.execPath (not a bare "node") mirrors scripts/check-syntax.mjs's
+// own convention -- guarantees the exact Node binary already running the test, not whatever "node" resolves
+// to on PATH.
+const NODE_STRIP_TYPES_ARGS = ["--experimental-strip-types"];
 export const bin = join(
   process.cwd(),
-  "packages/loopover-miner/bin/loopover-miner.js",
+  "packages/loopover-miner/bin/loopover-miner.ts",
 );
 let server: Server | null = null;
 
@@ -32,7 +45,7 @@ export async function closeFixtureServer() {
 }
 
 export function run(args: string[], env: Record<string, string> = {}) {
-  return execFileSync("node", [bin, ...args], {
+  return execFileSync(process.execPath, [...NODE_STRIP_TYPES_ARGS, bin, ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -50,7 +63,7 @@ export function runCliResult(
   args: string[],
   env: Record<string, string> = {},
 ): CliProcessResult {
-  const result = spawnSync("node", [bin, ...args], {
+  const result = spawnSync(process.execPath, [...NODE_STRIP_TYPES_ARGS, bin, ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -70,8 +83,8 @@ export function runCliResult(
 export function runAsync(args: string[], env: Record<string, string> = {}) {
   return new Promise<CliProcessResult>((resolve) => {
     execFile(
-      "node",
-      [bin, ...args],
+      process.execPath,
+      [...NODE_STRIP_TYPES_ARGS, bin, ...args],
       {
         encoding: "utf8",
         env: {

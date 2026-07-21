@@ -105,9 +105,11 @@ describe("eligible branch with validated linked issue", () => {
 describe("unlinked — no linked issue configured", () => {
   const result = preview({ linkedIssueMode: "none" });
 
-  it("derives eligible:false and not_required status when mode is none", () => {
+  it("derives eligible:true and not_required status when mode is none (#7809)", () => {
     const plan = deriveEligibilityPlan(result);
-    expect(plan.eligible).toBe(false);
+    // A confirmed branch with no linked issue required is eligible -- the structured boolean now agrees with the
+    // "not required" summary instead of contradicting it (#7809).
+    expect(plan.eligible).toBe(true);
     expect(plan.linkedIssueStatus).toBe("not_required");
     expect(plan.branchEligibilityStatus).toBe("not_required");
     expect(plan.blockers).toHaveLength(0);

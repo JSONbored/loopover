@@ -224,4 +224,29 @@ describe("selfhost-pre-deploy-summary.sh", () => {
     expect(result.stderr).toContain("is not an ancestor");
     expect(result.stdout).toContain("upstream commit");
   });
+
+  it("surfaces an error instead of a false all-clear when git diff --name-only fails (#7775)", () => {
+    const { base, seedDir, checkoutDir } = createSandbox();
+    // Give origin an incoming commit so the script proceeds past "up to date" to the sensitive-path diff.
+    commitFile(seedDir, "src/incoming.ts", "export const incoming = 1;\n", "incoming commit");
+    git(["push", "-q", "origin", "main"], seedDir);
+
+    // Shadow `git` with a fake that fails ONLY `git diff --name-only ...` (the sensitive-path scan),
+    // delegating every other command -- including fetch and the `git diff --stat` summary -- to real git.
+    const realGit = spawnSync("bash", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const fakeBin = join(base, "fakebin");
+    mkdirSync(fakeBin, { recursive: true });
+    writeFileSync(
+      join(fakeBin, "git"),
+      `#!/usr/bin/env bash\nif [ "$1" = "diff" ] && [ "$2" = "--name-only" ]; then\n  echo "forced diff failure" >&2\n  exit 1\nfi\nexec ${realGit} "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    const result = run(checkoutDir, { PATH: `${fakeBin}:${process.env.PATH ?? ""}` });
+
+    // A failed diff must be reported as a failure, not silently presented as "no sensitive paths touched".
+    expect(result.status, result.stdout + result.stderr).not.toBe(0);
+    expect(result.stderr).toMatch(/git diff.*failed|cannot assess historically-sensitive/i);
+    expect(result.stdout).not.toContain("no historically-sensitive paths touched");
+  });
 });

@@ -72,7 +72,7 @@ describe("detectMigrationCollisions (#2550)", () => {
 });
 
 describe("KNOWN_MIGRATION_DUPLICATES (#2550)", () => {
-  it("stays byte-identical to scripts/check-migrations.mjs's grandfathered list", () => {
+  it("stays byte-identical to scripts/check-migrations.ts's grandfathered list", () => {
     // A drift here would mean the CI script and the live premerge recheck disagree about what's grandfathered
     // — this pins the exact set so a future addition to one side without the other is caught immediately.
     expect([...KNOWN_MIGRATION_DUPLICATES.keys()].sort((a, b) => a - b)).toEqual([15, 17, 74, 90, 156]);

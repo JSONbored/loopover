@@ -488,7 +488,7 @@ describe("MCP tool calls return schema-valid structured content", () => {
     });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
-    expect(data.eligible).toBe(false);
+    expect(data.eligible).toBe(true); // not_required + confirmed branch is eligible (#7809)
     expect(data.linkedIssueStatus).toBe("not_required");
     expect(data.branchEligibilityStatus).toBe("not_required");
     expect(Array.isArray(data.blockers)).toBe(true);

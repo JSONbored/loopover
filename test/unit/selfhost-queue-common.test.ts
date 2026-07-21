@@ -282,6 +282,9 @@ describe("self-host queue common helpers", () => {
     expect(isGitHubBudgetBackgroundJob({ type: "generate-review-recap", requestedBy: "schedule", repoFullName: "owner/repo" })).toBe(true);
     // reconcile-open-prs: runOpenPrReconciliation makes large paginated GitHub REST calls per watched repo.
     expect(isGitHubBudgetBackgroundJob({ type: "reconcile-open-prs", requestedBy: "schedule" })).toBe(true);
+    // reconcile-active-review-tracking: runActiveReviewReconciliation makes one live GET /pulls/{n} call per
+    // stale active_review_tracking row it finds (#webhook-reorder-clobber).
+    expect(isGitHubBudgetBackgroundJob({ type: "reconcile-active-review-tracking", requestedBy: "schedule" })).toBe(true);
   });
 
   it("REGRESSION (#4505): maintenance job types confirmed to make NO GitHub REST calls stay OFF the GitHub budget (never wrongly gated)", () => {

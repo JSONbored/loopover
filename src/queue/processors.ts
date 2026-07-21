@@ -65,6 +65,7 @@ import {
   countRecentAuditEventsForActorAndTarget,
   countRecentAuditEventsForActorInRepo,
   countRecentAuditEventsForActorInRepoWithTargetSuffix,
+  recentStaleRecheckDeniedPullNumbers,
   hasAuditEventForDelivery,
   hasAuditEventForHeadSha,
   recordGateBlockOutcome,
@@ -805,7 +806,7 @@ export async function buildContributorDecisionPacks(
       /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
       console.error(
         JSON.stringify({
-          level: "warn",
+          level: "error",
           event: "decision_pack_login_failed",
           login: contributorLogin,
           error: errorMessage(error),
@@ -1123,7 +1124,7 @@ async function isRegateRepairExhausted(env: Env, repoFullName: string, pr: Pick<
   return true;
 }
 
-async function surfaceRepairPriorityPullNumbers(
+export async function surfaceRepairPriorityPullNumbers(
   env: Env,
   repoFullName: string,
   pulls: readonly PullRequestRecord[],
@@ -1133,7 +1134,23 @@ async function surfaceRepairPriorityPullNumbers(
   for (const pr of pulls) {
     if (pr.headSha && pr.lastPublishedSurfaceSha !== pr.headSha)
       priorityPullNumbers.add(pr.number);
+    // #orb-stale-recheck-priority: the bot already approved THIS exact commit (approvedHeadSha === headSha,
+    // set only once agentHoldAuditDetail's own gate-passed/CI-green/approvals-satisfied checks all cleared),
+    // yet the PR is still open with mergeable_state neither "clean" (would already have merged) nor "dirty"
+    // (a real conflict, which needs a human, not a fast recheck) -- i.e. GitHub is still computing
+    // mergeability. GitHub sends NO webhook when that computation finishes, so without this the PR waits out
+    // whatever the ordinary sweep cadence happens to be instead of the few seconds this actually takes
+    // (observed: green+approved PRs stuck OPEN, see fetchLivePullRequestMergeState's own doc comment).
+    if (pr.headSha && pr.approvedHeadSha === pr.headSha && pr.mergeableState && pr.mergeableState !== "clean" && pr.mergeableState !== "dirty")
+      priorityPullNumbers.add(pr.number);
   }
+  // Scoped to `pulls` (not added unconditionally): a denial recorded against a PR that has SINCE closed/merged
+  // (so no longer appears in this open-PR list) must not resurrect a priority entry for it here — and doing so
+  // would violate the "every priorityPullNumbers entry has a pulls match with a truthy headSha" invariant the
+  // exhaustion-check loop below relies on.
+  const openPullNumbers = new Set(pulls.filter((pr) => pr.headSha).map((pr) => pr.number));
+  for (const prNumber of await recentStaleRecheckDeniedPullNumbers(env, repoFullName, new Date(Date.now() - REGATE_REPAIR_ATTEMPT_LOOKBACK_MS).toISOString()))
+    if (openPullNumbers.has(prNumber)) priorityPullNumbers.add(prNumber);
   if (gateCheckEnabled) {
     await Promise.all(
       pulls.map(async (pr) => {
@@ -1154,7 +1171,7 @@ async function surfaceRepairPriorityPullNumbers(
   await Promise.all(
     [...priorityPullNumbers].map(async (prNumber) => {
       const pr = pulls.find((candidate) => candidate.number === prNumber);
-      /* v8 ignore next -- priorityPullNumbers is only ever populated (both loops above) from a `pr` in `pulls` that already had a truthy headSha, so this lookup always succeeds with one; the guard only satisfies Array#find's `| undefined` return type. */
+      /* v8 ignore next -- priorityPullNumbers is only ever populated (every loop above, including the openPullNumbers-scoped stale-recheck one) from a `pr` in `pulls` that already had a truthy headSha, so this lookup always succeeds with one; the guard only satisfies Array#find's `| undefined` return type. */
       if (!pr?.headSha) return;
       if (await isRegateRepairExhausted(env, repoFullName, pr)) priorityPullNumbers.delete(prNumber);
     }),
@@ -1474,7 +1491,7 @@ export async function sweepRepoRegate(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "sweep_mark_regated_failed",
         repository: repoFullName,
         error: errorMessage(error),
@@ -1775,7 +1792,7 @@ export async function sweepRepoBacklogConvergence(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "backlog_convergence_mark_regated_failed",
         repository: repoFullName,
         error: errorMessage(error),
@@ -1919,7 +1936,7 @@ export async function regatePullRequest(
     }
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "sweep_rereview_failed",
         deliveryId,
         repository: repoFullName,
@@ -2022,7 +2039,7 @@ export function changedPathsForGuardrail(
 }
 
 /**
- * Live premerge migrations/** collision recheck (#2550). `check-migrations.mjs` (CI) only validates against
+ * Live premerge migrations/** collision recheck (#2550). `check-migrations.ts` (CI) only validates against
  * THIS PR's own branch snapshot at the time CI ran — it can never see a sibling PR that merged a
  * same-numbered migration file to `baseRef` in the meantime. This does the live check right before the
  * merge-decision moment: fetch the base branch's CURRENT migration filenames, drop any filename THIS PR's
@@ -2031,7 +2048,7 @@ export function changedPathsForGuardrail(
  * this PR merges), union what's left with THIS PR's own new migration filenames (the live tree never
  * contains this PR's own not-yet-merged files, so checking main alone could never detect a collision from
  * this PR's perspective — the union is load-bearing, not optional), then run the SAME collision-detection
- * function scripts/check-migrations.mjs uses.
+ * function scripts/check-migrations.ts uses.
  *
  * Deliberately scoped to a collision involving THIS PR's own migration number(s) only (via `prNumbers`) — a
  * pre-existing collision between two OTHER already-merged files (which would mean `main` itself is already
@@ -3584,7 +3601,7 @@ export async function reReviewStoredPullRequest(
     if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "pr_public_surface_failed",
         deliveryId,
         repository: repoFullName,
@@ -3618,7 +3635,7 @@ export async function reReviewStoredPullRequest(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "agent_maintenance_failed",
         deliveryId,
         repository: repoFullName,
@@ -5139,7 +5156,7 @@ async function processContributorEvidenceLogins(
       /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
       console.error(
         JSON.stringify({
-          level: "warn",
+          level: "error",
           event: "contributor_evidence_login_failed",
           login: contributorLogin,
           error: errorMessage(error),
@@ -6388,7 +6405,7 @@ async function handlePullRequestWebhookEvent(
           if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "pr_public_surface_failed",
               deliveryId,
               repository: payload.repository?.full_name,
@@ -6426,7 +6443,7 @@ async function handlePullRequestWebhookEvent(
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "agent_maintenance_failed",
               deliveryId,
               repository: repoFullName,
@@ -6457,7 +6474,7 @@ async function handlePullRequestWebhookEvent(
           /* v8 ignore next -- best-effort: a reputation-record failure is logged, never surfaced to the gate. */
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "reputation_record_failed",
               deliveryId,
               repository: repoFullName,
@@ -6483,7 +6500,7 @@ async function handlePullRequestWebhookEvent(
         /* v8 ignore next -- best-effort: a RAG re-index enqueue failure is logged, never surfaced to the gate. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "rag_reindex_enqueue_failed",
             deliveryId,
             repository: repoFullName,
@@ -6508,7 +6525,7 @@ async function handlePullRequestWebhookEvent(
         /* v8 ignore next -- best-effort: a sibling re-gate enqueue failure is logged, never surfaced to the gate. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "sibling_regate_enqueue_failed",
             deliveryId,
             repository: repoFullName,
@@ -6612,7 +6629,7 @@ async function handleIssueWebhookEvent(
         /* v8 ignore next -- best-effort: an issue-cap enforcement failure is logged, never surfaced to the webhook. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "contributor_issue_cap_failed",
             deliveryId,
             repository: payload.repository?.full_name,
@@ -7013,7 +7030,7 @@ async function resolvePullRequestFilesForReview(
     /* v8 ignore next -- fail-safe: an inline fetch failure degrades to the empty stored rows (byte-identical to pre-fix). */
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "review_files_inline_fetch_failed",
         repository: args.repoFullName,
         pullNumber: args.pullNumber,
@@ -7479,7 +7496,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
   } catch (error) {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "linked_issue_satisfaction_failed",
         repository: args.repoFullName,
         pullNumber: args.pr.number,
@@ -7557,7 +7574,7 @@ export async function runContentLaneDeliverableCheckForAdvisory(
      * calls (e.g. a DB-backed cache layer) degrades to "no finding" instead of an unhandled rejection. */
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "content_lane_deliverable_check_failed",
         repository: args.repoFullName,
         pullNumber: primaryIssueNumber,
@@ -9058,12 +9075,12 @@ async function maybePublishPrPublicSurface(
     // Stamp the head SHA only after every required public surface for this repo completed. For gate-enabled repos,
     // a comment/label without a finalized Orb gate check is incomplete and must stay repair-visible to the sweep.
     await markPullRequestSurfacePublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
-      console.error(JSON.stringify({ level: "warn", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+      console.error(JSON.stringify({ level: "error", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
     });
     // #regate-churn: mark the AI review row for THIS head+fingerprint as durably published (a no-op when no fresh
     // row was written this pass -- e.g. the frozen-reuse path above, or AI review off/skipped entirely).
     await markAiReviewPublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
-      console.error(JSON.stringify({ level: "warn", event: "ai_review_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+      console.error(JSON.stringify({ level: "error", event: "ai_review_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
     });
     return gateEvaluation;
   };
@@ -10374,7 +10391,7 @@ async function maybePublishPrPublicSurface(
             }).catch((error) => {
               console.error(
                 JSON.stringify({
-                  level: "warn",
+                  level: "error",
                   event: "gate_check_summary_upsert_failed",
                   repoFullName,
                   pullNumber: pr.number,
@@ -10466,7 +10483,7 @@ async function maybePublishPrPublicSurface(
           }).catch((error) => {
             console.error(
               JSON.stringify({
-                level: "warn",
+                level: "error",
                 event: "gate_check_summary_upsert_failed",
                 repoFullName,
                 pullNumber: pr.number,
@@ -10512,7 +10529,7 @@ async function maybePublishPrPublicSurface(
               }).catch((error) => {
                 console.error(
                   JSON.stringify({
-                    level: "warn",
+                    level: "error",
                     event: "gate_check_summary_upsert_failed",
                     repoFullName,
                     pullNumber: pr.number,
@@ -10554,7 +10571,7 @@ async function maybePublishPrPublicSurface(
             }).catch((error) => {
               console.error(
                 JSON.stringify({
-                  level: "warn",
+                  level: "error",
                   event: "gate_check_summary_upsert_failed",
                   repoFullName,
                   pullNumber: pr.number,

@@ -1,6 +1,6 @@
 # Self-host stack CI (#980/#982). Provides integration coverage the main CI can't:
 #   1. Postgres integration test — needs a real PG service container
-#   2. Self-host bundle build validation (build-selfhost.mjs)
+#   2. Self-host bundle build validation (build-selfhost.ts)
 #   3. Docker image build + container smoke test (/health, /ready, /metrics)
 # Unit tests and typecheck are NOT duplicated here — the main CI validate job covers them.
 name: self-host
@@ -11,8 +11,8 @@ on:
     paths:
       - "src/selfhost/**"
       - "src/server.ts"
-      - "scripts/build-selfhost.mjs"
-      - "scripts/validate-selfhost-sourcemap.mjs"
+      - "scripts/build-selfhost.ts"
+      - "scripts/validate-selfhost-sourcemap.ts"
       - "Dockerfile"
       - "docker-compose.yml"
       - "migrations/**"
@@ -27,8 +27,8 @@ on:
     paths:
       - "src/selfhost/**"
       - "src/server.ts"
-      - "scripts/build-selfhost.mjs"
-      - "scripts/validate-selfhost-sourcemap.mjs"
+      - "scripts/build-selfhost.ts"
+      - "scripts/validate-selfhost-sourcemap.ts"
       - "Dockerfile"
       - "docker-compose.yml"
       - "migrations/**"
@@ -97,10 +97,10 @@ jobs:
         run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/loopover npx vitest run test/integration/selfhost-pg.test.ts
 
       - name: Build the self-host bundle
-        run: node scripts/build-selfhost.mjs
+        run: node --experimental-strip-types scripts/build-selfhost.ts
 
       - name: Validate self-host source map
-        run: node scripts/validate-selfhost-sourcemap.mjs
+        run: node scripts/validate-selfhost-sourcemap.ts
 
       - name: Validate docker-compose.yml
         run: |
@@ -145,10 +145,12 @@ jobs:
           docker network create gt-smoke
           docker run -d --name gt-redis --network gt-smoke redis:7-alpine
           trap 'docker rm -f gt gt-redis >/dev/null 2>&1 || true; docker network rm gt-smoke >/dev/null 2>&1 || true' EXIT
+          ok=0
           for _ in $(seq 1 30); do
-            if docker exec gt-redis redis-cli ping | grep -q PONG; then break; fi
+            if docker exec gt-redis redis-cli ping | grep -q PONG; then ok=1; break; fi
             sleep 1
           done
+          if [ "$ok" != "1" ]; then echo "::error::redis did not become ready"; docker logs gt-redis; exit 1; fi
           docker run -d --name gt --network gt-smoke -p 8787:8787 \
             -e REDIS_URL=redis://gt-redis:6379 \
             -e SELFHOST_SETUP_TOKEN=selfhost-ci-setup-token \

@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { validateAlertRules, validateDashboards } from "../../scripts/validate-observability-configs.mjs";
+import { validateAlertRules, validateDashboards } from "../../scripts/validate-observability-configs.js";
 
 function tmpDashboardDir(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "gt-dash-"));

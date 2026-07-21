@@ -33,7 +33,7 @@ jobs:
       - name: Pull ci.yml run stats
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/ci-duration-report.mjs --days=7 --output=ci-duration-report.json
+        run: node --experimental-strip-types scripts/ci-duration-report.ts --days=7 --output=ci-duration-report.json
       - name: Write summary
         run: |
           node <<'NODE'

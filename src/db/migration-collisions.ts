@@ -1,8 +1,8 @@
-// Pure, fs-free migration-collision detection (#2550), shared by scripts/check-migrations.mjs (CI, reads the
+// Pure, fs-free migration-collision detection (#2550), shared by scripts/check-migrations.ts (CI, reads the
 // local filesystem) and the live premerge recheck (src/queue/processors.ts, reads a GitHub-API-fetched
 // filename list) — a single source of truth so the two never drift apart.
 
-/** Matches scripts/check-migrations.mjs's NAME regex exactly. */
+/** Matches scripts/check-migrations.ts's NAME regex exactly. */
 export const MIGRATION_FILENAME_PATTERN = /^(\d{4})_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/;
 
 export type MigrationCollision = {
@@ -20,7 +20,7 @@ export function extractMigrationNumber(filename: string): number | null {
 }
 
 /** The pairs already merged AND applied in production before the collision was noticed (see
- *  scripts/check-migrations.mjs's own header comment for why these can never be renumbered). Kept in lockstep
+ *  scripts/check-migrations.ts's own header comment for why these can never be renumbered). Kept in lockstep
  *  with that script's KNOWN_DUPLICATES — both must list the exact same grandfathered sets. */
 export const KNOWN_MIGRATION_DUPLICATES: ReadonlyMap<number, ReadonlySet<string>> = new Map([
   [15, new Set(["0015_github_agent_command_feedback.sql", "0015_product_usage_events.sql"])],
@@ -32,7 +32,7 @@ export const KNOWN_MIGRATION_DUPLICATES: ReadonlyMap<number, ReadonlySet<string>
 
 /**
  * Group filenames by their migration number and return every number with more than one file, minus any
- * EXACT-set match against `knownDuplicates` (same grandfather semantics as scripts/check-migrations.mjs:
+ * EXACT-set match against `knownDuplicates` (same grandfather semantics as scripts/check-migrations.ts:
  * the group must be the identical size and every file in it must be in the allowed set — a third file at an
  * already-grandfathered number, or a substitution, is still flagged). Non-conforming filenames are ignored —
  * malformed-filename detection is a separate, CI-only concern. Pure, no I/O.

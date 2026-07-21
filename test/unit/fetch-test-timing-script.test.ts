@@ -3,9 +3,9 @@ import {
   aggregateByFile,
   RETRYABLE_STATUS,
   shouldRetryCodecovFetch,
-} from "../../scripts/fetch-test-timing.mjs";
+} from "../../scripts/fetch-test-timing.js";
 
-describe("fetch-test-timing.mjs (#7457)", () => {
+describe("fetch-test-timing.ts (#7457)", () => {
   describe("aggregateByFile", () => {
     it("sums multiple rows for the same file within one commit before averaging across commits", () => {
       // Two test cases in commit A (2s + 3s = 5s that run), one case in commit B (1s). Average across

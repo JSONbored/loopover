@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -113,5 +113,117 @@ describe("maybe_infisical_run (#5120)", () => {
     } finally {
       harness.cleanup();
     }
+  });
+});
+
+describe("env_put (#7766 -- atomic write + mode preservation)", () => {
+  // Source the lib and invoke env_put directly with (key, value, file) positional args.
+  function runEnvPut(file: string, key: string, value: string) {
+    const script = `set -euo pipefail; . "${libPath.replace(/\\/g, "/")}"; env_put "$1" "$2" "$3"`;
+    return spawnSync("bash", ["-c", script, "bash", key, value, file], { encoding: "utf8" });
+  }
+
+  function tempEnvFile(contents: string): { dir: string; file: string } {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-env-put-"));
+    const file = join(dir, ".env");
+    writeFileSync(file, contents);
+    return { dir, file };
+  }
+
+  it("updates an existing key in place, leaving the rest of the file intact", () => {
+    const { dir, file } = tempEnvFile("FOO=1\nBAR=old\n");
+    try {
+      const r = runEnvPut(file, "BAR", "new");
+      expect(r.status, r.stderr).toBe(0);
+      expect(readFileSync(file, "utf8")).toBe("FOO=1\nBAR=new\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("appends a key that is not present yet", () => {
+    const { dir, file } = tempEnvFile("FOO=1\n");
+    try {
+      const r = runEnvPut(file, "BAZ", "added");
+      expect(r.status, r.stderr).toBe(0);
+      expect(readFileSync(file, "utf8")).toBe("FOO=1\nBAZ=added\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the target file's non-default mode across the write (does not narrow to mktemp's 0600)", () => {
+    const { dir, file } = tempEnvFile("FOO=1\n");
+    try {
+      chmodSync(file, 0o640);
+      const r = runEnvPut(file, "FOO", "2");
+      expect(r.status, r.stderr).toBe(0);
+      expect(statSync(file).mode & 0o777).toBe(0o640);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves no leftover temp file behind (an atomic rename, not a copy)", () => {
+    const { dir, file } = tempEnvFile("FOO=1\n");
+    try {
+      const r = runEnvPut(file, "FOO", "2");
+      expect(r.status, r.stderr).toBe(0);
+      expect(readdirSync(dir).filter((name) => name.includes(".tmp."))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("compose_file_args exit propagation (#7765)", () => {
+  // The exact idiom the callers (deploy-selfhost-image.sh etc.) now use to consume compose_file_args.
+  // Under the old `mapfile -t compose_args < <(compose_file_args)` the function ran in a subshell whose
+  // `exit 1` on a missing file was swallowed (mapfile returns 0), so the caller continued with an
+  // empty/truncated -f arg list. The checked assignment must instead abort before REACHED_END.
+  const CONSUMER = `
+set -euo pipefail
+. "${libPath.replace(/\\/g, "/")}"
+if ! compose_args_raw="$(compose_file_args)"; then
+  exit 1
+fi
+mapfile -t compose_args <<< "$compose_args_raw"
+printf 'REACHED_END args=[%s]\\n' "\${compose_args[*]}"
+`;
+
+  function runConsumer(env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-compose-args-"));
+    try {
+      // Give the default-branch a real docker-compose.yml so the happy path has a file to find.
+      writeFileSync(join(dir, "docker-compose.yml"), "services: {}\n");
+      writeFileSync(join(dir, "base.yml"), "services: {}\n");
+      return spawnSync("bash", ["-c", CONSUMER], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, ...env },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("continues with the -f args when every compose file exists", () => {
+    const result = runConsumer();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("REACHED_END args=[-f docker-compose.yml]");
+  });
+
+  it("aborts (never reaching the consumer) when the sole compose file is missing", () => {
+    const result = runConsumer({ SELFHOST_COMPOSE_FILES: "does-not-exist.yml" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("REACHED_END");
+    expect(result.stderr).toContain("compose file not found: does-not-exist.yml");
+  });
+
+  it("aborts instead of continuing with a TRUNCATED arg list when a later compose file is missing", () => {
+    const result = runConsumer({ SELFHOST_COMPOSE_FILES: "base.yml missing.yml" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("REACHED_END");
+    expect(result.stderr).toContain("compose file not found: missing.yml");
   });
 });

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkEnginesNvmrcSync } from "../../scripts/check-engines-nvmrc-sync.mjs";
+import { checkEnginesNvmrcSync } from "../../scripts/check-engines-nvmrc-sync.js";
 
 describe("check-engines-nvmrc-sync script", () => {
   /** Builds `{ readFile, listDir }` fakes from a flat `{ "group/name/package.json": jsonString }` map
@@ -140,7 +140,7 @@ describe("check-engines-nvmrc-sync script", () => {
   });
 
   it("prints a clean summary and exits 0 for the real repo state when run as a subprocess", () => {
-    const output = execFileSync(process.execPath, ["scripts/check-engines-nvmrc-sync.mjs"], { encoding: "utf8" });
+    const output = execFileSync(process.execPath, ["--experimental-strip-types", "scripts/check-engines-nvmrc-sync.ts"], { encoding: "utf8" });
 
     expect(output).toMatch(/Engines\/\.nvmrc sync check ok: \d+ package\(s\)/);
   });

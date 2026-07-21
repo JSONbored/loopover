@@ -22,8 +22,8 @@ RUN npm ci --ignore-scripts
 RUN npm --workspace @loopover/engine run build
 # --all: bundle every dependency into one self-contained dist/server.mjs, so the runtime image needs no
 # node_modules (≈10× smaller). The bundle has zero `cloudflare:*` imports (stubbed at build), so no loader.
-RUN node scripts/build-selfhost.mjs --all
-RUN node scripts/validate-selfhost-sourcemap.mjs
+RUN node --experimental-strip-types scripts/build-selfhost.ts --all
+RUN node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts
 
 # --- runtime base: slim, non-root -----------------------------------------------------------------------
 FROM public.ecr.aws/docker/library/node:24-slim AS runtime-base
@@ -69,7 +69,7 @@ ARG INSTALL_VISUAL_REVIEW=false
 COPY package*.json ./
 RUN if [ "$INSTALL_VISUAL_REVIEW" = "true" ]; then npm install puppeteer-core@22.13.1 --ignore-scripts; fi
 # sharp (#4370): esbuild marks it `external` in the --all bundle (a native per-platform binary can't be
-# bundled into dist/server.mjs, see scripts/build-selfhost.mjs), so it must be installed separately here,
+# bundled into dist/server.mjs, see scripts/build-selfhost.ts), so it must be installed separately here,
 # same reason as puppeteer-core above -- but unconditional (not behind an opt-in build-arg): it's a core
 # dependency of the vision-image-downscale path, not an optional external-sidecar feature. --ignore-scripts
 # is safe here: sharp's own platform binary ships as an npm `optionalDependencies` entry

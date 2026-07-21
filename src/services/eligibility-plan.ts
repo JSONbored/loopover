@@ -112,7 +112,13 @@ export function deriveEligibilityPlan(result: ScorePreviewResult): EligibilityPl
   // Only affirm eligibility when the branch is positively confirmed (eligible or not required);
   // "unknown" / missing metadata is treated as not-yet-eligible so the plan never overpromises.
   const branchConfirmed = branchEligibilityStatus === "eligible" || branchEligibilityStatus === "not_required";
-  const eligible = result.linkedIssueMultiplier.eligible && branchConfirmed;
+  // When no linked issue was required, linkedIssueMultiplier.eligible is meaninglessly false, so a confirmed branch
+  // must not be gated on it (#7809) -- mirror the same special case eligibilityStatusKey already applies for
+  // "not_required", so the structured `eligible` boolean agrees with the "not required" publicSummary text.
+  const eligible =
+    linkedIssueStatus === "not_required"
+      ? branchConfirmed
+      : result.linkedIssueMultiplier.eligible && branchConfirmed;
 
   const blockers = result.blockedBy
     .filter((b) => ELIGIBILITY_BLOCKER_CODES.has(b.code))

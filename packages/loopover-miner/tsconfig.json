@@ -22,8 +22,8 @@
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
   // Every bin/lib runtime module is real TypeScript (#7290 / #7317): tsc owns the in-place .js + .d.ts
-  // emit. The glob stays the include surface; test/unit/miner-typescript-migration-complete.test.ts
-  // fails closed if a hand-maintained .js/.d.ts orphan ever reappears.
+  // emit, which is gitignored -- contributors and tests never touch it (see .gitignore's comment on
+  // these paths). The glob stays the include surface as the package's only source of truth.
   "include": ["bin/**/*.ts", "lib/**/*.ts"],
   // Without this, tsc's default exclude list (which always adds outDir) resolves to "." -- the whole
   // package root -- and silently excludes every include match, since outDir is "." for in-place emit.

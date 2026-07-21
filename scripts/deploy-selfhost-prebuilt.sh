@@ -36,7 +36,7 @@ run_node_build() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node scripts/build-selfhost.mjs --all && node scripts/validate-selfhost-sourcemap.mjs'
+    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node --experimental-strip-types scripts/build-selfhost.ts --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
 }
 
 run_sentry_upload() {
@@ -74,7 +74,7 @@ run_sentry_upload() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates git >/dev/null && git config --global --add safe.directory /work && (npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE" >/tmp/loopover-sentry-release-new.log 2>&1 || true) && npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --auto && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist && node scripts/validate-selfhost-sourcemap.mjs && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" dist && npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
+    sh -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates git >/dev/null && git config --global --add safe.directory /work && (npx -y "$SENTRY_CLI_PACKAGE" releases new "$SENTRY_RELEASE" >/tmp/loopover-sentry-release-new.log 2>&1 || true) && npx -y "$SENTRY_CLI_PACKAGE" releases set-commits "$SENTRY_RELEASE" --auto && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps inject dist && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts && npx -y "$SENTRY_CLI_PACKAGE" sourcemaps upload --release="$SENTRY_RELEASE" dist && npx -y "$SENTRY_CLI_PACKAGE" releases finalize "$SENTRY_RELEASE" && chown -R "$HOST_UID:$HOST_GID" dist node_modules package-lock.json'
 }
 
 run_init_secrets() {
@@ -104,7 +104,13 @@ services:
       LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
 YAML
 
-  mapfile -t compose_args < <(compose_file_args)
+  # #7765: capture via a checked assignment so compose_file_args's `exit 1` on a missing compose file
+  # actually aborts this script -- `mapfile < <(compose_file_args)` ran it in a subshell whose non-zero
+  # exit was swallowed (mapfile itself returns 0), leaving compose_args empty/truncated.
+  if ! compose_args_raw="$(compose_file_args)"; then
+    exit 1
+  fi
+  mapfile -t compose_args <<< "$compose_args_raw"
   compose_args+=(-f "$override_file")
 
   echo "selfhost deploy: building $SERVICE runtime-prebuilt image"

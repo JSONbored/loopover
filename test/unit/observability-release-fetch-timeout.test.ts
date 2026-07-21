@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // container/GitHub endpoints that a unit test can't stand up.
 
 it("check-mcp-release-due's githubRequest fetch carries an AbortSignal timeout", () => {
-  const src = readFileSync("scripts/check-mcp-release-due.mjs", "utf8");
+  const src = readFileSync("scripts/check-mcp-release-due.ts", "utf8");
   const fetchCount = (src.match(/\bfetch\(/g) ?? []).length;
   const timeoutCount = (src.match(/AbortSignal\.timeout\(/g) ?? []).length;
   expect(fetchCount).toBe(1);
@@ -15,7 +15,7 @@ it("check-mcp-release-due's githubRequest fetch carries an AbortSignal timeout",
 });
 
 describe("smoke-observability scripts (#7014): every generated fetch is timeout-guarded", () => {
-  for (const path of ["scripts/smoke-observability-traces.mjs", "scripts/smoke-observability-metrics.mjs"]) {
+  for (const path of ["scripts/smoke-observability-traces.ts", "scripts/smoke-observability-metrics.ts"]) {
     it(`${path} bounds every fetch with AbortSignal.timeout`, () => {
       const src = readFileSync(path, "utf8");
       const fetchCount = (src.match(/\bawait fetch\(/g) ?? []).length;

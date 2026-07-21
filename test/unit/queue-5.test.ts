@@ -5883,6 +5883,25 @@ describe("queue processors", () => {
     reconcileSpy.mockRestore();
   });
 
+  it("reconcile-active-review-tracking job no-ops when LOOPOVER_ACTIVE_REVIEW_RECONCILIATION is OFF (does no scan)", async () => {
+    const env = createTestEnv(); // flag unset → OFF
+    const listSpy = vi.spyOn(repositoriesModule, "listStaleActiveReviewTracking");
+
+    await processJob(env, { type: "reconcile-active-review-tracking", requestedBy: "test" });
+
+    expect(listSpy).not.toHaveBeenCalled();
+  });
+
+  it("reconcile-active-review-tracking job runs the reconciliation scan when LOOPOVER_ACTIVE_REVIEW_RECONCILIATION is ON", async () => {
+    const env = createTestEnv({ LOOPOVER_ACTIVE_REVIEW_RECONCILIATION: "true" });
+    const listSpy = vi.spyOn(repositoriesModule, "listStaleActiveReviewTracking").mockResolvedValueOnce([]);
+
+    await processJob(env, { type: "reconcile-active-review-tracking", requestedBy: "test" });
+
+    expect(listSpy).toHaveBeenCalled();
+    listSpy.mockRestore();
+  });
+
   it("retry-orb-relay job dispatches into retryFailedRelays, pruning an expired relay-failure row (#relay-retry)", async () => {
     const env = createTestEnv();
     await env.DB.prepare(

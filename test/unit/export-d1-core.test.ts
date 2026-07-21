@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExportManifest, buildTableExport, checksumRows, EXCLUDED_TABLES, filterRowsSince, isSafeTableName, redactRow, REDACTED_COLUMNS } from "../../scripts/export-d1-core.mjs";
+import { buildExportManifest, buildTableExport, checksumRows, EXCLUDED_TABLES, filterRowsSince, isSafeTableName, redactRow, REDACTED_COLUMNS } from "../../scripts/export-d1-core.js";
 
 describe("export-d1-core isSafeTableName (SQL-injection guard)", () => {
   it("accepts plain SQL identifiers", () => {

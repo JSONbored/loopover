@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { crc32, createStoredZip, listFiles } from "../../scripts/extension-zip-core.mjs";
+import { crc32, createStoredZip, listFiles } from "../../scripts/extension-zip-core.js";
 
 // Minimal reader for the STORED (uncompressed) archives createStoredZip writes. It walks the
 // end-of-central-directory + central directory rather than trusting insertion order, so a wrong
@@ -53,7 +53,7 @@ function readStoredZip(zip: Buffer): ExtractedEntry[] {
   return entries;
 }
 
-describe("build-extension.mjs zip writer (#7464)", () => {
+describe("build-extension.ts zip writer (#7464)", () => {
   describe("crc32", () => {
     it("matches the canonical CRC-32 test vector", () => {
       // crc32("123456789") === 0xCBF43926 is the standard reference vector for CRC-32/ISO-HDLC.

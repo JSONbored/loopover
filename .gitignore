@@ -1,6 +1,18 @@
 node_modules
 dist/
 dist-ssr/
+# packages/loopover-{miner,mcp} compile real TypeScript in place (tsc's outDir === rootDir) and never
+# commit the emitted output -- both ship as installable CLIs, so the .js still has to exist in the
+# published npm tarball (built fresh by `npm run build:{miner,mcp}` / the publish workflows), but nothing
+# else needs a prior build: Vite/esbuild resolve the .js-suffixed import specifiers these packages write
+# straight to the sibling .ts by default (same as packages/loopover-engine/src/**, which has never had a
+# committed .js either), and the CLI-harness tests spawn the .ts directly via Node's own type-stripping.
+packages/loopover-miner/bin/*.js
+packages/loopover-miner/bin/*.d.ts
+packages/loopover-miner/lib/*.js
+packages/loopover-miner/lib/*.d.ts
+packages/loopover-mcp/bin/*.js
+packages/loopover-mcp/lib/*.js
 .turbo/
 .output
 .vinxi

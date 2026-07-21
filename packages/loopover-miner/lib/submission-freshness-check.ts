@@ -143,7 +143,9 @@ export async function checkSubmissionFreshness(
   const minerLoginKey = minerLogin.toLowerCase();
   const referencingPrs = Array.isArray(snapshot.referencingPrs) ? snapshot.referencingPrs : [];
   const addressedByAnotherAuthor = referencingPrs.some(
-    (pr) => typeof pr.authorLogin === "string" && pr.authorLogin.trim().toLowerCase() !== minerLoginKey && (pr.state === "merged" || pr.state === "open"),
+    (pr) =>
+      (pr.state === "merged" || pr.state === "open") &&
+      (typeof pr.authorLogin !== "string" || pr.authorLogin.trim().toLowerCase() !== minerLoginKey),
   );
   if (addressedByAnotherAuthor) {
     return abort(eventLedger, repoFullName, candidate.issueNumber, "already_addressed");

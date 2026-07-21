@@ -11,7 +11,7 @@ import {
   parseOrbBetaVersion,
   parseSemver,
   selectImageRelevantCommits,
-} from "../../scripts/orb-release-core.mjs";
+} from "../../scripts/orb-release-core.js";
 
 type TestCommit = { sha: string; subject: string; body?: string; files: string[] };
 
@@ -108,7 +108,7 @@ describe("semver helpers", () => {
 
   // #6294: a same-version beta must never outrank its stable promotion. A lexicographic sort puts
   // "orb-v1.2.0-beta.10" ahead of "orb-v1.2.0" (the beta suffix string-sorts after its own prefix), which
-  // would pick a stale beta as check-orb-release-due.mjs's git-log boundary once a beta and its stable
+  // would pick a stale beta as check-orb-release-due.ts's git-log boundary once a beta and its stable
   // promotion point at different commits. Beta tags of a shipped version live in the tag list forever, so
   // this stays reachable indefinitely.
   it("latestOrbTag ranks a stable tag ahead of its same-version betas, not lexicographically (#6294)", () => {

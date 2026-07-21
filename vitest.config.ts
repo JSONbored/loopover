@@ -35,35 +35,44 @@ export default defineConfig({
       include: [
         "src/**/*.ts",
         "packages/loopover-engine/src/**/*.ts",
+        // packages/loopover-{miner,mcp} ship .ts source only (no committed compiled output). Their own
+        // internal cross-imports and every root test importing into them write NodeNext-style .js-suffixed
+        // specifiers (required so tsc's real build -- still the actual published npm artifact -- resolves
+        // correctly) -- Vite/esbuild already resolves those to the sibling .ts when no literal .js exists
+        // on disk, the same default behavior packages/loopover-engine/src/**'s own .js-suffixed imports
+        // have always relied on. BUT @vitest/coverage-v8 still tracks each executed module under the id
+        // Vite resolved it FROM (the requested .js specifier), not the .ts file actually read off disk --
+        // confirmed by removing the .js glob entry once and watching every one of these files (genuinely
+        // executed, genuinely tested) report a flat 0% because coverage.include no longer matched their
+        // reported id. So both extensions stay listed for the same file: the .js entry is what makes the
+        // v8 coverage provider find the module AT ALL, and the .ts entry is what makes it display against
+        // real TypeScript source instead of a phantom .js path that was never written to disk.
         "packages/loopover-miner/lib/**/*.js",
-        // Files converted to real TypeScript (#7290 / #7317) execute as the compiled .js above, but
-        // v8's coverage provider remaps through the inline sourcemap tsc emits, attributing coverage to
-        // the .ts source instead -- this entry is what keeps that remapped file in the report.
         "packages/loopover-miner/lib/**/*.ts",
         // bin/loopover-miner-mcp.ts exports createMinerMcpServer, imported in-process by
         // test/unit/miner-mcp-*.test.ts -- genuinely unit-coverable, same as lib/ above. Its sibling
         // bin/loopover-miner.ts (the plain CLI dispatcher: no exports, subprocess-only tested via
-        // test/unit/support/miner-cli-harness.ts) is NOT ignore-listed in codecov.yml -- test/unit/
+        // test/unit/support/miner-cli-harness.ts, now spawned via Node's own --experimental-strip-types
+        // rather than a prior `tsc` build) is NOT ignore-listed in codecov.yml -- test/unit/
         // codecov-policy.test.ts (#4864) forbids a blanket exemption for packages/loopover-miner, so it
         // stays included and genuinely graded (near-0% today) until it either gains real in-process tests
         // or is refactored into a testable export the way bin/loopover-miner-mcp.ts already was.
         "packages/loopover-miner/bin/**/*.js",
         "packages/loopover-miner/bin/**/*.ts",
         "packages/discovery-index/src/**/*.ts",
-        // packages/loopover-mcp/lib/*.js are plain JS today; issue #7291 migrates them to real TypeScript,
-        // keeping the same .js/.ts/.d.ts triplet shape packages/loopover-miner/lib/** already has (so
-        // coverage is wired BEFORE that PR lands, not as a follow-up fix). All 5 files
-        // (format-table/local-branch/redact-local-path/telemetry/cli-error) are now imported in-process
-        // by test/unit/*.test.ts (cli-error's own test/unit/mcp-cli-error.test.ts landed in #7409), so a
-        // PR touching any of them is covered by codecov/patch -- that's intended enforcement, not a bug.
+        // All 5 packages/loopover-mcp/lib/*.ts files (format-table/local-branch/redact-local-path/
+        // telemetry/cli-error) are imported in-process by test/unit/*.test.ts (cli-error's own
+        // test/unit/mcp-cli-error.test.ts landed in #7409), so a PR touching any of them is covered by
+        // codecov/patch -- that's intended enforcement, not a bug.
         "packages/loopover-mcp/lib/**/*.js",
         "packages/loopover-mcp/lib/**/*.ts",
-        // packages/loopover-mcp/bin/loopover-mcp.js (~6,600 of ~7,400 lines in the package) is tested
+        // packages/loopover-mcp/bin/loopover-mcp.ts (~6,600 of ~7,400 lines in the package) is tested
         // exclusively via subprocess spawn (test/unit/mcp-cli-*.test.ts, mcp-discovery.test.ts et al,
-        // through test/unit/support/mcp-cli-harness.ts's execFileSync/StdioClientTransport). Same shape as
-        // packages/loopover-miner/bin/loopover-miner.ts above -- and, consistent with that file NOT getting
-        // a codecov.yml exemption (#4864), this isn't ignore-listed either: #7291 (the TS migration) will
-        // need real in-process tests or a testable-export refactor for this file, not a free pass.
+        // through test/unit/support/mcp-cli-harness.ts's execFileSync/StdioClientTransport, now spawned
+        // via Node's own --experimental-strip-types). Same shape as packages/loopover-miner/bin/
+        // loopover-miner.ts above -- and, consistent with that file not getting a codecov.yml exemption
+        // either (#4864), this isn't ignore-listed: it stays included and genuinely graded until it
+        // either gains real in-process tests or is refactored into a testable export.
         "packages/loopover-mcp/bin/**/*.js",
         "packages/loopover-mcp/bin/**/*.ts",
         // review-enrichment is a standalone (non-workspace) package with its own node:test suite; its
@@ -118,23 +127,22 @@ export default defineConfig({
       // merged shards instead; this backstop still runs on the full local
       // `npm run test:coverage`. Spread-omit the key (rather than set it to
       // undefined) to satisfy exactOptionalPropertyTypes.
-      // All four are set below 90 (not just branches) because of a reproducible v8
-      // `--mergeReports` artifact, not a real coverage drop: merging a shard that
-      // never touches a given compiled-from-.ts miner lib file (packages/loopover-
-      // miner/lib/**/*.js, remapped to .ts via inline sourcemap, #7290) with a
-      // shard that does can REDUCE that file's reported hit ratio -- on ANY of the
-      // four metrics -- below what the exercising shard alone reported. Confirmed
-      // with an isolated 2-shard --reporter=blob + --mergeReports repro on a single
-      // file (a file at 99%+ branches in its own shard dropped to ~71% once merged
-      // with a shard that ran zero of its tests), unaffected by `coverage.all`. It
-      // does not reproduce on plain live-transformed .ts (src/**, packages/loopover-
-      // engine/src/**), only on this pre-compiled .ts-with-inline-sourcemap remap
-      // path, and grows as more packages/loopover-miner/lib files convert from .js
-      // to .ts (#7290 phase 2+) -- branches alone tripped first (PR #7351, widened
-      // to 85), then functions tripped next batch at 89.74% even with branches
-      // fixed, confirming this isn't a one-metric fluke. All four are widened
-      // together now, with real margin, so each further batch in this multi-phase
-      // migration doesn't need its own one-metric-at-a-time fix here.
+      // All four are set below 90 (not just branches), originally to route around a reproducible v8
+      // `--mergeReports` artifact, not a real coverage drop: merging a shard that never touched a given
+      // compiled-from-.ts miner lib file (packages/loopover-miner/lib/**/*.js, remapped to .ts via inline
+      // sourcemap, #7290) with a shard that did could REDUCE that file's reported hit ratio -- on ANY of
+      // the four metrics -- below what the exercising shard alone reported (confirmed with an isolated
+      // 2-shard --reporter=blob + --mergeReports repro: a file at 99%+ branches in its own shard dropped
+      // to ~71% once merged with a shard that ran zero of its tests, unaffected by `coverage.all`). That
+      // never reproduced on plain live-transformed .ts (src/**, packages/loopover-engine/src/**), only on
+      // the pre-compiled .ts-with-inline-sourcemap remap path -- which no longer exists anywhere in this
+      // include list (packages/loopover-{miner,mcp} now execute their real .ts directly too, same as
+      // everything else here), so this specific artifact's precondition is gone. Left at 80 anyway rather
+      // than raised back toward 90: the widening predates the mergeReports fix by multiple rounds (PR
+      // #7351 widened branches to 85 for it; the next batch tripped functions at 89.74% even with branches
+      // already fixed) and the note two paragraphs up ("Do NOT raise these... or the cross-PR churn
+      // returns") describes a separate, still-live reason to stay low that this change doesn't touch --
+      // revisiting the threshold itself is a deliberate follow-up decision, not a side effect of this one.
       // `npm run test:coverage` (unsharded, no merge) is unaffected and is the
       // faithful local signal; only CI's sharded validate-tests-merge job sees
       // this. Real per-line/branch enforcement is Codecov's codecov/patch gate

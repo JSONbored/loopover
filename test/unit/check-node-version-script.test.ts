@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkNodeVersion } from "../../scripts/check-node-version.mjs";
+import { checkNodeVersion } from "../../scripts/check-node-version.js";
 
 describe("check-node-version script", () => {
   it("passes when the running Node satisfies the declared engines.node range", () => {
@@ -40,7 +40,7 @@ describe("check-node-version script", () => {
   });
 
   it("prints nothing and exits 0 as a subprocess on a satisfying Node", () => {
-    const output = execFileSync(process.execPath, ["scripts/check-node-version.mjs"], { encoding: "utf8" });
+    const output = execFileSync(process.execPath, ["--experimental-strip-types", "scripts/check-node-version.ts"], { encoding: "utf8" });
 
     expect(output).toBe("");
   });

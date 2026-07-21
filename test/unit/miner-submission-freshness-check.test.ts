@@ -162,7 +162,23 @@ describe("checkSubmissionFreshness (#3007)", () => {
     expect(result).toEqual({ fresh: false, reason: "already_addressed" });
   });
 
-  it("a referencing PR with a non-string authorLogin is ignored rather than crashing or false-flagging", async () => {
+  it("REGRESSION: a merged referencing PR with a missing authorLogin counts as already-addressed (fail-closed)", async () => {
+    const { claimLedger } = stubClaimLedger([activeClaim]);
+    const { eventLedger } = stubEventLedger();
+    const fetchLiveIssueSnapshot = vi.fn(async () => ({
+      state: "open" as const,
+      referencingPrs: [{ number: 99, state: "merged" as const, authorLogin: null as unknown as string, createdAt: null }],
+    }));
+
+    const result = await checkSubmissionFreshness(
+      { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+      { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+    );
+
+    expect(result).toEqual({ fresh: false, reason: "already_addressed" });
+  });
+
+  it("a referencing PR with a non-string authorLogin counts as already-addressed instead of being ignored", async () => {
     const { claimLedger } = stubClaimLedger([activeClaim]);
     const { eventLedger } = stubEventLedger();
     const fetchLiveIssueSnapshot = vi.fn(async () => ({
@@ -175,7 +191,7 @@ describe("checkSubmissionFreshness (#3007)", () => {
       { claimLedger, fetchLiveIssueSnapshot, eventLedger },
     );
 
-    expect(result).toEqual({ fresh: true });
+    expect(result).toEqual({ fresh: false, reason: "already_addressed" });
   });
 
   it("a CLOSED (not merged) referencing PR from another author does not count as already-addressed", async () => {

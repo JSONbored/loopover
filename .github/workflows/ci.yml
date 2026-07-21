@@ -43,6 +43,7 @@ jobs:
       miner: ${{ steps.filter.outputs.miner }}
       minerTestHarness: ${{ steps.filter.outputs.minerTestHarness }}
       rees: ${{ steps.filter.outputs.rees }}
+      controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
       # Debounce rapid re-pushes to an open PR: every job below (validate-code, all 3 validate-tests
@@ -142,8 +143,8 @@ jobs:
               - 'apps/loopover-extension/**'
               - 'apps/loopover-miner-extension/**'
               - 'packages/loopover-ui-kit/**'
-              - 'scripts/build-extension.mjs'
-              - 'scripts/build-miner-extension.mjs'
+              - 'scripts/build-extension.ts'
+              - 'scripts/build-miner-extension.ts'
               - 'package.json'
               - 'package-lock.json'
             # Backend changes that can drift the OpenAPI contract the UI type-checks against, but say
@@ -159,14 +160,14 @@ jobs:
               # and the pack check only inspects the tarball. Root src/ cannot
               # affect it, so it is intentionally NOT a trigger here.
               - 'packages/loopover-mcp/**'
-              - 'scripts/check-mcp-package.mjs'
+              - 'scripts/check-mcp-package.ts'
               - 'package-lock.json'
             engine:
               - 'packages/loopover-engine/**'
               - 'package-lock.json'
             miner:
               - 'packages/loopover-miner/**'
-              - 'scripts/check-miner-package.mjs'
+              - 'scripts/check-miner-package.ts'
               - 'package-lock.json'
             # No dedicated build/pack script (unlike mcp/engine/miner above) -- discovery-index is a normal
             # vitest-covered workspace package (packages/discovery-index/src/**/*.ts is in vitest.config.ts's
@@ -178,7 +179,8 @@ jobs:
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
-            # and mcp-discovery.test.ts spawns packages/loopover-mcp/bin/loopover-mcp.js as a real
+            # and mcp-discovery.test.ts spawns packages/loopover-mcp/bin/loopover-mcp.ts (gitignored
+            # compiled output; Node's own type-stripping runs the .ts directly, no build needed) as a real
             # subprocess via StdioClientTransport -- none of the 6 ever load root src/ in-process. This mirrors
             # the `mcp` filter's own established trust boundary above (a self-contained package build). They are
             # NOT self-contained w.r.t. packages/loopover-engine/**, though: loopover-mcp now has a real
@@ -211,10 +213,13 @@ jobs:
             rees:
               - 'review-enrichment/**'
               - '.github/workflows/ci.yml'
+            controlPlane:
+              - 'control-plane/**'
+              - '.github/workflows/ci.yml'
             # Both miner-package test files are self-contained w.r.t. root src/**, the same trust boundary as
-            # mcpCliHarness above: check-miner-package.test.ts only spawns scripts/check-miner-package.mjs as a
+            # mcpCliHarness above: check-miner-package.test.ts only spawns scripts/check-miner-package.ts as a
             # real subprocess (node:child_process + vitest, nothing else), and miner-calibration-types.test.ts
-            # only imports the scaffolded packages/loopover-miner/lib/calibration.js -- neither ever loads
+            # only imports the scaffolded packages/loopover-miner/lib/calibration.ts -- neither ever loads
             # root src/ in-process. Mirrors mcpCliHarness's filter shape for the same reason (tooling/config
             # changes that could plausibly affect how these tests run, plus the miner package + the test files
             # themselves), swapping in the miner-specific package and test files.
@@ -242,7 +247,7 @@ jobs:
     needs: changes
     # draft != true also gates push runs correctly: github.event.pull_request is unset there, so the
     # property access evaluates to null, and null != true is true.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true')) }}
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -394,10 +399,13 @@ jobs:
         if: ${{ github.event_name == 'push' || needs.changes.outputs.observability == 'true' }}
         env:
           NODE_OPTIONS: ""
-        run: node scripts/validate-observability-configs.mjs
+        run: node --experimental-strip-types scripts/validate-observability-configs.ts
       # Runs ahead of Typecheck AND "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts
       # (root backend, since #2281/#3985) imports packages/loopover-miner/lib/opportunity-fanout.js --
-      # committed, pre-built JS -- which itself imports @loopover/engine. That package's dist/ is
+      # a .js-suffixed specifier esbuild/Vite resolve straight to the real (gitignored, uncompiled)
+      # .ts source, same as @loopover/engine's own src/**, so THIS half needs no build at all -- which
+      # itself imports @loopover/engine THE PACKAGE, though, via a bare `@loopover/engine` specifier
+      # elsewhere in the chain, and THAT resolves through node_modules to dist/. That package's dist/ is
       # gitignored and only exists after this build step, so ANY backend typecheck or test run needs it built
       # first, not just a PR that touches packages/loopover-engine/** directly (this step's original, too-
       # narrow trigger). Originally ran after coverage (broke test:coverage on PRs that didn't touch the
@@ -506,49 +514,36 @@ jobs:
       # old npm run build:mcp -- turbo resolves @loopover/engine as its topological dependency (mcp's own
       # package.json depends on @loopover/engine) and reuses the "Restore Turborepo cache" above, so an
       # engine-only PR's already-built engine is never rebuilt a second time here.
+      # packages/loopover-mcp ships .ts source only -- no compiled .js/.d.ts is committed (gitignored;
+      # see vitest.config.ts's resolveMinerMcpTsSourcePlugin for how tests run against the .ts directly
+      # with no build step). This "Build MCP" step still exists because the PACKAGE ITSELF has to ship
+      # runnable .js in its published npm tarball (npm install -g gives you plain Node, no TS toolchain),
+      # and "MCP package check" right below needs that real build output on disk to validate.
       - name: Build MCP
         if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npx turbo run build --filter=@loopover/mcp
-      # packages/loopover-mcp/{bin,lib} compile real TypeScript in place (tsc's outDir === rootDir, so
-      # e.g. lib/foo.ts emits lib/foo.js right next to it) and commit that emitted output -- the package
-      # ships as an installable CLI (npm install -g), so a runnable .js has to exist in the published
-      # tarball, and test/**/*.test.ts imports the emitted .js by its literal specifier, not the .ts
-      # source. "Build MCP" above (this job) and the "Test with coverage" job below run as separate GitHub
-      # Actions jobs with independent checkouts, so nothing in this job's build step can ever self-heal a
-      # stale commit before the coverage job's tests run against it -- a contributor who edits .ts and
-      # forgets to rebuild+commit the .js gets tests silently exercising old behavior with no CI signal,
-      # same drift-class gap the Selfhost/Miner env-reference checks above were added to close. This
-      # fails loudly instead: the build one step up already regenerated bin/lib in place, so any git
-      # status output here means the committed .js/.d.ts didn't match what that build just produced.
-      - name: MCP build drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
-        run: node scripts/check-build-drift.mjs mcp
       - name: MCP package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run test:mcp-pack
-      # Invokes turbo.json's @loopover/miner#build:tsc (cache: false -- historically to avoid a cache
-      # restore stomping this package's hand-written .js files while the #7290 migration was still
-      # in-flight; now that #7317 closed it out, every bin/lib file is compiler-owned and that original
-      # risk no longer applies, but re-enabling caching here is a separate change this PR doesn't make)
-      # and @loopover/miner#build:verify (real caching win: skips re-`node --check`-ing all 121 bin/lib
-      # files when neither changed) DIRECTLY as their own task names, deliberately NOT via the aggregate
-      # `@loopover/miner#build` task (which exists for standalone/local `npm run build` callers) -- that
-      # aggregate's own script is `npm run build:tsc && npm run build:verify`, i.e. it re-invokes both of
-      # these exact scripts a second time even when turbo already ran them as cached prerequisite tasks
-      # (declaring a task as a dependsOn prerequisite doesn't replace a parent task's own script body).
-      # Calling the aggregate here would silently double both the tsc compile and the syntax check on
-      # every run, negating the caching win this comment describes -- confirmed by reproducing the double
-      # execution locally before switching to this direct form. This also finally activates the
-      # build:tsc/build:verify split from Phase 0, which no ci.yml step exercised until now.
+      # Same "ships .ts only, this build is for the published npm tarball + the pack-check below, not for
+      # tests" story as MCP's own "Build MCP" step above. Invokes turbo.json's @loopover/miner#build:tsc
+      # (cache: false -- historically to avoid a cache restore stomping this package's hand-written .js
+      # files while the #7290 migration was still in-flight; now that #7317 closed it out, every bin/lib
+      # file is compiler-owned and that original risk no longer applies, but re-enabling caching here is a
+      # separate change this PR doesn't make) and @loopover/miner#build:verify (real caching win: skips
+      # re-`node --check`-ing all 121 bin/lib files when neither changed) DIRECTLY as their own task names,
+      # deliberately NOT via the aggregate `@loopover/miner#build` task (which exists for standalone/local
+      # `npm run build` callers) -- that aggregate's own script is `npm run build:tsc && npm run
+      # build:verify`, i.e. it re-invokes both of these exact scripts a second time even when turbo already
+      # ran them as cached prerequisite tasks (declaring a task as a dependsOn prerequisite doesn't replace
+      # a parent task's own script body). Calling the aggregate here would silently double both the tsc
+      # compile and the syntax check on every run, negating the caching win this comment describes --
+      # confirmed by reproducing the double execution locally before switching to this direct form. This
+      # also finally activates the build:tsc/build:verify split from Phase 0, which no ci.yml step
+      # exercised until now.
       - name: Build miner CLI
         if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npx turbo run build:tsc build:verify --filter=@loopover/miner
-      # Same "separate job, no self-heal" drift-class gap as MCP's own build drift check above, and the
-      # ORIGINAL motivating case for it: packages/loopover-miner/lib/cross-repo-evaluation.{ts,js,d.ts}
-      # are real files a contributor edits directly, not obscure internals.
-      - name: Miner build drift check
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.engine == 'true' }}
-        run: node scripts/check-build-drift.mjs miner
       # loopover-miner depends on @loopover/engine for real too (same relationship as loopover-mcp above
       # -- packages/loopover-miner/package.json lists it as a dependency), so this and "Build miner CLI"
       # above now also trigger on an engine-only PR, matching "Build MCP"/"MCP package check"'s existing
@@ -557,7 +552,7 @@ jobs:
       - name: Miner package check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run test:miner-pack
-      # scripts/check-miner-deployment-docs.mjs reads packages/loopover-engine/src/miner/**/*.ts
+      # scripts/check-miner-deployment-docs.ts reads packages/loopover-engine/src/miner/**/*.ts
       # (ENGINE_MINER_DIR) to build the registered-commands list checked against DEPLOYMENT.md, so an
       # engine-only PR touching that directory used to skip this audit entirely.
       - name: Miner deployment docs audit
@@ -626,6 +621,60 @@ jobs:
         with:
           files: ./review-enrichment/coverage/lcov.info
           flags: rees
+          disable_search: true
+          override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
+          override_commit: ${{ github.event.pull_request.head.sha }}
+          override_pr: ${{ github.event.pull_request.number }}
+          fail_ci_if_error: true
+      # control-plane is not an npm workspace member (its own package-lock.json), so it needs its own
+      # cache entry -- same restore/save-after-success pattern and fork/trusted key split as REES above.
+      - name: Restore control-plane node_modules cache
+        id: control-plane-node-modules-cache
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: control-plane/node_modules
+          key: npm-control-plane-${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true) && 'fork' || 'trusted' }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('control-plane/package.json', 'control-plane/package-lock.json') }}
+      - name: Control-plane install
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true') && steps.control-plane-node-modules-cache.outputs.cache-hit != 'true' }}
+        run: npm run control-plane:install
+      - name: Save control-plane node_modules cache
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true') && steps.control-plane-node-modules-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: control-plane/node_modules
+          key: ${{ steps.control-plane-node-modules-cache.outputs.cache-primary-key }}
+      - name: Control-plane build and tests
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true' }}
+        run: npm run control-plane:test
+      - name: Control-plane coverage
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true' }}
+        run: npm run control-plane:coverage || true
+      - name: Verify control-plane coverage report exists
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true' }}
+        run: |
+          if [ ! -s control-plane/coverage/lcov.info ]; then
+            echo "::error title=Control-plane coverage::control-plane/coverage/lcov.info is missing or empty"
+            exit 1
+          fi
+      - name: Upload control-plane coverage to Codecov
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true') && github.event.pull_request.head.repo.fork != true }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./control-plane/coverage/lcov.info
+          flags: control-plane
+          disable_search: true
+          override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
+          fail_ci_if_error: true
+      - name: Upload control-plane coverage to Codecov (fork PR tokenless)
+        if: ${{ (github.event_name == 'push' || needs.changes.outputs.controlPlane == 'true') && github.event.pull_request.head.repo.fork == true }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: ./control-plane/coverage/lcov.info
+          flags: control-plane
           disable_search: true
           override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
           override_commit: ${{ github.event.pull_request.head.sha }}
@@ -777,7 +826,7 @@ jobs:
     # packages/loopover-engine, packages/loopover-miner, and packages/discovery-index via their entries in
     # vitest.config.ts's coverage.include, exercised by the root test/** suite these shards already run).
     # Draft PRs still skip the whole fan-out (#6448), so these triggers only apply to ready PRs.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -810,7 +859,7 @@ jobs:
       # miner + ui-kit + ui + extension) was very likely discarded every run in favor of a shard's
       # engine-only one. Splitting the prefixes gives each job's own lineage instead of racing; within THIS
       # prefix, the 6 shards below still race each other for one slot, which is fine since they all save the
-      # exact same content (only @loopover/engine#build runs in this job) -- whichever shard wins, the
+      # exact same content (engine + mcp + miner builds all run in this job) -- whichever shard wins, the
       # content is equivalent, unlike the cross-job case this split just fixed.
       - name: Restore Turborepo cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -821,6 +870,50 @@ jobs:
             turbo-tests-${{ hashFiles('package-lock.json') }}-
       - name: Build engine package
         run: npx turbo run build --filter=@loopover/engine
+      # packages/loopover-mcp and packages/loopover-miner both ship .ts source only (no compiled .js
+      # committed -- gitignored, same as @loopover/engine's dist/), but this job's own SKIP_MCP_CLI_HARNESS/
+      # SKIP_MINER_TEST_HARNESS env below (see "Test with coverage") can both be false, which spawns the
+      # REAL built CLI binary (packages/loopover-mcp/bin/loopover-mcp.js / packages/loopover-miner/bin/
+      # loopover-miner.js) as a subprocess -- AND, separately, every mcp-cli-*/miner-mcp-* test that instead
+      # runs the .ts entry directly via `node --experimental-strip-types` (test/unit/support/mcp-cli-harness.ts
+      # et al.) still needs this: that flag only strips types from the directly-executed entry file, it does
+      # NOT make plain Node resolve a `.js`-suffixed relative import to a sibling .ts the way Vite/esbuild do
+      # (confirmed live: `node --experimental-strip-types packages/loopover-mcp/bin/loopover-mcp.ts doctor`
+      # with no compiled lib/ present fails ERR_MODULE_NOT_FOUND on lib/local-branch.js, the CLI's own first
+      # local import) -- so bin/lib's compiled .js has to physically exist on disk either way. Before the
+      # compiled output stopped being committed, this job's checkout already had it for free; now it needs
+      # building here too, same as validate-code's own "Build MCP"/"Build miner CLI" steps.
+      #
+      # --force on both: turbo.json's @loopover/mcp#build task now declares real `outputs` (see its own
+      # comment) so a cache HIT restores the actual files instead of only the log, but this job's 3 parallel
+      # shards still race on ONE shared turbo-tests- cache key/slot (below), and a hit-from-a-sibling-shard
+      # is exactly the kind of cross-job interaction that's expensive to keep re-verifying under. --force
+      # makes this job's own correctness independent of that entirely: it always executes for real here,
+      # never trusts a hit (from any source, this run or a prior one) for the two packages hundreds of
+      # downstream tests treat as load-bearing. The packages are small (a few seconds each, confirmed
+      # locally) -- this is a deliberate, small, fixed cost traded for eliminating an entire class of
+      # cache-hit-but-file-missing failures, not a workaround. Unconditional (no `if:`), matching "Build
+      # engine package" immediately above; --force doesn't skip the write side, so this run's own build
+      # still contributes a correct, restorable cache entry for anything else that reads the turbo-tests-
+      # prefix (this job's own next run, or a future validate-tests-only invocation).
+      - name: Build MCP
+        run: npx turbo run build --filter=@loopover/mcp --force
+      - name: Build miner CLI
+        run: npx turbo run build:tsc build:verify --filter=@loopover/miner --force
+      # Fail fast and unambiguously, right here, if either binary is somehow still missing after the two
+      # --force builds above -- instead of dozens of confusing per-test MODULE_NOT_FOUND/ENOENT failures far
+      # downstream in "Test with coverage" that all look unrelated to each other and to this step. This
+      # should be structurally impossible now (both builds above are forced, never cache-skipped), but it's
+      # a one-line, load-bearing tripwire for a class of bug that has already cost real debugging time twice.
+      - name: Verify MCP/miner CLI binaries were actually built
+        run: |
+          set -euo pipefail
+          for f in packages/loopover-mcp/bin/loopover-mcp.js packages/loopover-miner/bin/loopover-miner.js; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing after Build MCP/Build miner CLI both ran with --force. Every mcp-cli-*/miner-* test below will fail with a confusing MODULE_NOT_FOUND/ENOENT instead of this message -- something deeper changed (e.g. the build script itself stopped writing to this path); this is not a cache/timing issue, --force rules that out."
+              exit 1
+            fi
+          done
       - name: Save Turborepo cache
         if: ${{ !cancelled() }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -834,7 +927,7 @@ jobs:
       # across every push-to-main run). key never actually matches (no save ever uses this literal
       # string); it exists only so the step always falls through to the restore-keys prefix match,
       # picking whatever the most recent refresh wrote. A cache MISS here is always safe: see
-      # scripts/compute-test-shards.mjs's fallback -- it splits evenly across shards when no timing
+      # scripts/compute-test-shards.ts's fallback -- it splits evenly across shards when no timing
       # data is available for a file (or none at all), the same balance vitest's own --shard already
       # gives today, so this can only make shard balance better than today's baseline, never worse.
       - name: Restore test timing cache
@@ -895,7 +988,7 @@ jobs:
           # top-level `if:` above is unchanged), so a scoped miss is caught within minutes of merge, not never.
           # Kill switch: set the repo variable SCOPED_TEST_SELECTION_ENABLED to "false" to force the full suite
           # for every PR (e.g. if a gap is ever found) without a revert PR.
-          SCOPED_TEST_SELECTION: ${{ github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true') }}
+          SCOPED_TEST_SELECTION: ${{ github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.controlPlane != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true') }}
         run: |
           EXCLUDE_ARGS=()
           if [ "$SKIP_MCP_CLI_HARNESS" = "true" ]; then
@@ -943,12 +1036,21 @@ jobs:
             # shards, every run sampled. Deliberately not applied to the scoped-selection branch above:
             # that file set isn't known until vitest resolves --changed itself, so a precomputed
             # assignment can't cover it without duplicating vitest's own dependency-graph resolution here.
-            # compute-test-shards.mjs enforces its own hard invariant (the union of all 3 shards' files
+            # compute-test-shards.ts enforces its own hard invariant (the union of all 3 shards' files
             # must exactly equal the discovered file set, no file missing or duplicated) and refuses to
             # write output at all if that's ever violated, so a bug here fails this step loudly rather
             # than silently dropping a test file from CI.
-            node scripts/compute-test-shards.mjs --shards=3 --timing=test-timing.json --output=shard-assignment.json
-            mapfile -t SHARD_FILES < <(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")
+            node --experimental-strip-types scripts/compute-test-shards.ts --shards=3 --timing=test-timing.json --output=shard-assignment.json
+            # #7767: capture via a checked assignment so a throw in the node one-liner (bad matrix.shard
+            # value, corrupt/missing shard-assignment.json) actually aborts this step -- the old
+            # `mapfile -t SHARD_FILES < <(node -e ...)` ran node in a subshell whose non-zero exit was
+            # swallowed (mapfile itself returns 0), leaving SHARD_FILES empty and silently making vitest
+            # run the entire suite instead of its slice. Same fix idiom as compose_file_args (#7765).
+            if ! SHARD_FILES_RAW="$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")"; then
+              echo "::error::failed to resolve shard file list for shard ${{ matrix.shard }}"
+              exit 1
+            fi
+            mapfile -t SHARD_FILES <<< "$SHARD_FILES_RAW"
             npm run test:coverage -- --maxWorkers=4 "${SHARD_FILES[@]}" --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
           fi
       - name: Test failure guidance
@@ -1039,12 +1141,23 @@ jobs:
   # vitest.config.ts's own comment describes; Codecov's patch gate (changed-lines only) doesn't cover a
   # whole-repo regression outside the diff, so this is what actually restores that backstop for CI, using
   # vitest's own --mergeReports against each shard's uploaded blob report.
+  #
+  # That "merged = whole-suite" assumption breaks when scoped test selection (#ci-scoped-test-selection,
+  # see the shard job's own SCOPED_TEST_SELECTION comment above) was active for this run: all 3 shards then
+  # ran the SAME narrow `--changed=origin/main` subset (not a partition of the ~2,900-test full suite), so
+  # merging them still only reconstructs that narrow slice's coverage -- correctly high for the files it
+  # touches, but the threshold judges the WHOLE include set, so it false-fails even a fully-tested scoped
+  # PR (confirmed live: a 3-file packages/loopover-mcp-only PR with 100% coverage on its own two touched
+  # test files still reported 0%/80% and failed). This job disables the threshold in that same case, via
+  # the identical SCOPED_TEST_SELECTION condition -- Codecov's patch gate already enforces real per-line
+  # coverage on a scoped PR's actual diff regardless, so nothing is lost by skipping the whole-suite
+  # backstop specifically when it can't see the whole suite.
   validate-tests-merge:
     name: validate-tests-merge
     needs: [changes, validate-tests]
     # Same trigger as validate-tests: whenever shards ran (REES/mcp/engine/miner/discoveryIndex-only PRs
     # included), merge their reports too.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -1067,6 +1180,12 @@ jobs:
           path: all-blob-reports
           merge-multiple: true
       - name: Merge shard coverage and check the global threshold
+        env:
+          # Mirrors validate-tests' own SCOPED_TEST_SELECTION condition exactly (this job already has
+          # `needs.changes` available). vitest.config.ts checks this var for TRUTHINESS, not `=== 'true'`,
+          # so the false branch must be an empty string (falsy), not the literal string "false" (which JS
+          # treats as truthy) -- that's why this is a `&& 'true' || ''` expression, not a bare boolean.
+          COVERAGE_NO_THRESHOLDS: ${{ (github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.controlPlane != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true')) && 'true' || '' }}
         run: npx vitest run --coverage --mergeReports=all-blob-reports
 
   # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.

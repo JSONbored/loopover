@@ -62,14 +62,16 @@ export function dupWinnerLinkedDuplicateWinnerNumber(
  * Live-reconcile the duplicate cluster's open siblings before the winner is elected (#dup-winner / audit #15).
  *
  * The stored open-PR cache ({@link listOtherOpenPullRequests}) lags GitHub: a sibling that was closed/merged on
- * GitHub but is still cached `open` would keep "winning" the duplicate cluster, demoting the real lowest-OPEN PR
- * to a loser and auto-closing it via the `duplicate_pr_risk` blocker. Only a LOWER-numbered overlapping sibling
- * can demote this PR from winner, so re-fetch the LIVE state of just those siblings and drop any that are no
- * longer open. Then the downstream election ({@link isDuplicateClusterWinnerByClaim}) reflects ground truth.
+ * GitHub but is still cached `open` would keep "winning" the duplicate cluster, demoting the true earliest
+ * claimant to a loser and auto-closing it via the `duplicate_pr_risk` blocker. Duplicate-winner election is
+ * claim-time based ({@link resolveDuplicateClusterWinnerNumber}, #3816): any overlapping sibling — lower or
+ * higher PR number — can demote this PR if it claimed the linked issue earlier, so re-fetch the LIVE state of
+ * all overlapping siblings and drop any that are no longer open. Then the downstream election
+ * ({@link isDuplicateClusterWinnerByClaim}) reflects ground truth.
  *
  * FAIL-OPEN to the stored state: a sibling is dropped ONLY on a positive "not open" confirmation — an unreadable
  * live fetch keeps it, so a transient GitHub hiccup never newly spares a real loser. Flag-OFF (default), no
- * linked issues, or no lower overlapping sibling ⇒ returns the input unchanged with no extra API calls.
+ * linked issues, or no overlapping sibling ⇒ returns the input unchanged with no extra API calls.
  */
 export async function reconcileLiveDuplicateSiblings(
   env: Env,

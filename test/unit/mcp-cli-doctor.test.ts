@@ -55,12 +55,22 @@ describe("loopover-mcp CLI — doctor", () => {
       expect.arrayContaining([
         expect.objectContaining({ id: "auth", title: "Auth", status: "pass" }),
         expect.objectContaining({ id: "api_compatibility", title: "API compatibility", status: "pass" }),
-        expect.objectContaining({ id: "local_repo_readiness", title: "Local repo readiness", status: "pass" }),
+        // Not asserting status here: this group's own "client_path" sub-check (findExecutable("loopover-mcp"))
+        // does a plain PATH scan for a "loopover-mcp" executable, which resolves via node_modules/.bin's npm-
+        // workspace bin-link -- but npm only creates that symlink if bin/loopover-mcp.js already exists at
+        // `npm ci` time. Since compiled output is no longer committed (build(mcp,miner): stop committing
+        // compiled .js/.d.ts entirely), every CI job's npm ci runs before any build step, so the symlink is
+        // never created there, regardless of a later build -- this group's status is genuinely "warn" in that
+        // environment and "pass" only where something else (a real global install, e.g.) already put
+        // loopover-mcp on PATH. Checked explicitly below instead, tolerating either.
+        expect.objectContaining({ id: "local_repo_readiness", title: "Local repo readiness" }),
         expect.objectContaining({ id: "scorer_availability", title: "Scorer availability", status: "warn" }),
         expect.objectContaining({ id: "output_safety", title: "Output safety", status: "pass" }),
         expect.objectContaining({ id: "next_command", title: "Next command", status: "warn" }),
       ]),
     );
+    const localRepoReadiness = payload.checklist.find((group) => group.id === "local_repo_readiness");
+    expect(["pass", "warn"]).toContain(localRepoReadiness?.status);
     expect(payload.nextCommand).toMatchObject({
       command: "loopover-mcp doctor --json",
       reason: expect.stringContaining("local scorer"),

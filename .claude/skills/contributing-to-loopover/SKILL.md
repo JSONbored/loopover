@@ -202,7 +202,7 @@ Run the matching command(s) and **commit the regenerated file(s)** — CI fails 
 | A Cloudflare binding/var in `wrangler.jsonc` | `npm run cf-typegen` | `worker-configuration.d.ts` |
 | Drizzle schema (`src/db/schema.ts`) | `npm run drizzle:generate` | the new `migrations/NNNN_*.sql` |
 | Added a raw-SQL migration | (none — just author it) | next **contiguous** `migrations/NNNN_snake.sql` |
-| `src/selfhost/**` (or a few other scanned files — see `scripts/gen-selfhost-env-reference.mjs`'s `DEFAULT_SOURCE_ROOTS`) adding/removing an `env.SOMETHING` read | `npm run selfhost:env-reference` | `apps/loopover-ui/src/lib/selfhost-env-reference.ts` — the doc cites the file only (not `file:line`, deliberately, so an unrelated line shift elsewhere in the file never makes this go stale) |
+| `src/selfhost/**` (or a few other scanned files — see `scripts/gen-selfhost-env-reference.ts`'s `DEFAULT_SOURCE_ROOTS`) adding/removing an `env.SOMETHING` read | `npm run selfhost:env-reference` | `apps/loopover-ui/src/lib/selfhost-env-reference.ts` — the doc cites the file only (not `file:line`, deliberately, so an unrelated line shift elsewhere in the file never makes this go stale) |
 | CLI command surface | `npm run command-reference` | the generated command-reference doc |
 | UI files (`apps/loopover-ui/**`) | `npm --workspace @loopover/ui run format` | formatted files |
 
@@ -221,9 +221,9 @@ npm audit --audit-level=moderate          # the dependency-review job's local eq
 
 `npm run test:ci` runs, and must pass, **all of**: `actionlint`, `db:migrations:check`,
 `db:schema-drift:check`, `selfhost:env-reference:check`, `selfhost:validate-observability`,
-`cf-typegen:check`, `build:mcp:check`, `build:miner:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:live-gate-parity`, `test:driver-parity`, the
-`@loopover/engine` workspace's own test run, `test:workers`, `test:mcp-pack`,
-`test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
+`cf-typegen:check`, `typecheck`, `test:coverage`, `test:engine-parity`, `test:live-gate-parity`, `test:driver-parity`, the
+`@loopover/engine` workspace's own test run, `test:workers`, `build:mcp`, `test:mcp-pack`,
+`build:miner`, `test:miner-pack`, `rees:test`, `ui:openapi:check`, `ui:openapi:settings-parity`,
 `ui:version-audit`, `docs:drift-check`, `manifest:drift-check`, `engine-parity:drift-check`,
 `command-reference:check`, `ui:lint`, `ui:typecheck`, `ui:test`, `ui:build`. If any step fails, fix it
 and re-run — do not push a red tree. (Full per-check table in `reference.md`; check `package.json`'s

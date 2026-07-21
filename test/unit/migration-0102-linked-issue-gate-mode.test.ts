@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const MIGRATION_FILE = "0102_fix_linked_issue_gate_mode_default.sql";
 
 // Replays every migrations/*.sql file BEFORE 0102 into a fresh in-memory DB (mirrors
-// scripts/check-schema-drift.mjs's own "replay migrations into node:sqlite" approach), so the table shape
+// scripts/check-schema-drift.ts's own "replay migrations into node:sqlite" approach), so the table shape
 // this test inserts into is exactly what migration 0102 itself was written against -- not a guess. The
 // TestD1Database helper (test/helpers/d1.ts) can't be reused here: it concatenates and applies EVERY
 // migration (including 0102) up front, so the `repository_settings` table would already be empty-and-fixed

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // #7460: readReleasePrepEntries()/dependencyChange()/readConstant() synthesize changelog entries for
 // release-prep-only changes (dependency bumps, compatibility-constant updates) that real commit-message
 // parsing would never surface -- these three functions had no coverage at all. Mirrors
-// test/unit/mcp-release.test.ts's pattern for the already-tested sibling logic in mcp-release-core.mjs.
+// test/unit/mcp-release.test.ts's pattern for the already-tested sibling logic in mcp-release-core.ts.
 
 const MCP_PACKAGE_JSON = "packages/loopover-mcp/package.json";
 const ROOT_PACKAGE_JSON = "package.json";
@@ -56,7 +56,7 @@ function setFixture(current: FileMap, previous: FileMap) {
   });
 }
 
-const { readReleasePrepEntries, dependencyChange, readConstant } = await import("../../scripts/generate-mcp-changelog.mjs");
+const { readReleasePrepEntries, dependencyChange, readConstant } = await import("../../scripts/generate-mcp-changelog.js");
 
 describe("readConstant (#7460)", () => {
   it("extracts a matching exported string constant", () => {

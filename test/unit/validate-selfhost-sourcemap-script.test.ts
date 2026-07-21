@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateSourcemap } from "../../scripts/validate-selfhost-sourcemap.mjs";
+import { validateSourcemap } from "../../scripts/validate-selfhost-sourcemap.js";
 
 const BUNDLE = "/tmp/dist/server.mjs";
 const MAP = "/tmp/dist/server.mjs.map";
@@ -29,7 +29,7 @@ function harness(files: Record<string, string | undefined>) {
   };
 }
 
-describe("validate-selfhost-sourcemap.mjs (#7458)", () => {
+describe("validate-selfhost-sourcemap.ts (#7458)", () => {
   it("passes a well-formed minimal source map", () => {
     expect(
       validateSourcemap(

@@ -403,6 +403,13 @@ declare global {
      *  6-hour backfillRegisteredRepositories freshness window. Default OFF — unset/false means the cron tick
      *  enqueues NO reconciliation job, so the worker is byte-identical to today. */
     LOOPOVER_PR_RECONCILIATION?: string;
+    /** Self-heal (#webhook-reorder-clobber): when truthy, the same short-interval cron as LOOPOVER_PR_RECONCILIATION
+     *  ALSO re-checks every active_review_tracking row stuck in `status: "active"` longer than 15 minutes against
+     *  LIVE (non-cached) GitHub state, and terminalizes the ones GitHub confirms are actually closed — a delayed
+     *  webhook job can otherwise restart tracking for a PR that already closed, orphaning the row forever (see
+     *  src/review/active-review-reconciliation.ts). Default OFF — unset/false means the cron tick enqueues NO
+     *  reconciliation job, so the worker is byte-identical to today. */
+    LOOPOVER_ACTIVE_REVIEW_RECONCILIATION?: string;
     /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
      *  section — at review time the codebase vector index is queried for code/docs semantically related to the
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference

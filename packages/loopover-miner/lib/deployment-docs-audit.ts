@@ -3,7 +3,7 @@
 // LOOPOVER_MINER_* / MINER_* env var, repo-relative file path, and `loopover-miner <subcommand>`
 // it documents still exists under packages/loopover-miner/**. A rename or move that leaves the doc
 // stale then fails CI with a message naming the exact stale claim, instead of misleading operators.
-// Wired into CI via `npm run test:miner-deployment-docs-audit` (scripts/check-miner-deployment-docs.mjs)
+// Wired into CI via `npm run test:miner-deployment-docs-audit` (scripts/check-miner-deployment-docs.ts)
 // and the live unit suite in test/unit/miner-deployment-docs-audit.test.ts (#6158).
 
 /** Parsed claims a DEPLOYMENT.md makes about the miner's runtime surface. */

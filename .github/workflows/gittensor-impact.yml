@@ -1,6 +1,6 @@
 name: Gittensor Impact
 
-# Renders the README contributor-impact card with scripts/gittensor-impact-card.mjs
+# Renders the README contributor-impact card with scripts/gittensor-impact-card.ts
 # (our own script, styled to this repo's brand — see apps/loopover-ui/src/styles.css)
 # and publishes it to the gittensor-impact-assets branch, which the README embeds
 # directly. No third-party action: this replaced matthewevans/gittensor-impact-action
@@ -39,7 +39,7 @@ jobs:
           node-version: 22.23.1
 
       - name: Render impact card
-        run: node scripts/gittensor-impact-card.mjs JSONbored/loopover gittensor-impact-dark.svg
+        run: node --experimental-strip-types scripts/gittensor-impact-card.ts JSONbored/loopover gittensor-impact-dark.svg
 
       - name: Publish to gittensor-impact-assets
         env:

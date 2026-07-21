@@ -12,6 +12,7 @@ has documented compatibility issues in TanStack/Vite environments). Both apps sh
 (#6037, a bounded spike, `maintainer-only`) before porting to metagraphed as a shared package.
 
 **Until #6037 lands with a proven pattern:**
+
 - Every issue that would otherwise ask a contributor to hand-build a new `docs.*.tsx` route (in
   either repo) should stay `maintainer-only`, or better, not be filed at all — file it (or note it
   as a gap in the digest) but don't unlock it for contributors.
@@ -42,6 +43,7 @@ Two products, self-host-first:
   hardcoding either name into a new issue body rather than assuming either direction.
 
 **Standing priorities named by the maintainer (2026-07-14), not yet issue-backed:**
+
 - **AMS selfhost hardening, round 2.** Miner Wave 4 ("AMS Hardening & Packaging") fully closed
   (151/151) on 2026-07-14 — that backlog is empty, not hiding more maintainer-only work. Getting more
   requires a fresh gap-audit (read the current `packages/loopover-miner`/`-engine` code against what
@@ -53,7 +55,7 @@ Two products, self-host-first:
   (`packages/loopover-miner/DEPLOYMENT.md` + 10 files under `docs/`) exist only as raw markdown, never
   ported to the real docs website (`apps/loopover-ui/src/routes/docs.*.tsx`) the way ORB's
   self-hosting docs already are — filed as epic #6012 (milestone `ORB - Long Term Features &
-  Improvements`, not its own milestone — see the milestone-discipline note above) with one sub-issue
+Improvements`, not its own milestone — see the milestone-discipline note above) with one sub-issue
   per source file. Check #6012's sub-issue completion state before assuming this work still needs
   scoping from scratch.
 
@@ -69,7 +71,7 @@ layout or design element, only what data/actions a surface needs to expose.
 
 **Settlement/economics — externally blocked, direction still in flux.** #6098's pluggable
 settlement-backend interface (gittensor-owned or self-built) is the correct spec-level answer and
-isn't changing. But *which* backend wins is blocked on gittensor subnet-side alignment (#4781) and, as
+isn't changing. But _which_ backend wins is blocked on gittensor subnet-side alignment (#4781) and, as
 of 2026-07-21, that conversation is still live — gittensor's own team was independently discussing
 replacing a pool-funding model with a live repo-registry + emission-share-reweight endpoint instead
 (see #6569's comment history). Do not assume either model is final when scoping new economics-adjacent
@@ -78,7 +80,7 @@ not buildable work yet.
 
 **BYOR + APR are both confirmed in scope** (#7589 epic). One concrete, expensive lesson from
 2026-07-21: APR repo creation does **not** use a new GitHub org or App-installation-token — everything
-stays under the JSONbored personal account, and repo creation goes through the *existing* "Loopover
+stays under the JSONbored personal account, and repo creation goes through the _existing_ "Loopover
 OAuth" app (`src/auth/github-oauth.ts`) with a `repo`-scope extension, calling `POST /user/repos`. An
 earlier version of this plan (org + installation token) was filed as a real issue, had to be corrected
 publicly, and nearly cost a contributor wasted work before anyone picked it up. If a future run touches
@@ -102,16 +104,16 @@ costs a contributor's wasted PR and a public correction.
 
 ## Milestone taxonomy (as of 2026-07-14 — re-check before trusting, this moves fast)
 
-| Milestone | Nature | Contributor-open? |
-|---|---|---|
-| `Miner Wave N — <theme>` (no suffix) | A finished or active AMS-hardening-style wave | Mostly yes once released |
-| `Miner Wave N — <theme> (maintainer)` | Business/legal/architecture track (currently Wave 5, Rent-a-Loop) | Mostly no — but check individual issues, some concrete implementation sub-tasks are deliberately carved out and unlocked even inside a `(maintainer)`-titled milestone |
-| `Miner Wave 4.5 — AMS Hardening Round 2` | **New, created 2026-07-15.** The home for recurring post-Wave-4 gap-audit findings in `packages/loopover-miner`/`packages/loopover-engine` — correctness bugs, unenforced documented contracts, stale comments, small hardening gaps. Every future "AMS selfhost hardening round N" audit files here, not a fresh milestone each time. | Yes — same shape as Wave 4's own contributor-open issues |
-| `AMS Cloud Readiness (maintainer)` | Hosted **multi-tenant SaaS** AMS — NOT the same thing as "AMS selfhost hardening" despite the name similarity | Mostly no (architecture/billing/SLA decisions) — a handful of pure research-spike/audit/load-test issues are deliberately contributor-eligible; check labels per-issue |
-| `ORB Cloud Readiness (maintainer)` | Same shape, for ORB's hosted SaaS story | Mostly no, same caveat — the first several issues in this milestone (#4878-4884-style, "extract X into loopover-engine") are often pure refactors miscategorized here, not actually tenant/business-specific — read the body, not just the milestone |
-| `ORB - Long Term Features & Improvements` | Grab-bag: some genuine self-host feature/bug work, some product-design epics awaiting maintainer subjective calls | Mixed — read each body |
-| `LoopOver Rebrand Migration (maintainer)` | Brand/infra cutover | No |
-| Unmilestoned | Should be rare — every gardening-generated issue gets a real milestone (see below) | If you find one, fold it into the closest-fitting existing milestone rather than leave it adrift |
+| Milestone                                 | Nature                                                                                                                                                                                                                                                                                                                                 | Contributor-open?                                                                                                                                                                                                                                    |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Miner Wave N — <theme>` (no suffix)      | A finished or active AMS-hardening-style wave                                                                                                                                                                                                                                                                                          | Mostly yes once released                                                                                                                                                                                                                             |
+| `Miner Wave N — <theme> (maintainer)`     | Business/legal/architecture track (currently Wave 5, Rent-a-Loop)                                                                                                                                                                                                                                                                      | Mostly no — but check individual issues, some concrete implementation sub-tasks are deliberately carved out and unlocked even inside a `(maintainer)`-titled milestone                                                                               |
+| `Miner Wave 4.5 — AMS Hardening Round 2`  | **New, created 2026-07-15.** The home for recurring post-Wave-4 gap-audit findings in `packages/loopover-miner`/`packages/loopover-engine` — correctness bugs, unenforced documented contracts, stale comments, small hardening gaps. Every future "AMS selfhost hardening round N" audit files here, not a fresh milestone each time. | Yes — same shape as Wave 4's own contributor-open issues                                                                                                                                                                                             |
+| `AMS Cloud Readiness (maintainer)`        | Hosted **multi-tenant SaaS** AMS — NOT the same thing as "AMS selfhost hardening" despite the name similarity                                                                                                                                                                                                                          | Mostly no (architecture/billing/SLA decisions) — a handful of pure research-spike/audit/load-test issues are deliberately contributor-eligible; check labels per-issue                                                                               |
+| `ORB Cloud Readiness (maintainer)`        | Same shape, for ORB's hosted SaaS story                                                                                                                                                                                                                                                                                                | Mostly no, same caveat — the first several issues in this milestone (#4878-4884-style, "extract X into loopover-engine") are often pure refactors miscategorized here, not actually tenant/business-specific — read the body, not just the milestone |
+| `ORB - Long Term Features & Improvements` | Grab-bag: some genuine self-host feature/bug work, some product-design epics awaiting maintainer subjective calls                                                                                                                                                                                                                      | Mixed — read each body                                                                                                                                                                                                                               |
+| `LoopOver Rebrand Migration (maintainer)` | Brand/infra cutover                                                                                                                                                                                                                                                                                                                    | No                                                                                                                                                                                                                                                   |
+| Unmilestoned                              | Should be rare — every gardening-generated issue gets a real milestone (see below)                                                                                                                                                                                                                                                     | If you find one, fold it into the closest-fitting existing milestone rather than leave it adrift                                                                                                                                                     |
 
 **Every gardening-generated issue gets a milestone — none ship unmilestoned.** Default to the
 closest-fitting existing one. Creating a new milestone is a much higher bar than it sounds — confirmed
@@ -131,6 +133,7 @@ confirmation, per the maintainer's own stated preference (2026-07-15): "figure i
 ## What's safe to unleash — the actual test
 
 A concrete engineering task is safe to hand to a contributor when:
+
 - It has a clear existing precedent to follow in the codebase (another file/module/pattern already
   does the analogous thing), so "how" isn't itself an open design question.
 - It doesn't require a business/product decision (pricing, ToS, what to charge, whether to build a
@@ -151,6 +154,35 @@ A concrete engineering task is safe to hand to a contributor when:
 When genuinely unsure, default to `maintainer-only` — a wrongly-locked issue costs one manual unlock
 later; a wrongly-unlocked one costs a contributor's wasted PR and possibly a bad precedent.
 
+## Never unlock an existing `maintainer-only` issue during routine gardening — hard rule
+
+**What happened, 2026-07-21:** a gardening pass filed 8 issues correctly as `maintainer-only` under
+`AMS Cloud Readiness`/`ORB Cloud Readiness` (tenant dashboard/billing exposure, notification-infra
+extension, PagerDuty paging into the kill-switch trip path and into control-plane provisioning
+failures, hosted cross-service wiring for a not-yet-live hosted ORB), then — roughly an hour later,
+in the same run — flipped all 8 to `help wanted` + `gittensor:feature`, removing `maintainer-only`.
+No safety-test re-check was recorded; the flip just happened. Three contributor PRs
+(#7706, #7718, #7719) **merged** against these issues before the maintainer caught it and the labels
+were reverted. This is real shipped code touching kill-switch alerting, tenant provisioning failure
+paging, and tenant-facing data exposure — the exact blast radius this skill's safety test exists to
+prevent — that landed without maintainer design review.
+
+**The rule, going forward:** routine gardening (Pass 1, 2, or 3) must never remove `maintainer-only`
+from an issue that already carries it. Unlocking an existing issue is a strictly bigger decision than
+creating a new one correctly-labeled from the start, and this skill's automation does not get to make
+that call unattended. If a pass concludes an existing `maintainer-only` issue's scope has become
+genuinely safe to unlock (e.g. the blocking architecture question it depended on got resolved), leave
+the label alone and say so in the digest for the maintainer to action manually — do not edit the label.
+This applies with no exception inside `AMS Cloud Readiness`, `ORB Cloud Readiness`, and
+`Miner Wave 5 — Rent-a-Loop (maintainer)` — every issue already filed there was deliberately gated by a
+human judgment call about the hosted-product/security boundary, not by this skill's own heuristics, so
+this skill re-opening that gate is categorically out of scope regardless of how mechanical an
+individual issue's Deliverables read.
+
+The only label-removal a gardening pass may still perform on an existing issue is the ordinary
+Pass-1 stale-issue close path (closing a _finished_ issue outright) — never a `maintainer-only` strip
+on an issue that stays open.
+
 ## The gate only enforces what the issue explicitly says — never rely on implied intent
 
 **Confirmed by the maintainer, 2026-07-15:** the loopover-orb review agent (the gate) checks a PR
@@ -161,7 +193,7 @@ is.
 
 **What this broke once already:** issue #5996 (a combined ORB+AMS self-host doc) explained in
 Context that public-facing docs live on the website, not as repo markdown, and had one Requirements
-bullet saying so. A contributor's PR (#6011, filed *after* that bullet was added) still added a new
+bullet saying so. A contributor's PR (#6011, filed _after_ that bullet was added) still added a new
 root-level `.md` file plus edited three other markdown files as its "fix" — a plausible-looking wrong
 interpretation the gate had nothing more explicit to check against, since the constraint wasn't
 phrased as an unambiguous, standalone rule.
@@ -169,6 +201,7 @@ phrased as an unambiguous, standalone rule.
 **How to apply, every time a deliverable's file type/path/format actually matters (not just docs —
 also applies to "this must be a native GraphQL mutation not a markdown checklist," "this must reuse
 the existing X pattern not invent a new one," etc.):**
+
 - State the hard constraint as its own callout or leading Requirements bullet, not folded into
   prose Context.
 - Name the exact file path/pattern the deliverable must match.
@@ -176,10 +209,10 @@ the existing X pattern not invent a new one," etc.):**
   "adding a new `.md` file anywhere in the repo, including the root," "editing README.md to add this
   content instead of creating the route file").
 - For anything doc-shaped, use language close to: `> ⚠️ Read this before starting. The deliverable
-  is a website page at <exact path>. It is not a markdown file. A PR that adds/edits any .md file as
-  the fix does NOT resolve this issue and will be closed.` — see #5996 or any of #6012's sub-issues
+is a website page at <exact path>. It is not a markdown file. A PR that adds/edits any .md file as
+the fix does NOT resolve this issue and will be closed.` — see #5996 or any of #6012's sub-issues
   for the exact wording already proven out.
-- Assume the issue text is the *only* thing an AI-harness-driven contributor's agent will read before
+- Assume the issue text is the _only_ thing an AI-harness-driven contributor's agent will read before
   acting — don't assume it will also read this skill file, the repo's CLAUDE.md, or common sense
   about the file type.
 
@@ -187,7 +220,7 @@ the existing X pattern not invent a new one," etc.):**
 own words, 2026-07-21: "gittensor miners are lazy and don't care, so we need to be extremely clear
 about what's wanted/needed").** If the codebase already has an analogous implementation (a sibling
 `vite-*-api.ts` plugin, an existing alerting integration, an existing driver-factory shape, an
-existing CLI command family), the issue must name the *exact* file to mirror as a leading, standalone
+existing CLI command family), the issue must name the _exact_ file to mirror as a leading, standalone
 `> ⚠️ Required pattern` callout — not buried in prose Context — and must state explicitly what does
 NOT satisfy the issue (a differently-shaped implementation, a second/parallel mechanism, an
 unspecified choice among multiple plausible artifacts). **What this broke once already:** a batch of
@@ -195,7 +228,7 @@ issues re-labeled contributor-eligible on 2026-07-21 had their labels flipped bu
 left saying "maintainer-only" verbatim in the footer, and one issue's own Deliverables left the
 actual artifact ambiguous ("a CLI command, MCP tool, or miner-ui data source" — three different
 things, no pick). Caught only because the maintainer asked to re-verify rather than take it on faith.
-Every contributor-facing issue's *entire* body — not just its labels — has to be internally
+Every contributor-facing issue's _entire_ body — not just its labels — has to be internally
 consistent and unambiguous, checked by rereading the finished body end-to-end before publishing, not
 assumed correct because the individual edits each seemed right in isolation.
 
@@ -220,24 +253,30 @@ assumed correct because the individual edits each seemed right in isolation.
 
 ```md
 ## Context
+
 <what exists today, cite real file paths / function names, why this matters>
 
 ## Requirements
+
 <concrete, testable requirements — no "TBD" or "explore options" for anything actually decidable now>
 
 ## Deliverables
+
 - [ ] <concrete artifact 1>
 - [ ] <concrete artifact 2>
 
 ## Test Coverage Requirements
+
 <explicit 99%+ Codecov patch target / 100% target including invariants + a regression test for any
-fix — note explicitly if the touched paths are outside coverage.include, e.g. apps/**, so a future
+fix — note explicitly if the touched paths are outside coverage.include, e.g. apps/\*\*, so a future
 reader isn't confused about why Codecov doesn't gate it>
 
 ## Expected Outcome
+
 <what's true after this ships that wasn't true before>
 
 ## Links & Resources
+
 <related issues, the files to anchor on>
 ```
 
@@ -260,8 +299,27 @@ issue out of order would waste a contributor's time or produce broken intermedia
 Prefer these over a markdown checklist for any new tracker/epic:
 
 ```graphql
-mutation { addSubIssue(input: { issueId: "<parent node id>", subIssueId: "<child node id>" }) { issue { number } } }
-mutation { addBlockedBy(input: { issueId: "<blocked node id>", blockingIssueId: "<blocker node id>" }) { issue { number } } }
+mutation {
+  addSubIssue(
+    input: { issueId: "<parent node id>", subIssueId: "<child node id>" }
+  ) {
+    issue {
+      number
+    }
+  }
+}
+mutation {
+  addBlockedBy(
+    input: {
+      issueId: "<blocked node id>"
+      blockingIssueId: "<blocker node id>"
+    }
+  ) {
+    issue {
+      number
+    }
+  }
+}
 ```
 
 Get an issue's GraphQL node ID via `gh api graphql -f query='query { repository(owner:"JSONbored", name:"loopover") { issue(number: N) { id } } }'` (note: literal query strings without file interpolation are fine with `-f`; only the `@file` file-read syntax requires `-F`).

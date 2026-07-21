@@ -162,6 +162,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_linked_issue_satisfaction_cache_hit_total", { help: "Linked-issue satisfaction assessment cache hits.", type: "counter" }],
   ["loopover_linked_issue_satisfaction_cache_miss_total", { help: "Linked-issue satisfaction assessment cache misses.", type: "counter" }],
   ["loopover_linked_issue_satisfaction_cache_write_error_total", { help: "Linked-issue satisfaction assessment cache write errors.", type: "counter" }],
+  ["loopover_active_review_reconciliation_terminalized_total", { help: "Orphaned active_review_tracking rows terminalized after a live GitHub check confirmed the PR is closed, by repo.", type: "counter" }],
   ["loopover_open_pr_reconciliation_missing_total", { help: "Open PRs found missing from local tracking during reconciliation, by repo.", type: "counter" }],
   ["loopover_orb_relay_malformed_events_total", { help: "Orb relay batch entries dropped for missing/mistyped required fields (deliveryId/eventName/rawBody).", type: "counter" }],
   ["loopover_orb_relay_register_total", { help: "Orb relay registration attempts, by mode and result (registered/recovered/failed).", type: "counter" }],

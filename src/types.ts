@@ -231,6 +231,16 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Self-heal (flag-gated by LOOPOVER_ACTIVE_REVIEW_RECONCILIATION). A delayed webhook job can restart
+      // active_review_tracking for a PR that's already closed on GitHub, orphaning the row in `status: "active"`
+      // forever (see src/review/active-review-reconciliation.ts's header comment). Re-checks every stale
+      // `active` row against LIVE (non-cached) GitHub state and terminalizes the ones confirmed closed.
+      // Enqueued on the same 10-minute reconciliation cadence as reconcile-open-prs (index.ts) ONLY when the
+      // flag is ON, so flag-OFF this job never exists.
+      type: "reconcile-active-review-tracking";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       // Convergence (self-improve / auto-tune, flag-gated by LOOPOVER_REVIEW_SELFTUNE). Run the ported
       // self-improvement loop over loopover's review-outcome data — compute tuning recommendations,
       // SHADOW-SOAK any strictly-tightening one, and AUTO-PROMOTE it to live only after the soak window passes

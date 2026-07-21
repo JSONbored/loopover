@@ -1,5 +1,5 @@
 import { parsePullRequestTargetKey } from "@loopover/engine";
-import { and, asc, desc, eq, gte, inArray, isNotNull, not, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, not, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "./client";
 import {
   activeReviewTracking,
@@ -359,6 +359,9 @@ export async function upsertPullRequestFromGitHub(
       bodyObservedAt: pullRequests.bodyObservedAt,
       headSha: pullRequests.headSha,
       headShaObservedAt: pullRequests.headShaObservedAt,
+      state: pullRequests.state,
+      mergedAt: pullRequests.mergedAt,
+      githubUpdatedAt: pullRequests.githubUpdatedAt,
     })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
@@ -405,6 +408,29 @@ export async function upsertPullRequestFromGitHub(
       : headShaChanged || !existingClaimRow?.headShaObservedAt
         ? syncedAt
         : existingClaimRow.headShaObservedAt;
+  // Out-of-order webhook guard (#webhook-reorder-clobber): a webhook for an OLDER event (e.g. `review_requested`)
+  // can be dequeued AFTER a NEWER event for the same PR (e.g. `closed`) already landed, if the older job was
+  // stuck behind queue backpressure -- its embedded `pull_request` snapshot is then stale and must not regress
+  // state/headSha/mergedAt back to what GitHub reported minutes ago (this is exactly how an already-closed PR's
+  // active_review_tracking row got resurrected: a delayed job re-saw `state: "open"` and restarted a review
+  // pass nothing ever terminalized). Compares GitHub's own `updated_at` against what this row last observed;
+  // `isStalePayload` is only ever true when BOTH sides have a real timestamp to compare AND the incoming one is
+  // strictly older -- a sparse payload (no `updated_at`) or a pre-migration/first-ever row (`githubUpdatedAt`
+  // absent) fails OPEN, applying the write exactly as before this guard existed. Decided in JS (not SQL) so the
+  // RESOLVED values below can also correct this call's own RETURNED record -- the caller (e.g.
+  // handlePullRequestWebhookEvent) reasons about the PR from this return value, not a fresh DB read, so a
+  // rejected-as-stale write must make the return value agree with what was actually persisted.
+  const incomingGithubUpdatedAt = pr.updated_at ?? null;
+  const isStalePayload =
+    incomingGithubUpdatedAt !== null &&
+    existingClaimRow?.githubUpdatedAt != null &&
+    incomingGithubUpdatedAt < existingClaimRow.githubUpdatedAt;
+  const resolvedState = isStalePayload ? existingClaimRow!.state : pr.state;
+  const resolvedHeadSha = isStalePayload ? (existingClaimRow!.headSha ?? undefined) : incomingHeadSha;
+  const resolvedMergedAt = isStalePayload ? (existingClaimRow!.mergedAt ?? undefined) : (pr.merged_at ?? undefined);
+  // No `?? undefined` fallback on the stale branch (unlike headSha/mergedAt above): isStalePayload's own
+  // definition already requires existingClaimRow.githubUpdatedAt to be non-null, so that branch is unreachable.
+  const resolvedGithubUpdatedAt = isStalePayload ? existingClaimRow!.githubUpdatedAt : (incomingGithubUpdatedAt ?? undefined);
   await db
     .insert(pullRequests)
     .values({
@@ -412,13 +438,13 @@ export async function upsertPullRequestFromGitHub(
       repoFullName,
       number: pr.number,
       title: pr.title,
-      state: pr.state,
+      state: resolvedState,
       authorLogin: pr.user?.login,
       authorAssociation: pr.author_association,
-      headSha: pr.head?.sha,
+      headSha: resolvedHeadSha,
       headRef: pr.head?.ref,
       baseRef: pr.base?.ref,
-      mergedAt: pr.merged_at ?? undefined,
+      mergedAt: resolvedMergedAt,
       htmlUrl: pr.html_url,
       labelsJson: jsonString(record.labels),
       linkedIssuesJson,
@@ -427,6 +453,7 @@ export async function upsertPullRequestFromGitHub(
       headShaObservedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(payload),
+      githubUpdatedAt: resolvedGithubUpdatedAt,
       // GitHub's own PR creation time (see PullRequestRecord.createdAt's doc comment, src/types.ts) --
       // set ONLY here, on first insert, and deliberately absent from onConflictDoUpdate's `set` below so
       // a resync never overwrites it. `?? undefined` falls through to the column's own $defaultFn when a
@@ -438,13 +465,13 @@ export async function upsertPullRequestFromGitHub(
       target: [pullRequests.repoFullName, pullRequests.number],
       set: {
         title: pr.title,
-        state: pr.state,
+        state: resolvedState,
         authorLogin: pr.user?.login,
         authorAssociation: pr.author_association,
-        headSha: pr.head?.sha,
+        headSha: resolvedHeadSha,
         headRef: pr.head?.ref,
         baseRef: pr.base?.ref,
-        mergedAt: pr.merged_at ?? undefined,
+        mergedAt: resolvedMergedAt,
         htmlUrl: pr.html_url,
         labelsJson: jsonString(record.labels),
         linkedIssuesJson,
@@ -453,10 +480,11 @@ export async function upsertPullRequestFromGitHub(
         headShaObservedAt,
         lastSeenOpenAt,
         payloadJson: jsonString(payload),
+        githubUpdatedAt: resolvedGithubUpdatedAt,
         updatedAt: syncedAt,
       },
     });
-  return { ...record, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
+  return { ...record, state: resolvedState, headSha: resolvedHeadSha, mergedAt: resolvedMergedAt ?? null, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(
@@ -5839,6 +5867,25 @@ export async function terminalizeActiveReviewTracking(
     .where(and(...conditions));
   /* v8 ignore next -- D1 update metadata normally includes changes; the ?? 0 fallback protects driver anomalies. */
   return Number(result.meta.changes ?? 0) > 0;
+}
+
+/** Rows still `active` and older than `olderThanIso` -- candidates for runActiveReviewReconciliation
+ *  (src/review/active-review-reconciliation.ts) to verify against LIVE GitHub state before terminalizing. Age
+ *  alone is never sufficient to terminalize (a genuinely slow review must not be force-closed); the caller
+ *  confirms each row's PR is actually closed before acting. No index on (status, startedAt) -- a full scan is
+ *  fine at this table's current scale (low thousands of rows); worth an index if that changes materially. */
+export async function listStaleActiveReviewTracking(
+  env: Env,
+  olderThanIso: string,
+): Promise<Array<{ repoFullName: string; pullNumber: number; startedAt: string }>> {
+  return getDb(env.DB)
+    .select({
+      repoFullName: activeReviewTracking.repoFullName,
+      pullNumber: activeReviewTracking.pullNumber,
+      startedAt: activeReviewTracking.startedAt,
+    })
+    .from(activeReviewTracking)
+    .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, olderThanIso)));
 }
 
 // Review memory (#2178, data-model slice of #1964). Hard per-repo cap on stored suppression signals — mirrors

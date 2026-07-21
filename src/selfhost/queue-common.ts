@@ -123,6 +123,11 @@ const GITHUB_BUDGET_BACKGROUND_TYPES = new Set<string>([
   // fetch to entrius/gittensor, not the GitHub REST API), this genuinely draws down the shared installation's
   // REST budget and must yield alongside every other budget consumer here.
   "sync-brokered-installed-repos",
+  // runActiveReviewReconciliation (#webhook-reorder-clobber) makes one live, non-cached `GET /pulls/{n}` REST
+  // call per stale active_review_tracking row it finds. Flag-gated OFF by default (LOOPOVER_ACTIVE_REVIEW_
+  // RECONCILIATION) -- registered here up front so enabling it never bypasses the shared budget the way
+  // reconcile-open-prs originally did before #4505/#4506 closed that gap.
+  "reconcile-active-review-tracking",
 ]);
 const PRIORITY_BY_TYPE = new Map([
   ["agent-regate-pr", AGENT_REGATE_PRIORITY],

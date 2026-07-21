@@ -115,6 +115,12 @@
     // backfillRegisteredRepositories freshness window. Default OFF — flag-OFF the cron enqueues no
     // reconciliation job, byte-identical to today.
     "LOOPOVER_PR_RECONCILIATION": "false",
+    // Self-heal (#webhook-reorder-clobber): same short-interval cron as LOOPOVER_PR_RECONCILIATION above ALSO
+    // re-checks every active_review_tracking row stuck in `status: "active"` longer than 15 minutes against
+    // LIVE (non-cached) GitHub state, and terminalizes the ones GitHub confirms are actually closed — a
+    // delayed webhook job can otherwise restart tracking for a PR that already closed, orphaning the row
+    // forever. Default OFF — flag-OFF the cron enqueues no reconciliation job, byte-identical to today.
+    "LOOPOVER_ACTIVE_REVIEW_RECONCILIATION": "false",
     // Convergence (RAG retrieval): at review time, query the codebase vector index for code/docs semantically
     // related to the PR's changed files and append a RELEVANT EXISTING CODE / DOCS section to the reviewer
     // prompt — additive reference context (callers, related modules, conventions), exactly like grounding.

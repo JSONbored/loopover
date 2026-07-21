@@ -3,35 +3,29 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeFixtureServer, startFixtureServer } from "./support/mcp-cli-harness";
 
-// (#7799) In-process coverage of the stdio loopover_get_activation_preview proxy. The bin ends with
-// `await server.connect(new StdioServerTransport())` at module scope, so we mock StdioServerTransport to hand
-// the imported module an in-memory transport we control, then drive its tool surface with a real MCP client.
-// This is the only way to instrument bin/loopover-mcp.ts's new lines -- subprocess spawn (the sibling
-// mcp-cli-maintainer-noise.test.ts) is functionally faithful but not coverage-instrumented.
-const holder = vi.hoisted(() => ({ serverTransport: undefined as any }));
-vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
-  StdioServerTransport: class {
-    constructor() {
-      return holder.serverTransport as any;
-    }
-  },
-}));
+// (#7799, updated for #7764) In-process coverage of the stdio loopover_get_activation_preview proxy.
+// After #7764 the bin only binds StdioServerTransport when launched as the process entrypoint; in-process
+// importers get the exported `server` and must connect an InMemoryTransport themselves (same pattern as
+// mcp-cli-plan-issues.test.ts / mcp-cli-registry-snapshot.test.ts). The pre-#7764 StdioServerTransport mock
+// deadlocks once another file imports the bin first — that is what broke validate-tests on #7913.
+const MODULES = ["../../packages/loopover-mcp/bin/loopover-mcp.ts"] as const;
 
-const FORBIDDEN_PUBLIC_TERMS = /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
+type BinModule = {
+  server: { connect: (transport: unknown) => Promise<void> };
+};
 
-let client: Client;
-let configDir: string;
-let capturedRequests: Array<{ url: string; method: string }>;
-const ENV_KEYS = ["LOOPOVER_CONFIG_DIR", "LOOPOVER_API_URL", "LOOPOVER_TOKEN", "LOOPOVER_API_TIMEOUT_MS"] as const;
-const savedEnv: Record<string, string | undefined> = {};
+const FORBIDDEN_PUBLIC_TERMS =
+  /wallet\s*[:=]\s*\S+|hotkey\s*[:=]\s*\S+|coldkey\s*[:=]\s*\S+|raw trust score is|your trust score|reward estimate is|estimated reward/i;
+
+let tempDir = "";
+const capturedRequests: Array<{ url: string; method: string }> = [];
+const loaded = new Map<string, BinModule>();
 
 beforeAll(async () => {
-  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
-  configDir = mkdtempSync(join(tmpdir(), "loopover-activation-preview-"));
-  capturedRequests = [];
+  tempDir = mkdtempSync(join(tmpdir(), "loopover-activation-preview-"));
   const apiUrl = await startFixtureServer({
     onApiRequest: (request) => {
       if (request.url && request.url.includes("/activation-preview")) {
@@ -39,62 +33,55 @@ beforeAll(async () => {
       }
     },
   });
-  process.env.LOOPOVER_CONFIG_DIR = configDir;
   process.env.LOOPOVER_API_URL = apiUrl;
-  process.env.LOOPOVER_TOKEN = "session-token";
-  process.env.LOOPOVER_API_TIMEOUT_MS = "5000";
-
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  holder.serverTransport = serverTransport;
-
-  // cliArgs[0] === undefined skips the module's `if (cliArgs[0] && cliArgs[0] !== "--stdio")` CLI-dispatch
-  // guard (which would runCli + process.exit), so importing just registers the tools and connects our
-  // in-memory transport instead of a real stdio one.
-  const originalArgv = process.argv;
-  process.argv = [process.execPath, "loopover-mcp"];
-  // Import the .ts source explicitly (not the .js): a committed/build-artifact .js on disk would otherwise be
-  // resolved and instrumented under its .js path, so codecov/patch would map the new lines to the wrong file.
-  // A non-literal specifier keeps tsc from rejecting the .ts extension (TS5097) while vitest still loads it.
-  const binTsModule = "../../packages/loopover-mcp/bin/loopover-mcp.ts";
-  await import(/* @vite-ignore */ binTsModule);
-  process.argv = originalArgv;
-
-  client = new Client({ name: "activation-preview-test", version: "0.0.1" });
-  await client.connect(clientTransport);
-});
+  process.env.LOOPOVER_API_TOKEN = "in-process-token";
+  process.env.LOOPOVER_API_TIMEOUT_MS = "2000";
+  process.env.LOOPOVER_CONFIG_DIR = tempDir;
+  process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK = "1";
+  for (const specifier of MODULES) {
+    loaded.set(specifier, (await import(specifier)) as unknown as BinModule);
+  }
+}, 120_000);
 
 afterAll(async () => {
-  await client?.close().catch(() => undefined);
   await closeFixtureServer();
-  if (configDir) rmSync(configDir, { recursive: true, force: true });
-  for (const key of ENV_KEYS) {
-    if (savedEnv[key] === undefined) delete process.env[key];
-    else process.env[key] = savedEnv[key];
-  }
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  delete process.env.LOOPOVER_API_URL;
+  delete process.env.LOOPOVER_API_TOKEN;
+  delete process.env.LOOPOVER_CONFIG_DIR;
+  delete process.env.LOOPOVER_SKIP_NPM_VERSION_CHECK;
 });
 
-describe("loopover_get_activation_preview stdio proxy (#7799)", () => {
-  it("registers the tool in the stdio server tool list", async () => {
-    const { tools } = await client.listTools();
-    const tool = tools.find((entry) => entry.name === "loopover_get_activation_preview");
-    expect(tool).toBeDefined();
-    expect(tool?.description).toMatch(/activation preview/i);
-  });
+describe("bin loopover_get_activation_preview stdio tool (in-process, #7799)", () => {
+  it.each(MODULES)("registers and proxies GET .../activation-preview — %s", async (specifier) => {
+    capturedRequests.length = 0;
+    const mod = loaded.get(specifier)!;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await mod.server.connect(serverTransport);
+    const client = new Client({ name: "activation-preview-test", version: "0.1.0" }, { capabilities: {} });
+    await client.connect(clientTransport);
+    try {
+      const { tools } = await client.listTools();
+      const tool = tools.find((entry) => entry.name === "loopover_get_activation_preview");
+      expect(tool).toBeDefined();
+      expect(tool?.description).toMatch(/activation preview/i);
 
-  it("proxies the call to /activation-preview via apiGet and returns the payload", async () => {
-    const result = await client.callTool({
-      name: "loopover_get_activation_preview",
-      arguments: { owner: "owner", repo: "repo" },
-    });
-    expect(capturedRequests.length).toBe(1);
-    const captured = capturedRequests[0]!;
-    expect(captured.url).toContain("/v1/repos/owner/repo/activation-preview");
-    expect(captured.method).toBe("GET");
-    expect(result.isError).toBeFalsy();
-    const text = JSON.stringify(result);
-    expect(text).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
-    expect(text).toContain("owner/repo");
-    expect(text).toContain("evaluatedCount");
-    expect(text).toContain("enable_advisory");
+      const result = await client.callTool({
+        name: "loopover_get_activation_preview",
+        arguments: { owner: "owner", repo: "repo" },
+      });
+      expect(capturedRequests.length).toBe(1);
+      const captured = capturedRequests[0]!;
+      expect(captured.url).toContain("/v1/repos/owner/repo/activation-preview");
+      expect(captured.method).toBe("GET");
+      expect(result.isError).toBeFalsy();
+      const text = JSON.stringify(result);
+      expect(text).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+      expect(text).toContain("owner/repo");
+      expect(text).toContain("evaluatedCount");
+      expect(text).toContain("enable_advisory");
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   });
 });

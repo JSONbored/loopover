@@ -1287,6 +1287,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Set the autonomy level for one action class via a read-merge-write, so the other classes are left untouched. Same as `loopover-mcp maintain set-level <action> <level>`. Maintainer access required.",
   },
   {
+    name: "loopover_get_automation_state",
+    category: "agent",
+    description: "Return a repo's agent automation state: the per-action autonomy levels, kill-switch / dry-run mode, GitHub write-permission readiness, and how many auto_with_approval actions are awaiting a maintainer decision — the read-side view behind the pause/resume and set-level toggles. Same as `loopover-mcp maintain automation-state`. Maintainer access required.",
+  },
+  {
     name: "loopover_get_gate_precision",
     category: "maintainer",
     description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
@@ -2597,6 +2602,22 @@ registerStdioTool(
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
   );
+
+// #6742 added this endpoint's REST route and its `maintain automation-state` CLI mirror, but not the stdio tool,
+// so it fell outside #6152's batch above (#7752). Read-only: the derived counterpart to the pause/resume and
+// set-level writes registered above, reached through the same apiGet client those use.
+registerStdioTool(
+  "loopover_get_automation_state",
+  {
+    description: stdioToolDescription("loopover_get_automation_state"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/automation-state`);
+    return toolResult(`Agent automation state for ${owner}/${repo}.`, payload);
+  },
+);
+
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.

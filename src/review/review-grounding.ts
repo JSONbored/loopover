@@ -17,6 +17,10 @@
 // (2) the one I/O dependency (GitHub file fetch) is INJECTED via the FileFetcher interface + explicit
 // params instead of reviewbot's RunContext/ReviewTarget/github helpers, so fetchFullFileContents is
 // self-contained and unit-testable. The host wires a real GitHub-backed FileFetcher at the call site.
+// EXCEPTION (#7465-class fix): `sampleHeadAndTail` + the raised FILE_CONTENT_BUDGET/MAX_SINGLE_FILE/
+// MAX_FETCH_CHARS below are a loopover-side-ONLY addition, not yet ported back to reviewbot's own
+// review-grounding.ts -- if reviewbot's copy is ever resynced from this file, carry this piece forward too,
+// or reviewbot will regress to the old all-or-nothing truncation this was written to eliminate.
 
 import { isTestPath } from "../signals/test-evidence";
 import { neutralizePromptInjection } from "./prompt-injection";
@@ -63,10 +67,59 @@ export interface ReviewGrounding {
 }
 
 // Budgets so the full-file block fits the 120B context alongside the diff + RAG + project knowledge.
-const FILE_CONTENT_BUDGET = 60_000; // total chars inlined across all changed files
-const MAX_SINGLE_FILE = 24_000; // a file larger than this is marked truncated (review it from the diff)
+// Raised from 24k/60k (#7465-class fix: metagraphed PR #7465 was wrongly auto-closed because
+// registry/subnets/eirel.json's 188KB post-change body — GitHub omits `patch` for a diff this large, so the
+// bounded-diff builder had nothing either — blew straight through the old flat caps and rendered as a fully
+// empty "(omitted — too large to inline; review this file from the diff)" placeholder with NO diff to fall
+// back to either. The reviewer correctly said it couldn't verify a file it was never shown, and the one-shot
+// gate closed the PR over an honest "I can't see this" rather than a confirmed defect.) These are now sized
+// with real headroom relative to that 188KB incident file, but any FIXED cap is eventually defeated by
+// growth — metagraphed's one-file-per-subnet registry only ever appends, so a subnet's file gets larger
+// forever. The durable half of the fix is below: `sampleHeadAndTail` guarantees a file we successfully read
+// is NEVER rendered as pure "omitted" content again, no matter how large it grows.
+export const FILE_CONTENT_BUDGET = 96_000; // total chars inlined across all changed files
+export const MAX_SINGLE_FILE = 48_000; // a file up to this size is inlined IN FULL; beyond it, head+tail SAMPLED
+// The network-level read cap, decoupled from the two prompt budgets above: we always attempt to read the
+// REAL, full file (up to this generous ceiling) so `sampleHeadAndTail` has genuine tail content to show —
+// asking the fetcher for only `MAX_SINGLE_FILE` chars (the old behavior) would silently return a head-only
+// prefix, which is exactly wrong for an append-oriented file where the NEW content lands at the end.
+export const MAX_FETCH_CHARS = 1_000_000;
+// Below this per-file share, a head+tail sample would be too thin on each side to carry real signal (mirrors
+// review-diff.ts's `remaining < 240` guard style) — treat as unavailable rather than showing a sliver.
+export const MIN_SAMPLE_CHARS = 400;
 // Binary / generated / lockfile paths carry no review signal as full text — skip inlining them.
 const SKIP_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|heic|svg|ico|pdf|lock|min\.js|min\.css|map|woff2?|ttf|eot|mp4|webm|zip|gz|tgz|wasm)$/i;
+
+/**
+ * When a successfully-read file's content doesn't fit in its allotted prompt `budget`, keep its HEAD and
+ * TAIL rather than dropping it entirely (#7465-class fix). A file this large will often keep growing forever
+ * (an append-only registry/manifest never shrinks), so no fixed budget can "cover" it permanently — the fix
+ * is to never render zero content for a file we actually read, regardless of size: the file's START (its
+ * top-level structure/preamble — proves no undisclosed metadata edits) and its END (new entries in an
+ * append-oriented file typically land at the tail) both survive, with an honest, sized marker for whatever
+ * was cut from the middle. Returns "" when `budget` is too small for a meaningful sample at all (below
+ * {@link MIN_SAMPLE_CHARS}) — the caller treats that the same as an unreadable file.
+ */
+export function sampleHeadAndTail(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  if (budget < MIN_SAMPLE_CHARS) return "";
+  const marker = (omittedChars: number) =>
+    `\n\n… (${omittedChars.toLocaleString("en-US")} chars omitted from the middle of this file — shown below: its real start and end) …\n\n`;
+  // Reserve space for the marker using the whole file's length as the omitted-count estimate — the actual
+  // printed count (computed below from the real head/tail split) can only be smaller, so this is always a
+  // safe (>=) upper bound on the marker's own rendered length.
+  const reserve = marker(text.length).length;
+  const available = budget - reserve;
+  const headLen = Math.ceil(available / 2);
+  const tailLen = available - headLen;
+  const omitted = text.length - headLen - tailLen;
+  // tailLen is always > 0 here: MIN_SAMPLE_CHARS (400, already checked above) comfortably exceeds the
+  // marker's own rendered length (well under 150 chars even at astronomical omitted-counts), so
+  // `available` -- and therefore `tailLen` -- can never reach 0. This matters because `"x".slice(-0)`
+  // returns the WHOLE string (JS treats -0 as plain 0, i.e. "from the start"), not "" -- a tailLen of
+  // exactly 0 would otherwise silently duplicate the head instead of omitting the tail.
+  return `${text.slice(0, headLen)}${marker(omitted)}${text.slice(-tailLen)}`;
+}
 
 /** The grounding feature flags (subset of reviewbot's FeatureToggles). Two internal booleans of one
  *  GroundingFlags value — the type permits independent values so a future caller could split CI-summary
@@ -93,6 +146,7 @@ const GROUNDING_GUIDANCE = [
   "- A FAILED check marked '(no detail provided)' means you were given only its name, not its actual error output — you cannot know WHY it failed. Do not fill that gap with a guess. Writing something 'likely' failed for a specific content reason, or naming an example cause 'not visible in this diff', is STILL an unverified guess wearing a hedge — it is FORBIDDEN as a blocker, exactly like asserting a defect on a file you cannot see. State plainly that the check failed and its cause could not be verified from what you were given; do not name any hypothetical cause, hedged or not.",
   "- If a 'BASE BRANCH STATUS' section is present below, this PR's branch is a KNOWN, measured number of commits behind the default branch. For an undetailed FAILED check, prefer citing that TRUE fact as the likely cause (and suggest rebasing onto the latest default branch) over guessing a content-level defect — this is a verified fact, not a guess, so it is the correct thing to say instead of staying silent about the cause.",
   "- The FULL post-change content of the changed files is given below as 'FULL FILE CONTENT'. Before claiming any symbol, import, type, or export is undefined / unused / missing / wrong-signature, CHECK that file — only flag it if it is genuinely absent there.",
+  "- A file marked 'showing this file's real start and end' is REAL content read from that file — a genuine partial sample (too large to include in full), not a placeholder. Use the visible start/end to spot-check structure, formatting, and consistency; do not claim confidence about the omitted middle section, and do not treat something merely ABSENT from the visible sample as proof it is missing from the file — say you could not verify that part instead.",
   "- If verifying a concern needs a file that is NOT provided, say you could not verify it; do NOT assert a defect on code you cannot see.",
 ].join("\n");
 
@@ -234,20 +288,31 @@ export async function fetchFullFileContents(
       out.push({ path: file.filename, text: "", truncated: true });
       continue;
     }
+    // Always ask for the REAL file up to the generous network ceiling — never a per-file prompt-budget
+    // slice — so a file bigger than its prompt share still has genuine tail content for sampleHeadAndTail
+    // to show (#7465-class fix; see MAX_FETCH_CHARS).
     let text: string | null = null;
     try {
-      text = await fetcher.getFileContent(file.filename, ref, Math.min(MAX_SINGLE_FILE, FILE_CONTENT_BUDGET - used) + 1);
+      text = await fetcher.getFileContent(file.filename, ref, MAX_FETCH_CHARS);
     } catch {
       text = null;
     }
     if (text == null) continue; // unreadable (binary / vanished / perms) — skip silently
-    if (text.length > MAX_SINGLE_FILE || used + text.length > FILE_CONTENT_BUDGET) {
+    const share = Math.min(MAX_SINGLE_FILE, FILE_CONTENT_BUDGET - used);
+    if (text.length <= share) {
+      out.push({ path: file.filename, text });
+      used += text.length;
+      continue;
+    }
+    const sampled = sampleHeadAndTail(text, share);
+    if (!sampled) {
+      // The remaining share was too thin for even a head+tail sample to carry signal — same as unreadable.
       out.push({ path: file.filename, text: "", truncated: true });
       used = FILE_CONTENT_BUDGET;
       continue;
     }
-    out.push({ path: file.filename, text });
-    used += text.length;
+    out.push({ path: file.filename, text: sampled, truncated: true });
+    used += sampled.length;
   }
   return out.length ? out : undefined;
 }
@@ -289,10 +354,16 @@ function formatCiSection(c: ReviewCiSummary): string {
 function formatFilesSection(files: ChangedFileContent[]): string {
   const blocks = files.map((file) => {
     const path = safeGroundingPath(file.path);
-    if (file.truncated) return `### ${path}\n(omitted — too large to inline; review this file from the diff)`;
+    // truncated + no text: the per-PR budget was already spent on higher-priority files before this one's
+    // turn — genuinely nothing to show (rare; #7465-class fix: a file we DID manage to read is never
+    // reduced to this, see the `truncated + text` branch below).
+    if (file.truncated && !file.text) return `### ${path}\n(no content available — the per-PR review budget was already spent on higher-priority files)`;
     const text = neutralizePromptInjection(file.text).text;
     const fence = safeMarkdownFence(text);
-    return `### ${path}\n${fence}\n${text}\n${fence}`;
+    // truncated + text: a real head+tail sample (see sampleHeadAndTail) — too large to include in full, but
+    // never a contentless placeholder.
+    const note = file.truncated ? "\n(too large to include in full — showing this file's real start and end; see the marker below for what's cut)\n" : "";
+    return `### ${path}${note}${fence}\n${text}\n${fence}`;
   });
   return ["FULL FILE CONTENT (post-change, head ref — check here before claiming any symbol is undefined/unused):", "", blocks.join("\n\n")].join("\n");
 }

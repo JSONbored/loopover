@@ -827,13 +827,17 @@ export function isIncoherentDiffBail(text: string): boolean {
 // Aggregate ceiling across ALL optional context sections combined (#3900). Each section below already
 // enforces its OWN per-section cap (FILE_CONTENT_BUDGET, MAX_CONTEXT_CHARS, MAX_PROMPT_CHARS,
 // MAX_ENRICHMENT_PROMPT_SECTION_CHARS...), but nothing previously bounded the COMBINED total: with every
-// convergence feature enabled on one repo, the worst-case assembled prompt exceeds 200,000 characters before
-// the system prompt is even added, degrading signal-to-noise on exactly the large/complex PRs that most need
-// focused attention. The diff + description are NOT counted against this ceiling -- they are the primary
-// review target and are always included in full (capped at 120,000 + 2,000 chars regardless). 200,000 sits
-// comfortably above diff+description+grounding's own worst case (~182k) so grounding is effectively never
-// trimmed, while still meaningfully bounding the "every feature enabled" case.
-const AGGREGATE_CONTEXT_BUDGET_CHARS = 200_000;
+// convergence feature enabled on one repo, the worst-case assembled prompt would otherwise exceed this
+// ceiling before the system prompt is even added, degrading signal-to-noise on exactly the large/complex PRs
+// that most need focused attention. The diff + description are NOT counted against this ceiling -- they are
+// the primary review target and are always included in full (capped at 120,000 + 2,000 chars regardless).
+// 240,000 sits comfortably above diff+description+grounding's own worst case (~218k, after #7465-class fix
+// raised review-grounding.ts's FILE_CONTENT_BUDGET 60k→96k) so grounding -- the highest-priority section --
+// is effectively never trimmed, while still meaningfully bounding the "every feature enabled" case. This
+// MUST be re-derived any time FILE_CONTENT_BUDGET (or the 120k diff cap above) changes again, or grounding's
+// own fix silently stops reaching the model on exactly the large-PR case it exists for (see
+// test/unit/ai-review.test.ts's "never trims grounding" regression test).
+const AGGREGATE_CONTEXT_BUDGET_CHARS = 240_000;
 
 /**
  * Priority-ordered cutoff (#3900): walk the optional sections highest-priority-first, including each while it

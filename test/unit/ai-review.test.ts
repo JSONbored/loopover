@@ -15,6 +15,7 @@ import {
   type LoopOverAiReviewInput,
 } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
+import { FILE_CONTENT_BUDGET } from "../../src/review/review-grounding";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { inlineFindingCategory } from "../../src/review/inline-comments-select";
 import { isPublicSafeText } from "../../src/signals/redaction";
@@ -4416,8 +4417,10 @@ describe("buildUserPrompt aggregate context budget (#3900)", () => {
 
   it("drops the lowest-priority sections first when every section enabled together would exceed the aggregate budget", () => {
     // Sized so grounding+RAG survive (highest priority) but impact-map/enrichment/culture-profile/test-evidence
-    // -- everything below RAG in priority order -- get cut once the running total would overflow.
-    const grounding = "G".repeat(150_000);
+    // -- everything below RAG in priority order -- get cut once the running total would overflow. Rescaled
+    // for AGGREGATE_CONTEXT_BUDGET_CHARS=240k (#7465-class fix, up from 200k): grounding+rag alone (230k)
+    // fit; adding impactMap (20k more) overflows, so it and everything after it drop.
+    const grounding = "G".repeat(190_000);
     const rag = "R".repeat(40_000);
     const impactMap = "I".repeat(20_000);
     const user = buildUserPrompt({
@@ -4438,8 +4441,12 @@ describe("buildUserPrompt aggregate context budget (#3900)", () => {
     expect(user.length).toBeLessThanOrEqual(AGGREGATE_CONTEXT_BUDGET_CHARS);
   });
 
-  it("never trims grounding even with the diff at its own maximum size and grounding at its OWN real-world maximum (review-grounding.ts's 60k FILE_CONTENT_BUDGET)", () => {
-    const grounding = "G".repeat(60_000);
+  // #7465-class fix: AGGREGATE_CONTEXT_BUDGET_CHARS must always be re-derived to stay above
+  // diff+description+FILE_CONTENT_BUDGET's worst case -- this regression test pins that relationship so a
+  // future change to either budget that breaks it fails LOUDLY here, instead of silently dropping grounding
+  // (the highest-priority section) on exactly the large-PR case it exists to cover.
+  it("never trims grounding even with the diff at its own maximum size and grounding at its OWN real-world maximum (review-grounding.ts's FILE_CONTENT_BUDGET)", () => {
+    const grounding = "G".repeat(FILE_CONTENT_BUDGET);
     const user = buildUserPrompt({
       ...budgetBaseInput,
       diff: "d".repeat(120_000),

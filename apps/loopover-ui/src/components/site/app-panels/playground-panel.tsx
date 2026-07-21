@@ -213,10 +213,14 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
       <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)_240px]">
         <div className="space-y-4 rounded-token border-hairline bg-card p-5">
           <div>
-            <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="playground-tool"
+              className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground"
+            >
               Tool
             </label>
             <select
+              id="playground-tool"
               value={tool}
               onChange={(e) => setTool(e.target.value as Tool)}
               className="mt-1 w-full rounded-token border-hairline bg-background/60 px-2 py-1.5 text-token-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
@@ -229,20 +233,28 @@ export function PlaygroundPanel({ defaultTool = "preflight-branch" }: { defaultT
             </select>
           </div>
           <div>
-            <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="playground-repo"
+              className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground"
+            >
               Repo
             </label>
             <input
+              id="playground-repo"
               value={repo}
               onChange={(e) => setRepo(e.target.value)}
               className="mt-1 w-full rounded-token border-hairline bg-background/60 px-2 py-1.5 font-mono text-token-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             />
           </div>
           <div>
-            <label className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
+            <label
+              htmlFor="playground-branch"
+              className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground"
+            >
               Branch
             </label>
             <input
+              id="playground-branch"
               value={branch}
               onChange={(e) => setBranch(e.target.value)}
               className="mt-1 w-full rounded-token border-hairline bg-background/60 px-2 py-1.5 font-mono text-token-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"

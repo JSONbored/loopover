@@ -573,6 +573,7 @@ function FocusManifestEditor({ base }: { base: string | null }) {
         expectations, and gate overrides. Mirrors <code className="font-mono">.loopover.yml</code>.
       </p>
       <textarea
+        aria-label="Focus manifest editor"
         value={loading ? "Loading…" : text}
         onChange={(event) => setText(event.target.value)}
         readOnly={loading}

@@ -37,7 +37,7 @@ import { buildResultsPayload } from "@loopover/engine";
 // #6753: the same pure composer the remote MCP tool + /v1/loop/progress-snapshot both call.
 import { buildProgressSnapshot } from "@loopover/engine";
 // #6755: the same pure bridge the remote MCP tool + /v1/loop/intake-idea both call.
-import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "@loopover/engine";
+import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan, existingTargetRepo } from "@loopover/engine";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -576,7 +576,8 @@ const intakeIdeaShape = {
   id: z.string().optional(),
   title: z.string().optional(),
   body: z.string().optional(),
-  targetRepo: z.string().optional(),
+  // Loose on purpose (#7635): engine owns IdeaTarget shape (`existing` | `provision`).
+  targetRepo: z.unknown().optional(),
   constraints: z.array(z.string()).max(50).optional(),
   acceptanceHints: z.array(z.string()).max(50).optional(),
   priority: z.string().optional(),
@@ -1750,7 +1751,9 @@ registerStdioTool(
     const validated = validateIdeaSubmission(input);
     if (!validated.ok) return toolResult(`Invalid idea submission: ${validated.errors.join(", ")}.`, { ok: false, errors: validated.errors });
     const graph = buildTaskGraph(validated.idea, input.decomposition);
-    const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+    const repo = existingTargetRepo(validated.idea.targetRepo);
+    if (repo === null) return toolResult("Invalid idea submission: target_repo_required.", { ok: false, errors: ["target_repo_required"] });
+    const claimPlan = buildClaimPlan(graph, repo);
     return toolResult(
       `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
       { ok: true, verdict: claimPlan.graphVerdict, claimPlan },

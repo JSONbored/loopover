@@ -116,6 +116,113 @@ describe("maybe_infisical_run (#5120)", () => {
   });
 });
 
+describe("require_cmd (#7769)", () => {
+  // Source the lib and invoke require_cmd directly with its single command-name arg.
+  function runRequireCmd(cmd: string) {
+    const script = `set -uo pipefail; . "${libPath.replace(/\\/g, "/")}"; require_cmd "$1"`;
+    return spawnSync("bash", ["-c", script, "bash", cmd], { encoding: "utf8" });
+  }
+
+  it("is a silent no-op (exit 0) when the command exists on PATH", () => {
+    const r = runRequireCmd("bash");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toBe("");
+  });
+
+  it("aborts with exit 1 and a clear stderr message when the command is missing", () => {
+    const r = runRequireCmd("loopover-definitely-absent-cmd");
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("required command not found: loopover-definitely-absent-cmd");
+  });
+});
+
+describe("env_get (#7769)", () => {
+  // Source the lib and invoke env_get directly: args are [key] (using $ENV_FILE) or [key, file].
+  function runEnvGet(args: string[], env: Record<string, string> = {}) {
+    const script = `set -uo pipefail; . "${libPath.replace(/\\/g, "/")}"; env_get "$@"`;
+    return spawnSync("bash", ["-c", script, "bash", ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+  }
+
+  function tempEnvFile(contents: string): { dir: string; file: string } {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-env-get-"));
+    const file = join(dir, ".env");
+    writeFileSync(file, contents);
+    return { dir, file };
+  }
+
+  it("returns a plain unquoted value for a present key", () => {
+    const { dir, file } = tempEnvFile("FOO=1\nBAR=hello\n");
+    try {
+      const r = runEnvGet(["BAR", file]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe("hello\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("strips one pair of surrounding double OR single quotes from the value", () => {
+    const { dir, file } = tempEnvFile(`DQ="quoted value"\nSQ='other value'\n`);
+    try {
+      expect(runEnvGet(["DQ", file]).stdout).toBe("quoted value\n");
+      expect(runEnvGet(["SQ", file]).stdout).toBe("other value\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("trims whitespace around the value and matches a key even when the line is indented", () => {
+    const { dir, file } = tempEnvFile("  SPACED =   spaced-value   \n");
+    try {
+      const r = runEnvGet(["SPACED", file]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe("spaced-value\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips comment lines and returns the first matching assignment", () => {
+    const { dir, file } = tempEnvFile("# FOO=commented\nFOO=first\nFOO=second\n");
+    try {
+      const r = runEnvGet(["FOO", file]);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe("first\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 1 with no output when the key is absent", () => {
+    const { dir, file } = tempEnvFile("FOO=1\n");
+    try {
+      const r = runEnvGet(["MISSING", file]);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 1 when the target file does not exist", () => {
+    const r = runEnvGet(["FOO", join(tmpdir(), "loopover-env-get-does-not-exist", ".env")]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toBe("");
+  });
+
+  it("falls back to $ENV_FILE when no file argument is given", () => {
+    const { dir, file } = tempEnvFile("TOKEN=from-env-file\n");
+    try {
+      const r = runEnvGet(["TOKEN"], { ENV_FILE: file });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe("from-env-file\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("env_put (#7766 -- atomic write + mode preservation)", () => {
   // Source the lib and invoke env_put directly with (key, value, file) positional args.
   function runEnvPut(file: string, key: string, value: string) {

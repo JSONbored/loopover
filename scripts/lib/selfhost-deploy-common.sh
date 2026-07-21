@@ -3,6 +3,8 @@
 # Sourced, not executed: this file has no shebang-driven side effects and defines functions only.
 # Both callers set ENV_FILE before sourcing this; env_get/env_put fall back to it when no file arg is given.
 
+# Abort with a stderr message + `exit 1` if $1 is not an executable on PATH; a silent no-op when it is. Lets
+# the deploy scripts fail fast on a missing dependency (docker, infisical, ...) before doing any real work.
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "error: required command not found: $1" >&2
@@ -10,6 +12,10 @@ require_cmd() {
   fi
 }
 
+# Read $1's value from the env file ($2, or $ENV_FILE when the arg is omitted): the FIRST `key=value` line
+# (comment/blank lines skipped, leading indentation and whitespace around the value trimmed, and one pair of
+# matching surrounding single/double quotes stripped). Returns 1 with no output if the file is absent or the
+# key is not present, so callers can distinguish "unset" from an explicit empty value.
 env_get() {
   local key="$1"
   local file="${2:-$ENV_FILE}"

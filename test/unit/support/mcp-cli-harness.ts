@@ -779,6 +779,22 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7803: public registry snapshot (raw current snapshot, not a diff). No auth.
+    if (request.url === "/v1/registry/snapshot" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          id: "fixture-snapshot",
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          fetchedAt: "2026-05-30T00:00:00.000Z",
+          source: { kind: "raw-github", url: "fixture://registry" },
+          repoCount: 1,
+          totalEmissionShare: 0.01,
+          warnings: [],
+          repositories: [{ fullName: "owner/repo", emissionShare: 0.01 }],
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/intelligence" && request.method === "GET") {
       response.end(
         JSON.stringify({

@@ -34,6 +34,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_lint_pr_text",
   "loopover_validate_config",
   "loopover_get_registry_changes",
+  "loopover_get_registry_snapshot",
   "loopover_get_upstream_drift",
   "loopover_local_status",
   "loopover_remediation_plan",
@@ -137,6 +138,10 @@ describe("MCP output schema discovery", () => {
     const registryChangesProps = Object.keys((registryChanges?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(registryChangesProps).toEqual(expect.arrayContaining(["currentSnapshotId", "previousSnapshotId", "addedRepos", "removedRepos", "changedRepos", "summary"]));
     expect(registryChangesProps).not.toEqual(expect.arrayContaining(["previous", "current", "added", "removed", "changed", "warnings"]));
+
+    const registrySnapshot = byName.get("loopover_get_registry_snapshot");
+    const registrySnapshotProps = Object.keys((registrySnapshot?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(registrySnapshotProps).toEqual(expect.arrayContaining(["id", "repoCount", "repositories", "error"]));
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {
@@ -189,6 +194,27 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect((result.structuredContent as Record<string, unknown>).changedRepos).toEqual([
       { repoFullName: "owner/changed", changes: ["emission_share 0.01 -> 0.02"] },
     ]);
+  });
+
+  it("loopover_get_registry_snapshot returns the latest snapshot when one exists (#7803)", async () => {
+    const env = createTestEnv();
+    await seedRegistryChangeSnapshots(env);
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "loopover_get_registry_snapshot", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      repoCount: 3,
+      source: { kind: "raw-github", url: "fixture://current-registry" },
+    });
+    expect((result.structuredContent as { repositories: unknown[] }).repositories).toHaveLength(3);
+    expect(JSON.stringify(result.structuredContent)).not.toContain("registry_snapshot_not_found");
+  });
+
+  it("loopover_get_registry_snapshot returns a normal not-found result when empty (#7803)", async () => {
+    const { client } = await connectTestClient(createTestEnv());
+    const result = await client.callTool({ name: "loopover_get_registry_snapshot", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ error: "registry_snapshot_not_found" });
   });
 
   it("loopover_get_repo_context returns validated structured content", async () => {
@@ -656,7 +682,7 @@ describe("MCP output schemas do not declare private financial fields", () => {
   it("structured content from public-safe tools never includes redacted financial keys", async () => {
     const { client } = await connectTestClient();
 
-    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_registry_changes"]) {
+    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_registry_changes", "loopover_get_registry_snapshot"]) {
       const result = await client.callTool({ name, arguments: {} });
       const serialized = JSON.stringify(result.structuredContent ?? {});
       expect(serialized, `tool "${name}" structured content must not leak financial fields`).not.toMatch(

@@ -87,7 +87,7 @@ import { generateContributorIssueDrafts } from "../services/contributor-issue-dr
 import { generateIssuePlanDrafts } from "../services/issue-plan-draft";
 import { sanitizePublicComment } from "../github/commands";
 import { fetchPublicContributorProfile } from "../github/public";
-import { listLatestRegistrySnapshots } from "../registry/sync";
+import { listLatestRegistrySnapshots, getLatestRegistrySnapshot } from "../registry/sync";
 import { getOrCreateScoringModelSnapshot, isTimeDecayEnabled } from "../scoring/model";
 import { buildScorePreview, makeScorePreviewRecord } from "../scoring/preview";
 import {
@@ -1413,6 +1413,18 @@ const registryChangesOutputSchema = {
   summary: z.string().optional(),
 };
 
+const registrySnapshotOutputSchema = {
+  id: z.string().optional(),
+  generatedAt: z.string().optional(),
+  fetchedAt: z.string().optional(),
+  source: z.unknown().optional(),
+  repoCount: z.number().optional(),
+  totalEmissionShare: z.number().optional(),
+  warnings: z.unknown().optional(),
+  repositories: z.unknown().optional(),
+  error: z.string().optional(),
+};
+
 const upstreamDriftOutputSchema = {
   generatedAt: z.string().optional(),
   status: z.string().optional(),
@@ -1853,6 +1865,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_preflight_pr: "discovery",
   loopover_get_bounty_advisory: "discovery",
   loopover_get_registry_changes: "utility",
+  loopover_get_registry_snapshot: "utility",
   loopover_get_upstream_drift: "utility",
   loopover_get_issue_quality: "maintainer",
   loopover_get_pr_reviewability: "review",
@@ -2353,6 +2366,16 @@ export class LoopoverMcp {
         outputSchema: registryChangesOutputSchema,
       },
       async () => this.toolResult(await this.getRegistryChanges()),
+    );
+
+    register(
+      "loopover_get_registry_snapshot",
+      {
+        description: "Return the latest cached Gittensor registry snapshot (the raw current snapshot, not a diff).",
+        inputSchema: {},
+        outputSchema: registrySnapshotOutputSchema,
+      },
+      async () => this.toolResult(await this.getRegistrySnapshot()),
     );
 
     register(
@@ -4043,6 +4066,22 @@ export class LoopoverMcp {
     return {
       summary: "LoopOver registry changes from latest cached snapshots.",
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async getRegistrySnapshot(): Promise<ToolPayload> {
+    // Mirrors GET /v1/registry/snapshot: return the raw latest snapshot, or a normal not-found result
+    // (never throw) when nothing has been synced yet — same error code the REST route uses.
+    const snapshot = await getLatestRegistrySnapshot(this.env);
+    if (!snapshot) {
+      return {
+        summary: "No registry snapshot has been synced yet.",
+        data: { error: "registry_snapshot_not_found" },
+      };
+    }
+    return {
+      summary: `Latest registry snapshot (${snapshot.repoCount} repos).`,
+      data: snapshot as unknown as Record<string, unknown>,
     };
   }
 

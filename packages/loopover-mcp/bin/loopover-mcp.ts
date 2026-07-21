@@ -1128,6 +1128,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the latest cached report of changes to the Gittensor repo registry — repositories added, removed, or re-registered upstream. Read-only; takes no parameters.",
   },
   {
+    name: "loopover_get_registry_snapshot",
+    category: "utility",
+    description:
+      "Return the latest cached Gittensor registry snapshot (the raw current snapshot — repositories, emission shares, and warnings — not a diff). Read-only; takes no parameters. Public/unauthenticated, same as GET /v1/registry/snapshot.",
+  },
+  {
     name: "loopover_get_upstream_drift",
     category: "utility",
     description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
@@ -1974,6 +1980,15 @@ registerStdioTool(
     inputSchema: {},
   },
   async () => toolResult("LoopOver registry changes.", await apiGet("/v1/registry/changes")),
+);
+
+registerStdioTool(
+  "loopover_get_registry_snapshot",
+  {
+    description: stdioToolDescription("loopover_get_registry_snapshot"),
+    inputSchema: {},
+  },
+  async () => toolResult("LoopOver registry snapshot.", await apiGet("/v1/registry/snapshot")),
 );
 
 // #6736: CLI mirror of the public loopover_get_bounty_advisory tool. Proxies the same unauthenticated

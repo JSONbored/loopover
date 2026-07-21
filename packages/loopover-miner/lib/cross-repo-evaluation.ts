@@ -73,7 +73,7 @@ export type CrossRepoEvaluationSummary = {
   failuresByCategory: Record<string, number>;
 };
 
-type EvaluateRepoReadinessOptions = {
+export type EvaluateRepoReadinessOptions = {
   repoPath?: string;
   resolveRepoPath?: (entry: { repoFullName: string }) => string;
   env?: NodeJS.ProcessEnv;
@@ -445,6 +445,261 @@ export function formatCrossRepoEvaluationReport(
   if (summary.total > 0) {
     lines.push(`without loopover-specific target config: ${summary.withoutLoopoverConfig}/${summary.total}`);
   }
+  const categories = Object.entries(summary.failuresByCategory).sort(([a], [b]) => a.localeCompare(b));
+  if (categories.length > 0) {
+    lines.push("", "failures by category:");
+    for (const [category, count] of categories) {
+      lines.push(`- ${category}: ${count}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+// --- Full-execution mode (#7634) --------------------------------------------------------------------------------
+// The readiness harness above answers "can the miner form a plan for this repo?". Full-execution goes one step
+// further and answers "does the miner actually produce working, correct code?" by running the discover -> plan ->
+// code -> test loop against a benchmark repo, then checking the generated code compiles, the repo's own tests pass,
+// and the diff is not a no-op. DRY-RUN ONLY: it edits the local clone and discards -- it never opens a PR, never
+// pushes, and never touches the third-party repo remotely (the same safety posture as the readiness harness).
+
+/** Execution-stage failure taxonomy (#7634): extends the readiness taxonomy for the code + test loop. Ordered by
+ *  pipeline stage, so a repo that fails an earlier stage is reported against that stage. */
+export const CROSS_REPO_EXECUTION_CATEGORY: Readonly<{
+  PLAN_NOT_FORMED: "plan_not_formed";
+  CODE_BUILD_FAILED: "code_build_failed";
+  TESTS_FAILED: "tests_failed";
+  NO_OP_DIFF: "no_op_diff";
+  CLONE_SETUP: "clone_setup";
+  OTHER: "other";
+}> = Object.freeze({
+  PLAN_NOT_FORMED: "plan_not_formed",
+  CODE_BUILD_FAILED: "code_build_failed",
+  TESTS_FAILED: "tests_failed",
+  NO_OP_DIFF: "no_op_diff",
+  CLONE_SETUP: "clone_setup",
+  OTHER: "other",
+});
+
+export type CrossRepoExecutionResult = {
+  repoFullName: string;
+  passed: boolean;
+  executionCategory: string | null;
+  reason: string | null;
+  readinessPassed: boolean;
+  diffPresent: boolean | null;
+  built: boolean | null;
+  testsPassed: boolean | null;
+  stack?: RepoStackResult | undefined;
+};
+
+export type CrossRepoExecutionSummary = {
+  total: number;
+  passed: number;
+  failed: number;
+  majorityPassed: boolean;
+  failuresByCategory: Record<string, number>;
+};
+
+/** Injectable local-execution seams (#7634). Real implementations (child_process build/test, the coding-agent
+ *  driver) are wired by the CLI; unit tests inject fakes. Every seam is dry-run: it operates on the local clone
+ *  only, and the harness never pushes or opens a PR. */
+export type CrossRepoExecutionSeams = {
+  runAgentAttempt?: (context: {
+    repoFullName: string;
+    repoPath: string;
+    stack: RepoStackResult;
+  }) => Promise<{ diff: string }>;
+  buildRepo?: (context: { repoPath: string; command: string }) => Promise<{ ok: boolean; detail?: string }>;
+  runRepoTests?: (context: { repoPath: string; command: string }) => Promise<{ ok: boolean; detail?: string }>;
+};
+
+export type EvaluateRepoFullExecutionOptions = EvaluateRepoReadinessOptions & CrossRepoExecutionSeams;
+
+function buildExecutionFailure(
+  repoFullName: string,
+  category: string,
+  reason: string,
+  extra: Partial<CrossRepoExecutionResult> = {},
+): CrossRepoExecutionResult {
+  return {
+    repoFullName,
+    passed: false,
+    executionCategory: category,
+    reason,
+    readinessPassed: false,
+    diffPresent: null,
+    built: null,
+    testsPassed: null,
+    ...extra,
+  };
+}
+
+/**
+ * Run the full discover -> plan -> code -> test loop for one benchmark repo in dry-run (#7634). Reuses
+ * evaluateRepoReadiness for the plan stage, then delegates the code + build + test steps to injectable seams so the
+ * orchestration + taxonomy stay unit-testable without a live coding agent. Never pushes or opens a PR.
+ */
+export async function evaluateRepoFullExecution(
+  entry: CrossRepoEvaluationManifestRepo,
+  options: EvaluateRepoFullExecutionOptions = {},
+): Promise<CrossRepoExecutionResult> {
+  const readiness = evaluateRepoReadiness(entry, options);
+  const repoFullName = readiness.repoFullName;
+  if (!readiness.passed) {
+    // A clone/setup gap stays clone_setup; any other readiness failure means no plan could be formed.
+    const category =
+      readiness.failureCategory === CROSS_REPO_FAILURE_CATEGORY.CLONE_SETUP
+        ? CROSS_REPO_EXECUTION_CATEGORY.CLONE_SETUP
+        : CROSS_REPO_EXECUTION_CATEGORY.PLAN_NOT_FORMED;
+    return buildExecutionFailure(repoFullName, category, readiness.reason ?? "readiness check failed", {
+      stack: readiness.stack,
+    });
+  }
+
+  const stack = readiness.stack;
+  const testCommand = stack?.detected ? stack.testCommand : null;
+  if (!testCommand) {
+    return buildExecutionFailure(
+      repoFullName,
+      CROSS_REPO_EXECUTION_CATEGORY.OTHER,
+      "No test command was inferred; full execution needs the repo's own test suite to run.",
+      { readinessPassed: true, stack },
+    );
+  }
+
+  const runAgentAttempt = options.runAgentAttempt;
+  if (typeof runAgentAttempt !== "function") {
+    return buildExecutionFailure(
+      repoFullName,
+      CROSS_REPO_EXECUTION_CATEGORY.OTHER,
+      "No coding-agent runner was provided; full execution cannot generate a diff.",
+      { readinessPassed: true, stack },
+    );
+  }
+
+  const repoPath = resolveEvaluationRepoPath(entry, options);
+  let diff: string;
+  try {
+    const attempt = await runAgentAttempt({ repoFullName, repoPath, stack: stack as RepoStackResult });
+    diff = typeof attempt?.diff === "string" ? attempt.diff : "";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return buildExecutionFailure(repoFullName, CROSS_REPO_EXECUTION_CATEGORY.OTHER, `Coding agent failed: ${message}`, {
+      readinessPassed: true,
+      stack,
+    });
+  }
+  const diffPresent = diff.trim().length > 0;
+
+  // Compile/build the edited clone when the stack exposes a build command -- a failure means the agent's code
+  // doesn't compile.
+  const buildCommand = stack?.detected ? stack.buildCommand : null;
+  if (buildCommand && typeof options.buildRepo === "function") {
+    const built = await options.buildRepo({ repoPath, command: buildCommand });
+    if (!built.ok) {
+      return buildExecutionFailure(
+        repoFullName,
+        CROSS_REPO_EXECUTION_CATEGORY.CODE_BUILD_FAILED,
+        `Build failed: ${built.detail ?? buildCommand}`,
+        { readinessPassed: true, diffPresent, built: false, stack },
+      );
+    }
+  }
+
+  // Run the target repo's own test suite against the edited clone.
+  const runRepoTests = options.runRepoTests;
+  if (typeof runRepoTests !== "function") {
+    return buildExecutionFailure(
+      repoFullName,
+      CROSS_REPO_EXECUTION_CATEGORY.OTHER,
+      "No test runner was provided; full execution cannot run the repo's tests.",
+      { readinessPassed: true, diffPresent, built: true, stack },
+    );
+  }
+  const tested = await runRepoTests({ repoPath, command: testCommand });
+  if (!tested.ok) {
+    return buildExecutionFailure(
+      repoFullName,
+      CROSS_REPO_EXECUTION_CATEGORY.TESTS_FAILED,
+      `Tests failed: ${tested.detail ?? testCommand}`,
+      { readinessPassed: true, diffPresent, built: true, testsPassed: false, stack },
+    );
+  }
+
+  // Tests passed -- but an empty diff means the agent changed nothing, so the pass is trivial (no real code).
+  if (!diffPresent) {
+    return buildExecutionFailure(
+      repoFullName,
+      CROSS_REPO_EXECUTION_CATEGORY.NO_OP_DIFF,
+      "Tests passed but the agent produced an empty diff (no real change).",
+      { readinessPassed: true, diffPresent: false, built: true, testsPassed: true, stack },
+    );
+  }
+
+  return {
+    repoFullName,
+    passed: true,
+    executionCategory: null,
+    reason: null,
+    readinessPassed: true,
+    diffPresent: true,
+    built: true,
+    testsPassed: true,
+    stack,
+  };
+}
+
+/** Run full-execution across every repo in a parsed manifest (#7634). Async: each repo runs the real code+test loop. */
+export async function runFullCrossRepoExecution(
+  parsed: ParsedCrossRepoEvaluationManifest,
+  options: { repoFilter?: string } & EvaluateRepoFullExecutionOptions = {},
+): Promise<CrossRepoExecutionResult[]> {
+  const repos = parsed?.manifest?.repos ?? [];
+  const results: CrossRepoExecutionResult[] = [];
+  for (const entry of repos) {
+    if (options.repoFilter && entry.repoFullName !== options.repoFilter) continue;
+    results.push(await evaluateRepoFullExecution(entry, options));
+  }
+  return results;
+}
+
+/** Reduce full-execution results to pass/fail counts + a strict-majority verdict (#7634). */
+export function summarizeCrossRepoExecution(results: CrossRepoExecutionResult[]): CrossRepoExecutionSummary {
+  const list = Array.isArray(results) ? results : [];
+  let passed = 0;
+  let failed = 0;
+  const failuresByCategory: Record<string, number> = {};
+  for (const result of list) {
+    if (result?.passed === true) {
+      passed += 1;
+      continue;
+    }
+    failed += 1;
+    const category = result?.executionCategory ?? CROSS_REPO_EXECUTION_CATEGORY.OTHER;
+    failuresByCategory[category] = (failuresByCategory[category] ?? 0) + 1;
+  }
+  const total = passed + failed;
+  return { total, passed, failed, majorityPassed: total > 0 ? passed > failed : false, failuresByCategory };
+}
+
+/** Human-readable full-execution report (#7634), mirroring formatCrossRepoEvaluationReport's shape. */
+export function formatCrossRepoExecutionReport(
+  results: CrossRepoExecutionResult[],
+  summary: CrossRepoExecutionSummary = summarizeCrossRepoExecution(results),
+): string {
+  const lines = ["loopover-miner cross-repo full execution", ""];
+  for (const result of results) {
+    if (result.passed) {
+      lines.push(`PASS ${result.repoFullName}`);
+      continue;
+    }
+    lines.push(`FAIL ${result.repoFullName} [${result.executionCategory}] ${result.reason}`);
+  }
+  lines.push(
+    "",
+    `summary: ${summary.passed}/${summary.total} passed` +
+      (summary.majorityPassed ? " (majority passed)" : " (majority failed)"),
+  );
   const categories = Object.entries(summary.failuresByCategory).sort(([a], [b]) => a.localeCompare(b));
   if (categories.length > 0) {
     lines.push("", "failures by category:");

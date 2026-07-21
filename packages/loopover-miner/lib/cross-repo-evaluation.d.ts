@@ -50,7 +50,7 @@ export type CrossRepoEvaluationSummary = {
     withoutLoopoverConfig: number;
     failuresByCategory: Record<string, number>;
 };
-type EvaluateRepoReadinessOptions = {
+export type EvaluateRepoReadinessOptions = {
     repoPath?: string;
     resolveRepoPath?: (entry: {
         repoFullName: string;
@@ -100,4 +100,72 @@ export declare function summarizeCrossRepoEvaluation(results: CrossRepoEvaluatio
  * Human-readable pass/fail report for one evaluation run (#4788).
  */
 export declare function formatCrossRepoEvaluationReport(results: CrossRepoEvaluationResult[], summary?: CrossRepoEvaluationSummary): string;
-export {};
+/** Execution-stage failure taxonomy (#7634): extends the readiness taxonomy for the code + test loop. Ordered by
+ *  pipeline stage, so a repo that fails an earlier stage is reported against that stage. */
+export declare const CROSS_REPO_EXECUTION_CATEGORY: Readonly<{
+    PLAN_NOT_FORMED: "plan_not_formed";
+    CODE_BUILD_FAILED: "code_build_failed";
+    TESTS_FAILED: "tests_failed";
+    NO_OP_DIFF: "no_op_diff";
+    CLONE_SETUP: "clone_setup";
+    OTHER: "other";
+}>;
+export type CrossRepoExecutionResult = {
+    repoFullName: string;
+    passed: boolean;
+    executionCategory: string | null;
+    reason: string | null;
+    readinessPassed: boolean;
+    diffPresent: boolean | null;
+    built: boolean | null;
+    testsPassed: boolean | null;
+    stack?: RepoStackResult | undefined;
+};
+export type CrossRepoExecutionSummary = {
+    total: number;
+    passed: number;
+    failed: number;
+    majorityPassed: boolean;
+    failuresByCategory: Record<string, number>;
+};
+/** Injectable local-execution seams (#7634). Real implementations (child_process build/test, the coding-agent
+ *  driver) are wired by the CLI; unit tests inject fakes. Every seam is dry-run: it operates on the local clone
+ *  only, and the harness never pushes or opens a PR. */
+export type CrossRepoExecutionSeams = {
+    runAgentAttempt?: (context: {
+        repoFullName: string;
+        repoPath: string;
+        stack: RepoStackResult;
+    }) => Promise<{
+        diff: string;
+    }>;
+    buildRepo?: (context: {
+        repoPath: string;
+        command: string;
+    }) => Promise<{
+        ok: boolean;
+        detail?: string;
+    }>;
+    runRepoTests?: (context: {
+        repoPath: string;
+        command: string;
+    }) => Promise<{
+        ok: boolean;
+        detail?: string;
+    }>;
+};
+export type EvaluateRepoFullExecutionOptions = EvaluateRepoReadinessOptions & CrossRepoExecutionSeams;
+/**
+ * Run the full discover -> plan -> code -> test loop for one benchmark repo in dry-run (#7634). Reuses
+ * evaluateRepoReadiness for the plan stage, then delegates the code + build + test steps to injectable seams so the
+ * orchestration + taxonomy stay unit-testable without a live coding agent. Never pushes or opens a PR.
+ */
+export declare function evaluateRepoFullExecution(entry: CrossRepoEvaluationManifestRepo, options?: EvaluateRepoFullExecutionOptions): Promise<CrossRepoExecutionResult>;
+/** Run full-execution across every repo in a parsed manifest (#7634). Async: each repo runs the real code+test loop. */
+export declare function runFullCrossRepoExecution(parsed: ParsedCrossRepoEvaluationManifest, options?: {
+    repoFilter?: string;
+} & EvaluateRepoFullExecutionOptions): Promise<CrossRepoExecutionResult[]>;
+/** Reduce full-execution results to pass/fail counts + a strict-majority verdict (#7634). */
+export declare function summarizeCrossRepoExecution(results: CrossRepoExecutionResult[]): CrossRepoExecutionSummary;
+/** Human-readable full-execution report (#7634), mirroring formatCrossRepoEvaluationReport's shape. */
+export declare function formatCrossRepoExecutionReport(results: CrossRepoExecutionResult[], summary?: CrossRepoExecutionSummary): string;

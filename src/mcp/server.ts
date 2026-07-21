@@ -110,6 +110,7 @@ import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../servi
 import { buildRecommendationQualityReport } from "../services/recommendation-quality-report";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
+import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
 import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
@@ -166,6 +167,7 @@ import { buildFocusManifestValidation } from "../services/focus-manifest-validat
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
+import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
@@ -891,6 +893,21 @@ const maintainerNoiseOutputSchema = {
   noiseSources: z.array(z.string()).optional(),
   maintainerActions: z.array(z.string()).optional(),
   queueHealth: z.unknown().optional(),
+  summary: z.string().optional(),
+};
+
+// (#7799) Repo-specific "here's what LoopOver would have surfaced" activation preview over recent PRs.
+// Mirrors buildMaintainerActivationPreview's shape; deterministic, maintainer-authenticated, advisory only.
+const activationPreviewOutputSchema = {
+  repoFullName: z.string().optional(),
+  generatedAt: z.string().optional(),
+  currentReviewCheckMode: z.string().optional(),
+  aiReviewConfigured: z.boolean().optional(),
+  evaluatedCount: z.number().optional(),
+  withFindingsCount: z.number().optional(),
+  findingCodeCounts: z.array(z.unknown()).optional(),
+  samples: z.array(z.unknown()).optional(),
+  recommendedAction: z.string().nullable().optional(),
   summary: z.string().optional(),
 };
 
@@ -1798,6 +1815,7 @@ export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "
 export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_context: "maintainer",
   loopover_get_maintainer_noise: "maintainer",
+  loopover_get_activation_preview: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
   loopover_get_repo_onboarding_pack: "maintainer",
@@ -1927,6 +1945,17 @@ export class LoopoverMcp {
         outputSchema: maintainerNoiseOutputSchema,
       },
       async (input) => this.toolResult(await this.getMaintainerNoise(input)),
+    );
+
+    register(
+      "loopover_get_activation_preview",
+      {
+        description:
+          "Return the repo's maintainer activation preview: a deterministic \"here's what LoopOver would have surfaced\" run of the advisory engine over recent PRs (evaluated/with-findings counts, distinct finding codes, per-PR samples, current review-check mode, and the single recommended next action). Maintainer-authenticated; advisory only, never runs AI.",
+        inputSchema: ownerRepoShape,
+        outputSchema: activationPreviewOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getActivationPreview(input)),
     );
 
     register(
@@ -3110,6 +3139,31 @@ export class LoopoverMcp {
     const report = await loadMaintainerNoiseReport(this.env, fullName);
     return {
       summary: maintainerNoiseSummary(report),
+      data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  // (#7799) MCP surface for GET /v1/repos/:owner/:repo/activation-preview. Assembles the same inputs the REST
+  // route does (getRepository + resolveRepositorySettings + listPullRequests) and defers to the guarded
+  // buildMaintainerActivationPreview service. Deterministic and advisory-only -- never runs AI.
+  private async getActivationPreview(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoApprovalQueueAccess(fullName);
+    const [repo, settings, pullRequests] = await Promise.all([
+      getRepository(this.env, fullName),
+      resolveRepositorySettings(this.env, fullName),
+      listPullRequests(this.env, fullName),
+    ]);
+    const report = buildMaintainerActivationPreview({
+      repoFullName: fullName,
+      repo,
+      settings,
+      pullRequests,
+      generatedAt: nowIso(),
+      duplicateWinnerEnabled: resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(this.env), settings.duplicateWinnerMode),
+    });
+    return {
+      summary: report.summary,
       data: report as unknown as Record<string, unknown>,
     };
   }

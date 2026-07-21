@@ -553,6 +553,23 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/activation-preview" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-06-01T00:00:00.000Z",
+          currentReviewCheckMode: "off",
+          aiReviewConfigured: false,
+          evaluatedCount: 3,
+          withFindingsCount: 2,
+          findingCodeCounts: [{ code: "missing_linked_issue", count: 2 }],
+          samples: [{ number: 7, title: "misc cleanup", severity: "advisory", findingCount: 1, findings: [{ code: "missing_linked_issue", severity: "advisory", title: "No linked issue" }] }],
+          recommendedAction: "enable_advisory",
+          summary: "LoopOver activation preview for owner/repo: evaluated 3 recent PR(s), 2 with findings.",
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/outcome-patterns" && request.method === "GET") {
       response.end(
         JSON.stringify({

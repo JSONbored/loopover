@@ -940,6 +940,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
   },
   {
+    name: "loopover_get_activation_preview",
+    category: "maintainer",
+    description: "Return the repo's maintainer activation preview: a deterministic run of the advisory engine over recent PRs (evaluated/with-findings counts, distinct finding codes, per-PR samples, current review-check mode, and the single recommended next action). Maintainer-authenticated; advisory only.",
+  },
+  {
     name: "loopover_preflight_pr",
     category: "discovery",
     description: "Preflight planned PR metadata against lane, duplicate, linked issue, test, and queue signals.",
@@ -1464,6 +1469,21 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
+  },
+);
+
+// (#7799) CLI stdio mirror of the remote loopover_get_activation_preview — thin GET proxy of the already
+// maintainer-scoped /v1/repos/:owner/:repo/activation-preview route (same ownerRepoShape + apiGet pattern
+// as maintainer_noise).
+registerStdioTool(
+  "loopover_get_activation_preview",
+  {
+    description: stdioToolDescription("loopover_get_activation_preview"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult("LoopOver activation preview.", await apiGet(`${prefix}/activation-preview`));
   },
 );
 

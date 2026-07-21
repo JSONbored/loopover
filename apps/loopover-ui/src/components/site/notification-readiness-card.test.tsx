@@ -94,4 +94,27 @@ describe("NotificationReadinessCard loading/error states (#6985)", () => {
     expect(container.textContent).toContain("No content leaves the browser without consent.");
     expect(screen.queryByText("Loading notification model…")).toBeNull();
   });
+
+  it("migrates a pre-rebrand opt-in stored under the legacy gittensory_ key (#7782)", () => {
+    // A maintainer who opted in before the rebrand has their preference under the OLD gittensory_-prefixed
+    // key. #5743's blanket rename had corrupted the legacyKey to equal the current key, so this value was
+    // silently dropped and the card defaulted back to "opt-in required". With the legacy key restored, the
+    // pre-rebrand opt-in is read forward and the pill shows "opt-in enabled".
+    window.localStorage.clear();
+    window.localStorage.setItem("gittensory_notification_opt_in", JSON.stringify(true));
+    useApiResource.mockReturnValue({
+      status: "ready",
+      data: notificationModelFixture,
+      error: null,
+      loadedAt: Date.now(),
+      reload: () => {},
+    });
+
+    render(<NotificationReadinessCard />);
+
+    expect(screen.getByText("opt-in enabled")).toBeTruthy();
+    // The legacy value was written forward to the current key (useLocalStorage's migration contract).
+    expect(window.localStorage.getItem("loopover_notification_opt_in")).toBe(JSON.stringify(true));
+    window.localStorage.clear();
+  });
 });

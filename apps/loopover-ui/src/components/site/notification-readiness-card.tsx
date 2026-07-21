@@ -33,7 +33,9 @@ export function NotificationReadinessCard() {
   const [optIn, setOptIn] = useLocalStorage<boolean>(
     "loopover_notification_opt_in",
     false,
-    "loopover_notification_opt_in",
+    // Legacy fallback must stay the OLD gittensory_-prefixed literal; #5743's blanket gittensory->loopover
+    // rename corrupted it to equal the current key, silently dropping a pre-rebrand opt-in (#7782).
+    "gittensory_notification_opt_in",
   );
   const [busy, setBusy] = useState(false);
 

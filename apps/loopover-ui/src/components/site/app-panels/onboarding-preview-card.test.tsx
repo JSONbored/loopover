@@ -128,6 +128,30 @@ describe("OnboardingPreviewCard", () => {
     expect(screen.getByText("503 Service Unavailable")).toBeTruthy();
   });
 
+  it("migrates a pre-rebrand dismissal stored under the legacy gittensory_ key (#7782)", async () => {
+    // A maintainer who dismissed this card before the rebrand has the flag under the OLD gittensory_-prefixed
+    // key. #5743's blanket rename had corrupted the legacyKey to equal the current key, so this value was
+    // silently dropped and the card reappeared. With the legacy key restored, the pre-rebrand dismissal is read
+    // forward: the card stays hidden and no demo API call runs.
+    window.localStorage.clear();
+    // useLocalStorage stores the `{ dismissed }` object shape, so the legacy value mirrors it.
+    window.localStorage.setItem(
+      "gittensory_maintainer_onboarding_preview_dismissed",
+      JSON.stringify({ dismissed: true }),
+    );
+    apiFetch.mockResolvedValue({ ok: true, data: preview() });
+
+    render(<OnboardingPreviewCard reviewability={REVIEWABILITY} />);
+    await waitFor(() =>
+      expect(window.localStorage.getItem("loopover_maintainer_onboarding_preview_dismissed")).toBe(
+        JSON.stringify({ dismissed: true }),
+      ),
+    );
+    // The migrated legacy dismissal keeps the card hidden and skips the demo API call entirely.
+    expect(screen.queryByText(/Here's what LoopOver would have flagged/)).toBeNull();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
   it("dismisses the card and keeps it hidden (and skips the API call) across a remount", async () => {
     apiFetch.mockResolvedValue({ ok: true, data: preview() });
     const { unmount } = render(<OnboardingPreviewCard reviewability={REVIEWABILITY} />);

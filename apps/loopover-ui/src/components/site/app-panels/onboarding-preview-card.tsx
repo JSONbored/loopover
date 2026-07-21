@@ -18,8 +18,10 @@ import { useLocalStorage } from "@/lib/use-local-storage";
 type ReviewabilityRow = { pr: string; title: string; reason: string };
 
 const DISMISS_KEY = "loopover_maintainer_onboarding_preview_dismissed";
-// One-time rebrand migration fallback -- see useLocalStorage's legacyKey param.
-const LEGACY_DISMISS_KEY = "loopover_maintainer_onboarding_preview_dismissed";
+// One-time rebrand migration fallback -- see useLocalStorage's legacyKey param. This must stay the OLD
+// gittensory_-prefixed literal; #5743's blanket gittensory->loopover rename corrupted it to equal DISMISS_KEY,
+// silently dropping a pre-rebrand dismissal (#7782).
+const LEGACY_DISMISS_KEY = "gittensory_maintainer_onboarding_preview_dismissed";
 
 /** Builds a settings-preview form from a REAL cached PR (title, and a linked-issue number scraped from
  *  `reason` when present) — everything else (author identity, labels, body) isn't in the reviewability

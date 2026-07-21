@@ -84,7 +84,7 @@ export function runCrossRepoEvaluationCli(options = {}) {
 /** Run one of the target repo's own commands (build or test) in its clone. `ok` is a clean exit 0. The command
  *  string comes from stack detection (`detectRepoStack`, e.g. "npm test", "pytest", "cargo build"); it is split on
  *  whitespace and spawned WITHOUT a shell, so there is no shell metacharacter interpretation of the command. */
-function spawnRepoCommand({ repoPath, command }) {
+export function spawnRepoCommand({ repoPath, command }) {
   const [bin, ...args] = String(command).split(/\s+/).filter(Boolean);
   if (!bin) return { ok: false, detail: "empty command" };
   const child = spawnSync(bin, args, { cwd: repoPath, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false });
@@ -95,7 +95,7 @@ function spawnRepoCommand({ repoPath, command }) {
 }
 
 /** Discard the coding agent's edits so the clone is pristine for the next run (dry-run: never keep the change). */
-function resetRepo(repoPath) {
+export function resetRepo(repoPath) {
   spawnSync("git", ["-C", repoPath, "checkout", "--", "."], { encoding: "utf8" });
   spawnSync("git", ["-C", repoPath, "clean", "-fd"], { encoding: "utf8" });
 }
@@ -106,7 +106,7 @@ function resetRepo(repoPath) {
  * modules so the readiness-only CLI path never pays for them. Requires a configured driver + its credentials
  * (see docs/cross-repo-evaluation.md); an unconfigured environment surfaces as an `other` execution failure.
  */
-async function buildAgentAttemptSeam(env) {
+export async function buildAgentAttemptSeam(env) {
   const [{ runCodingAgentAttempt, resolveFirstConfiguredCodingAgentDriverName }, { buildCodingTaskSpec }] =
     await Promise.all([import("@loopover/engine"), import("../lib/coding-task-spec.js")]);
   return async function runAgentAttempt({ repoFullName, repoPath, stack }) {
@@ -158,7 +158,7 @@ export async function runFullCrossRepoExecutionCli(options = {}) {
     runRepoTests: options.runRepoTests ?? spawnRepoCommand,
     env,
   };
-  const results = await runFullCrossRepoExecution(parsed, { repoFilter: options.repoFilter ?? null, ...seams });
+  const results = await runFullCrossRepoExecution(parsed, { ...options, repoFilter: options.repoFilter ?? null, ...seams });
   const summary = summarizeCrossRepoExecution(results);
   return { parsed, results, summary };
 }

@@ -40,3 +40,9 @@ export declare function runFullCrossRepoExecutionCli(options?: CrossRepoFullExec
   results: CrossRepoExecutionResult[];
   summary: CrossRepoExecutionSummary;
 }>;
+
+export declare function spawnRepoCommand(ctx: { repoPath: string; command: string }): { ok: boolean; detail?: string };
+
+export declare function resetRepo(repoPath: string): void;
+
+export declare function buildAgentAttemptSeam(env: NodeJS.ProcessEnv): Promise<(context: { repoFullName: string; repoPath: string; stack: unknown }) => Promise<{ diff: string }>>;

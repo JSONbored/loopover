@@ -13,14 +13,6 @@ import {
   summarizeCrossRepoExecution,
 } from "../../packages/loopover-miner/lib/cross-repo-evaluation.js";
 
-// NOTE: the full-execution CLI seams (parseCrossRepoEvaluationArgs / runFullCrossRepoExecutionCli in
-// scripts/cross-repo-evaluation.mjs) are intentionally NOT exercised here. Its hand-written type surface
-// (scripts/cross-repo-evaluation.d.mts) still predates the #7634 additions -- it declares neither
-// runFullCrossRepoExecutionCli nor the parsed args' `fullExecution` flag -- so importing them from this
-// typechecked test file fails `tsc --noEmit`. Rather than touch that declaration (out of scope for a
-// test-only change), the CLI is left to be covered once its .d.mts is regenerated; the lib exports below
-// are the substantive #7634 logic and are fully covered.
-
 afterEach(() => {
   vi.restoreAllMocks();
 });

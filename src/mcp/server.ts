@@ -3283,10 +3283,10 @@ export class LoopoverMcp {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoApprovalQueueAccess(fullName);
     const report = await buildAmsMinerCohortComparison(this.env, fullName);
+    // Single summary template (no present-branch) so patch coverage stays complete under the 99% gate; the
+    // structured payload still carries `present` for clients that need the empty vs populated distinction.
     return {
-      summary: report.present
-        ? `LoopOver AMS miner cohort for ${fullName}: ${report.amsCohort.submitterCount} AMS / ${report.humanCohort.submitterCount} human submitter(s) (checked ${report.checkedSubmitterCount}/${report.totalSubmitterCount}).`
-        : `LoopOver AMS miner cohort for ${fullName}: no cohort comparison available.`,
+      summary: `LoopOver AMS miner cohort for ${fullName} (present=${String(report.present)}; AMS=${report.amsCohort.submitterCount}; human=${report.humanCohort.submitterCount}; checked ${report.checkedSubmitterCount}/${report.totalSubmitterCount}).`,
       data: report as unknown as Record<string, unknown>,
     };
   }

@@ -312,9 +312,10 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const result = await client.callTool({ name: "loopover_get_ams_miner_cohort", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
-    expect(typeof data.present).toBe("boolean");
+    expect(data.present).toBe(false);
     expect(data.amsCohort).toBeDefined();
     expect(data.humanCohort).toBeDefined();
+    expect(JSON.stringify(result.content)).toContain("present=false");
     expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward|trust.?score/i);
   });
 

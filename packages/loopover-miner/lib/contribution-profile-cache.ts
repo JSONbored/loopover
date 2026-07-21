@@ -13,6 +13,7 @@ import {
   openLocalStoreAdapter,
   resolveLocalStoreDbPath,
 } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import {
   CONTRIBUTION_PROFILE_CACHE_PURGE_SPEC,
@@ -58,6 +59,7 @@ function normalizeRepoFullName(repoFullName: unknown): string {
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined)
     throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

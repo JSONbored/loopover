@@ -456,4 +456,15 @@ describe("openReplaySnapshotStore (#3010) — round-trip persistence", () => {
     const store = tempStore();
     expect(store.getSnapshot("acme/widgets", "nope")).toBeNull();
   });
+
+  // #7795: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and used as a snapshot key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const store = tempStore();
+    expect(() => store.getSnapshot("../etc", "abc123")).toThrow("invalid_repo_full_name"); // owner ".." invalid
+    expect(() => store.getSnapshot("o/..", "abc123")).toThrow("invalid_repo_full_name"); // repo ".." invalid
+    expect(() => store.getSnapshot("o baz/a", "abc123")).toThrow("invalid_repo_full_name");
+    expect(() => store.getSnapshot("o/a baz", "abc123")).toThrow("invalid_repo_full_name");
+  });
 });

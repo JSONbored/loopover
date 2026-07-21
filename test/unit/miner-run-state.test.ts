@@ -136,6 +136,24 @@ describe("loopover-miner run-state store (#2289)", () => {
     }
   });
 
+  // #7795: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and persisted as a state key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const store = initRunStateStore(join(tempRoot(), "run-state.sqlite3"));
+    try {
+      // Both getRunState (read) and setRunState (write) funnel through normalizeRepoFullName.
+      expect(() => store.getRunState("../etc")).toThrow("invalid_repo_full_name"); // owner ".." invalid
+      expect(() => store.getRunState("o/..")).toThrow("invalid_repo_full_name"); // repo ".." invalid
+      expect(() => store.setRunState("o baz/a", "idle")).toThrow("invalid_repo_full_name");
+      expect(() => store.setRunState("o/a baz", "idle")).toThrow("invalid_repo_full_name");
+      expect(() => store.setRunState("../etc", "idle")).toThrow("invalid_repo_full_name");
+      expect(() => store.setRunState("o/..", "idle")).toThrow("invalid_repo_full_name");
+    } finally {
+      store.close();
+    }
+  });
+
   it("fails closed to null when a legacy table contains an unknown state", () => {
     const dbPath = join(tempRoot(), "legacy.sqlite3");
     const legacy = new DatabaseSync(dbPath);

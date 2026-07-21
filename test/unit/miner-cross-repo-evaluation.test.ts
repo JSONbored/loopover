@@ -495,7 +495,10 @@ describe("cross-repo evaluation harness (#4788)", () => {
         json: true,
         repoFilter: "acme/widgets",
         requireMajority: true,
+        fullExecution: false,
       });
+      const fullExecArgs = parseCrossRepoEvaluationArgs(["--full-execution"]);
+      expect("fullExecution" in fullExecArgs && fullExecArgs.fullExecution).toBe(true);
       expect(parseCrossRepoEvaluationArgs(["--manifest"])).toEqual({ error: "Missing value for --manifest." });
       expect(parseCrossRepoEvaluationArgs(["--nope"])).toEqual({ error: "Unknown argument: --nope" });
       expect(parseCrossRepoEvaluationArgs(["--help"])).toEqual({ help: true });

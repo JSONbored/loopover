@@ -171,7 +171,7 @@ import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadi
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
@@ -913,6 +913,13 @@ const amsMinerCohortOutputSchema = {
   checkedSubmitterCount: z.number().optional(),
   amsCohort: z.unknown().optional(),
   humanCohort: z.unknown().optional(),
+};
+
+// #7808 - repo's own persisted focus manifest + compiled policy (REST GET focus-manifest mirror).
+const repoFocusManifestOutputSchema = {
+  repoFullName: z.string().optional(),
+  manifest: z.unknown().optional(),
+  policy: z.unknown().optional(),
 };
 
 // (#7799) Repo-specific "here's what LoopOver would have surfaced" activation preview over recent PRs.
@@ -1879,6 +1886,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_context: "maintainer",
   loopover_get_maintainer_noise: "maintainer",
   loopover_get_ams_miner_cohort: "maintainer",
+  loopover_get_repo_focus_manifest: "maintainer",
   loopover_get_activation_preview: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
@@ -2025,6 +2033,17 @@ export class LoopoverMcp {
         outputSchema: amsMinerCohortOutputSchema,
       },
       async (input) => this.toolResult(await this.getAmsMinerCohort(input)),
+    );
+
+    register(
+      "loopover_get_repo_focus_manifest",
+      {
+        description:
+          "Return a repo's own persisted focus manifest (.loopover.yml policy) plus its compiled policy. Read-only; maintainer/owner/operator authenticated — same auth boundary as GET /v1/repos/:owner/:repo/focus-manifest. Distinct from loopover_validate_config (ad-hoc string validation with no repo lookup).",
+        inputSchema: ownerRepoShape,
+        outputSchema: repoFocusManifestOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getRepoFocusManifest(input)),
     );
 
     register(
@@ -3160,6 +3179,22 @@ export class LoopoverMcp {
     await this.requireRepoAccess(repoFullName);
   }
 
+  // #7808 - mirror GET /v1/repos/:owner/:repo/focus-manifest auth: requireAppRole([maintainer,owner,operator])
+  // plus session requireSessionRepoAccess. Static `mcp` is never trusted (insufficient_role); api/internal are.
+  private async requireFocusManifestReadAccess(repoFullName: string): Promise<void> {
+    if (this.identity.kind === "static") {
+      if (this.identity.actor === "mcp") {
+        throw new Error("Forbidden: focus-manifest requires a maintainer, owner, or operator session (insufficient_role).");
+      }
+      return;
+    }
+    const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor);
+    if (!summary.roles.some((role) => role === "maintainer" || role === "owner" || role === "operator")) {
+      throw new Error("Forbidden: maintainer, owner, or operator role is required for focus-manifest (insufficient_role).");
+    }
+    await this.requireRepoAccess(repoFullName);
+  }
+
   // Stricter than requireRepoAccess (read): a maintainer-MANAGE gate for write actions (#784 propose-action).
   // A session must own/maintain the repo (or be an operator); api/internal static identities are trusted (they
   // are operator-only Worker secrets, never handed to end users). The static `mcp` identity is NOT trusted here:
@@ -3288,6 +3323,19 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver AMS miner cohort for ${fullName} (present=${String(report.present)}; AMS=${report.amsCohort.submitterCount}; human=${report.humanCohort.submitterCount}; checked ${report.checkedSubmitterCount}/${report.totalSubmitterCount}).`,
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7808 - thin MCP surface over GET /v1/repos/:owner/:repo/focus-manifest. Same requireAppRole +
+  // session-repo-access boundary as the REST route; same loadRepoFocusManifest + compileFocusManifestPolicy pair.
+  private async getRepoFocusManifest(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireFocusManifestReadAccess(fullName);
+    const manifest = await loadRepoFocusManifest(this.env, fullName);
+    const policy = compileFocusManifestPolicy(manifest);
+    return {
+      summary: `LoopOver focus manifest for ${fullName}.`,
+      data: { repoFullName: fullName, manifest, policy } as unknown as Record<string, unknown>,
     };
   }
 

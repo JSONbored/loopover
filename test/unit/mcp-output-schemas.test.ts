@@ -18,6 +18,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_activation_preview",
   "loopover_get_live_gate_thresholds",
   "loopover_get_gate_config_effective",
+  "loopover_get_repo_focus_manifest",
   "loopover_get_label_audit",
   "loopover_get_maintainer_lane",
   "loopover_get_repo_onboarding_pack",
@@ -159,6 +160,10 @@ describe("MCP output schema discovery", () => {
     const gateConfig = byName.get("loopover_get_gate_config_effective");
     const gateConfigProps = Object.keys((gateConfig?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(gateConfigProps).toEqual(expect.arrayContaining(["repoFullName", "effective", "shadowPending"]));
+
+    const focusManifest = byName.get("loopover_get_repo_focus_manifest");
+    const focusManifestProps = Object.keys((focusManifest?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(focusManifestProps).toEqual(expect.arrayContaining(["repoFullName", "manifest", "policy"]));
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {
@@ -419,6 +424,74 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const result = await client.callTool({ name: "loopover_get_gate_config_effective", arguments: { owner: "octo", repo: "demo" } });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({ status: "forbidden", repoFullName: "octo/demo" });
+  });
+
+  it("loopover_get_repo_focus_manifest returns persisted manifest + policy for trusted api identity (#7808)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env, { kind: "static", actor: "api" });
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      repoFullName: "octo/demo",
+      manifest: expect.anything(),
+      policy: expect.anything(),
+    });
+  });
+
+  it("loopover_get_repo_focus_manifest rejects the shared static mcp identity (#7808)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/insufficient_role|maintainer, owner, or operator/i);
+  });
+
+  it("loopover_get_repo_focus_manifest rejects sessions without maintainer/owner/operator role (#7808)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env, {
+      kind: "session",
+      actor: "read-only-member",
+      session: {
+        id: "session-read-only-member-focus",
+        tokenHash: "hash",
+        login: "read-only-member",
+        scopes: [],
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      },
+    });
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/insufficient_role|maintainer, owner, or operator/i);
+  });
+
+  it("loopover_get_repo_focus_manifest allows an operator session (#7808)", async () => {
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "focus-operator" });
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    const { client } = await connectTestClient(env, {
+      kind: "session",
+      actor: "focus-operator",
+      session: {
+        id: "session-focus-operator",
+        tokenHash: "hash",
+        login: "focus-operator",
+        scopes: [],
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+      },
+    });
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      repoFullName: "octo/demo",
+      manifest: expect.anything(),
+      policy: expect.anything(),
+    });
   });
 
   it("loopover_get_activation_preview denies cached member-only session access (#7799)", async () => {

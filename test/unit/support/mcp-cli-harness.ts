@@ -608,6 +608,17 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7808: repo's own persisted focus manifest + compiled policy.
+    if (request.url === "/v1/repos/owner/repo/focus-manifest" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          manifest: { version: 1, lanes: { lane: "bug" } },
+          policy: { lane: "bug", generatedAt: "2026-06-01T00:00:00.000Z" },
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/outcome-patterns" && request.method === "GET") {
       response.end(
         JSON.stringify({

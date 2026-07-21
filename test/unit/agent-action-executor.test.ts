@@ -59,6 +59,7 @@ import { fetchLiveCiAggregate, fetchLivePullRequestMergeState, fetchLivePullRequ
 import {
   actionParams,
   applyModerationEscalationForRule,
+  buildModerationEscalationComment,
   clearInstallationHealthRefreshCooldownForTest,
   clearWritePermissionDenialCooldownForTest,
   writePermissionDenialCooldownSizeForTest,
@@ -1519,6 +1520,14 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
   });
 
+  it("#mod-warning-context: the label alone is not enough -- a follow-up comment states the violation count and how many remain before an automatic ban", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 5 });
+    await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, expect.stringContaining("1 recorded moderation violation"));
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, expect.stringContaining("4 more will result in an automatic ban"));
+  });
+
   it("4 violations -> warning only; the 5th (default threshold) escalates to mod:banned + auto-blacklists the login", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true });
@@ -1535,26 +1544,30 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 104, "mod:banned", { createMissingLabel: true });
     const blacklist = await getGlobalContributorBlacklist(env);
     expect(blacklist?.map((entry) => entry.login)).toContain("farmer99");
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 104, expect.stringContaining("automatically added to the blacklist"));
   });
 
-  it("does NOT auto-blacklist when autoBlacklistOnBan is off, even at the ban threshold", async () => {
+  it("does NOT auto-blacklist when autoBlacklistOnBan is off, even at the ban threshold -- the follow-up comment says so explicitly", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1, autoBlacklistOnBan: false });
     await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel]);
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
     const blacklist = await getGlobalContributorBlacklist(env);
     expect(blacklist?.map((entry) => entry.login)).not.toContain("farmer99");
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, expect.stringContaining("Automatic blacklisting is not enabled"));
   });
 
-  it("does not double-add an actor who is already on the global blacklist", async () => {
+  it("does not double-add an actor who is already on the global blacklist -- the follow-up comment still reports the (already-true) blacklisted state", async () => {
     const env = createTestEnv({});
     await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
     // Two DISTINCT PRs (different pullNumber) -- two genuinely separate violations, not a same-target replay
     // (which the idempotency fix would correctly no-op before ever reaching the blacklist-membership check).
     await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 7 }), [coupledClose, coupledLabel]);
+    vi.clearAllMocks();
     await executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99", pullNumber: 8 }), [{ ...coupledClose }, { ...coupledLabel }]);
     const blacklist = await getGlobalContributorBlacklist(env);
     expect(blacklist?.filter((entry) => entry.login === "farmer99")).toHaveLength(1);
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 8, expect.stringContaining("automatically added to the blacklist"));
   });
 
   it("per-repo moderationGateMode 'off' force-disables the layer even when the global config is enabled", async () => {
@@ -1650,6 +1663,7 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     // Only the JUST-recorded violation counts (1 < banThreshold 2) -> warning, not banned.
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
     expect(ensurePullRequestLabel).not.toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", expect.anything());
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, expect.stringContaining("Violations older than 1 day(s) no longer count toward this total."));
   });
 
   it("REGRESSION (gate-flagged): a webhook redelivery / queue retry that re-executes the SAME close (same repo+number) does not double-count the violation or escalate past what the single real enforcement action warrants", async () => {
@@ -1671,6 +1685,51 @@ describe("moderation-rules engine escalation (#selfhost-mod-engine)", () => {
     await upsertGlobalModerationConfig(env, { enabled: true, violationDecayDays: Number.MAX_SAFE_INTEGER });
     await expect(executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel])).resolves.not.toThrow();
     expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:warning", { createMissingLabel: true });
+  });
+
+  it("#mod-warning-context: a failed blacklist write degrades to blacklisted:false rather than throwing or claiming a ban that didn't happen", async () => {
+    const env = createTestEnv({});
+    await upsertGlobalModerationConfig(env, { enabled: true, banThreshold: 1 });
+    const originalPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("global_contributor_blacklist")) throw new Error("D1 write failed");
+      return originalPrepare(sql);
+    });
+    await expect(executeAgentMaintenanceActions(env, ctx({ authorLogin: "farmer99" }), [coupledClose, coupledLabel])).resolves.not.toThrow();
+    expect(ensurePullRequestLabel).toHaveBeenCalledWith(env, 123, "owner/repo", 7, "mod:banned", { createMissingLabel: true });
+    expect(createIssueComment).toHaveBeenCalledWith(env, 123, "owner/repo", 7, expect.stringContaining("Automatic blacklisting is not enabled"));
+  });
+});
+
+describe("buildModerationEscalationComment (#mod-warning-context)", () => {
+  it("warning tier: states the current count and how many more violations remain before an automatic ban", () => {
+    const text = buildModerationEscalationComment({ tier: "warning", totalCount: 2, banThreshold: 5, violationDecayDays: null, blacklisted: false });
+    expect(text).toBe("This contributor now has 2 recorded moderation violation(s) (warning threshold). 3 more will result in an automatic ban.");
+  });
+
+  it("warning tier: appends the decay-window note when violationDecayDays is configured", () => {
+    const text = buildModerationEscalationComment({ tier: "warning", totalCount: 1, banThreshold: 3, violationDecayDays: 30, blacklisted: false });
+    expect(text).toContain("Violations older than 30 day(s) no longer count toward this total.");
+  });
+
+  it("warning tier: omits the decay-window note when violationDecayDays is null (permanent tally)", () => {
+    const text = buildModerationEscalationComment({ tier: "warning", totalCount: 1, banThreshold: 3, violationDecayDays: null, blacklisted: false });
+    expect(text).not.toContain("no longer count");
+  });
+
+  it("banned tier + blacklisted: reports the threshold reached and that the blacklist entry was added", () => {
+    const text = buildModerationEscalationComment({ tier: "banned", totalCount: 5, banThreshold: 5, violationDecayDays: null, blacklisted: true });
+    expect(text).toBe("This contributor now has 5 recorded moderation violation(s), at or beyond the configured threshold of 5. This contributor has been automatically added to the blacklist.");
+  });
+
+  it("banned tier + NOT blacklisted (autoBlacklistOnBan off or a failed write): reports the threshold reached but that no blacklist entry was added", () => {
+    const text = buildModerationEscalationComment({ tier: "banned", totalCount: 6, banThreshold: 5, violationDecayDays: null, blacklisted: false });
+    expect(text).toBe("This contributor now has 6 recorded moderation violation(s), at or beyond the configured threshold of 5. Automatic blacklisting is not enabled for this instance, so no blacklist entry was added.");
+  });
+
+  it("banned tier: also appends the decay-window note when configured", () => {
+    const text = buildModerationEscalationComment({ tier: "banned", totalCount: 5, banThreshold: 5, violationDecayDays: 14, blacklisted: true });
+    expect(text).toContain("Violations older than 14 day(s) no longer count toward this total.");
   });
 });
 

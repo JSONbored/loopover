@@ -36,6 +36,7 @@ import {
   resolveEffectiveModerationRules,
   resolveModerationGateEnabled,
   type ModerationRuleType,
+  type ModerationTier,
 } from "../settings/moderation-rules";
 import { incr } from "../selfhost/metrics";
 import { shouldWaitForOlderSiblings } from "../review/merge-train";
@@ -604,6 +605,33 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
 
 const MODERATION_RULE_TYPES = new Set<string>(Object.keys(MODERATION_VIOLATION_EVENT_TYPE));
 
+/** Pure text for the moderation-escalation follow-up comment (#mod-warning-context): the warning/banned LABEL
+ *  alone doesn't tell a contributor (or a maintainer reading the closure later) how many violations are on
+ *  record or how close they are to an automatic ban -- this always accompanies the label with the actual
+ *  numbers. Exported for direct unit testing without driving the full escalation flow. `totalCount < banThreshold`
+ *  is guaranteed by the `tier === "warning"` caller contract (moderationTierForViolationCount only returns
+ *  "warning" below the threshold), so the remaining-count subtraction is never non-positive here. */
+export function buildModerationEscalationComment(args: {
+  tier: Exclude<ModerationTier, "none">;
+  totalCount: number;
+  banThreshold: number;
+  violationDecayDays: number | null;
+  blacklisted: boolean;
+}): string {
+  const decayNote =
+    args.violationDecayDays !== null
+      ? ` Violations older than ${args.violationDecayDays} day(s) no longer count toward this total.`
+      : "";
+  if (args.tier === "banned") {
+    const blacklistNote = args.blacklisted
+      ? " This contributor has been automatically added to the blacklist."
+      : " Automatic blacklisting is not enabled for this instance, so no blacklist entry was added.";
+    return `This contributor now has ${args.totalCount} recorded moderation violation(s), at or beyond the configured threshold of ${args.banThreshold}.${blacklistNote}${decayNote}`;
+  }
+  const remaining = args.banThreshold - args.totalCount;
+  return `This contributor now has ${args.totalCount} recorded moderation violation(s) (warning threshold). ${remaining} more will result in an automatic ban.${decayNote}`;
+}
+
 /**
  * Moderation-rules engine (#selfhost-mod-engine / #review-evasion-protection): given that a moderation-
  * tracked enforcement action for `rule` ALREADY COMPLETED against `authorLogin` on `repoFullName#number`,
@@ -652,16 +680,38 @@ export async function applyModerationEscalationForRule(
   const label = tier === "banned" ? (args.moderationSettings?.moderationBannedLabel ?? globalConfig.bannedLabel) : (args.moderationSettings?.moderationWarningLabel ?? globalConfig.warningLabel);
   await ensurePullRequestLabel(env, args.installationId, args.repoFullName, args.number, label, { createMissingLabel: true }).catch(() => undefined);
 
+  let blacklisted = false;
   if (tier === "banned" && globalConfig.autoBlacklistOnBan) {
     /* v8 ignore next -- getGlobalContributorBlacklist never actually resolves undefined (it fails open to
        `[]`); the `?? []` only satisfies RepositorySettings["contributorBlacklist"]'s optional TS type. */
     const current = (await getGlobalContributorBlacklist(env)) ?? [];
-    if (!isAuthorBlacklisted(args.authorLogin, current)) {
+    if (isAuthorBlacklisted(args.authorLogin, current)) {
+      blacklisted = true;
+    } else {
       const banReason = `moderation-engine auto-ban: ${totalCount} lifetime violations reached the configured threshold`;
       const nextBlacklist = [...current, { login: args.authorLogin, reason: banReason, evidence: [targetKey] }];
-      await upsertGlobalContributorBlacklist(env, { contributorBlacklist: nextBlacklist }).catch(() => undefined);
+      // A write failure here must not throw (this whole function is best-effort, matching the label
+      // application above) -- it degrades `blacklisted` to false so the escalation comment below correctly
+      // says no blacklist entry was added, rather than claiming a ban that didn't actually happen.
+      blacklisted = await upsertGlobalContributorBlacklist(env, { contributorBlacklist: nextBlacklist })
+        .then(() => true)
+        .catch(() => false);
     }
   }
+
+  // #mod-warning-context: a maintainer (or the contributor) reading the closure later has no way to know how
+  // many violations are on record or how close this contributor is to an automatic ban from the label alone --
+  // post it as a plain follow-up comment (best-effort, matching every other side effect in this function)
+  // rather than threading it back into the original close comment, which is already posted by the time
+  // escalation runs.
+  const escalationComment = buildModerationEscalationComment({
+    tier,
+    totalCount,
+    banThreshold: globalConfig.banThreshold,
+    violationDecayDays: globalConfig.violationDecayDays,
+    blacklisted,
+  });
+  await createIssueComment(env, args.installationId, args.repoFullName, args.number, escalationComment).catch(() => undefined);
 }
 
 /**

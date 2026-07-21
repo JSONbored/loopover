@@ -51,6 +51,10 @@ flags:
     paths:
       - review-enrichment/
     carryforward: true
+  control-plane:
+    paths:
+      - control-plane/
+    carryforward: true
 
 comment:
   layout: "condensed_header, diff, flags, files"

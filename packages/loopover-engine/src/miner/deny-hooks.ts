@@ -13,7 +13,7 @@
 //     string-shaped input field — for flag-shaped needles like `-f`, where a substring test would also fire on
 //     `--follow-tags`.
 // A rule with none of these constraints fires on the matcher alone. The built-in DEFAULT_DENY_RULES mirror the
-// forbidden-path patterns enforced in `scripts/check-mcp-package.mjs` plus a conservative git force-push guard.
+// forbidden-path patterns enforced in `scripts/check-mcp-package.ts` plus a conservative git force-push guard.
 
 export type DenyRule = {
   /** Tool-name glob (`*` = any within a segment, `**` across segments) or an exact tool name. */
@@ -146,7 +146,7 @@ function ruleMatches(rule: DenyRule, toolName: unknown, inputStrings: string[]):
 
 /**
  * The built-in house-rule deny set — a non-empty starting example a later phase can extend or replace. Mirrors the
- * forbidden-path regex in `scripts/check-mcp-package.mjs` (CI workflows, env files, secret-bearing paths, private
+ * forbidden-path regex in `scripts/check-mcp-package.ts` (CI workflows, env files, secret-bearing paths, private
  * key material) and adds conservative git force-push guards (a command carrying `push` plus a force flag).
  */
 export const DEFAULT_DENY_RULES: DenyRule[] = [

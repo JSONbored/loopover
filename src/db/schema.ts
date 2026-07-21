@@ -435,6 +435,14 @@ export const pullRequests = sqliteTable(
     // (the contributor re-affirmed) refreshes it. loopover-computed (planner-written), omitted from the
     // GitHub-sync SET clause so a later sync cannot clobber it.
     screenshotTablePresenceSatisfiedJson: text("screenshot_table_presence_satisfied_json"),
+    // Out-of-order webhook guard (#webhook-reorder-clobber): GitHub's OWN `updated_at` for this PR, distinct
+    // from `updatedAt` below (app bookkeeping, stamped on every sync regardless of payload freshness).
+    // upsertPullRequestFromGitHub compares an incoming payload's `updated_at` against this column before
+    // applying state/headSha/mergedAt, so a delayed job processing an OLDER webhook (queue backpressure) can
+    // no longer clobber a newer value a faster job already wrote. NULL (pre-migration rows, or a sparse
+    // payload that omits `updated_at`) always fails OPEN -- the write applies, exactly like before this
+    // column existed.
+    githubUpdatedAt: text("github_updated_at"),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     updatedAt: text("updated_at").notNull().$defaultFn(() => nowIso()),
   },

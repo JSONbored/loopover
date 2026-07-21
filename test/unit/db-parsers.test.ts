@@ -627,6 +627,133 @@ describe("database row parser hardening", () => {
     expect(closed.headShaObservedAt).toBe(first.headShaObservedAt);
   });
 
+  describe("out-of-order webhook guard (#webhook-reorder-clobber)", () => {
+    it("REGRESSION: a delayed OLDER webhook cannot clobber state/headSha/mergedAt a newer one already wrote", async () => {
+      const env = createTestEnv();
+      // The real close lands first (job order, not necessarily arrival order).
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 30, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, merged_at: null, labels: [], updated_at: "2026-07-21T12:21:17.000Z",
+      });
+      // A job for an OLDER event (e.g. review_requested, queued minutes earlier) finally dequeues after
+      // sitting behind queue backpressure and processes its own stale, still-"open" embedded snapshot.
+      const stale = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 30, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a0" }, merged_at: null, labels: [], updated_at: "2026-07-21T12:15:52.000Z",
+      });
+
+      // The function's OWN return value reflects what was actually persisted, not the stale incoming payload --
+      // this is what handlePullRequestWebhookEvent's closed-check (and every other reader of this call's result)
+      // sees, so it must agree with the DB or the delayed job would still act on stale data in-process.
+      expect(stale.state).toBe("closed");
+      expect(stale.headSha).toBe("a1");
+      const stored = await getPullRequest(env, "owner/repo", 30);
+      expect(stored?.state).toBe("closed");
+      expect(stored?.headSha).toBe("a1");
+    });
+
+    it("a NEWER webhook (later updated_at) still applies normally", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 31, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+      const fresh = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 31, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a2" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
+      });
+
+      expect(fresh.state).toBe("closed");
+      expect(fresh.headSha).toBe("a2");
+    });
+
+    it("fails OPEN when the incoming payload has no updated_at (a sparse webhook sub-object) -- applies the write exactly as before this guard existed", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 32, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:21:17.000Z",
+      });
+      const sparse = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 32, title: "PR reopened by sparse event", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+
+      expect(sparse.state).toBe("open");
+    });
+
+    it("fails OPEN for a pre-migration row with no stored githubUpdatedAt yet -- applies the write exactly as before this guard existed", async () => {
+      const env = createTestEnv();
+      // Simulates a row created before this migration: no updated_at supplied on the FIRST sync either.
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number: 33, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+      const synced = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 33, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+
+      expect(synced.state).toBe("closed"); // nothing stored to compare against -> guard can't prove staleness, applies the write
+    });
+
+    it("mergedAt is guarded the same way -- a stale payload cannot regress a real merge back to null", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 34, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, merged_at: "2026-07-21T12:21:17.000Z", labels: [], updated_at: "2026-07-21T12:21:17.000Z",
+      });
+      const stale = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 34, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, merged_at: null, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+
+      expect(stale.mergedAt).toBe("2026-07-21T12:21:17.000Z");
+      const stored = await getPullRequest(env, "owner/repo", 34);
+      expect(stored?.mergedAt).toBe("2026-07-21T12:21:17.000Z");
+    });
+
+    it("an EQUAL updated_at (a true redelivery/retry of the same event) is not treated as stale", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 35, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+      const redelivered = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 35, title: "PR redelivered", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+
+      expect(redelivered.title).toBe("PR redelivered"); // non-guarded fields still apply on an equal-timestamp resync
+    });
+
+    it("REGRESSION: a stale payload's rejected head SHA does not reset the review-latency clock (headShaObservedAt) -- the clock must follow the RESOLVED head, not the raw payload's", async () => {
+      const env = createTestEnv();
+      const first = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+      expect(typeof first.headShaObservedAt).toBe("string");
+      // A genuine fresh commit lands and is processed promptly -- the real current head is now a2.
+      const pushed = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a2" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
+      });
+      expect(pushed.headSha).toBe("a2");
+      expect(pushed.headShaObservedAt).not.toBe(first.headShaObservedAt);
+
+      // A delayed job for the OLDER `review_requested` event (before the push) finally dequeues, still carrying
+      // the STALE head "a1". Without resolvedHeadSha driving headShaChanged, this would look like "a2 -> a1", a
+      // head change, and wrongly reset the clock even though the stored head never actually moved off "a2".
+      const stale = await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:01:00.000Z",
+      });
+
+      expect(stale.headSha).toBe("a2"); // still protected by the out-of-order guard
+      expect(stale.headShaObservedAt).toBe(pushed.headShaObservedAt); // clock untouched by the stale rejection
+    });
+
+    it("REGRESSION: a stale payload claiming state: open does not re-stamp lastSeenOpenAt once the PR has actually closed", async () => {
+      const env = createTestEnv();
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 37, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:00:00.000Z",
+      });
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 37, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
+      });
+      // A delayed job for an older still-"open" event dequeues after the real close.
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 37, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], updated_at: "2026-07-21T12:01:00.000Z",
+      });
+
+      const row = await env.DB.prepare("select last_seen_open_at from pull_requests where repo_full_name = ? and number = ?")
+        .bind("owner/repo", 37)
+        .first<{ last_seen_open_at: string | null }>();
+      expect(row?.last_seen_open_at).toBeNull(); // not re-stamped as "seen open" by the stale rejection
+    });
+  });
+
   it("countRecentDeadLetters counts github_app.dlq_dead_lettered audits since a cutoff, independent of any ops flag (#1276)", async () => {
     const env = createTestEnv();
     await recordAuditEvent(env, { eventType: "github_app.dlq_dead_lettered", actor: "loopover", targetKey: "dlq:github-webhook:a", outcome: "error", createdAt: "2026-06-24T10:00:00.000Z" });

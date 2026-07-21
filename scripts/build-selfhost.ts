@@ -26,7 +26,7 @@ await esbuild.build({
   // sharp (#4370) is ALWAYS external even in --all mode: it ships a native per-platform binary esbuild
   // cannot bundle, unlike sharp's own JS glue code -- the Dockerfile installs it separately into the
   // runtime image (see the runtime-base stage).
-  ...(bundleAll ? { external: ["sharp"] } : { packages: "external" }),
+  ...(bundleAll ? { external: ["sharp"] } : { packages: "external" as const }),
   // Bundling CJS deps into an ESM output needs require/__dirname/__filename shimmed (some deps call them).
   ...(bundleAll
     ? {

@@ -16,9 +16,9 @@ export const DEFAULT_SOURCE_ROOTS = [
   "src/services/ai-review.ts",
   "src/queue/ai-review-orchestration.ts",
   "src/queue/processors.ts",
-  "scripts/build-selfhost.mjs",
+  "scripts/build-selfhost.ts",
   "scripts/migrate-selfhost-sqlite-to-postgres.ts",
-  "scripts/smoke-observability-traces.mjs",
+  "scripts/smoke-observability-traces.ts",
 ];
 
 const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;

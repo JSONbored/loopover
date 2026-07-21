@@ -2,40 +2,33 @@
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import {
-  buildReleaseCandidateReport,
-  checkTag,
-  checkTarball,
-  checkTokenlessPublish,
-  expectedReleaseTag,
-  redactSensitive,
-} from "./mcp-release-candidate-core.js";
+import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { buildReleaseCandidateReport, checkTag, checkTarball, checkTokenlessPublish, expectedReleaseTag, redactSensitive, type CheckResult } from "./mcp-release-candidate-core.js";
 
 const PACKAGE_DIR = "packages/loopover-mcp";
 const WORKSPACE = "@loopover/mcp";
 const PUBLISH_WORKFLOW = ".github/workflows/publish-mcp.yml";
 const onWindows = process.platform === "win32";
 
-function arg(name) {
+function arg(name: string): string | null {
   const flag = `--${name}`;
   const index = process.argv.indexOf(flag);
-  if (index !== -1 && index + 1 < process.argv.length) return process.argv[index + 1];
+  if (index !== -1 && index + 1 < process.argv.length) return process.argv[index + 1]!;
   return null;
 }
 
 const wantsJson = process.argv.includes("--json");
 
-function run(command, args, options = {}) {
+function run(command: string, args: string[], options: SpawnSyncOptions = {}) {
   // shell:true on Windows so `npm`/`npx` (.cmd shims) resolve; output is captured, never streamed raw.
   return spawnSync(command, args, { encoding: "utf8", shell: onWindows, ...options });
 }
 
-function readMaybe(path) {
+function readMaybe(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
 }
 
-function packageVersion() {
+function packageVersion(): string | null {
   try {
     return JSON.parse(readFileSync(join(PACKAGE_DIR, "package.json"), "utf8")).version ?? null;
   } catch {
@@ -43,13 +36,13 @@ function packageVersion() {
   }
 }
 
-function tarballFileCheck() {
+function tarballFileCheck(): { check: CheckResult } {
   const result = run("npm", ["pack", "--workspace", WORKSPACE, "--dry-run", "--json"]);
   if (result.status !== 0 || !result.stdout) {
     return { check: { ok: false, code: "tarball_unsafe", message: "Could not compute the package file list via npm pack --dry-run." } };
   }
-  const files = JSON.parse(result.stdout)[0].files.map((file) => file.path);
-  const contentsByFile = {};
+  const files: string[] = JSON.parse(result.stdout)[0].files.map((file: { path: string }) => file.path);
+  const contentsByFile: Record<string, string> = {};
   for (const file of files) {
     const full = join(PACKAGE_DIR, file);
     if (existsSync(full)) contentsByFile[file] = readFileSync(full, "utf8");
@@ -57,7 +50,7 @@ function tarballFileCheck() {
   return { check: checkTarball({ files, contentsByFile }) };
 }
 
-function packedCliSmoke() {
+function packedCliSmoke(): CheckResult {
   const build = run("npm", ["run", "build:mcp"]);
   if (build.status !== 0) {
     return { ok: false, code: "cli_smoke_failed", message: "npm run build:mcp failed before the packed CLI smoke." };
@@ -68,7 +61,7 @@ function packedCliSmoke() {
   }
   const filename = JSON.parse(pack.stdout)[0].filename;
   const tarball = join(process.cwd(), filename);
-  let temp = null;
+  let temp: string | null = null;
   try {
     temp = mkdtempSync(join(tmpdir(), "mcp-rc-"));
     if (run("npm", ["--prefix", temp, "init", "-y"]).status !== 0) {
@@ -90,7 +83,7 @@ function packedCliSmoke() {
   }
 }
 
-function emit(line) {
+function emit(line: string): void {
   process.stdout.write(`${redactSensitive(line)}\n`);
 }
 

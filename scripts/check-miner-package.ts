@@ -28,19 +28,21 @@ const REQUIRED = [
 ];
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 // Stale public-package wording the published README must never ship with (#7013). The sibling
-// check-mcp-package.mjs has always guarded its README against this; the miner-package check did not, so a
+// check-mcp-package.ts has always guarded its README against this; the miner-package check did not, so a
 // pre-release "private beta"/"preview URL" phrasing could ship in the public `@loopover/miner` README unnoticed.
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;
 
-export function validateMinerPackFileList(files, readContent) {
+type PackedFile = string | { path: string };
+type ReadContentFn = (file: string) => string;
+
+export function validateMinerPackFileList(files: readonly PackedFile[], readContent: ReadContentFn): string[] {
   const paths = files.map((file) => (typeof file === "string" ? file : file.path)).sort();
   for (const file of paths) {
     if (FORBIDDEN_PATH.test(file)) throw new Error(`Forbidden file in miner package: ${file}`);
     if (!ALLOWED.some((pattern) => pattern.test(file))) throw new Error(`Unexpected file in miner package: ${file}`);
     const content = readContent(file);
     if (FORBIDDEN_CONTENT.test(content)) throw new Error(`Secret-like content found in miner package file: ${file}`);
-    if (file === "README.md" && STALE_PACKAGE_TEXT.test(content))
-      throw new Error(`Stale public-package wording found in miner package file: ${file}`);
+    if (file === "README.md" && STALE_PACKAGE_TEXT.test(content)) throw new Error(`Stale public-package wording found in miner package file: ${file}`);
   }
   for (const required of REQUIRED) {
     if (!paths.includes(required)) throw new Error(`Miner package is missing required file: ${required}`);
@@ -54,10 +56,10 @@ export function validateMinerPackFileList(files, readContent) {
   return paths;
 }
 
-export function runMinerPackCheck(options = {}) {
+export function runMinerPackCheck(options: { pack?: { files: PackedFile[] }; packageRoot?: string; readContent?: ReadContentFn } = {}): string {
   const pack = options.pack ?? loadMinerPackFromNpm();
   const packageRoot = options.packageRoot ?? join(process.cwd(), "packages/loopover-miner");
-  const readContent =
+  const readContent: ReadContentFn =
     options.readContent ??
     ((file) => {
       if (process.env.CHECK_MINER_PACK_TEST_CONTENT !== undefined) return process.env.CHECK_MINER_PACK_TEST_CONTENT;
@@ -67,9 +69,9 @@ export function runMinerPackCheck(options = {}) {
   return `Miner package dry-run ok: ${paths.join(", ")}\n`;
 }
 
-function loadMinerPackFromNpm() {
+function loadMinerPackFromNpm(): { files: PackedFile[] } {
   if (process.env.CHECK_MINER_PACK_TEST_FILES) {
-    const paths = JSON.parse(process.env.CHECK_MINER_PACK_TEST_FILES);
+    const paths: string[] = JSON.parse(process.env.CHECK_MINER_PACK_TEST_FILES);
     return { files: paths.map((path) => ({ path })) };
   }
   const result = spawnSync("npm", ["pack", "--workspace", "@loopover/miner", "--dry-run", "--json"], {

@@ -1428,6 +1428,14 @@ settings:
 # prReconciliation:
 #   enabled: true   # Bool. Default: false (the env var decides instead).
 
+# Fleet-wide active_review_tracking reconciliation sweep (#webhook-reorder-clobber): config-as-code override
+# for the LOOPOVER_ACTIVE_REVIEW_RECONCILIATION flag. A delayed webhook job can leave a PR's review-tracking
+# row stuck "active" after the PR has actually already closed on GitHub (queue backpressure widens the race).
+# This sweep re-checks stale "active" rows against LIVE GitHub state and terminalizes the ones confirmed
+# closed. Same shape and precedence as `prReconciliation:` above.
+# activeReviewReconciliation:
+#   enabled: true   # Bool. Default: false (the env var decides instead).
+
 # Opt-in federated fleet intelligence export (#1970): packages this instance's OWN calibration signals into a
 # signed, anonymized bundle an operator can choose to hand to a peer (or to a collector they run). Exports
 # AGGREGATE figures only -- gate precision, reversal/slop/copycat rates over a window -- never source code,

@@ -789,6 +789,7 @@ export {
   upstreamDriftIssuesConfigToJson,
   sweepWatchdogConfigToJson,
   prReconciliationConfigToJson,
+  activeReviewReconciliationConfigToJson,
   federatedIntelligenceConfigToJson,
   FEDERATED_COLLECTOR_MODES,
   settingsOverrideToJson,

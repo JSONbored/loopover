@@ -47,6 +47,7 @@ import {
   upstreamDriftIssuesConfigToJson,
   sweepWatchdogConfigToJson,
   prReconciliationConfigToJson,
+  activeReviewReconciliationConfigToJson,
   federatedIntelligenceConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -956,6 +957,7 @@ describe("compileFocusManifestPolicy", () => {
       upstreamDriftIssues: { present: false, enabled: false },
       sweepWatchdog: { present: false, enabled: false, staleAfterMinutes: null },
       prReconciliation: { present: false, enabled: false },
+      activeReviewReconciliation: { present: false, enabled: false },
       federatedIntelligence: { present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] },
       warnings: [],
     });
@@ -2266,6 +2268,54 @@ describe("parseFocusManifest gate config", () => {
 
     it("prReconciliationConfigToJson returns null for an absent config", () => {
       expect(prReconciliationConfigToJson(parseFocusManifest(null).prReconciliation)).toBeNull();
+    });
+  });
+
+  describe("activeReviewReconciliation: (#webhook-reorder-clobber, active-review-tracking reconciliation sweep config-as-code override)", () => {
+    it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.activeReviewReconciliation).toEqual({ present: false, enabled: false });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ activeReviewReconciliation: null }).activeReviewReconciliation).toEqual({ present: false, enabled: false });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ activeReviewReconciliation: "nope" as never });
+      expect(asString.activeReviewReconciliation.present).toBe(false);
+      expect(asString.warnings.some((w) => /"activeReviewReconciliation" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ activeReviewReconciliation: ["nope"] as never });
+      expect(asArray.activeReviewReconciliation.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"activeReviewReconciliation" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true, making the manifest present", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: true } });
+      expect(m.activeReviewReconciliation).toEqual({ present: true, enabled: true });
+      expect(m.present).toBe(true);
+    });
+
+    it("parses enabled: false explicitly, still marking the manifest present (present is a real override, off)", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: false } });
+      expect(m.activeReviewReconciliation).toEqual({ present: true, enabled: false });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: "yes" as unknown as boolean } });
+      expect(m.activeReviewReconciliation.enabled).toBe(false);
+      expect(m.warnings.some((w) => /activeReviewReconciliation\.enabled/.test(w))).toBe(true);
+    });
+
+    it("round-trips through activeReviewReconciliationConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ activeReviewReconciliation: { enabled: true } });
+      expect(parseFocusManifest({ activeReviewReconciliation: activeReviewReconciliationConfigToJson(m.activeReviewReconciliation) }).activeReviewReconciliation).toEqual(m.activeReviewReconciliation);
+    });
+
+    it("activeReviewReconciliationConfigToJson returns null for an absent config", () => {
+      expect(activeReviewReconciliationConfigToJson(parseFocusManifest(null).activeReviewReconciliation)).toBeNull();
     });
   });
 

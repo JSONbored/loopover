@@ -1136,7 +1136,7 @@ scripts above pointed at an older target:
   `deploy-selfhost-prebuilt.sh`.
 
 <Callout variant="warn" title="Migrations are forward-only">
-  This repo has no down-migration convention — `scripts/check-migrations.mjs` only enforces a
+  This repo has no down-migration convention — `scripts/check-migrations.ts` only enforces a
   contiguous, non-colliding numbering, not a reverse path. If a migration has already run forward
   against the live database, rolling back the app code is **not safe in general**: older code can
   break against a newer schema (a dropped/renamed column, a NOT NULL column it never writes, a

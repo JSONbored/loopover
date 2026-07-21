@@ -2,14 +2,17 @@
 // Runs c8 from the monorepo root so source-map remapping yields `review-enrichment/src/**` paths
 // (not bare `src/**`), and expands the test list in-process so Windows/npm quoting cannot drop the suite.
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 /** Normalize c8's SF: paths to forward slashes for Codecov. Swallows only a missing report
  *  (ENOENT on read) — CI's "Verify REES coverage report exists" step fails closed downstream.
  *  Any other read/write error propagates so a real lcov post-process failure is not masked. */
-export function normalizeLcovSfPaths(lcovPath, { readFile = readFileSync, writeFile = writeFileSync } = {}) {
+export function normalizeLcovSfPaths(
+  lcovPath: string,
+  { readFile = readFileSync, writeFile = writeFileSync }: { readFile?: (path: string, encoding: "utf8") => string; writeFile?: (path: string, data: string) => void } = {},
+): void {
   try {
     const raw = readFile(lcovPath, "utf8");
     writeFile(
@@ -22,7 +25,7 @@ export function normalizeLcovSfPaths(lcovPath, { readFile = readFileSync, writeF
   }
 }
 
-function collectTests(dir, out = []) {
+function collectTests(dir: string, out: string[] = []): string[] {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, ent.name);
     if (ent.isDirectory()) collectTests(path, out);

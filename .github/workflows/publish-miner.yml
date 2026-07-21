@@ -97,7 +97,7 @@ jobs:
         run: npm run build --workspace @loopover/miner
 
       # Reuses the exact allowlist/required-files/forbidden-content check test:ci already runs on
-      # every PR (scripts/check-miner-package.mjs) -- a dry-run pack, so it doesn't produce the real
+      # every PR (scripts/check-miner-package.ts) -- a dry-run pack, so it doesn't produce the real
       # tarball this job packs+uploads below.
       - name: Validate packed file list
         run: npm run test:miner-pack

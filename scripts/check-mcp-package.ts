@@ -9,24 +9,25 @@ import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist.js";
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;
 
-export function validateMcpPackFileList(files, readContent) {
+type PackedFile = string | { path: string };
+type ReadContentFn = (file: string) => string;
+
+export function validateMcpPackFileList(files: readonly PackedFile[], readContent: ReadContentFn): string[] {
   const paths = files.map((file) => (typeof file === "string" ? file : file.path)).sort();
   for (const file of paths) {
     if (FORBIDDEN_PATH.test(file)) throw new Error(`Forbidden file in MCP package: ${file}`);
-    if (!MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((pattern) => pattern.test(file)))
-      throw new Error(`Unexpected file in MCP package: ${file}`);
+    if (!MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((pattern) => pattern.test(file))) throw new Error(`Unexpected file in MCP package: ${file}`);
     const content = readContent(file);
     if (FORBIDDEN_CONTENT.test(content)) throw new Error(`Secret-like content found in MCP package file: ${file}`);
-    if (file === "README.md" && STALE_PACKAGE_TEXT.test(content))
-      throw new Error(`Stale public-package wording found in MCP package file: ${file}`);
+    if (file === "README.md" && STALE_PACKAGE_TEXT.test(content)) throw new Error(`Stale public-package wording found in MCP package file: ${file}`);
   }
   return paths;
 }
 
-export function runMcpPackCheck(options = {}) {
+export function runMcpPackCheck(options: { pack?: { files: PackedFile[] }; packageRoot?: string; readContent?: ReadContentFn } = {}): string {
   const pack = options.pack ?? loadMcpPackFromNpm();
   const packageRoot = options.packageRoot ?? join(process.cwd(), "packages/loopover-mcp");
-  const readContent =
+  const readContent: ReadContentFn =
     options.readContent ??
     ((file) => {
       if (process.env.CHECK_MCP_PACK_TEST_CONTENT !== undefined) return process.env.CHECK_MCP_PACK_TEST_CONTENT;
@@ -36,9 +37,9 @@ export function runMcpPackCheck(options = {}) {
   return `MCP package dry-run ok: ${paths.join(", ")}\n`;
 }
 
-function loadMcpPackFromNpm() {
+function loadMcpPackFromNpm(): { files: PackedFile[] } {
   if (process.env.CHECK_MCP_PACK_TEST_FILES) {
-    const paths = JSON.parse(process.env.CHECK_MCP_PACK_TEST_FILES);
+    const paths: string[] = JSON.parse(process.env.CHECK_MCP_PACK_TEST_FILES);
     return { files: paths.map((path) => ({ path })) };
   }
   const result = spawnSync("npm", ["pack", "--workspace", "@loopover/mcp", "--dry-run", "--json"], {

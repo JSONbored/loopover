@@ -15,7 +15,7 @@ it("check-mcp-release-due's githubRequest fetch carries an AbortSignal timeout",
 });
 
 describe("smoke-observability scripts (#7014): every generated fetch is timeout-guarded", () => {
-  for (const path of ["scripts/smoke-observability-traces.mjs", "scripts/smoke-observability-metrics.mjs"]) {
+  for (const path of ["scripts/smoke-observability-traces.ts", "scripts/smoke-observability-metrics.ts"]) {
     it(`${path} bounds every fetch with AbortSignal.timeout`, () => {
       const src = readFileSync(path, "utf8");
       const fetchCount = (src.match(/\bawait fetch\(/g) ?? []).length;

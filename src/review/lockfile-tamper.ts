@@ -117,6 +117,21 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
   let activeEntry: { entryKey: string; packageName: string } | null = null;
   let innerObjectDepth = 0;
   let sawPackagesEntry = false;
+  // True immediately after a header line is explicitly identified as NOT a real package entry (a
+  // container wrapper like "dependencies", or a bare key once we're already in node_modules/-keyed
+  // territory) -- suppresses the unattributed-entry fallback below for that block's own contents, so
+  // a deliberately-skipped key (see the "node_modules/" with nothing after the marker case) stays
+  // skipped rather than getting swept into a fallback bucket. Cleared by the next real header or a
+  // depth-0 close brace.
+  let insideRejectedBlock = false;
+  // Fallback bucket for a resolved/integrity/version change whose entry header isn't visible ANYWHERE
+  // in the diff -- git's default 3-line context doesn't guarantee an entry's opening-brace line
+  // survives when the changed field sits deeper than 3 lines into the entry (#7778). Without this, such
+  // a change was silently dropped: `currentEntryKey` stayed null for the whole hunk, so the
+  // `!currentEntryKey ... continue` guard below skipped it -- a tampered field could evade detection
+  // entirely just by having enough unchanged sibling fields ahead of it in its entry.
+  let activeUnknownKey: string | null = null;
+  let unknownEntrySeq = 0;
 
   const entryFor = (entryKey: string, packageName: string): MutableCandidate => {
     const existing = byEntry.get(entryKey);
@@ -144,14 +159,20 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
         activeEntry = { entryKey: key, packageName: nodeModulesPackage };
         innerObjectDepth = 0;
         sawPackagesEntry = true;
+        insideRejectedBlock = false;
+        activeUnknownKey = null;
       } else if (activeEntry) {
         innerObjectDepth++;
       } else if (!sawPackagesEntry && !CONTAINER_KEYS.has(key)) {
         activeEntry = { entryKey: key, packageName: key };
         innerObjectDepth = 0;
+        insideRejectedBlock = false;
+        activeUnknownKey = null;
       } else {
         activeEntry = null;
         innerObjectDepth = 0;
+        insideRejectedBlock = true;
+        activeUnknownKey = null;
       }
       continue;
     }
@@ -160,15 +181,26 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
         innerObjectDepth--;
       } else {
         activeEntry = null;
+        insideRejectedBlock = false;
+        activeUnknownKey = null;
       }
     }
-    const currentEntryKey = activeEntry?.entryKey ?? null;
-    const currentPackageName = activeEntry?.packageName ?? null;
-    if (!currentEntryKey || !currentPackageName || line.sign === " ") continue;
 
     const resolvedMatch = /^"resolved"\s*:\s*"([^"]*)"/.exec(body);
     const integrityMatch = /^"integrity"\s*:\s*"([^"]*)"/.exec(body);
     const versionMatch = /^"version"\s*:\s*"([^"]*)"/.exec(body);
+
+    let currentEntryKey = activeEntry?.entryKey ?? null;
+    let currentPackageName = activeEntry?.packageName ?? null;
+    if (!currentEntryKey && !insideRejectedBlock && line.sign !== " " && (resolvedMatch || integrityMatch || versionMatch)) {
+      if (!activeUnknownKey) {
+        unknownEntrySeq += 1;
+        activeUnknownKey = `${path}#unattributed-${unknownEntrySeq}`;
+      }
+      currentEntryKey = activeUnknownKey;
+      currentPackageName = "(unattributed lockfile entry)";
+    }
+    if (!currentEntryKey || !currentPackageName || line.sign === " ") continue;
 
     if (versionMatch) {
       const entry = entryFor(currentEntryKey, currentPackageName);

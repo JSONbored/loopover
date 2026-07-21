@@ -4,7 +4,7 @@
 # doesn't fit release-please's directory-component model the way packages/loopover-mcp and
 # packages/loopover-engine do (see mcp-release-please.yml). Same UX contract as those, hand-rolled: on the
 # same schedule (or on demand), (re)compute the next stable version from conventional commits since the last
-# STABLE orb-v tag (scripts/check-orb-stable-release-due.mjs / orb-release-core.ts's buildOrbStableReleaseReport)
+# STABLE orb-v tag (scripts/check-orb-stable-release-due.ts / orb-release-core.ts's buildOrbStableReleaseReport)
 # and keep a standing `release-orb-stable` branch + PR in sync with that proposal. Nothing ships until a
 # maintainer reviews and merges it -- see orb-stable-release-tag.yml for what happens then. Never touches the
 # daily fully-unattended beta channel (orb-beta-release.yml).
@@ -39,11 +39,11 @@ jobs:
 
       - name: Check whether a stable ORB release is due
         id: report
-        # check-orb-stable-release-due.mjs imports orb-release-core.ts directly, so it needs tsx (not plain
-        # node) to resolve that local .ts import.
+        # check-orb-stable-release-due.ts imports orb-release-core.ts directly via a `.js` specifier, so it
+        # needs tsx (not plain node) to resolve that local .ts import.
         run: |
           set -euo pipefail
-          npx tsx scripts/check-orb-stable-release-due.mjs --json --output orb-stable-release-due.json
+          npx tsx scripts/check-orb-stable-release-due.ts --json --output orb-stable-release-due.json
           node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync("orb-stable-release-due.json", "utf8"));

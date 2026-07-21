@@ -126,6 +126,21 @@ describe("isSafeHttpUrl", () => {
     // Exercises ipv6IsPrivateOrLocal's final `return false` (not loopback/ULA/link-local/mapped).
     expect(isSafeHttpUrl("https://[2001:4860:4860::8888]")).toBe(true);
   });
+
+  it("rejects the ffff:-less IPv4-compatible IPv6 form pointing at loopback / cloud metadata (SSRF bypass, #7777)", () => {
+    // `new URL()` normalizes ::127.0.0.1 to hostname [::7f00:1] -- same bracket-free hex shape as the
+    // already-handled ::ffff:7f00:1 mapped form, just without the "ffff" marker.
+    expect(isSafeHttpUrl("https://[::127.0.0.1]")).toBe(false);
+    // ::169.254.169.254 -> [::a9fe:a9fe] -- the AWS/GCP/Azure cloud-metadata IP, the concrete exploit target.
+    expect(isSafeHttpUrl("https://[::169.254.169.254]")).toBe(false);
+    expect(isSafeEndpointUrl("wss://[::169.254.169.254]")).toBe(false);
+  });
+
+  it("accepts the ffff:-less IPv4-compatible IPv6 form when it points at a public IP", () => {
+    // ::8.8.8.8 -> [::808:808] -- exercises the new optional (?:ffff:)? group's non-present branch
+    // on the public side, matching the existing mapped-form public case just above.
+    expect(isSafeHttpUrl("https://[::8.8.8.8]")).toBe(true);
+  });
 });
 
 describe("isSafeEndpointUrl", () => {

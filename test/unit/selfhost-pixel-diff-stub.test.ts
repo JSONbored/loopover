@@ -1,5 +1,5 @@
 // Tests for the self-host pixel-diff stub (#3674). This module is never bundled into the Worker entry
-// (scripts/build-selfhost.mjs swaps it in only when building src/server.ts — see
+// (scripts/build-selfhost.ts swaps it in only when building src/server.ts — see
 // test/unit/worker-entry-boundary.test.ts for the enforced side of that), so it's safe to depend on real
 // PNG fixtures / Buffer here, mirroring test/unit/visual-diff.test.ts's own fixture style.
 import { PNG } from "pngjs";

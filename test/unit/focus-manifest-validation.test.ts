@@ -114,6 +114,8 @@ sweepWatchdog:
   enabled: true
 prReconciliation:
   enabled: false
+activeReviewReconciliation:
+  enabled: true
 `,
     });
     expect(result.status).toBe("ok");
@@ -134,10 +136,11 @@ prReconciliation:
       upstreamDriftIssues: { enabled: false },
       sweepWatchdog: { enabled: true },
       prReconciliation: { enabled: false },
+      activeReviewReconciliation: { enabled: true },
     });
   });
 
-  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues/sweepWatchdog/prReconciliation/federatedIntelligence from the normalized output when none are configured", () => {
+  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues/sweepWatchdog/prReconciliation/activeReviewReconciliation/federatedIntelligence from the normalized output when none are configured", () => {
     const result = buildFocusManifestValidation({ content: "wantedPaths: [src/]\n" });
     expect(result.normalized).not.toHaveProperty("maintainerRecap");
     expect(result.normalized).not.toHaveProperty("ops");
@@ -146,7 +149,14 @@ prReconciliation:
     expect(result.normalized).not.toHaveProperty("upstreamDriftIssues");
     expect(result.normalized).not.toHaveProperty("sweepWatchdog");
     expect(result.normalized).not.toHaveProperty("prReconciliation");
+    expect(result.normalized).not.toHaveProperty("activeReviewReconciliation");
     expect(result.normalized).not.toHaveProperty("federatedIntelligence");
+  });
+
+  it("includes a configured activeReviewReconciliation block in the normalized settings-preview output (#webhook-reorder-clobber)", () => {
+    const result = buildFocusManifestValidation({ content: "activeReviewReconciliation:\n  enabled: true\n" });
+    expect(result.warnings).toEqual([]);
+    expect(result.normalized).toMatchObject({ activeReviewReconciliation: { enabled: true } });
   });
 
   it("includes a configured federatedIntelligence block in the normalized settings-preview output (#6998)", () => {

@@ -10,6 +10,7 @@ import {
   listLatestSignalSnapshotsForTargets,
   listRepoPullRequestFilePaths,
   listSignalSnapshots,
+  listStaleActiveReviewTracking,
   persistBountyLifecycleEvent,
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
@@ -439,6 +440,43 @@ describe("active-review tracking (#review-evasion-protection)", () => {
       const row = await rawRow(env, "owner/repo", 1);
       await terminalizeActiveReviewTracking(env, "owner/repo", 1);
       expect(await getActiveReviewStartedAt(env, "owner/repo", 1, "sha1")).toBe(row?.started_at);
+    });
+  });
+
+  describe("listStaleActiveReviewTracking (#webhook-reorder-clobber)", () => {
+    it("returns nothing when no row exists at all", async () => {
+      const env = createTestEnv();
+      expect(await listStaleActiveReviewTracking(env, "2026-07-21T13:00:00.000Z")).toEqual([]);
+    });
+
+    it("returns an active row older than the cutoff", async () => {
+      const env = createTestEnv();
+      await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+      const row = await rawRow(env, "owner/repo", 1);
+
+      const stale = await listStaleActiveReviewTracking(env, new Date(Date.parse(row!.started_at) + 1000).toISOString());
+
+      expect(stale).toEqual([{ repoFullName: "owner/repo", pullNumber: 1, startedAt: row!.started_at }]);
+    });
+
+    it("excludes a row NEWER than the cutoff -- a genuinely fresh review is never a candidate", async () => {
+      const env = createTestEnv();
+      await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+      const row = await rawRow(env, "owner/repo", 1);
+
+      const stale = await listStaleActiveReviewTracking(env, new Date(Date.parse(row!.started_at) - 1000).toISOString());
+
+      expect(stale).toEqual([]);
+    });
+
+    it("excludes a TERMINAL row even when it's old -- only status='active' is a candidate", async () => {
+      const env = createTestEnv();
+      await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 1, headSha: "sha1", deliveryId: "delivery-1" });
+      await terminalizeActiveReviewTracking(env, "owner/repo", 1);
+
+      const stale = await listStaleActiveReviewTracking(env, "2099-01-01T00:00:00.000Z");
+
+      expect(stale).toEqual([]);
     });
   });
 

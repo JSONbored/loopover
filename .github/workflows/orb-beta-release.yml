@@ -1,6 +1,6 @@
 # Automated ORB (self-host container image, ghcr.io/jsonbored/loopover-selfhost) beta channel.
 # Daily (or on demand via workflow_dispatch), checks whether any image-relevant commit has landed
-# since the last orb-v tag (scripts/check-orb-release-due.mjs / scripts/orb-release-core.ts) and,
+# since the last orb-v tag (scripts/check-orb-release-due.ts / scripts/orb-release-core.ts) and,
 # if so, cuts the next `orb-vX.Y.Z-beta.N` tag and dispatches release-selfhost.yml to build + publish
 # it -- fully unattended: that workflow's `environment:` routes an actual beta version to
 # `release-beta` (no required reviewers), while a stable/rc version still requires the human-gated
@@ -40,11 +40,11 @@ jobs:
 
       - name: Check whether an ORB beta is due
         id: report
-        # check-orb-release-due.mjs imports orb-release-core.ts directly, so it needs tsx (not plain node) to
-        # resolve that local .ts import.
+        # check-orb-release-due.ts imports orb-release-core.ts directly via a `.js` specifier, so it needs tsx
+        # (not plain node) to resolve that local .ts import.
         run: |
           set -euo pipefail
-          npx tsx scripts/check-orb-release-due.mjs --json --output orb-release-due.json
+          npx tsx scripts/check-orb-release-due.ts --json --output orb-release-due.json
           node <<'NODE'
           const fs = require("node:fs");
           const report = JSON.parse(fs.readFileSync("orb-release-due.json", "utf8"));

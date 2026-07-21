@@ -68,7 +68,12 @@ function ipv6IsPrivateOrLocal(host: string): boolean {
   const dotted = addr.match(/::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   /* v8 ignore next -- @preserve dotted ::ffff:N.N.N.N is normalized to hex by new URL() */
   if (dotted) return ipv4IsPrivateOrLocal(dotted[1] as string);
-  const hex = addr.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  // Matches both the IPv4-mapped form (::ffff:7f00:1) and the older, `ffff:`-less IPv4-compatible
+  // form (::7f00:1, RFC 4291's deprecated ::/96) that `new URL()` normalizes the same bracket-free
+  // way: a literal `::127.0.0.1` or `::169.254.169.254` host reaches this branch with no "ffff"
+  // marker at all and was previously falling through to the final `return false` unchecked (SSRF
+  // bypass, #7777).
+  const hex = addr.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hex) {
     const hi = parseInt(hex[1] as string, 16);
     const lo = parseInt(hex[2] as string, 16);

@@ -7,11 +7,11 @@ if (!playwright) {
   process.exit(1);
 }
 
-const browser = await playwright.chromium.launch({ headless: process.env.HEADFUL !== "1" }).catch((error) => {
+const browser = await playwright.chromium.launch({ headless: process.env.HEADFUL !== "1" }).catch((error: unknown) => {
   throw new Error(`Chromium launch failed. Run npm run test:smoke:browser:install first. ${error instanceof Error ? error.message : String(error)}`);
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-const consoleErrors = [];
+const consoleErrors: string[] = [];
 page.on("console", (message) => {
   if (message.type() === "error") consoleErrors.push(message.text());
 });

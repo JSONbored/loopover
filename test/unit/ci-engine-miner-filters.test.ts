@@ -9,7 +9,7 @@ describe("CI engine/miner path filters", () => {
     const ci = readFileSync(CI_PATH, "utf8");
     expect(ci).toMatch(/engine:\s*\n\s*- 'packages\/loopover-engine\/\*\*'/);
     expect(ci).toMatch(/miner:\s*\n\s*- 'packages\/loopover-miner\/\*\*'/);
-    expect(ci).toContain("scripts/check-miner-package.mjs");
+    expect(ci).toContain("scripts/check-miner-package.ts");
     expect(ci).toContain("needs.changes.outputs.engine");
     expect(ci).toContain("needs.changes.outputs.miner");
     expect(ci).toContain("name: Build engine package");

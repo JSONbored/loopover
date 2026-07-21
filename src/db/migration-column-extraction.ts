@@ -1,5 +1,5 @@
 // Pure, fs-free (table, column) collision detection across migration files (#2551), shared by
-// scripts/check-migrations.mjs's cross-migration collision check. Sufficient for this repo's actual migration
+// scripts/check-migrations.ts's cross-migration collision check. Sufficient for this repo's actual migration
 // corpus -- verified by direct inspection: no CREATE TRIGGER statements (so no trigger-body-aware semicolon
 // handling is needed, unlike src/selfhost/migrate.ts's statement splitter) and every identifier is a bare
 // lowercase snake_case name (no quoted/bracketed identifiers anywhere) -- not a general-purpose SQL parser.
@@ -198,7 +198,7 @@ export type ColumnCollision = { table: string; column: string; files: string[] }
  * Replay every migration file's schema events IN MIGRATION-NUMBER ORDER and return every (table, column)
  * pair DEFINED by more than one file -- a same-table/same-column collision across differently-numbered,
  * individually-valid migrations (#2551). `orderedFileContents` must already be sorted ascending by migration
- * number (the same order `scripts/check-migrations.mjs` reads the directory in); a `drop_table` event clears
+ * number (the same order `scripts/check-migrations.ts` reads the directory in); a `drop_table` event clears
  * every column tracked for that table so far, so a documented DROP+CREATE recreate never reads as a
  * collision with the table it replaces.
  *

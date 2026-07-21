@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // #2565: src/db/schema.ts (Drizzle ORM sqliteTable declarations) is a single shared file where two
-// independently-valid PRs can each add a new column to the SAME table. scripts/check-migrations.mjs's
+// independently-valid PRs can each add a new column to the SAME table. scripts/check-migrations.ts's
 // detectColumnCollisions (#2551) only catches a git-merge-race collision between two DIFFERENT migration
 // files that both add the same (table, column) pair -- it never reads src/db/schema.ts at all, so it cannot
 // see the DIFFERENT gap this check closes: schema.ts's DECLARED shape (what Drizzle thinks a table's columns
@@ -15,7 +15,7 @@
 // drizzle-orm's getTableColumns (keyed by each column's .name -- the actual DB column name, not the JS
 // property name). Diff the two column-name sets per table.
 //
-// Run via `tsx` (not plain `node`) for the same reason as check-migrations.mjs and
+// Run via `tsx` (not plain `node`) for the same reason as check-migrations.ts and
 // check-openapi-settings-parity.ts: this script imports src/db/schema.ts (a .ts module) directly, and a bare
 // `node` invocation can't resolve a `.ts` import without an experimental flag CI's pinned Node isn't
 // guaranteed to support.

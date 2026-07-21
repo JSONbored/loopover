@@ -1,5 +1,5 @@
 // Tests for the self-host vision-image-downscale stub (#4370). This module is never bundled into the
-// Worker entry (scripts/build-selfhost.mjs swaps it in only when building src/server.ts — see
+// Worker entry (scripts/build-selfhost.ts swaps it in only when building src/server.ts — see
 // test/unit/worker-entry-boundary.test.ts for the enforced side of that), so it's safe to depend on sharp
 // / real PNG fixtures here, mirroring test/unit/selfhost-pixel-diff-stub.test.ts's own fixture style.
 import sharp from "sharp";

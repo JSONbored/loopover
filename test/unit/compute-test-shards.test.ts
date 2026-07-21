@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-const SCRIPT = join(process.cwd(), "scripts/compute-test-shards.mjs");
+const SCRIPT = join(process.cwd(), "scripts/compute-test-shards.ts");
 
 function run(args: string[]) {
-  return spawnSync("node", [SCRIPT, ...args], { cwd: process.cwd(), encoding: "utf8" });
+  return spawnSync("node", ["--experimental-strip-types", SCRIPT, ...args], { cwd: process.cwd(), encoding: "utf8" });
 }
 
 function discoverRealTestFiles(): string[] {
@@ -34,7 +34,7 @@ afterEach(() => {
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("compute-test-shards.mjs", () => {
+describe("compute-test-shards.ts", () => {
   it("with no timing data, splits the real repo's test files evenly across shards (round-robin fallback)", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "shard-test-"));
     const outputPath = join(tmpDir, "assignment.json");

@@ -36,7 +36,7 @@ run_node_build() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node scripts/build-selfhost.mjs --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
+    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node --experimental-strip-types scripts/build-selfhost.ts --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
 }
 
 run_sentry_upload() {
@@ -104,7 +104,13 @@ services:
       LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
 YAML
 
-  mapfile -t compose_args < <(compose_file_args)
+  # #7765: capture via a checked assignment so compose_file_args's `exit 1` on a missing compose file
+  # actually aborts this script -- `mapfile < <(compose_file_args)` ran it in a subshell whose non-zero
+  # exit was swallowed (mapfile itself returns 0), leaving compose_args empty/truncated.
+  if ! compose_args_raw="$(compose_file_args)"; then
+    exit 1
+  fi
+  mapfile -t compose_args <<< "$compose_args_raw"
   compose_args+=(-f "$override_file")
 
   echo "selfhost deploy: building $SERVICE runtime-prebuilt image"

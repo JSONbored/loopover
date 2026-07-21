@@ -15,7 +15,7 @@ import {
 } from "../../scripts/check-schema-drift.js";
 import * as realSchema from "../../src/db/schema";
 
-// #2565: the script imports src/db/schema.ts (a .ts module), so -- like check-migrations.mjs and
+// #2565: the script imports src/db/schema.ts (a .ts module), so -- like check-migrations.ts and
 // check-openapi-settings-parity.ts -- it must run via `tsx`, the same binary package.json's
 // db:schema-drift:check uses, rather than plain `node`.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");

@@ -10,12 +10,15 @@ const metricName = `loopover_selfhost_smoke_${Date.now()}_total`;
 
 await main();
 
-async function main() {
+async function main(): Promise<void> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new Error("OBSERVABILITY_SMOKE_TIMEOUT_MS must be a positive number");
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0)
     throw new Error("OBSERVABILITY_SMOKE_POLL_MS must be a positive number");
 
+  // Executed by `docker compose exec ... node -e`, inside the container -- a separate JS runtime/process
+  // from this script's own, so its content is plain interpolated text, not something this file's own
+  // TypeScript can (or should) type-check.
   const script = `
 const metricName = ${JSON.stringify(metricName)};
 const now = BigInt(Date.now()) * 1000000n;

@@ -422,6 +422,89 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding?.detail).toContain("foo");
   });
 
+  // #7778: a resolved/integrity/version change can land in a hunk whose leading context (git's default
+  // 3 lines) doesn't reach back far enough to include its entry's own opening "node_modules/<pkg>": {
+  // line -- before the fix, `activeEntry`/`currentEntryKey` stayed null for the whole hunk and the
+  // change was silently dropped rather than flagged.
+  it("still flags a changed integrity when the entry's own header line falls outside the diff's 3-line context window (#7778)", () => {
+    const lockPatch = [
+      '@@ -50,10 +50,10 @@',
+      '       "version": "1.0.0",',
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old=="',
+      '+      "integrity": "sha512-tampered=="',
+      '       "dependencies": {',
+      '         "bar": "^1.0.0"',
+      '       }',
+      '     }',
+    ].join("\n");
+    // No `"node_modules/foo": {` header anywhere in this patch: it sits 4 lines above the changed
+    // integrity line, one line further back than git's default 3-line context window reaches.
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.code).toBe("lockfile_tamper_risk");
+    expect(finding?.title).toContain("unattributed lockfile entry");
+  });
+
+  it("does not flag an unrelated field change when no entry header is in view at all (#7778 fallback stays scoped to tracked fields)", () => {
+    const lockPatch = ['@@ -50,4 +50,4 @@', '       "license": "MIT",', '-      "dev": true', '+      "dev": false', '     }'].join("\n");
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
+
+  it("does not flag a version-only change with no entry header in view (no resolved/integrity touched)", () => {
+    const lockPatch = [
+      '@@ -50,4 +50,4 @@',
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "version": "1.0.0",',
+      '+      "version": "1.0.1",',
+      '     }',
+    ].join("\n");
+    // The unattributed fallback bucket is still created (a version line is a tracked field), but since
+    // resolved/integrity were never touched, resolvedOrIntegrityChanged stays false -- proves the
+    // fallback bucket tracks versionChanged correctly rather than always flagging once created.
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
+
+  it("flags an off-registry resolved URL with no entry header in view", () => {
+    const lockPatch = [
+      '@@ -50,4 +50,4 @@',
+      '       "license": "MIT",',
+      '-      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '+      "resolved": "https://evil.example.com/foo-1.0.0.tgz",',
+      '     }',
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("outside registry.npmjs.org");
+  });
+
+  it("does not merge an unattributed change into a later, properly-attributed entry once a real header appears (#7778)", () => {
+    const lockPatch = [
+      '@@ -50,13 +50,13 @@',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old-unattributed=="',
+      '+      "integrity": "sha512-new-unattributed=="',
+      '     },',
+      '     "node_modules/bar": {',
+      '-      "version": "2.0.0",',
+      '-      "resolved": "https://registry.npmjs.org/bar/-/bar-2.0.0.tgz",',
+      '-      "integrity": "sha512-old-bar=="',
+      '+      "version": "2.1.0",',
+      '+      "resolved": "https://registry.npmjs.org/bar/-/bar-2.1.0.tgz",',
+      '+      "integrity": "sha512-new-bar=="',
+      '     },',
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    // "bar" is a legitimate, fully-bumped dependency and must not be swept into the unattributed
+    // bucket's tamper signal (nor let its own version bump mask the earlier unattributed one) --
+    // only the truly unattributed integrity change should be flagged.
+    expect(finding?.detail).toContain("unattributed lockfile entry");
+    expect(finding?.detail).not.toContain("bar");
+  });
+
   it("tracks tamper signals inside a packages root wrapper and through optionalDependencies sub-objects", () => {
     const lockPatch = [
       '@@ -1,12 +1,12 @@',

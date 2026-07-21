@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Fetches per-test-file historical duration data from Codecov's Test Analytics API and aggregates it
-// into a per-file average, for the test-shard bin-packer (scripts/compute-test-shards.mjs) to consume.
+// into a per-file average, for the test-shard bin-packer (scripts/compute-test-shards.ts) to consume.
 // Codecov already ingests a JUnit report per shard on every push to main (see ci.yml's coverage-upload
 // steps, report_type: test_results) and pools it across runs -- this reads that pooled history back
 // out instead of this repo tracking its own duration history from scratch.
@@ -8,7 +8,7 @@
 // Filtered to branch=main deliberately: a PR's own JUnit upload is override_branch'd to that PR's own
 // branch name (see ci.yml's upload steps), not "main" -- so branch=main naturally selects only
 // push-triggered, full-unscoped-suite runs, which is exactly the population the shard bin-packer needs
-// (duration-aware sharding only applies to the full-suite case; see compute-test-shards.mjs).
+// (duration-aware sharding only applies to the full-suite case; see compute-test-shards.ts).
 //
 // Requires a Codecov personal API access token (Codecov Settings -> Access -> Generate Token), NOT the
 // existing CODECOV_TOKEN secret -- that one is an upload-only token and doesn't authenticate this read

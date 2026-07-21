@@ -20,7 +20,7 @@ const IMAGE_RELEVANT_PREFIXES = [
   "migrations/",
   "Dockerfile",
   "docker-compose.yml",
-  "scripts/build-selfhost.mjs",
+  "scripts/build-selfhost.ts",
   "scripts/deploy-selfhost-image.sh",
   "scripts/deploy-selfhost-prebuilt.sh",
   "scripts/lib/selfhost-deploy-common.sh",

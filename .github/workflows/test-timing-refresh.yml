@@ -2,7 +2,7 @@ name: Test timing refresh
 
 # Pulls per-test-file historical duration data from Codecov's Test Analytics API (see
 # scripts/fetch-test-timing.ts) and caches it for validate-tests' duration-aware shard bin-packer
-# (scripts/compute-test-shards.mjs, ci.yml's "Test with coverage" step) to consume. Runs on a schedule
+# (scripts/compute-test-shards.ts, ci.yml's "Test with coverage" step) to consume. Runs on a schedule
 # rather than per-PR: Codecov doesn't publish a numeric rate limit for this read endpoint, and this
 # repo's PR volume (hundreds/day) makes "query fresh on every PR" a real risk of hitting one, for data
 # that doesn't meaningfully change run-to-run anyway.

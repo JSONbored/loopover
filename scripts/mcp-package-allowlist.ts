@@ -1,4 +1,4 @@
-// Canonical MCP published-tarball allowlist (#6291). Shared by check-mcp-package.mjs and
+// Canonical MCP published-tarball allowlist (#6291). Shared by check-mcp-package.ts and
 // mcp-release-candidate-core.ts so the dry-run gate and the release-candidate tarball check
 // cannot drift (the previous duplicated lists already missed shipped lib/*.js files).
 

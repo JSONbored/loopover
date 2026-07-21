@@ -4,21 +4,38 @@ import { createTestEnv } from "../helpers/d1";
 
 const HEAD_SHA = "budget-head-sha-1234567890";
 
-function memoryBudgetStore(options: { failGet?: boolean; failPut?: boolean; forcedValue?: string } = {}): R2Bucket {
-  const store = new Map<string, string>();
+// An etag-aware in-memory R2 stand-in: each key holds its value plus a monotonic etag, `get` surfaces the
+// current httpEtag, and `put` honors the compare-and-swap conditions recordPreviewPollAttempt relies on
+// (#7780) -- `etagMatches` writes only when the etag is unchanged, `etagDoesNotMatch: "*"` writes only when
+// the object is still absent -- returning null (no write) on a precondition miss exactly as real R2 does.
+// `onPut` is an optional hook fired at the START of every put, used to interleave two concurrent writers.
+function memoryBudgetStore(
+  options: { failGet?: boolean; failPut?: boolean; forcedValue?: string; onPut?: (key: string) => Promise<void> | void } = {},
+): R2Bucket {
+  const store = new Map<string, { value: string; etag: string }>();
+  let etagSeq = 0;
   return {
     async get(key: string) {
       if (options.failGet) throw new Error("simulated budget-marker read failure");
       // forcedValue bypasses the real per-key store entirely -- used to simulate a corrupted/malformed stored
       // marker without needing to know the module's own private R2-key derivation.
-      if (options.forcedValue !== undefined) return { body: new Response(options.forcedValue).body } as unknown as R2ObjectBody;
-      const value = store.get(key);
-      return value === undefined ? null : ({ body: new Response(value).body } as unknown as R2ObjectBody);
+      if (options.forcedValue !== undefined) return { body: new Response(options.forcedValue).body, httpEtag: "forced-etag" } as unknown as R2ObjectBody;
+      const entry = store.get(key);
+      return entry === undefined ? null : ({ body: new Response(entry.value).body, httpEtag: entry.etag } as unknown as R2ObjectBody);
     },
-    async put(key: string, value: unknown) {
+    async put(key: string, value: unknown, putOptions?: R2PutOptions) {
+      if (options.onPut) await options.onPut(key);
       if (options.failPut) throw new Error("simulated budget-marker write failure");
-      store.set(key, await new Response(value as BodyInit).text());
-      return { key } as unknown as R2Object;
+      const onlyIf = putOptions?.onlyIf as R2Conditional | undefined;
+      const current = store.get(key);
+      // Enforce the two compare-and-swap preconditions the production code sends; a miss returns null (real R2
+      // signals "not written" by returning null rather than throwing).
+      if (onlyIf?.etagMatches !== undefined && current?.etag !== onlyIf.etagMatches) return null;
+      if (onlyIf?.etagDoesNotMatch === "*" && current !== undefined) return null;
+      etagSeq += 1;
+      const etag = `etag-${etagSeq}`;
+      store.set(key, { value: await new Response(value as BodyInit).text(), etag });
+      return { key, etag } as unknown as R2Object;
     },
   } as unknown as R2Bucket;
 }
@@ -117,5 +134,53 @@ describe("previewPollAttemptCount / recordPreviewPollAttempt (#6323 -- durable p
   it("recordPreviewPollAttempt never throws (best-effort) when the read INSIDE the write path fails", async () => {
     const env = createTestEnv({ REVIEW_AUDIT: memoryBudgetStore({ failGet: true }) });
     await expect(recordPreviewPollAttempt(env, HEAD_SHA)).resolves.toBeUndefined();
+  });
+
+  it("does NOT lose an increment when two triggers race for the same head SHA -- both are counted (#7780)", async () => {
+    // Interleave two concurrent recordPreviewPollAttempt calls so BOTH read the marker before EITHER writes --
+    // the classic read-modify-write TOCTOU. The first put to reach the store is stalled at a barrier until the
+    // second writer has read (and is about to write); whichever writes second must have re-read the newer
+    // count via the compare-and-swap retry, so the final count reflects BOTH increments, not one.
+    let releaseFirstPut: () => void = () => {};
+    const firstPutStalled = new Promise<void>((resolve) => {
+      releaseFirstPut = resolve;
+    });
+    let putCalls = 0;
+    const onPut = async () => {
+      putCalls += 1;
+      // Only the very first put blocks; every later put (the retry, and the second writer) runs immediately.
+      if (putCalls === 1) await firstPutStalled;
+    };
+    const env = createTestEnv({ REVIEW_AUDIT: memoryBudgetStore({ onPut }) });
+
+    const first = recordPreviewPollAttempt(env, HEAD_SHA); // reads count=0, stalls at its put barrier
+    // Let the first writer reach (and block at) its put before the second even starts, guaranteeing both read
+    // count=0 against the same (absent) etag.
+    await new Promise((r) => setTimeout(r, 0));
+    const second = recordPreviewPollAttempt(env, HEAD_SHA); // reads count=0 too, writes count=1 (wins the CAS)
+    await second;
+    releaseFirstPut(); // the first writer's stalled put now runs; its etagDoesNotMatch:"*" precondition misses
+    await first; // ...so it retries, re-reads count=1, and writes count=2
+
+    await expect(previewPollAttemptCount(env, HEAD_SHA)).resolves.toBe(2);
+  });
+
+  it("gives up after the bounded CAS retries under sustained contention, without throwing (#7780)", async () => {
+    // A pathological store whose conditional put NEVER succeeds (every etagDoesNotMatch precondition is treated
+    // as a miss): recordPreviewPollAttempt must exhaust its bounded retries and degrade to "this attempt didn't
+    // count" -- the same safe failure direction as a genuine write failure -- rather than throw or loop forever.
+    let putAttempts = 0;
+    const store = {
+      async get() {
+        return null; // always "no marker yet" -> the write path always uses etagDoesNotMatch:"*"
+      },
+      async put() {
+        putAttempts += 1;
+        return null; // precondition perpetually "misses" -> forces the retry loop to run to exhaustion
+      },
+    } as unknown as R2Bucket;
+    const env = createTestEnv({ REVIEW_AUDIT: store });
+    await expect(recordPreviewPollAttempt(env, HEAD_SHA)).resolves.toBeUndefined();
+    expect(putAttempts).toBe(3); // BUDGET_CAS_MAX_ATTEMPTS
   });
 });

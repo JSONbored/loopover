@@ -495,6 +495,18 @@ export type FocusManifestPrReconciliationConfig = {
 };
 
 /**
+ * Config-as-code override for the active_review_tracking reconciliation sweep
+ * (LOOPOVER_ACTIVE_REVIEW_RECONCILIATION), declared under top-level `activeReviewReconciliation:`
+ * (#webhook-reorder-clobber). Same shape and precedence as `prReconciliation:` above -- the sweep re-checks
+ * `active_review_tracking` rows a delayed webhook job left stuck "active" for a PR that already closed.
+ * Not present ⇒ the caller falls back to the LOOPOVER_ACTIVE_REVIEW_RECONCILIATION env var.
+ */
+export type FocusManifestActiveReviewReconciliationConfig = {
+  present: boolean;
+  enabled: boolean;
+};
+
+/**
  * Config-as-code opt-in for the federated fleet intelligence export (#1970), declared under
  * `federatedIntelligence:`. Gates buildFederatedBundle (src/orb/federated-bundle.ts), which packages this
  * instance's own anonymized calibration signals into a signed bundle an operator can hand to a peer -- like
@@ -1194,6 +1206,7 @@ export type FocusManifest = {
   upstreamDriftIssues: FocusManifestUpstreamDriftIssuesConfig;
   sweepWatchdog: FocusManifestSweepWatchdogConfig;
   prReconciliation: FocusManifestPrReconciliationConfig;
+  activeReviewReconciliation: FocusManifestActiveReviewReconciliationConfig;
   federatedIntelligence: FocusManifestFederatedIntelligenceConfig;
   warnings: string[];
 };
@@ -1374,6 +1387,11 @@ const EMPTY_PR_RECONCILIATION_CONFIG: FocusManifestPrReconciliationConfig = {
   enabled: false,
 };
 
+const EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG: FocusManifestActiveReviewReconciliationConfig = {
+  present: false,
+  enabled: false,
+};
+
 const EMPTY_FEDERATED_INTELLIGENCE_CONFIG: FocusManifestFederatedIntelligenceConfig = {
   present: false,
   enabled: false,
@@ -1408,6 +1426,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
   sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
   prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+  activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
   federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   warnings: [],
 };
@@ -1448,6 +1467,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
     sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
     prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+    activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
     federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   };
 }
@@ -2324,6 +2344,29 @@ function parsePrReconciliationConfig(value: JsonValue | undefined, warnings: str
  *  round-trips through {@link parsePrReconciliationConfig} unchanged. Returns null when nothing is
  *  configured. */
 export function prReconciliationConfigToJson(config: FocusManifestPrReconciliationConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled };
+}
+
+/**
+ * Parse the optional top-level `activeReviewReconciliation:` mapping (#webhook-reorder-clobber). Mirrors
+ * {@link parsePrReconciliationConfig} exactly — `enabled` is the only field.
+ */
+function parseActiveReviewReconciliationConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestActiveReviewReconciliationConfig {
+  if (value === undefined || value === null) return { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "activeReviewReconciliation" must be a mapping; ignoring it.');
+    return { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "activeReviewReconciliation.enabled", warnings) ?? false;
+  return { present: true, enabled };
+}
+
+/** Serialize an activeReviewReconciliation config back into the parse-compatible shape so a cached snapshot
+ *  round-trips through {@link parseActiveReviewReconciliationConfig} unchanged. Returns null when nothing is
+ *  configured. */
+export function activeReviewReconciliationConfigToJson(config: FocusManifestActiveReviewReconciliationConfig): JsonValue {
   if (!config.present) return null;
   return { enabled: config.enabled };
 }
@@ -3884,6 +3927,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     upstreamDriftIssues: parseUpstreamDriftIssuesConfig(record.upstreamDriftIssues, warnings),
     sweepWatchdog: parseSweepWatchdogConfig(record.sweepWatchdog, warnings),
     prReconciliation: parsePrReconciliationConfig(record.prReconciliation, warnings),
+    activeReviewReconciliation: parseActiveReviewReconciliationConfig(record.activeReviewReconciliation, warnings),
     federatedIntelligence: parseFederatedIntelligenceConfig(record.federatedIntelligence, warnings),
     warnings,
   };
@@ -3910,6 +3954,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.upstreamDriftIssues.present &&
     !manifest.sweepWatchdog.present &&
     !manifest.prReconciliation.present &&
+    !manifest.activeReviewReconciliation.present &&
     !manifest.federatedIntelligence.present
   ) {
     warnings.push("Manifest contained no recognized focus fields; falling back to deterministic signals.");

@@ -4,6 +4,7 @@
 
 export {
   createFakeTenantProvisioningDriver,
+  type DatabaseConnectionDetails,
   type FakeDriverCall,
   type FakeDriverStep,
   type FakeTenantProvisioningDriver,
@@ -38,3 +39,14 @@ export {
   type SettlementBackendDriver,
   type SettlementReversalReason,
 } from "./settlement-backend-driver.js";
+export {
+  createNeonDatabaseDriver,
+  dropNeonDatabase,
+  provisionNeonDatabase,
+  type DatabaseDriver,
+  type NeonDatabaseDriverConfig,
+} from "./neon-database-driver.js";
+export {
+  createTenantProvisioningDriver,
+  withRealDatabaseDriver,
+} from "./driver-factory.js";

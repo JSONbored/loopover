@@ -33,11 +33,30 @@ export type TenantProvisioningRequest = {
   product: Product;
 };
 
+/** What `provisionDatabase` hands back (#7653): everything a caller needs to actually reach the tenant's
+ *  database. `connectionString` is the ready-to-use `postgres://` URI (what a real Neon driver's `host`/`port`/
+ *  `user`/`password`/`database` fields compose into); kept alongside the parts so a caller that needs one
+ *  field (e.g. just `database` for logging) doesn't have to parse the URI back apart. Routing this through a
+ *  Cloudflare Hyperdrive binding is #7654's job once control-plane has a deployable service to attach one to
+ *  (see neon-database-driver.ts's header comment) -- this type only carries the raw connection, not a
+ *  Hyperdrive-specific shape. */
+export type DatabaseConnectionDetails = {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+  connectionString: string;
+};
+
 export interface TenantProvisioningDriver {
   /** Step 1 (#7180): stand up the tenant's isolated container. Real driver → Cloudflare Containers API. */
   createContainer(request: TenantProvisioningRequest): Promise<void>;
-  /** Step 2 (#7180): provision the tenant's database. Real driver → the chosen Postgres provider (#7524-blocked). */
-  provisionDatabase(request: TenantProvisioningRequest): Promise<void>;
+  /** Step 2 (#7180): provision the tenant's database, returning its connection details (#7653) -- a freshly
+   *  created role's password is typically retrievable from the provider only at creation time, so the caller
+   *  must capture this return value rather than re-deriving it later. Real driver → the chosen Postgres
+   *  provider (Neon + Hyperdrive, decided on #7180; see neon-database-driver.ts). */
+  provisionDatabase(request: TenantProvisioningRequest): Promise<DatabaseConnectionDetails>;
   /** Step 3 (#7180): inject the tenant's secrets. A real driver delegates to #7174's generalized broker
    *  (src/orb/broker.ts); the fake only records the call. No real secrets path is imported by this package. */
   injectSecrets(request: TenantProvisioningRequest): Promise<void>;
@@ -121,6 +140,14 @@ export function createFakeTenantProvisioningDriver(): FakeTenantProvisioningDriv
     async provisionDatabase(request) {
       record("provisionDatabase", request);
       databases.add(request.tenant.name);
+      // Deterministic per-tenant fake connection details -- no real IO, no state beyond the existing
+      // `databases` set, just enough shape for callers/tests exercising the widened (#7653) return contract.
+      const host = `fake-${request.tenant.name}.control-plane.invalid`;
+      const port = 5432;
+      const database = request.tenant.name;
+      const user = request.tenant.name;
+      const password = `fake-password-${request.tenant.name}`;
+      return { host, port, database, user, password, connectionString: `postgres://${user}:${password}@${host}:${port}/${database}` };
     },
     async injectSecrets(request) {
       record("injectSecrets", request);

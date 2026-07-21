@@ -63,7 +63,19 @@ test("provisionTenant does NOT page PagerDuty on a successful provision (#7667)"
 
   const result = await provisionTenant(tenant, "orb", driver, { notify });
 
-  assert.deepEqual(result, { tenant, product: "orb", state: "active" });
+  assert.deepEqual(result, {
+    tenant,
+    product: "orb",
+    state: "active",
+    database: {
+      host: "fake-acme.control-plane.invalid",
+      port: 5432,
+      database: "acme",
+      user: "acme",
+      password: "fake-password-acme",
+      connectionString: "postgres://acme:fake-password-acme@fake-acme.control-plane.invalid:5432/acme",
+    },
+  });
   assert.equal(calls.length, 0);
 });
 

@@ -17,6 +17,7 @@ import {
   type NotifyProvisioningFailure,
 } from "./pagerduty-notify.js";
 import type {
+  DatabaseConnectionDetails,
   Product,
   Tenant,
   TenantLifecycleState,
@@ -25,11 +26,15 @@ import type {
 } from "./tenant-provisioning-driver.js";
 
 /** Result of a successful provision — terminal lifecycle state `"active"` (the vocabulary tenant-client.ts
- *  passes through from this API). */
+ *  passes through from this API). Carries `database` (#7653) so a freshly created role's connection details --
+ *  often retrievable from the provider only at creation time -- aren't silently discarded by this orchestration
+ *  before any caller gets a chance to persist them. What a caller DOES with them (e.g. routing into
+ *  `injectSecrets` via #7852's secret-injection driver) is that driver's own job, not this orchestration's. */
 export type TenantProvisioningResult = {
   tenant: Tenant;
   product: Product;
   state: Extract<TenantLifecycleState, "active">;
+  database: DatabaseConnectionDetails;
 };
 
 /** Result of a successful deprovision — terminal lifecycle state `"torn down"`. */
@@ -83,14 +88,15 @@ export async function provisionTenant(
   pagerDuty: ProvisioningPagerDutyOptions = {},
 ): Promise<TenantProvisioningResult> {
   const request: TenantProvisioningRequest = { tenant, product };
+  let database: DatabaseConnectionDetails;
   try {
     await driver.createContainer(request);
-    await driver.provisionDatabase(request);
+    database = await driver.provisionDatabase(request);
     await driver.injectSecrets(request);
   } catch (error) {
     pageAndRethrow(tenant, product, "provision", error, pagerDuty);
   }
-  return { tenant, product, state: "active" };
+  return { tenant, product, state: "active", database };
 }
 
 /** Deprovision a tenant by tearing #7180's three steps down in REVERSE order. Same product-agnostic call shape

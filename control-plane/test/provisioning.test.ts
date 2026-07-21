@@ -17,7 +17,19 @@ test("provisionTenant runs the three #7180 steps in order and reports the tenant
 
   const result = await provisionTenant(tenant, "orb", driver);
 
-  assert.deepEqual(result, { tenant, product: "orb", state: "active" });
+  assert.deepEqual(result, {
+    tenant,
+    product: "orb",
+    state: "active",
+    database: {
+      host: "fake-acme.control-plane.invalid",
+      port: 5432,
+      database: "acme",
+      user: "acme",
+      password: "fake-password-acme",
+      connectionString: "postgres://acme:fake-password-acme@fake-acme.control-plane.invalid:5432/acme",
+    },
+  });
   // create-container → provision-DB → inject-secrets, in that order.
   assert.deepEqual(
     driver.calls.map((call) => call.step),

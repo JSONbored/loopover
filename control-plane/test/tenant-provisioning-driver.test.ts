@@ -40,6 +40,21 @@ test("destroyContainer on a never-created container is an idempotent no-op", asy
   assert.equal(driver.containers.has("ghost"), false);
 });
 
+test("provisionDatabase returns deterministic per-tenant connection details (#7653)", async () => {
+  const driver = createFakeTenantProvisioningDriver();
+
+  const details = await driver.provisionDatabase(requestFor("acme", "orb"));
+
+  assert.deepEqual(details, {
+    host: "fake-acme.control-plane.invalid",
+    port: 5432,
+    database: "acme",
+    user: "acme",
+    password: "fake-password-acme",
+    connectionString: "postgres://acme:fake-password-acme@fake-acme.control-plane.invalid:5432/acme",
+  });
+});
+
 test("provision/teardown steps toggle the database and secret maps too", async () => {
   const driver = createFakeTenantProvisioningDriver();
   const request = requestFor("acme", "ams");

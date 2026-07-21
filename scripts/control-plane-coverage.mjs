@@ -35,6 +35,12 @@ const result = spawnSync(
     `--report-dir=${reportDir}`,
     "--include=control-plane/dist/**/*.js",
     "--exclude=**/*.d.ts",
+    // control-plane/src/worker.ts (#7654) is the Cloudflare Worker entry point -- pure infra glue exercised
+    // only by real Cloudflare Workers/KV infrastructure, exactly like packages/discovery-index/src/worker.ts's
+    // own exclusion from vitest's coverage (vitest.config.ts/codecov.yml). It's excluded from this package's
+    // own tsc build entirely (tsconfig.json) and typechecked separately (tsconfig.worker.json), so `--all`
+    // would otherwise report it at a flat 0% for code nothing here can unit-test.
+    "--exclude=control-plane/dist/worker.js",
     "--all",
     process.execPath,
     "--test",

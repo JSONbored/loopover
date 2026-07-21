@@ -50,3 +50,12 @@ export {
   createTenantProvisioningDriver,
   withRealDatabaseDriver,
 } from "./driver-factory.js";
+export {
+  createFakeTenantRegistry,
+  createKvTenantRegistry,
+  type KvNamespaceLike,
+  type TenantRegistry,
+  type TenantRegistryRecord,
+} from "./tenant-registry.js";
+export { createTenantHttpApp, type TenantHttpAppDeps } from "./http-app.js";
+export { normalizeSharedSecret, verifyBearer } from "./auth.js";

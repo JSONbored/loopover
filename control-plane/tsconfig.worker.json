@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // worker.ts (transitively, via http-app.ts -> auth.ts/provisioning.ts/pagerduty-notify.ts) uses
+    // node:crypto's timingSafeEqual, Buffer, and process.env -- all real, stable APIs under the
+    // `nodejs_compat` compatibility flag this Worker enables (wrangler.jsonc), not a Node-only assumption
+    // that breaks at runtime. Both type packages are needed together: @cloudflare/workers-types for
+    // Workers-only globals (KVNamespace, ExecutionContext), "node" for the real Node builtins nodejs_compat
+    // actually provides.
+    "types": ["@cloudflare/workers-types", "node"],
+    "declaration": false,
+    "noEmit": true,
+    // Separate buildinfo file -- two tsc invocations over the same package must not share one cache file.
+    "tsBuildInfoFile": "./.worker.tsbuildinfo"
+  },
+  "include": ["src/worker.ts", "src/env.d.ts", "worker-configuration.d.ts"],
+  // Cancels the inherited exclude from ./tsconfig.json (which excludes exactly these three files from the
+  // main Node build) -- without resetting it here, this config's own include list would be entirely excluded.
+  "exclude": []
+}

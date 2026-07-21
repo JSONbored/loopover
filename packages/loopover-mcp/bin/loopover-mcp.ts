@@ -1236,6 +1236,12 @@ const STDIO_TOOL_DESCRIPTORS = [
       "Inspect a contributor's open PRs on registered repos, classify queue state, and return public-safe next-step packets from cached metadata.",
   },
   {
+    name: "loopover_get_contributor_profile",
+    category: "discovery",
+    description:
+      "Return the evidence-backed LoopOver contributor profile for a GitHub login: registered repos, merged-PR history, and where the contributor is strongest. Takes login (the contributor's GitHub username). Same as `loopover-mcp contributor-profile`.",
+  },
+  {
     name: "loopover_pr_outcome",
     category: "review",
     description:
@@ -2300,6 +2306,23 @@ registerStdioTool(
   async ({ login }: any) => {
     const payload = await getOpenPrMonitor(login);
     return toolResult(openPrMonitorToolSummary(login, payload), payload);
+  },
+);
+
+// #7760: local stdio mirror of the loopover_get_contributor_profile remote tool (src/mcp/server.ts). The remote
+// tool + `contributor-profile` CLI (#6737) already served this endpoint; only the stdio surface was missing. Mirrors
+// the loopover_monitor_open_prs block above -- loginShape + the shared getContributorProfile call (no duplicated HTTP
+// path). The summary is the remote tool's own fixed sentence (server.ts uses the identical string), so the two
+// surfaces never drift; the full API payload rides along as structuredContent.
+registerStdioTool(
+  "loopover_get_contributor_profile",
+  {
+    description: stdioToolDescription("loopover_get_contributor_profile"),
+    inputSchema: loginShape,
+  },
+  async ({ login }: any) => {
+    const payload = await getContributorProfile(login);
+    return toolResult(`LoopOver contributor profile for ${login}.`, payload);
   },
 );
 
@@ -4149,11 +4172,14 @@ function printContributorProfileHelp() {
 // from --login / the active session / LOOPOVER_LOGIN / GITHUB_LOGIN, exactly like the sibling contributor
 // commands, so an already-logged-in contributor never retypes their own login. Named `contributor-profile`
 // because the top-level `profile` command already manages MCP client profiles.
-async function contributorProfileCli(options: any) {
+// #7760: exported (like maintainCli) so an in-process test can drive it directly -- the subprocess CLI harness
+// v8 can't instrument, so the shared getContributorProfile call below is graded through this in-process entry.
+export async function contributorProfileCli(options: any) {
   if (options.help === true) return printContributorProfileHelp();
   const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
-  const payload = await apiGet(`/v1/contributors/${encodeURIComponent(login)}/profile`);
+  // #7760: shared with the loopover_get_contributor_profile stdio tool so the endpoint path lives in one place.
+  const payload = await getContributorProfile(login);
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}
 `);
@@ -6058,6 +6084,12 @@ function repoDecisionToolSummary(login: any, repoFullName: any, payload: any) {
 
 function getOpenPrMonitor(login: any) {
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/open-pr-monitor`);
+}
+
+// #7760: single source of truth for GET /v1/contributors/:login/profile, shared by the contributor-profile CLI
+// and the loopover_get_contributor_profile stdio tool so neither duplicates the endpoint path.
+function getContributorProfile(login: any) {
+  return apiGet(`/v1/contributors/${encodeURIComponent(login)}/profile`);
 }
 
 function getPrOutcomes(login: any, limit: any) {

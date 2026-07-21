@@ -152,6 +152,11 @@ describe("contribution-profile cache store (#6797)", () => {
     expect(() => store.get("not-a-full-name")).toThrow(
       "invalid_repo_full_name",
     );
+    // #7795: a path-traversal / control-char segment is rejected too — ../repo (left arm), owner/.. (right), a tab.
+    for (const bad of ["../widgets", "acme/..", "acme/wid\tgets"]) {
+      expect(() => store.get(bad)).toThrow("invalid_repo_full_name");
+      expect(() => store.purgeByRepo(bad)).toThrow("invalid_repo_full_name");
+    }
     expect(() =>
       store.put({ repoFullName: "owner/repo/extra" } as never),
     ).toThrow("invalid_repo_full_name");

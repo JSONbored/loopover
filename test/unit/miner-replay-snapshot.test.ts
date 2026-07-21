@@ -341,6 +341,11 @@ describe("exportReplaySnapshot (#3010)", () => {
 
     await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "noslash", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
     await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "a/b/c", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
+    // #7795: a path-traversal / control-char segment is rejected too — ../repo (left arm), owner/.. (right), a tab.
+    // getSnapshot is the synchronous store path through the same guarded normalizeRepoFullName.
+    for (const bad of ["../widgets", "acme/..", "acme/wid\tgets"]) {
+      expect(() => store.getSnapshot(bad, "abc123")).toThrow("invalid_repo_full_name");
+    }
   });
 
   it("assertExecResult falls back to a generic exit-code message when stderr is entirely absent", async () => {

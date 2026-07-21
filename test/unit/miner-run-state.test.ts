@@ -128,6 +128,12 @@ describe("loopover-miner run-state store (#2289)", () => {
     const store = initRunStateStore(dbPath);
     try {
       expect(() => store.getRunState("not-a-full-name")).toThrow("invalid_repo_full_name");
+      // #7795: a path-traversal / control-char segment is rejected too — ../repo (left arm), owner/.. (right), a tab.
+      for (const bad of ["../loopover", "JSONbored/..", "JSON\tbored/loopover"]) {
+        expect(() => store.getRunState(bad)).toThrow("invalid_repo_full_name");
+        expect(() => store.setRunState(bad, "idle")).toThrow("invalid_repo_full_name");
+        expect(() => store.purgeByRepo(bad)).toThrow("invalid_repo_full_name");
+      }
       expect(() => store.setRunState("owner/repo/extra", "idle")).toThrow("invalid_repo_full_name");
       expect(() => store.setRunState("owner/repo", "blocked" as never)).toThrow("invalid_run_state");
       expect(store.getRunState("owner/repo")).toBeNull();

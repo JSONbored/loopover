@@ -3,6 +3,7 @@ import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { RUN_STATE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 export type RunState = "idle" | "discovering" | "planning" | "preparing";
 
@@ -57,6 +58,9 @@ function normalizeRepoFullName(repoFullName: string): string {
   const trimmed = repoFullName.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  // #7795: extend #5831/#7525's path-safety guard here too — reject a `.`/`..`/control-char segment before it
+  // can be persisted into SQLite (or echoed back through the CLI), matching claim-ledger.ts's sibling parser.
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

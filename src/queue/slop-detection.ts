@@ -172,7 +172,7 @@ export async function runAiSlopForAdvisory(
   } catch (error) {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "ai_slop_failed",
         repository: args.repoFullName,
         pullNumber: args.pr.number,

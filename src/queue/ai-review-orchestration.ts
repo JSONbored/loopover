@@ -880,7 +880,7 @@ export async function runAiReviewForAdvisory(
   } catch (error) {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "ai_review_failed",
         repository: args.repoFullName,
         pullNumber: args.pr.number,

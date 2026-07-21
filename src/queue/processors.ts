@@ -805,7 +805,7 @@ export async function buildContributorDecisionPacks(
       /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
       console.error(
         JSON.stringify({
-          level: "warn",
+          level: "error",
           event: "decision_pack_login_failed",
           login: contributorLogin,
           error: errorMessage(error),
@@ -1474,7 +1474,7 @@ export async function sweepRepoRegate(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "sweep_mark_regated_failed",
         repository: repoFullName,
         error: errorMessage(error),
@@ -1775,7 +1775,7 @@ export async function sweepRepoBacklogConvergence(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "backlog_convergence_mark_regated_failed",
         repository: repoFullName,
         error: errorMessage(error),
@@ -1919,7 +1919,7 @@ export async function regatePullRequest(
     }
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "sweep_rereview_failed",
         deliveryId,
         repository: repoFullName,
@@ -3584,7 +3584,7 @@ export async function reReviewStoredPullRequest(
     if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "pr_public_surface_failed",
         deliveryId,
         repository: repoFullName,
@@ -3618,7 +3618,7 @@ export async function reReviewStoredPullRequest(
   ).catch((error) => {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "agent_maintenance_failed",
         deliveryId,
         repository: repoFullName,
@@ -5139,7 +5139,7 @@ async function processContributorEvidenceLogins(
       /* v8 ignore next -- defensive per-login isolation; the log-and-continue path is not exercised in tests */
       console.error(
         JSON.stringify({
-          level: "warn",
+          level: "error",
           event: "contributor_evidence_login_failed",
           login: contributorLogin,
           error: errorMessage(error),
@@ -6388,7 +6388,7 @@ async function handlePullRequestWebhookEvent(
           if (isGitHubRateLimitedError(error) || isRetryableJobError(error)) throw error;
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "pr_public_surface_failed",
               deliveryId,
               repository: payload.repository?.full_name,
@@ -6426,7 +6426,7 @@ async function handlePullRequestWebhookEvent(
           /* v8 ignore next -- best-effort: auto-maintain failures are logged, never surfaced to the gate. */
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "agent_maintenance_failed",
               deliveryId,
               repository: repoFullName,
@@ -6457,7 +6457,7 @@ async function handlePullRequestWebhookEvent(
           /* v8 ignore next -- best-effort: a reputation-record failure is logged, never surfaced to the gate. */
           console.error(
             JSON.stringify({
-              level: "warn",
+              level: "error",
               event: "reputation_record_failed",
               deliveryId,
               repository: repoFullName,
@@ -6483,7 +6483,7 @@ async function handlePullRequestWebhookEvent(
         /* v8 ignore next -- best-effort: a RAG re-index enqueue failure is logged, never surfaced to the gate. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "rag_reindex_enqueue_failed",
             deliveryId,
             repository: repoFullName,
@@ -6508,7 +6508,7 @@ async function handlePullRequestWebhookEvent(
         /* v8 ignore next -- best-effort: a sibling re-gate enqueue failure is logged, never surfaced to the gate. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "sibling_regate_enqueue_failed",
             deliveryId,
             repository: repoFullName,
@@ -6612,7 +6612,7 @@ async function handleIssueWebhookEvent(
         /* v8 ignore next -- best-effort: an issue-cap enforcement failure is logged, never surfaced to the webhook. */
         console.error(
           JSON.stringify({
-            level: "warn",
+            level: "error",
             event: "contributor_issue_cap_failed",
             deliveryId,
             repository: payload.repository?.full_name,
@@ -7013,7 +7013,7 @@ async function resolvePullRequestFilesForReview(
     /* v8 ignore next -- fail-safe: an inline fetch failure degrades to the empty stored rows (byte-identical to pre-fix). */
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "review_files_inline_fetch_failed",
         repository: args.repoFullName,
         pullNumber: args.pullNumber,
@@ -7479,7 +7479,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
   } catch (error) {
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "linked_issue_satisfaction_failed",
         repository: args.repoFullName,
         pullNumber: args.pr.number,
@@ -7557,7 +7557,7 @@ export async function runContentLaneDeliverableCheckForAdvisory(
      * calls (e.g. a DB-backed cache layer) degrades to "no finding" instead of an unhandled rejection. */
     console.error(
       JSON.stringify({
-        level: "warn",
+        level: "error",
         event: "content_lane_deliverable_check_failed",
         repository: args.repoFullName,
         pullNumber: primaryIssueNumber,
@@ -9058,12 +9058,12 @@ async function maybePublishPrPublicSurface(
     // Stamp the head SHA only after every required public surface for this repo completed. For gate-enabled repos,
     // a comment/label without a finalized Orb gate check is incomplete and must stay repair-visible to the sweep.
     await markPullRequestSurfacePublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
-      console.error(JSON.stringify({ level: "warn", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+      console.error(JSON.stringify({ level: "error", event: "surface_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
     });
     // #regate-churn: mark the AI review row for THIS head+fingerprint as durably published (a no-op when no fresh
     // row was written this pass -- e.g. the frozen-reuse path above, or AI review off/skipped entirely).
     await markAiReviewPublished(env, repoFullName, pr.number, advisory.headSha).catch((error) => {
-      console.error(JSON.stringify({ level: "warn", event: "ai_review_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
+      console.error(JSON.stringify({ level: "error", event: "ai_review_published_mark_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
     });
     return gateEvaluation;
   };
@@ -10374,7 +10374,7 @@ async function maybePublishPrPublicSurface(
             }).catch((error) => {
               console.error(
                 JSON.stringify({
-                  level: "warn",
+                  level: "error",
                   event: "gate_check_summary_upsert_failed",
                   repoFullName,
                   pullNumber: pr.number,
@@ -10466,7 +10466,7 @@ async function maybePublishPrPublicSurface(
           }).catch((error) => {
             console.error(
               JSON.stringify({
-                level: "warn",
+                level: "error",
                 event: "gate_check_summary_upsert_failed",
                 repoFullName,
                 pullNumber: pr.number,
@@ -10512,7 +10512,7 @@ async function maybePublishPrPublicSurface(
               }).catch((error) => {
                 console.error(
                   JSON.stringify({
-                    level: "warn",
+                    level: "error",
                     event: "gate_check_summary_upsert_failed",
                     repoFullName,
                     pullNumber: pr.number,
@@ -10554,7 +10554,7 @@ async function maybePublishPrPublicSurface(
             }).catch((error) => {
               console.error(
                 JSON.stringify({
-                  level: "warn",
+                  level: "error",
                   event: "gate_check_summary_upsert_failed",
                   repoFullName,
                   pullNumber: pr.number,

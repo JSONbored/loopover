@@ -95,6 +95,25 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(scoped).toMatch(/Gate precision for owner\/repo \(last 30d\)/);
   });
 
+  it("selftune-audit reports the override audit trail (plain + json), passing the limit through (#7798)", async () => {
+    const e = await env();
+    const out = await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo"], e);
+    expect(out).toMatch(/Self-tune override audit for owner\/repo: 2 event\(s\)/);
+    expect(out).toMatch(/override_promoted\s+\{"confidenceFloor":0\.9\}/);
+    // A null detail is filtered out of the plain-text line rather than printed as "null".
+    expect(out).toMatch(/override_shadowed$/m);
+    expect(out).not.toContain("null");
+    const json = JSON.parse(await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo", "--json"], e)) as {
+      repoFullName: string;
+      audit: Array<{ eventType: string }>;
+    };
+    expect(json.repoFullName).toBe("owner/repo");
+    expect(json.audit.map((row) => row.eventType)).toEqual(["override_promoted", "override_shadowed"]);
+    // --limit bounds the page; the CLI forwards it as ?limit, which the fixture echoes back.
+    const scoped = JSON.parse(await runAsync(["maintain", "selftune-audit", "--repo", "owner/repo", "--limit", "5", "--json"], e)) as { limit?: number };
+    expect(scoped.limit).toBe(5);
+  });
+
   it("generate-issue-drafts dry-runs by default and never forwards create (#6757)", async () => {
     const bodies: Array<{ dryRun?: boolean; create?: boolean; limit?: number }> = [];
     const e = await env({ onIssueDraftRequest: (b) => bodies.push(b) });

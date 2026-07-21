@@ -136,4 +136,26 @@ describe("loopover-mcp maintain stdio proxies (#6152)", () => {
     }
     expect(capturedRequests).toEqual([]);
   });
+
+  // #7798: the self-tune override audit trail's stdio mirror. Same proxy contract as the #6152 tools above,
+  // added in a later batch so it lives in its own case rather than the shared MAINTAIN_TOOLS loop.
+  it("loopover_get_selftune_override_audit proxies to the audit endpoint and forwards limit", async () => {
+    await connect();
+    const names = (await client!.listTools()).tools.map((tool) => tool.name);
+    expect(names).toContain("loopover_get_selftune_override_audit");
+    const result = await client!.callTool({ name: "loopover_get_selftune_override_audit", arguments: { ...REPO, limit: 5 } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as { repoFullName: string; audit: Array<{ eventType: string }>; limit?: number };
+    expect(data.repoFullName).toBe("owner/repo");
+    expect(data.audit.map((row) => row.eventType)).toEqual(["override_promoted", "override_shadowed"]);
+    expect(data.limit).toBe(5);
+    expect(JSON.stringify(result.content)).toContain("2 event(s)");
+  });
+
+  it("loopover_get_selftune_override_audit surfaces an API failure as a tool error", async () => {
+    await connect();
+    const result = await client!.callTool({ name: "loopover_get_selftune_override_audit", arguments: { owner: "nobody", repo: "missing" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/404|not_found/);
+  });
 });

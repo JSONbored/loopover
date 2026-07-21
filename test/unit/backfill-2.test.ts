@@ -188,6 +188,42 @@ describe("GitHub backfill", () => {
       vi.stubGlobal("fetch", async () => new Response("boom", { status: 500 }));
       await expect(fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 99, "public-token")).resolves.toEqual([]);
     });
+
+    it("REGRESSION (#stale-disposition-label-cleanup / guardrail false-positive): retries once and recovers when GitHub's first response is empty because the diff isn't computed yet", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let filesCalls = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/pulls/55/files")) {
+          filesCalls += 1;
+          if (filesCalls === 1) return Response.json([]);
+          return Response.json([{ filename: "src/bar.ts", status: "modified", additions: 3, deletions: 1, changes: 4, patch: "@@ -1 +1 @@\n-old\n+new" }]);
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      const records = await fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 55, "public-token");
+      expect(filesCalls).toBe(2);
+      expect(records.map((r) => r.path)).toEqual(["src/bar.ts"]);
+      // Persisted from the SECOND (successful) attempt — a subsequent stored read reuses it.
+      expect((await listPullRequestFiles(env, "JSONbored/gittensory", 55)).map((r) => r.path)).toEqual(["src/bar.ts"]);
+    });
+
+    it("retries exactly once, not repeatedly, when both attempts come back empty", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      let filesCalls = 0;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.includes("/pulls/56/files")) {
+          filesCalls += 1;
+          return Response.json([]);
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await expect(fetchAndStorePullRequestFilesForReview(env, "JSONbored/gittensory", 56, "public-token")).resolves.toEqual([]);
+      expect(filesCalls).toBe(2);
+    });
   });
 
   describe("fetchLiveCiAggregate", () => {

@@ -2416,6 +2416,17 @@ function toPullRequestFileRecordFromGitHub(repoFullName: string, pullNumber: num
   };
 }
 
+// A brand-new or just-pushed PR can have GitHub return a clean, successful EMPTY files list because its diff
+// isn't computed yet — not a rate limit (the shared client in ./client.ts already retries those), so this
+// single short retry is the only thing standing between that timing gap and a permanently-empty diff. An empty
+// changedPaths list is what makes isGuardrailHit fail-safe to "hit" (#1062), and that manual-review hold, once
+// applied, is never auto-removed (agent-actions.ts's #stale-disposition-label-cleanup deliberately leaves
+// manualReview alone — it might be a human's own hold, not just a stale bot one) — so a guardrail-configured
+// repo's PR could otherwise sit "held for manual review" indefinitely over nothing but a fetch timing gap.
+const REVIEW_FILES_EMPTY_RETRY_DELAY_MS = 500;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Inline, best-effort file fetch for the REVIEW path (convergence). The PR-opened webhook can fire the review
  * BEFORE the async detail-sync has populated `pull_request_files`, leaving the AI review + grounding + unified
@@ -2423,6 +2434,10 @@ function toPullRequestFileRecordFromGitHub(repoFullName: string, pullNumber: num
  * time, the caller falls back here: fetch the PR's files straight from GitHub (REST → GraphQL, same paths the
  * detail-sync uses), persist them (so the rest of the same review run + any later read reuse them), and return
  * them mapped to the stored record shape.
+ *
+ * An empty first attempt is retried once, after a short delay (see {@link REVIEW_FILES_EMPTY_RETRY_DELAY_MS}),
+ * before being accepted — GitHub's own diff computation lagging a just-created/just-pushed PR is common enough
+ * that a single retry converts most of these into a real diff.
  *
  * Fail-safe by construction: a fetch failure returns `[]` (never throws), so the review degrades to the same
  * empty-diff state it has today rather than breaking. The persist is best-effort and only runs when the fetch
@@ -2436,7 +2451,12 @@ export async function fetchAndStorePullRequestFilesForReview(
   admissionKey?: GitHubRateLimitAdmissionKey,
 ): Promise<PullRequestFileRecord[]> {
   const warnings: string[] = [];
-  const files = await fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey, "live_review").catch(() => [] as GitHubFilePayload[]);
+  const fetchOnce = () => fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey, "live_review").catch(() => [] as GitHubFilePayload[]);
+  let files = await fetchOnce();
+  if (files.length === 0) {
+    await sleep(REVIEW_FILES_EMPTY_RETRY_DELAY_MS);
+    files = await fetchOnce();
+  }
   if (files.length === 0) return [];
   const records = files.map((file) => toPullRequestFileRecordFromGitHub(repoFullName, pullNumber, file));
   // Persist so the AI review, grounding, gate, check-run, and unified-comment reads in THIS run (and any later

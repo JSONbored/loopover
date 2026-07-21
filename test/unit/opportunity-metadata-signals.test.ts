@@ -51,6 +51,14 @@ describe("opportunity metadata signals", () => {
     expect(computeMetadataDupRisk({ ...base, repoFullName: "acme/other" }, peers)).toBe(0);
   });
 
+  it("excludes the source issue from its own dup-risk when the echoed peer's repoFullName is cased differently (#7731)", () => {
+    // The shared batch list can echo the source issue back to itself with a differently-cased repoFullName;
+    // the self-skip must still exclude it (matching the same-repo check's normalization) rather than
+    // counting the issue as a duplicate of itself and inflating dupRisk.
+    const selfEcho = { ...base, repoFullName: "ACME/Widgets" };
+    expect(computeMetadataDupRisk(base, [selfEcho])).toBe(0);
+  });
+
   it("buildMetadataRankInput applies repo-specific goal specs case-insensitively", () => {
     const input = buildMetadataRankInput(
       { ...base, labels: ["feature"] },

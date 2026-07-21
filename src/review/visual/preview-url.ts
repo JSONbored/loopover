@@ -228,15 +228,28 @@ export async function findPreviewUrlFromChecks(params: {
       const url = extractPreviewUrl(status.target_url);
       if (url) return url;
     }
-    const checks = await githubJson<{ check_runs?: Array<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }> }>(
+    // Walk EVERY page of check-runs (#7779): a commit with >100 check-runs can push the preview-deploy
+    // check-run onto page 2+, which a single per_page=100 read would miss -- exactly the truncation the file
+    // header warns about, and the same walk getPreviewBuildState/findPreviewUrlFromPrComments already do for
+    // this endpoint. Reuses findAcrossPages so the scan stops as soon as a page yields a usable URL.
+    const urlFromChecks = await findAcrossPages<
+      { status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } },
+      string
+    >(
       `${base}/commits/${encodeURIComponent(params.sha)}/check-runs?per_page=100`,
       opts,
+      (payload) =>
+        (payload as { check_runs?: Array<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }> })?.check_runs ?? [],
+      (runs) => {
+        for (const run of runs) {
+          if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
+          const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
+          if (url) return url;
+        }
+        return null;
+      },
     ).catch(() => null);
-    for (const run of checks?.check_runs ?? []) {
-      if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
-      const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
-      if (url) return url;
-    }
+    if (urlFromChecks) return urlFromChecks;
   } catch (error) {
     console.log(JSON.stringify({ event: "preview_from_checks_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
   }

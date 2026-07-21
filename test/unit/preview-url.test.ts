@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromChecks, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -165,6 +165,84 @@ describe("preview-url pagination (#7450)", () => {
     vi.stubGlobal("fetch", failLater);
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
     expect(failLater).toHaveBeenCalledTimes(2);
+  });
+
+  // findPreviewUrlFromChecks scans the combined commit-status first, then walks check-runs. These stub the
+  // status endpoint to an empty/no-preview payload so control reaches the check-runs walk under test (#7779).
+  const emptyStatus = () => Response.json({ statuses: [] });
+
+  it("findPreviewUrlFromChecks follows Link: rel=next and finds the preview check-run on page 2 (#7779)", async () => {
+    // The bug: a commit with >100 check-runs pushes the Cloudflare Workers Builds check onto page 2+, which the
+    // old single-page read missed. Page 1 is 100 non-preview runs advertising a next page; page 2 carries it.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/status")) return emptyStatus();
+      if (url.includes("/check-runs")) {
+        if (isPage2(input)) return Response.json({ check_runs: [{ status: "completed", conclusion: "success", details_url: "https://pr-9.pages.dev/" }] });
+        return Response.json({ check_runs: Array.from({ length: 100 }, () => ({ status: "completed", conclusion: "success", details_url: "https://example.com/ci" })) }, { headers: { link: NEXT_LINK } });
+      }
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBe("https://pr-9.pages.dev");
+    // Page 2 of check-runs was actually fetched (the pre-#7779 bug never read it).
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/check-runs") && isPage2(c[0]))).toBe(true);
+  });
+
+  it("findPreviewUrlFromChecks skips a completed non-success check-run and reads the preview from output.summary/text (#7779)", async () => {
+    // Exercises the `continue` (completed && conclusion !== success) skip and the details_url ?? summary ?? text
+    // fallback chain: the first run is a hard failure (skipped), the second carries the URL only in output.text.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/status")) return emptyStatus();
+      if (url.includes("/check-runs")) {
+        return Response.json({
+          check_runs: [
+            { status: "completed", conclusion: "failure", details_url: "https://should-be-skipped.pages.dev/" },
+            { status: "completed", conclusion: "success", output: { text: "preview at https://from-text.workers.dev/" } },
+          ],
+        });
+      }
+      return Response.json({});
+    });
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBe("https://from-text.workers.dev");
+  });
+
+  it("findPreviewUrlFromChecks returns null when no check-run carries a preview URL and there is no next page (#7779)", async () => {
+    // The probe finds nothing on the only page and the payload has no `check_runs` array (treated as []): the
+    // whole discovery degrades to null rather than throwing.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/status")) return emptyStatus();
+      if (url.includes("/check-runs")) return Response.json({});
+      return Response.json({});
+    });
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBeNull();
+  });
+
+  it("findPreviewUrlFromChecks degrades to null when the check-runs read fails, without throwing (#7779)", async () => {
+    // The .catch(() => null) around the paginated walk preserves the pre-#7779 best-effort behavior: a check-runs
+    // fetch error must not throw out of the function, just yield no URL from that source.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/status")) return emptyStatus();
+      if (url.includes("/check-runs")) throw new Error("check-runs network down");
+      return Response.json({});
+    });
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBeNull();
+  });
+
+  it("findPreviewUrlFromChecks returns a preview URL straight from the combined commit-status, before touching check-runs (#7779)", async () => {
+    // The status-first path: a success status whose target_url is a preview host short-circuits before the
+    // check-runs walk runs at all.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/status")) return Response.json({ statuses: [{ state: "success", target_url: "https://from-status.pages.dev/" }] });
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBe("https://from-status.pages.dev");
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/check-runs"))).toBe(false);
   });
 });
 

@@ -73,14 +73,20 @@ describe("parsePrOutcomesArgs (#7658)", () => {
 
 describe("resolvePrOutcomesLogin (#7658)", () => {
   it("prefers the explicit flag, then LOOPOVER_LOGIN, then GITHUB_LOGIN", () => {
-    expect(resolvePrOutcomesLogin("explicit", { LOOPOVER_LOGIN: "from-loopover", GITHUB_LOGIN: "from-gh" })).toBe(
-      "explicit",
-    );
-    expect(resolvePrOutcomesLogin(null, { LOOPOVER_LOGIN: "from-loopover", GITHUB_LOGIN: "from-gh" })).toBe(
-      "from-loopover",
-    );
-    expect(resolvePrOutcomesLogin(null, { GITHUB_LOGIN: "from-gh" })).toBe("from-gh");
-    expect(resolvePrOutcomesLogin(null, {})).toBeNull();
+    expect(
+      resolvePrOutcomesLogin("explicit", {
+        LOOPOVER_LOGIN: "from-loopover",
+        GITHUB_LOGIN: "from-gh",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("explicit");
+    expect(
+      resolvePrOutcomesLogin(null, {
+        LOOPOVER_LOGIN: "from-loopover",
+        GITHUB_LOGIN: "from-gh",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe("from-loopover");
+    expect(resolvePrOutcomesLogin(null, { GITHUB_LOGIN: "from-gh" } as unknown as NodeJS.ProcessEnv)).toBe("from-gh");
+    expect(resolvePrOutcomesLogin(null, {} as unknown as NodeJS.ProcessEnv)).toBeNull();
   });
 });
 
@@ -111,9 +117,13 @@ describe("fetchContributorPrOutcomes (#7658)", () => {
 
   it("fails loud when there is no session", async () => {
     const fetchImpl = vi.fn();
-    await expect(fetchContributorPrOutcomes("minerbot", { env: {}, fetchImpl, loopoverAuth: null })).rejects.toThrow(
-      /no loopover session/,
-    );
+    await expect(
+      fetchContributorPrOutcomes("minerbot", {
+        env: {} as unknown as NodeJS.ProcessEnv,
+        fetchImpl,
+        loopoverAuth: null,
+      }),
+    ).rejects.toThrow(/no loopover session/);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -183,7 +193,7 @@ describe("runPrOutcomes CLI (#7658)", () => {
 
   it("fails when login cannot be resolved", async () => {
     captureConsole();
-    const code = await runPrOutcomesCli([], { env: {}, loopoverAuth: AUTH });
+    const code = await runPrOutcomesCli([], { env: {} as unknown as NodeJS.ProcessEnv, loopoverAuth: AUTH });
     expect(code).not.toBe(0);
     expect(errs.join("\n")).toMatch(/Pass --login/);
   });
@@ -205,7 +215,7 @@ describe("runPrOutcomes CLI (#7658)", () => {
     let seenLimit: number | undefined;
     const code = await runPrOutcomes(["--login", "minerbot", "--limit", "7"], {
       loopoverAuth: AUTH,
-      fetchContributorPrOutcomes: async (_login, options) => {
+      fetchContributorPrOutcomes: async (_login, options = {}) => {
         seenLimit = options.limit;
         return SAMPLE_PAYLOAD;
       },

@@ -116,11 +116,19 @@ is_sensitive() {
 }
 
 sensitive_files=()
+# #7775: capture the diff via a CHECKED command substitution rather than `done < <(git diff ...)`. A
+# process-substitution failure (bad ref, shallow clone, detached history) is invisible to `set -e`, so the
+# loop would just see no lines and the script would report "no historically-sensitive paths touched" -- a
+# false all-clear on a deploy-safety advisory. Surface it as a real error instead.
+if ! diff_output="$(git diff --name-only "$range")"; then
+  echo "error: 'git diff --name-only $range' failed; cannot assess historically-sensitive paths" >&2
+  exit 1
+fi
 while IFS= read -r file; do
   if [ -n "$file" ] && is_sensitive "$file"; then
     sensitive_files+=("$file")
   fi
-done < <(git diff --name-only "$range")
+done <<< "$diff_output"
 
 echo ""
 if [ "${#sensitive_files[@]}" -eq 0 ]; then

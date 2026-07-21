@@ -27,6 +27,7 @@ export type FindStuckOptions = CommentScope & { thresholdMinutes: number };
 
 export declare const MARKER: string;
 export declare const REQUIRED_CONTEXTS: Set<string>;
+export declare const EXTERNAL_REQUIRED_CHECKS: Set<string>;
 
 export declare function minutesSince(isoString: string): number;
 

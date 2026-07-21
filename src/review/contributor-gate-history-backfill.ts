@@ -82,14 +82,14 @@ export async function backfillContributorGateHistory(env: Env, opts: { limit?: n
       continue;
     }
     try {
-      await env.DB.prepare(
+      const result = await env.DB.prepare(
         `INSERT INTO contributor_gate_history (id, login, source, project, target_id, decision, head_sha, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
         .bind(`contrib:${login}:${c.source}:${c.targetId}@${c.headSha ?? "none"}`, login, c.source, c.project, c.targetId, c.decision, c.headSha, c.createdAt)
         .run();
-      inserted += 1;
+      if (result.meta.changes > 0) inserted += 1;
     } catch (error) {
       console.warn(JSON.stringify({ event: "contributor_gate_history_backfill_write_error", project: c.project, targetId: c.targetId, message: errorMessage(error).slice(0, 200) }));
     }

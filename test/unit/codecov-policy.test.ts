@@ -240,4 +240,45 @@ describe("Codecov policy", () => {
     const validateTestsMerge = nestedRecord(workflow, ["jobs", "validate-tests-merge"]);
     expect(String(validateTestsMerge.if)).toContain("needs.changes.outputs.rees == 'true'");
   });
+
+  it("captures control-plane node:test coverage for Codecov (#7743)", () => {
+    const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+    expect(rootPkg.scripts["control-plane:coverage"]).toBe("node scripts/control-plane-coverage.mjs");
+    const coverageScript = readFileSync("scripts/control-plane-coverage.mjs", "utf8");
+    expect(coverageScript).toContain("c8");
+    expect(coverageScript).toContain("control-plane");
+    expect(coverageScript).toContain("coverage");
+
+    const controlPlanePkg = JSON.parse(readFileSync("control-plane/package.json", "utf8")) as {
+      devDependencies: Record<string, string>;
+    };
+    expect(controlPlanePkg.devDependencies.c8).toBeDefined();
+
+    const codecov = readYaml("codecov.yml");
+    const controlPlaneFlag = nestedRecord(codecov, ["flags", "control-plane"]);
+    expect(controlPlaneFlag.carryforward).toBe(true);
+    expect(controlPlaneFlag.paths).toEqual(["control-plane/"]);
+
+    const workflow = readYaml(".github/workflows/ci.yml");
+    const validateCode = nestedRecord(workflow, ["jobs", "validate-code"]);
+    const codeSteps = recordArray(validateCode.steps, "jobs.validate-code.steps");
+    const coverageStep = codeSteps.find((step) => step.name === "Control-plane coverage");
+    const verifyStep = codeSteps.find((step) => step.name === "Verify control-plane coverage report exists");
+    const trustedUpload = codeSteps.find((step) => step.name === "Upload control-plane coverage to Codecov");
+    const forkUpload = codeSteps.find((step) => step.name === "Upload control-plane coverage to Codecov (fork PR tokenless)");
+    expect(coverageStep).toBeDefined();
+    expect(String(coverageStep!.run)).toContain("control-plane:coverage");
+    expect(verifyStep).toBeDefined();
+    expect(String(verifyStep!.run)).toContain("control-plane/coverage/lcov.info");
+    expect(trustedUpload).toBeDefined();
+    expect(record(trustedUpload!.with, "control-plane trusted upload").flags).toBe("control-plane");
+    expect(forkUpload).toBeDefined();
+    expect(record(forkUpload!.with, "control-plane fork upload").flags).toBe("control-plane");
+    expect(String(forkUpload!.if)).toContain("fork == true");
+
+    const validateTests = nestedRecord(workflow, ["jobs", "validate-tests"]);
+    expect(String(validateTests.if)).toContain("needs.changes.outputs.controlPlane == 'true'");
+    const validateTestsMerge = nestedRecord(workflow, ["jobs", "validate-tests-merge"]);
+    expect(String(validateTestsMerge.if)).toContain("needs.changes.outputs.controlPlane == 'true'");
+  });
 });

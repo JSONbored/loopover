@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { resolveActionlintDownloadAttempts } from "./lib/actionlint-download-attempts.mjs";
 
 const require = createRequire(import.meta.url);
 const { actionlint } = require("github-actionlint");
@@ -16,7 +17,7 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const maxAttempts = Math.max(1, Number.parseInt(process.env.ACTIONLINT_DOWNLOAD_ATTEMPTS ?? "4", 10) || 4);
+const maxAttempts = resolveActionlintDownloadAttempts(process.env.ACTIONLINT_DOWNLOAD_ATTEMPTS);
 const retryDelaysMs = [1000, 3000, 7000];
 const retryableSetupError = /Download failed: (?:408|425|429|5\d\d)\b|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up/i;
 

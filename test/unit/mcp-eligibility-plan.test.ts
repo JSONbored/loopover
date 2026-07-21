@@ -58,13 +58,14 @@ describe("MCP loopover_get_eligibility_plan (#2222)", () => {
     expect(typeof plan.publicSummary).toBe("string");
   });
 
-  it("returns not_required statuses when linked-issue mode is none", async () => {
+  it("returns not_required statuses (and eligible:true) when linked-issue mode is none (#7809)", async () => {
     const client = await connect();
     const plan = await callPlan(client, {
       ...BASE_ARGS,
       linkedIssueMode: "none",
     });
-    expect(plan.eligible).toBe(false);
+    // eligible now agrees with the "not required" summary rather than contradicting it (#7809).
+    expect(plan.eligible).toBe(true);
     expect(plan.linkedIssueStatus).toBe("not_required");
     expect(plan.branchEligibilityStatus).toBe("not_required");
     expect(plan.publicSummary).toMatch(/not required/i);

@@ -25,6 +25,13 @@ export const MARKER = "<!-- stuck-required-check-watchdog -->";
 // with a real user token, to check the current list).
 export const REQUIRED_CONTEXTS = new Set(["validate", "Superagent Security Scan"]);
 
+// The subset of REQUIRED_CONTEXTS that no workflow in this repo declares -- currently only the third-party
+// "Superagent Security Scan" GitHub App check (see the header comment). Kept beside REQUIRED_CONTEXTS, and
+// exported, so a workflow-drift test can tell workflow-sourced required checks (which must still match a
+// ci.yml job name) apart from genuinely external ones, and so this "which of these are external" knowledge
+// is documented next to the hardcoded list rather than hidden in a test (#7774).
+export const EXTERNAL_REQUIRED_CHECKS = new Set(["Superagent Security Scan"]);
+
 /** Build the authenticated GitHub API caller used by the live entrypoint. Kept as a factory so the
  *  pure/testable logic below can take `githubApi` as an injected dependency instead of closing over a
  *  module-level token. */

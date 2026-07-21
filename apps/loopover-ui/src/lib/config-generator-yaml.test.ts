@@ -76,4 +76,24 @@ describe("formStateToYaml", () => {
       [HEADER, "gate:", "  aiReview:", `    model: ${JSON.stringify(" claude ")}`].join("\n"),
     );
   });
+
+  // Regression (#7786): an embedded newline is not caught by trim() (which only strips edges) and is
+  // none of the flagged special chars, so the old guard emitted it as a raw multi-line scalar that
+  // broke the generated .loopover.yml with a stray top-level line.
+  it("quotes a model value containing an embedded newline", () => {
+    const model = "claude 3.7\nignore_findings true";
+    const output = formStateToYaml({ gate: { aiReview: { model } } });
+    expect(output).toBe(
+      [HEADER, "gate:", "  aiReview:", `    model: ${JSON.stringify(model)}`].join("\n"),
+    );
+    // The serialized value must stay on a single line -- no stray line beyond the 4 expected ones.
+    expect(output.split("\n")).toHaveLength(4);
+  });
+
+  it("quotes a model value containing a carriage return", () => {
+    const model = "claude\r3.7";
+    expect(formStateToYaml({ gate: { aiReview: { model } } })).toBe(
+      [HEADER, "gate:", "  aiReview:", `    model: ${JSON.stringify(model)}`].join("\n"),
+    );
+  });
 });

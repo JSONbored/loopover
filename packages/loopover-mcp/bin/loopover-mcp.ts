@@ -454,6 +454,14 @@ const loginShape = {
   login: z.string().min(1),
 };
 
+// #7762: stdio mirror of the remote loopover_mark_notifications_read shape (src/mcp/server.ts). login is
+// optional here, resolved from `login` / the active session / LOOPOVER_LOGIN like the notifications-read CLI;
+// ids is optional -- omit to mark every delivered notification read.
+const markNotificationsReadShape = {
+  login: z.string().min(1).optional(),
+  ids: z.array(z.string().min(1)).optional(),
+};
+
 const loginRepoShape = {
   login: z.string().min(1),
   owner: z.string().min(1),
@@ -1246,6 +1254,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "review",
     description:
       "Return a contributor's own post-merge outcome records — for each merged PR, a public-safe attribution of what it did for their standing on the repo. Self-scoped: only the authenticated login's outcomes.",
+  },
+  {
+    name: "loopover_mark_notifications_read",
+    category: "utility",
+    description:
+      "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
   },
   {
     name: "loopover_compare_pr_variants",
@@ -2338,6 +2352,22 @@ registerStdioTool(
   async ({ login, limit }: any) => {
     const payload = await getPrOutcomes(login, limit);
     return toolResult(prOutcomesToolSummary(login, payload), payload);
+  },
+);
+
+// #7762: stdio mirror of the remote loopover_mark_notifications_read + the notifications-read CLI. Reuses the
+// same postMarkNotificationsRead helper (POST /v1/contributors/:login/notifications/read) the CLI calls; login
+// resolves the same way (arg / active session / LOOPOVER_LOGIN), ids is optional (omit to mark all read).
+registerStdioTool(
+  "loopover_mark_notifications_read",
+  {
+    description: stdioToolDescription("loopover_mark_notifications_read"),
+    inputSchema: markNotificationsReadShape,
+  },
+  async ({ login, ids }: any) => {
+    const contributorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+    return toolResult(`Marked LoopOver notifications read for ${contributorLogin}.`, await postMarkNotificationsRead(contributorLogin, ids));
   },
 );
 

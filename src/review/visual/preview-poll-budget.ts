@@ -31,26 +31,43 @@ const BUDGET_MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_PREVIEW_POLL_ATTEMPTS = 5;
 
 type BudgetMarker = { count: number; firstAttemptAt: number };
+// A read of the marker plus the R2 httpEtag it was stored under (null when no object exists yet). The etag is
+// what recordPreviewPollAttempt's conditional write compares-and-swaps against so two triggers racing for the
+// same head SHA can't both read count=N and both write count=N+1, silently losing one increment (#7780).
+type BudgetRead = { marker: BudgetMarker | null; etag: string | null };
+// How many times recordPreviewPollAttempt re-reads + retries its conditional write when another trigger wins
+// the compare-and-swap first. Small: the race window is a single R2 round-trip and realistically at most a
+// handful of triggers ever contend for one head SHA at once, so a couple of retries converges; exhausting them
+// just degrades to the pre-#7780 best-effort "this attempt didn't count" outcome, the same safe direction the
+// module already accepts for a genuine write failure.
+const BUDGET_CAS_MAX_ATTEMPTS = 3;
 
 async function budgetR2Key(headSha: string): Promise<string> {
   const fingerprint = await sha256Hex(`${headSha}:preview-poll-budget`);
   return `${BUDGET_R2_NAMESPACE}${fingerprint.slice(0, 40)}.json`;
 }
 
-/** Shared read path for both public functions below. Returns null (fail-open toward "no attempts yet") on
- *  any read error, a malformed marker, or one older than BUDGET_MARKER_MAX_AGE_MS -- a stale marker is
- *  treated as absent, not as "budget still exhausted from a previous, unrelated review cycle". */
-async function readBudgetMarker(env: Env, headSha: string): Promise<BudgetMarker | null> {
-  if (!env.REVIEW_AUDIT) return null;
+/** Validate a raw stored payload into a BudgetMarker, or null when it's malformed or older than
+ *  BUDGET_MARKER_MAX_AGE_MS -- a stale marker is treated as absent, not as "budget still exhausted from a
+ *  previous, unrelated review cycle". */
+function parseBudgetMarker(text: string): BudgetMarker | null {
+  const marker = JSON.parse(text) as Partial<BudgetMarker>;
+  if (typeof marker.count !== "number" || typeof marker.firstAttemptAt !== "number") return null;
+  if (Date.now() - marker.firstAttemptAt >= BUDGET_MARKER_MAX_AGE_MS) return null;
+  return { count: marker.count, firstAttemptAt: marker.firstAttemptAt };
+}
+
+/** Shared read path for both public functions below. Returns a fail-open read (marker null, etag null) on any
+ *  read error or a malformed/stale marker. Also surfaces the object's httpEtag so the increment path can do a
+ *  compare-and-swap write against exactly the version it read (#7780). */
+async function readBudgetMarker(env: Env, headSha: string): Promise<BudgetRead> {
+  if (!env.REVIEW_AUDIT) return { marker: null, etag: null };
   try {
     const object = await env.REVIEW_AUDIT.get(await budgetR2Key(headSha));
-    if (!object) return null;
-    const marker = JSON.parse(await new Response(object.body).text()) as Partial<BudgetMarker>;
-    if (typeof marker.count !== "number" || typeof marker.firstAttemptAt !== "number") return null;
-    if (Date.now() - marker.firstAttemptAt >= BUDGET_MARKER_MAX_AGE_MS) return null;
-    return { count: marker.count, firstAttemptAt: marker.firstAttemptAt };
+    if (!object) return { marker: null, etag: null };
+    return { marker: parseBudgetMarker(await new Response(object.body).text()), etag: object.httpEtag };
   } catch {
-    return null;
+    return { marker: null, etag: null };
   }
 }
 
@@ -58,7 +75,7 @@ async function readBudgetMarker(env: Env, headSha: string): Promise<BudgetMarker
  *  storage is unavailable, or the existing marker has expired. Consulted by buildCapture BEFORE treating a
  *  "still building" preview state as worth another attempt. */
 export async function previewPollAttemptCount(env: Env, headSha: string): Promise<number> {
-  return (await readBudgetMarker(env, headSha))?.count ?? 0;
+  return (await readBudgetMarker(env, headSha)).marker?.count ?? 0;
 }
 
 /** Record one more preview-poll attempt for `headSha`, preserving the marker's original `firstAttemptAt`
@@ -70,9 +87,20 @@ export async function previewPollAttemptCount(env: Env, headSha: string): Promis
 export async function recordPreviewPollAttempt(env: Env, headSha: string): Promise<void> {
   if (!env.REVIEW_AUDIT) return;
   try {
-    const existing = await readBudgetMarker(env, headSha);
-    const marker: BudgetMarker = { count: (existing?.count ?? 0) + 1, firstAttemptAt: existing?.firstAttemptAt ?? Date.now() };
-    await env.REVIEW_AUDIT.put(await budgetR2Key(headSha), JSON.stringify(marker), { httpMetadata: { contentType: "application/json" } });
+    const key = await budgetR2Key(headSha);
+    for (let attempt = 0; attempt < BUDGET_CAS_MAX_ATTEMPTS; attempt += 1) {
+      const existing = await readBudgetMarker(env, headSha);
+      const marker: BudgetMarker = { count: (existing.marker?.count ?? 0) + 1, firstAttemptAt: existing.marker?.firstAttemptAt ?? Date.now() };
+      // Compare-and-swap against exactly the version we just read: only overwrite the existing object if its
+      // etag is unchanged (etagMatches), or -- when we read no object -- only create one if none exists yet
+      // (etagDoesNotMatch: "*"). If another trigger wrote in between, R2 returns null instead of writing, and
+      // we loop to re-read its newer count and retry, so no increment is lost (#7780).
+      const onlyIf: R2Conditional = existing.etag !== null ? { etagMatches: existing.etag } : { etagDoesNotMatch: "*" };
+      const written = await env.REVIEW_AUDIT.put(key, JSON.stringify(marker), { httpMetadata: { contentType: "application/json" }, onlyIf });
+      if (written) return;
+    }
+    // Exhausted retries under sustained contention -- degrade to "this attempt didn't count", the same safe
+    // failure direction the module already accepts for a genuine write failure (see doc comment above).
   } catch {
     // best effort -- see doc comment above
   }

@@ -193,13 +193,22 @@ describe("buildTaskGraph — spec §4 Example B (multi-step idea → dependency 
 describe("buildTaskGraph — normalization details", () => {
   const idea = validIdea();
 
-  it("uses an explicit draft acceptanceCriteria when provided, and drops a non-eligible label", () => {
-    const g = buildTaskGraph(idea, [{
+  it("keeps an explicit draft acceptanceCriteria AND folds in the first issue's hints/constraints (#7730), and drops a non-eligible label", () => {
+    // The renter's hints/constraints must still be represented on issue-0 rather than silently dropped just
+    // because the first draft also supplied its own explicit criteria.
+    const ideaWithSignals = validIdea({
+      acceptanceHints: ["existing callers keep working"],
+      constraints: ["no new dependencies"],
+    });
+    const g = buildTaskGraph(ideaWithSignals, [{
       key: "issue-1", title: "Add a widget", body: "new capability",
       labels: ["gittensor:feature", "gittensor:priority"],
       acceptanceCriteria: [{ id: "x", statement: "explicit", kind: "artifact" }],
     }]);
-    expect(g.issues[0]?.acceptanceCriteria).toEqual([{ id: "x", statement: "explicit", kind: "artifact" }]);
+    const criteria = g.issues[0]?.acceptanceCriteria ?? [];
+    expect(criteria[0]).toEqual({ id: "x", statement: "explicit", kind: "artifact" }); // explicit criterion kept, first
+    expect(criteria.some((c) => c.statement === "existing callers keep working" && c.kind === "behavior")).toBe(true);
+    expect(criteria.some((c) => c.statement === "no new dependencies" && c.kind === "constraint")).toBe(true);
     expect(g.issues[0]?.labels).toEqual(["gittensor:feature"]); // gittensor:priority stripped
   });
 
@@ -217,6 +226,28 @@ describe("buildTaskGraph — normalization details", () => {
   it("skips blank hint/constraint entries", () => {
     const g = buildTaskGraph(validIdea({ acceptanceHints: ["  "], constraints: [""] }));
     expect(g.issues[0]?.acceptanceCriteria).toHaveLength(1); // only the default behavior criterion
+  });
+
+  it("folds hints/constraints into the FIRST draft's explicit criteria but not a later draft's (#7730)", () => {
+    const withSignals = validIdea({ acceptanceHints: ["callers keep working"], constraints: ["no new deps"] });
+    const g = buildTaskGraph(withSignals, [
+      { key: "issue-1", title: "First", body: "b", acceptanceCriteria: [{ id: "a", statement: "first-explicit", kind: "artifact" }] },
+      {
+        key: "issue-2",
+        title: "Second",
+        body: "b",
+        dependsOn: ["issue-1"],
+        acceptanceCriteria: [{ id: "b", statement: "second-explicit", kind: "artifact" }],
+      },
+    ]);
+    const first = g.issues[0]?.acceptanceCriteria ?? [];
+    const second = g.issues[1]?.acceptanceCriteria ?? [];
+    // Issue 0: explicit criterion first, then the renter's hint + constraint folded in.
+    expect(first[0]).toEqual({ id: "a", statement: "first-explicit", kind: "artifact" });
+    expect(first.some((c) => c.statement === "callers keep working" && c.kind === "behavior")).toBe(true);
+    expect(first.some((c) => c.statement === "no new deps" && c.kind === "constraint")).toBe(true);
+    // Issue 1 (index > 0): only its own explicit criterion — hints/constraints are NOT duplicated onto it.
+    expect(second).toEqual([{ id: "b", statement: "second-explicit", kind: "artifact" }]);
   });
 });
 

@@ -145,4 +145,20 @@ describe("OnboardingPreviewCard", () => {
     expect(screen.queryByText(/Here's what LoopOver would have flagged/)).toBeNull();
     expect(apiFetch).not.toHaveBeenCalled();
   });
+
+  it("honors a pre-rebrand dismissal stored under the legacy key and migrates it forward (#7782)", () => {
+    apiFetch.mockResolvedValue({ ok: true, data: preview() });
+    const dismissed = JSON.stringify({ dismissed: true });
+    window.localStorage.setItem("gittensory_maintainer_onboarding_preview_dismissed", dismissed);
+
+    render(<OnboardingPreviewCard reviewability={REVIEWABILITY} />);
+
+    // The card stays dismissed for a maintainer who dismissed it before the rebrand...
+    expect(screen.queryByText(/Here's what LoopOver would have flagged/)).toBeNull();
+    expect(apiFetch).not.toHaveBeenCalled();
+    // ...and the legacy value is written forward so later reads hit the current key directly.
+    expect(window.localStorage.getItem("loopover_maintainer_onboarding_preview_dismissed")).toBe(
+      dismissed,
+    );
+  });
 });

@@ -33,7 +33,8 @@ export function NotificationReadinessCard() {
   const [optIn, setOptIn] = useLocalStorage<boolean>(
     "loopover_notification_opt_in",
     false,
-    "loopover_notification_opt_in",
+    // One-time rebrand migration fallback -- see useLocalStorage's legacyKey param.
+    "gittensory_notification_opt_in",
   );
   const [busy, setBusy] = useState(false);
 

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #6985: a real fetch failure used to render the same generic text as "still loading" — these tests
 // pin the three render paths (loading / error / success) now that LoadingState/ErrorState replace it.
@@ -93,5 +93,33 @@ describe("NotificationReadinessCard loading/error states (#6985)", () => {
 
     expect(container.textContent).toContain("No content leaves the browser without consent.");
     expect(screen.queryByText("Loading notification model…")).toBeNull();
+  });
+});
+
+describe("NotificationReadinessCard legacy opt-in migration (#7782)", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useApiResource.mockReturnValue({
+      status: "ready",
+      data: notificationModelFixture,
+      error: null,
+      loadedAt: Date.now(),
+      reload: () => {},
+    });
+  });
+
+  it("reads a pre-rebrand opt-in stored under the legacy key and migrates it forward", () => {
+    window.localStorage.setItem("gittensory_notification_opt_in", "true");
+
+    render(<NotificationReadinessCard />);
+
+    expect(screen.getByText("opt-in enabled")).toBeTruthy();
+    expect(window.localStorage.getItem("loopover_notification_opt_in")).toBe("true");
+  });
+
+  it("stays opted out when neither the current nor the legacy key is set", () => {
+    render(<NotificationReadinessCard />);
+
+    expect(screen.getByText("opt-in required")).toBeTruthy();
   });
 });

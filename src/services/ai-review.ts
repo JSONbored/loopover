@@ -306,6 +306,20 @@ export type LoopOverAiReviewInput = {
    */
   repoInstructions?: string | null | undefined;
   /**
+   * Screenshot-table-vision's plain-language evidence summary (#screenshot-vision-summary, #4366 follow-up),
+   * resolved by the caller from a SEPARATE, already-completed vision call over the PR's before/after
+   * screenshot-table (self-hosted `env.AI_VISION`, cheap GPU compute, or BYOK) — see
+   * `review/visual/screenshot-table-vision.ts`'s `parseScreenshotTableVisionSummary`. TEXT ONLY, by design
+   * (#cost-architecture): that vision call already looked at the actual image bytes on the cheap self-hosted
+   * model; only its distilled text summary reaches THIS (frontier-model) review, so this prompt's token cost
+   * grows by a small amount of text, never by image tokens — deliberately NOT routed through the `images`
+   * parameter below (see `toContentBlocks`), which is a separate, unrelated, still-inert plumbing path (#4111).
+   * Absent/null (no screenshot-table, the vision gate declined, or the vision call failed/returned unparseable
+   * output) ⇒ the reviewer prompt is byte-identical to before this field existed, same convention as
+   * `repoInstructions`/`pathGuidance` above.
+   */
+  screenshotEvidenceSummary?: string | null | undefined;
+  /**
    * `.loopover.yml` `review.inline_comments` (#inline-comments) — when true (the caller has already ANDed the
    * operator flag + cutover allowlist + the per-repo manifest toggle), the reviewer is asked to ALSO emit an
    * `inlineFindings` array of line-anchored findings for quiet, non-blocking inline PR comments. Absent/false
@@ -981,18 +995,35 @@ function buildSystemPrompt(input: LoopOverAiReviewInput): string {
   // review; empty ⇒ nothing appended (byte-identical).
   const repoInstructionsAppend = buildRepoInstructionsSystemAppend(input.repoInstructions);
   const repoInstructionsSuffix = repoInstructionsAppend ? ` ${repoInstructionsAppend}` : "";
+  // #screenshot-vision-summary: the screenshot-table-vision pass's plain-language TEXT-ONLY summary (never image
+  // bytes -- see this field's own doc comment on LoopOverAiReviewInput). Absent/blank ⇒ nothing appended
+  // (byte-identical), same convention as repoInstructions immediately above.
+  const screenshotEvidenceAppend = buildScreenshotEvidenceSystemAppend(input.screenshotEvidenceSummary);
+  const screenshotEvidenceSuffix = screenshotEvidenceAppend ? ` ${screenshotEvidenceAppend}` : "";
   const inlineSuffix = input.inlineFindings ? INLINE_FINDINGS_SUFFIX : "";
   // review.finding_categories (#1958) only makes sense layered on top of inlineFindings itself being requested.
   const categorySuffix = input.inlineFindings && input.findingCategories ? FINDING_CATEGORY_SUFFIX : "";
   // improvementSignal (#4743): caller-resolved, exactly like inlineFindings/findingCategories above.
   const improvementSignalSuffix = input.improvementSignal ? IMPROVEMENT_SIGNAL_SUFFIX : "";
-  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${securityFocusSuffix}${pathSuffix}${repoInstructionsSuffix}${inlineSuffix}${categorySuffix}${improvementSignalSuffix}`;
+  return `${REVIEW_SYSTEM_PROMPT}${groundingSuffix}${enrichmentSuffix}${profileSuffix}${securityFocusSuffix}${pathSuffix}${repoInstructionsSuffix}${screenshotEvidenceSuffix}${inlineSuffix}${categorySuffix}${improvementSignalSuffix}`;
 }
 
 function buildRepoInstructionsSystemAppend(repoInstructions: string | null | undefined): string {
   const trimmed = repoInstructions?.trim();
   return trimmed
     ? `REPOSITORY REVIEW INSTRUCTIONS (maintainer conventions for this repo — honor them unless they conflict with a real defect): ${trimmed}`
+    : "";
+}
+
+/** #screenshot-vision-summary: mirrors {@link buildRepoInstructionsSystemAppend}'s exact shape -- a labeled
+ *  section header the model can distinguish from other prompt context, empty for a blank/whitespace-only or
+ *  absent summary so the system prompt stays byte-identical. The label calls out that this is a DISTILLED
+ *  vision-model summary (not the reviewer's own observation, and not the raw images) so the reviewer treats it
+ *  as reported evidence to weigh, not ground truth it verified itself. */
+function buildScreenshotEvidenceSystemAppend(screenshotEvidenceSummary: string | null | undefined): string {
+  const trimmed = screenshotEvidenceSummary?.trim();
+  return trimmed
+    ? `SCREENSHOT EVIDENCE (a separate vision model's summary of this PR's before/after screenshot-table images — text only; weigh it as reported evidence): ${trimmed}`
     : "";
 }
 

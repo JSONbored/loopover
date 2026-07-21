@@ -4,6 +4,7 @@ import {
   buildScreenshotTableVisionUserPrompt,
   evaluateScreenshotTableVisionGate,
   parseScreenshotTableVisionResponse,
+  parseScreenshotTableVisionSummary,
   SCREENSHOT_TABLE_VISION_FINDING_CODE,
 } from "../../src/review/visual/screenshot-table-vision";
 import type { AiReviewProviderKey } from "../../src/services/ai-review";
@@ -114,6 +115,69 @@ describe("parseScreenshotTableVisionResponse", () => {
   it("caps the result at MAX_SCREENSHOT_TABLE_VISION_FINDINGS even when the model returns more", () => {
     const findings = Array.from({ length: 5 }, (_, i) => ({ pairIndex: 1, body: `Issue ${i}.` }));
     expect(parseScreenshotTableVisionResponse(JSON.stringify({ findings }), 2)).toHaveLength(2);
+  });
+
+  it("(#screenshot-vision-summary) an extra 'summary' field in the same response never affects findings-parsing", () => {
+    const text = JSON.stringify({
+      findings: [{ pairIndex: 1, body: "Both images are the same screenshot." }],
+      summary: "The after screenshot moves the nav bar to the right, matching the PR's stated redesign.",
+    });
+    expect(parseScreenshotTableVisionResponse(text, 2)).toEqual([{ pairIndex: 1, body: "Both images are the same screenshot." }]);
+  });
+});
+
+describe("parseScreenshotTableVisionSummary (#screenshot-vision-summary)", () => {
+  it("parses a valid summary string into public-safe text", () => {
+    const text = JSON.stringify({
+      findings: [],
+      summary: "The after screenshot shows the nav bar moved to the right, matching the PR's stated redesign.",
+    });
+    expect(parseScreenshotTableVisionSummary(text)).toBe(
+      "The after screenshot shows the nav bar moved to the right, matching the PR's stated redesign.",
+    );
+  });
+
+  it("is independent of the findings array -- a response with real findings still yields its summary", () => {
+    const text = JSON.stringify({
+      findings: [{ pairIndex: 1, body: "Both images are the same screenshot." }],
+      summary: "The two screenshots look identical, which does not support the stated change.",
+    });
+    expect(parseScreenshotTableVisionSummary(text)).toBe(
+      "The two screenshots look identical, which does not support the stated change.",
+    );
+  });
+
+  it("returns undefined for a missing summary field", () => {
+    expect(parseScreenshotTableVisionSummary(JSON.stringify({ findings: [] }))).toBeUndefined();
+  });
+
+  it("returns undefined for a non-string summary field", () => {
+    expect(parseScreenshotTableVisionSummary(JSON.stringify({ findings: [], summary: 42 }))).toBeUndefined();
+  });
+
+  it("returns undefined for a blank/whitespace-only summary (fails toPublicSafe's emptiness guard)", () => {
+    expect(parseScreenshotTableVisionSummary(JSON.stringify({ findings: [], summary: "   " }))).toBeUndefined();
+  });
+
+  it("returns undefined for text with no JSON object at all", () => {
+    expect(parseScreenshotTableVisionSummary("not json, just prose")).toBeUndefined();
+  });
+
+  it("returns undefined for a balanced-brace object that is still invalid JSON (e.g. a trailing comma)", () => {
+    expect(parseScreenshotTableVisionSummary('{"summary": "x",}')).toBeUndefined();
+  });
+
+  it("truncates a summary longer than MAX_SCREENSHOT_TABLE_VISION_SUMMARY_CHARS", () => {
+    const longSummary = "A".repeat(1000);
+    const result = parseScreenshotTableVisionSummary(JSON.stringify({ findings: [], summary: longSummary }));
+    expect(result).toBeDefined();
+    expect(result?.length).toBe(600);
+  });
+
+  it("trims a summary within the bound instead of always slicing to the max", () => {
+    expect(parseScreenshotTableVisionSummary(JSON.stringify({ findings: [], summary: "  A short summary.  " }))).toBe(
+      "A short summary.",
+    );
   });
 });
 

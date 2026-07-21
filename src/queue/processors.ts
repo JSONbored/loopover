@@ -616,6 +616,7 @@ import {
   buildScreenshotTableVisionUserPrompt,
   evaluateScreenshotTableVisionGate,
   parseScreenshotTableVisionResponse,
+  parseScreenshotTableVisionSummary,
   SCREENSHOT_TABLE_VISION_FINDING_CODE,
   SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT,
 } from "../review/visual/screenshot-table-vision";
@@ -7702,6 +7703,14 @@ async function recordScreenshotTableVisionUsage(
  * settings). STRICTLY ADVISORY, mirrors `runVisualVisionForAdvisory`'s exact shape (resolve reputation + BYOK,
  * gate, call, parse, mutate `args.advisory.findings`) so it can be exercised directly in tests. Never throws:
  * any failure (a broken image fetch, a provider error, an unparseable response) degrades to "no finding added".
+ *
+ * Returns the SAME vision call's plain-language evidence summary (#screenshot-vision-summary), when the call
+ * actually ran and produced one — `undefined` for every skip/early-exit/failure path (mirrors this summary's
+ * own "absent means omit" contract, see `parseScreenshotTableVisionSummary`'s doc comment). The caller
+ * (`maybePublishPrPublicSurface`) threads this into the main AI review's `screenshotEvidenceSummary` prompt
+ * param as TEXT-ONLY extra context — never the image bytes themselves (#cost-architecture: vision stays on
+ * the cheap self-hosted `env.AI_VISION`/BYOK call already made here; only its distilled text output reaches
+ * the separate, expensive frontier-model review call).
  */
 export async function runScreenshotTableVisionForAdvisory(
   env: Env,
@@ -7716,13 +7725,14 @@ export async function runScreenshotTableVisionForAdvisory(
     settings: RepositorySettings;
     advisory: { findings: AdvisoryFinding[] };
   },
-): Promise<void> {
-  if (args.mode === "paused" || !args.settings.screenshotTableGate?.enabled) return;
+): Promise<string | undefined> {
+  if (args.mode === "paused" || !args.settings.screenshotTableGate?.enabled) return undefined;
   const rawPairs = extractTableRowImageUrls(args.prBody).filter((pair) => pair.every((url) => isSafeHttpUrl(url)));
-  if (rawPairs.length === 0) return;
+  if (rawPairs.length === 0) return undefined;
   try {
     const fetchedPairs: Array<{ before: AiContentBlock; after: AiContentBlock }> = [];
     const findings: AdvisoryFinding[] = [];
+    let evidenceSummary: string | undefined;
     for (const [rowIndex, [beforeUrl, afterUrl]] of rawPairs.slice(0, 2).entries()) {
       /* v8 ignore next -- defensive: rawPairs only contains rows with >=2 urls, so both slots exist here. */
       if (!beforeUrl || !afterUrl) continue;
@@ -7771,7 +7781,10 @@ export async function runScreenshotTableVisionForAdvisory(
         let visionText: string | null;
         let visionUsage: AiReviewActualUsage | undefined;
         if (providerKey) {
-          const response = await callAiProvider(providerKey, SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT, userPrompt, 400, images);
+          // 600 (was 400): the response now carries the findings array PLUS the always-on plain-language
+          // `summary` field (#screenshot-vision-summary) -- mirrors runSelfHostVisualVision's own 600-token
+          // cap on the self-host leg below, so BYOK and self-host give the model the same amount of room.
+          const response = await callAiProvider(providerKey, SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT, userPrompt, 600, images);
           visionText = response.text;
           visionUsage = response.usage;
           await recordScreenshotTableVisionUsage(
@@ -7798,10 +7811,15 @@ export async function runScreenshotTableVisionForAdvisory(
         if (visionText) {
           const parsed = parseScreenshotTableVisionResponse(visionText, gate.pairCount);
           findings.push(...buildScreenshotTableVisionFindings(parsed));
+          // #screenshot-vision-summary: parsed from the SAME response, never a second vision call (keeps the
+          // self-hosted GPU cost identical to the gaming-only check alone). undefined for an unparseable/blank
+          // summary -- the caller's own "absent means omit" contract for the AI review prompt param.
+          evidenceSummary = parseScreenshotTableVisionSummary(visionText);
         }
       }
     }
     if (findings.length > 0) args.advisory.findings.push(...findings);
+    return evidenceSummary;
   } catch (error) {
     console.log(
       JSON.stringify({
@@ -7811,6 +7829,7 @@ export async function runScreenshotTableVisionForAdvisory(
         message: errorMessage(error).slice(0, 200),
       }),
     );
+    return undefined;
   }
 }
 
@@ -8078,6 +8097,13 @@ async function maybePublishPrPublicSurface(
   // resolving false this pass, in which case the quadrant degrades to showing nothing extra rather than
   // fabricating a risk reading (see formatRiskValueQuadrant's own doc comment).
   let slopBand: SlopBand | null = null;
+  // #screenshot-vision-summary: the screenshot-table-vision pass's plain-language evidence summary (when it ran
+  // and produced one) -- resolved BEFORE the AI review below runs (see the `runScreenshotTableVisionForAdvisory`
+  // call further down, moved earlier in this pass specifically so this value exists in time) and threaded into
+  // `runAiReviewForAdvisory` as extra TEXT-ONLY context (#cost-architecture: never the image bytes themselves).
+  // Stays undefined for every skip/failure path -- the AI review prompt is then byte-identical to before this
+  // field existed.
+  let screenshotEvidenceSummary: string | undefined;
   // Resolve the repo's action mode ONCE for the whole publish pass and thread it into every GitHub write below, so
   // a dry-run / pause / global-freeze publishes NOTHING (check-run, comment, label) — the gate verdict is still
   // computed + returned for the disposition logic, the writes are just suppressed + audited. (#dry-run-chokepoint)
@@ -9383,6 +9409,28 @@ async function maybePublishPrPublicSurface(
         }
       }
     }
+    // Vision-verify a contributor-pasted screenshot-table (#4366 wiring) — see runScreenshotTableVisionForAdvisory's
+    // own doc comment. Independent of the bot-capture vision block further down (checked below the gate/panel
+    // rendering): this checks the CONTRIBUTOR's own pasted table images, not the bot's rendered before/after
+    // pair, so it never needs the visual-capture pipeline's output. MOVED here (#screenshot-vision-summary),
+    // ahead of the AI review's own cache-read/run decision just below, so the vision pass's plain-language
+    // evidence summary exists in time to thread into `runAiReviewForAdvisory` as extra context -- this call's
+    // OWN gating (mode/screenshotTableGate.enabled/reputation/provider/image-pairs, all internal to
+    // `runScreenshotTableVisionForAdvisory`) is completely unchanged, and it stays independent of
+    // `aiReviewWillRun` below exactly as before this move: a repo with the screenshot-table gate on but AI
+    // review off (or an AI-review-ineligible author) still gets the gaming-detection check, it just has no AI
+    // review to hand a summary to.
+    screenshotEvidenceSummary = await runScreenshotTableVisionForAdvisory(env, {
+      mode,
+      repoFullName,
+      pr,
+      prBody: pr.body,
+      prTitle: pr.title,
+      author,
+      confirmedContributor,
+      settings,
+      advisory,
+    });
     if (aiReviewWillRun) {
       // Per-(repo, PR, head SHA, mode) advisory lock (#regate-dup-prep), claimed HERE — not just inside
       // runAiReviewForAdvisory — so it covers the cache-read DECISION below too, not only the LLM call itself.
@@ -9690,6 +9738,12 @@ async function maybePublishPrPublicSurface(
               // improvementSignal (#4744): resolved once above, reused here so the LLM tier's value-assessment
               // prompt addition (#4743) only fires when this repo has actually opted in.
               improvementSignal: improvementSignalAllowed,
+              // #screenshot-vision-summary: the screenshot-table-vision pass's plain-language evidence summary,
+              // resolved earlier in THIS pass (see the `runScreenshotTableVisionForAdvisory` call above,
+              // before this `if (aiReviewWillRun)` block) -- TEXT ONLY, never the image bytes (#cost-architecture).
+              // undefined (no screenshot-table, the vision gate declined, or the call failed/returned unparseable
+              // output) ⇒ this review's prompt is byte-identical to before this field existed.
+              screenshotEvidenceSummary,
               // #regate-dup-prep: this call's own advisory lock is already claimed (by aiReviewCacheReadDecideAndRun's
               // caller, above) — pass it through so runAiReviewForAdvisory trusts it instead of re-claiming (and
               // losing) against itself, and does not release it before the cache write below runs.
@@ -10662,20 +10716,17 @@ async function maybePublishPrPublicSurface(
         routes: beforeAfter,
         bugAnalysisEnabled,
       });
-      // Vision-verify a contributor-pasted screenshot-table (#4366 wiring) — see runScreenshotTableVisionForAdvisory's
-      // own doc comment. Independent of the bot-capture vision block above: this checks the CONTRIBUTOR's own
-      // pasted table images, not the bot's rendered before/after pair.
-      await runScreenshotTableVisionForAdvisory(env, {
-        mode,
-        repoFullName,
-        pr,
-        prBody: pr.body,
-        prTitle: pr.title,
-        author,
-        confirmedContributor,
-        settings,
-        advisory,
-      });
+      // Vision-verify a contributor-pasted screenshot-table (#4366 wiring): the actual vision call (and its
+      // findings) now runs EARLIER in this pass -- see the `runScreenshotTableVisionForAdvisory` call above,
+      // near the AI review's own cache-read/run decision -- so its plain-language evidence summary is ready in
+      // time to thread into THIS pass's AI review prompt as extra context (#screenshot-vision-summary /
+      // #cost-architecture). Moved so `runAiReviewForAdvisory` (which now accepts `screenshotEvidenceSummary`)
+      // is called AFTER the vision pass, not before it. One deliberate, benign side effect of moving the call
+      // (and its `advisory.findings` mutation) this much earlier: its STRICTLY ADVISORY findings (never a gate
+      // blocker, see screenshot-table-vision.ts's header) can now also land in `gateEvaluation`/`commentGate`
+      // (computed further up, between the two positions) for THIS pass, where before this move they only ever
+      // reached `advisoryFindings: advisory.findings` below (read live, after the old call site) -- i.e. they
+      // show up sooner in the SAME rendered comment, never later or not at all.
       // review.memory (#2181, apply slice of #1964): before the unified comment renders, suppress/demote
       // advisory (non-blocking) findings a maintainer already dismissed as false positives for this repo. ONLY
       // ever applied to `commentGate.warnings` -- NEVER `commentGate.blockers` -- so this can never change the

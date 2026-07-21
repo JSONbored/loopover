@@ -15,6 +15,16 @@
 //      two images still look near-identical (a re-encoded/recompressed duplicate a byte comparison would miss)
 //      OR plausibly unrelated to the PR's stated change (a screenshot from an unrelated app/page/topic).
 //
+// The SAME vision call (#screenshot-vision-summary) ALSO returns a plain-language `summary` describing what the
+// before/after images show and whether they plausibly support the PR's stated change -- always on, no separate
+// config toggle (unlike visual-findings.ts's `bugAnalysisEnabled`-style dual-prompt precedent, which this module
+// deliberately does NOT follow: the maintainer wants this on for every repo that already opted into the
+// deterministic gate). This is a SECOND field in the SAME JSON response, never a second vision API call --
+// keeping the (cheap, self-hosted `env.AI_VISION`) GPU cost identical to the gaming-only check alone. The live
+// caller threads ONLY this summary's TEXT (never the image bytes/AiContentBlocks themselves) into the main AI
+// review's prompt as extra context (#cost-architecture) -- see `runAiReviewForAdvisory` / `runLoopOverAiReview`'s
+// `screenshotEvidenceSummary` param.
+//
 // STRICTLY ADVISORY: `SCREENSHOT_TABLE_VISION_FINDING_CODE` is not one of the codes `isConfiguredGateBlocker`
 // (src/rules/advisory.ts) recognizes, so this finding can NEVER become a gate blocker -- it rides the
 // identical `advisory.findings` pipeline `visual_regression_finding`/`ai_consensus_defect` already use.
@@ -72,16 +82,24 @@ export type ScreenshotTableVisionFinding = { pairIndex: number; body: string };
 const MAX_SCREENSHOT_TABLE_VISION_FINDINGS = 2;
 
 export const SCREENSHOT_TABLE_VISION_SYSTEM_PROMPT = [
-  "You are checking a pull request's before/after screenshot-table evidence for gaming, not for visual regressions.",
-  "Each pair below is one table row's before image followed by its after image, in that order.",
-  'Respond with ONLY a JSON object of this exact shape (no prose, no code fence): {"findings": [{"pairIndex": number, "body": string}]}.',
-  "Report a finding for a pair ONLY when the two images are effectively the SAME screenshot (a near-identical",
-  "duplicate, not a genuine before/after difference) OR when either image looks implausible as evidence for the",
-  "stated change (an unrelated app/website/topic, a blank/broken render, or an obviously irrelevant picture).",
-  "Do NOT report a pair just because the visual difference is small — a genuine minor style tweak is exactly",
-  "what real before/after evidence looks like. pairIndex is 1 for the first pair, 2 for the second, and so on.",
-  "Each body is ONE sentence, specific to what you SEE. Return an empty findings array when every pair looks",
-  "like genuine, plausible before/after evidence. Never mention rewards, payouts, wallets, hotkeys, coldkeys, or trust scores.",
+  "You are reviewing a pull request's before/after screenshot-table evidence for TWO separate purposes: gaming",
+  "detection AND a plain factual summary. Each pair below is one table row's before image followed by its after",
+  "image, in that order.",
+  'Respond with ONLY a JSON object of this exact shape (no prose, no code fence): {"findings": [{"pairIndex": number, "body": string}], "summary": string}.',
+  "GAMING DETECTION (the findings array): report a finding for a pair ONLY when the two images are effectively the",
+  "SAME screenshot (a near-identical duplicate, not a genuine before/after difference) OR when either image looks",
+  "implausible as evidence for the stated change (an unrelated app/website/topic, a blank/broken render, or an",
+  "obviously irrelevant picture). Do NOT report a pair just because the visual difference is small — a genuine minor",
+  "style tweak is exactly what real before/after evidence looks like. pairIndex is 1 for the first pair, 2 for the",
+  "second, and so on. Each finding body is ONE sentence, specific to what you SEE. Return an empty findings array",
+  "when every pair looks like genuine, plausible before/after evidence — you are checking for gaming here, not for",
+  "visual regressions.",
+  "EVIDENCE SUMMARY (the summary field, ALWAYS include this, even when findings is empty): in 1-3 plain-language",
+  "sentences, describe what the before and after images actually show and whether they plausibly support the pull",
+  "request's stated change (its title, if given, appears above). Call out any visible UX or visual regression you",
+  "can see comparing the before image to the after image. This is a neutral, factual description for a human",
+  "reviewer, a different question from the gaming judgment above — write it even when findings is empty.",
+  "Never mention rewards, payouts, wallets, hotkeys, coldkeys, or trust scores.",
 ].join(" ");
 
 /** Build the user-turn text naming the PR's stated change ahead of the image content blocks — the caller
@@ -120,6 +138,37 @@ export function parseScreenshotTableVisionResponse(text: string, pairCount: numb
     out.push({ pairIndex, body });
   }
   return out;
+}
+
+/** Bound on the plain-language evidence summary's length (#screenshot-vision-summary) — mirrors the bounded-
+ *  length convention every other freeform AI-authored prompt-context field in this codebase follows (e.g.
+ *  `review.instructions`'s own manifest-parse-time cap) so a verbose vision response can never blow out the
+ *  main AI review's token budget — the entire point of keeping this addition TEXT-ONLY (see this file's
+ *  header's cost-architecture note). */
+const MAX_SCREENSHOT_TABLE_VISION_SUMMARY_CHARS = 600;
+
+/** Parse ONLY the new plain-language `summary` field out of the model's structured vision response
+ *  (#screenshot-vision-summary) — a SIBLING parser to {@link parseScreenshotTableVisionResponse}, deliberately
+ *  independent so that function's existing findings-parsing behavior (and its own test suite) stay untouched.
+ *  Returns `undefined` — never an empty string — for a missing/blank/non-string `summary`, an unparseable
+ *  response, or one that trips the public/private boundary (`toPublicSafe`); the same fail-safe convention
+ *  {@link parseScreenshotTableVisionResponse} uses. This "absent means omit" contract matches exactly what the
+ *  eventual `screenshotEvidenceSummary` review-prompt param expects: absent/empty ⇒ the main review's prompt
+ *  stays byte-identical to today. Bounded to {@link MAX_SCREENSHOT_TABLE_VISION_SUMMARY_CHARS}. */
+export function parseScreenshotTableVisionSummary(text: string): string | undefined {
+  const raw = extractLastJsonObject(text);
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const summaryRaw = (parsed as { summary?: unknown } | null)?.summary;
+  if (typeof summaryRaw !== "string") return undefined;
+  const safe = toPublicSafe(summaryRaw);
+  if (!safe) return undefined;
+  return safe.slice(0, MAX_SCREENSHOT_TABLE_VISION_SUMMARY_CHARS);
 }
 
 /** Build the ADVISORY-ONLY findings for the unified comment (#4366) — one per vision observation, feeding the

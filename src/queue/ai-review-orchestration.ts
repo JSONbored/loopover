@@ -363,6 +363,17 @@ export async function runAiReviewForAdvisory(
     // value-assessment prompt addition. Absent/false ⇒ the prompt is byte-identical (no valueAssessment
     // requested) -- the only reachable value until this PR started resolving the feature.
     improvementSignal?: boolean | undefined;
+    // Screenshot-table-vision's plain-language evidence summary (#screenshot-vision-summary, #4366 follow-up),
+    // resolved by the caller from the SAME (self-hosted `env.AI_VISION`/BYOK) vision call that already checks
+    // the PR's before/after screenshot-table for gaming -- see `runScreenshotTableVisionForAdvisory` /
+    // `parseScreenshotTableVisionSummary`. TEXT ONLY, by design (#cost-architecture): the vision call already
+    // looked at the actual image bytes on the cheap self-hosted model; only its distilled text summary reaches
+    // this (frontier-model) review, so the prompt's token cost grows by a small amount of text, never by image
+    // tokens. Threaded straight through to runLoopOverAiReview's own field of the same name (mirroring
+    // reviewInstructions/pathGuidance's byte-identical-when-absent contract). Absent/null (no screenshot-table,
+    // the vision gate declined, or the call failed/returned unparseable output) ⇒ the reviewer prompt is
+    // byte-identical to before this field existed -- never routed through the images/AiContentBlock parameter.
+    screenshotEvidenceSummary?: string | null | undefined;
     // The inbound webhook delivery id that triggered this review (#codex-timeout-fields) — forwarded to a
     // self-host provider's failure log purely for operator correlation; never read by any review logic. Absent
     // (e.g. a sweep/repair fan-out with no single originating delivery, or a unit test) ⇒ the log line omits it.
@@ -701,6 +712,9 @@ export async function runAiReviewForAdvisory(
         files.map((file) => file.path),
       ),
       repoInstructions: args.reviewInstructions ?? null,
+      // #screenshot-vision-summary: the caller's already-resolved screenshot-table-vision evidence summary
+      // (TEXT ONLY -- see this arg's own doc comment above). Absent/null ⇒ byte-identical prompt.
+      screenshotEvidenceSummary: args.screenshotEvidenceSummary ?? null,
       changedFiles: files,
       // improvementSignal (#4744): ask the model for the ordinal value/improvement judgment (#4743) only when
       // the caller resolved the feature on for this repo. Absent/false ⇒ byte-identical prompt.

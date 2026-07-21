@@ -500,6 +500,62 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
     expect((await optionsFor("claude-code", "   ")).systemAppend).toBeUndefined();
   });
 
+  it("screenshotEvidenceSummary (#screenshot-vision-summary) is appended to the system prompt; absent/null/blank leaves it byte-identical", async () => {
+    const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
+      (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
+        ?.messages?.[0]?.content ?? "";
+    const runSummary = async (screenshotEvidenceSummary: string | null | undefined) => {
+      const run = vi.fn(async () => ({ response: reviewJson() }));
+      const env = createTestEnv({
+        AI: { run } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await runLoopOverAiReview(env, { ...baseInput, screenshotEvidenceSummary });
+      return systemPromptOf(run);
+    };
+    const withSummary = await runSummary(
+      "The after screenshot shows the nav bar moved to the right, matching the PR's stated redesign.",
+    );
+    expect(withSummary).toContain("SCREENSHOT EVIDENCE");
+    expect(withSummary).toContain("matching the PR's stated redesign");
+    // Absent, null, or whitespace-only → no append (byte-identical prompt), same convention as repoInstructions.
+    const withoutUndefined = await runSummary(undefined);
+    const withoutNull = await runSummary(null);
+    const withoutBlank = await runSummary("   ");
+    expect(withoutUndefined).not.toContain("SCREENSHOT EVIDENCE");
+    expect(withoutNull).not.toContain("SCREENSHOT EVIDENCE");
+    expect(withoutBlank).not.toContain("SCREENSHOT EVIDENCE");
+    expect(withoutUndefined).toBe(withoutNull);
+    expect(withoutNull).toBe(withoutBlank);
+  });
+
+  it("screenshotEvidenceSummary composes correctly alongside repoInstructions and pathGuidance when all three are present", async () => {
+    const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
+      (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })
+        ?.messages?.[0]?.content ?? "";
+    const run = vi.fn(async () => ({ response: reviewJson() }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await runLoopOverAiReview(env, {
+      ...baseInput,
+      pathGuidance: "\n\nPath-specific review instructions:\n- `src/**`: Enforce null checks.",
+      repoInstructions: "Follow our async-error conventions.",
+      screenshotEvidenceSummary: "The after screenshot shows a visible layout regression in the header.",
+    });
+    const system = systemPromptOf(run);
+    expect(system).toContain("Enforce null checks.");
+    expect(system).toContain("REPOSITORY REVIEW INSTRUCTIONS");
+    expect(system).toContain("async-error conventions");
+    expect(system).toContain("SCREENSHOT EVIDENCE");
+    expect(system).toContain("visible layout regression in the header");
+  });
+
   it("the inline-findings instruction is appended to the system prompt ONLY when requested (#inline-comments)", async () => {
     const systemPromptOf = (run: ReturnType<typeof vi.fn>): string =>
       (run.mock.calls[0]?.[1] as { messages?: Array<{ content?: string }> })

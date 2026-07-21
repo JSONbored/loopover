@@ -212,6 +212,122 @@ describe("runScreenshotTableVisionForAdvisory (#4366)", () => {
     ]);
   });
 
+  it("(#screenshot-vision-summary) returns the vision call's plain-language evidence summary alongside its findings", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    stubShotsAndProvider(
+      JSON.stringify({
+        findings: [{ pairIndex: 1, body: "The after screenshot shows an unrelated login page." }],
+        summary: "The after screenshot shows a login page, not the redesigned nav bar the PR title describes.",
+      }),
+    );
+    const adv = findingsHolder();
+    const summary = await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(summary).toBe("The after screenshot shows a login page, not the redesigned nav bar the PR title describes.");
+    // The existing findings-pipeline is unaffected by the new summary field riding in the same response.
+    expect(adv.findings).toEqual([
+      {
+        code: "screenshot_table_vision_finding",
+        severity: "warning",
+        title: "Possible screenshot-table issue: pair 1",
+        detail: "The after screenshot shows an unrelated login page.",
+        action: "Advisory only — verify the screenshot-table images against the stated change before deciding.",
+      },
+    ]);
+  });
+
+  it("(#screenshot-vision-summary) returns undefined when the provider response has no summary field, even with real findings", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    stubShotsAndProvider(findingsResponse([{ pairIndex: 1, body: "The after screenshot shows an unrelated login page." }]));
+    const adv = findingsHolder();
+    const summary = await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(summary).toBeUndefined();
+    expect(adv.findings).toHaveLength(1);
+  });
+
+  it("(#screenshot-vision-summary) runs via env.AI_VISION and returns the self-host response's summary too", async () => {
+    const runMock = vi.fn(async () => ({
+      response: JSON.stringify({ findings: [], summary: "Both screenshots show the same redesigned nav bar, matching the PR title." }),
+    }));
+    const env = byokEnv();
+    (env as unknown as { AI_VISION: unknown }).AI_VISION = { run: runMock };
+    stubShotsAndProvider(null);
+    const adv = findingsHolder();
+    const summary = await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings({ aiReviewByok: false }),
+      advisory: adv,
+    });
+    expect(summary).toBe("Both screenshots show the same redesigned nav bar, matching the PR title.");
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("(#screenshot-vision-summary) returns undefined when the deterministic gate never fires (no AI call at all)", async () => {
+    const env = byokEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const adv = findingsHolder();
+    const summary = await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: "Just a plain description, no table.",
+      prTitle: "Fix a typo",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(summary).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("(#screenshot-vision-summary) returns undefined for a byte-identical pair (no AI call, so no summary either)", async () => {
+    const env = byokEnv();
+    await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });
+    stubShotsAndProvider(null, { before: [9, 9, 9], after: [9, 9, 9] });
+    const adv = findingsHolder();
+    const summary = await runScreenshotTableVisionForAdvisory(env, {
+      mode: "live",
+      repoFullName,
+      pr,
+      prBody: tableBody(BEFORE_URL, AFTER_URL),
+      prTitle: "Redesign the nav bar",
+      author: "alice",
+      confirmedContributor: true,
+      settings: gateEnabledSettings(),
+      advisory: adv,
+    });
+    expect(summary).toBeUndefined();
+  });
+
   it("adds no finding when the provider returns an empty findings array (genuine evidence)", async () => {
     const env = byokEnv();
     await upsertRepositoryAiKey(env, { repoFullName, provider: "anthropic", key: "sk-ant-key", model: null });

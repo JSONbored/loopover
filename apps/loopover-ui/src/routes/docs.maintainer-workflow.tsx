@@ -4,17 +4,17 @@ import { Suspense } from "react";
 import { DocsPage } from "@/components/site/docs-page";
 import { LoadingState } from "@/components/site/state-views";
 import { docsClientLoader } from "@/lib/docs-client-loader";
+import { getDocPage } from "@/lib/docs-source.functions";
 
 // Rendered from content/docs/maintainer-workflow.mdx via fumadocs-mdx's browser entry
 // (docsClientLoader), through the existing DocsPage/Callout/CodeBlock/WorkflowMirror
-// primitives -- not fumadocs-ui's bundled components. See docs-source.ts's comment for
+// primitives -- not fumadocs-ui's bundled components. See docs-source.server.ts's comment for
 // why the loader below resolves only a plain, serializable path string.
 export const Route = createFileRoute("/docs/maintainer-workflow")({
   loader: async () => {
-    const { docsSource } = await import("@/lib/docs-source");
-    const page = docsSource.getPage(["maintainer-workflow"]);
+    const page = await getDocPage({ data: { slugs: ["maintainer-workflow"] } });
     if (!page) throw notFound();
-    return { path: page.path, title: page.data.title, description: page.data.description };
+    return page;
   },
   head: () => ({
     meta: [

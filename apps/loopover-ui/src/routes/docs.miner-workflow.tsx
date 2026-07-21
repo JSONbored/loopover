@@ -4,18 +4,18 @@ import { Suspense } from "react";
 import { DocsPage } from "@/components/site/docs-page";
 import { LoadingState } from "@/components/site/state-views";
 import { docsClientLoader } from "@/lib/docs-client-loader";
+import { getDocPage } from "@/lib/docs-source.functions";
 
 // Rendered from content/docs/miner-workflow.mdx via fumadocs-mdx's browser entry
 // (docsClientLoader), through the existing DocsPage/Callout/CodeBlock/WorkflowMirror/
 // AmsObservabilityCallout primitives -- not fumadocs-ui's bundled components. See
-// docs-source.ts's comment for why the loader below resolves only a plain,
+// docs-source.server.ts's comment for why the loader below resolves only a plain,
 // serializable path string.
 export const Route = createFileRoute("/docs/miner-workflow")({
   loader: async () => {
-    const { docsSource } = await import("@/lib/docs-source");
-    const page = docsSource.getPage(["miner-workflow"]);
+    const page = await getDocPage({ data: { slugs: ["miner-workflow"] } });
     if (!page) throw notFound();
-    return { path: page.path, title: page.data.title, description: page.data.description };
+    return page;
   },
   head: () => ({
     meta: [

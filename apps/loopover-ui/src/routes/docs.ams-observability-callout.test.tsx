@@ -13,8 +13,9 @@ import {
 } from "../components/site/ams-observability-callout";
 
 // Every route that embeds the shared callout, so a new route add/remove can't silently skip one (#5191).
-// These routes render from content/docs/*.mdx via the fumadocs client-loader (see docs-source.ts's
-// comment), so this is now a content drift-guard -- checking the .mdx source for the JSX tag -- rather
+// These routes render from content/docs/*.mdx via the fumadocs client-loader (see
+// docs-source.server.ts's comment), so this is now a content drift-guard -- checking the .mdx source
+// for the JSX tag -- rather
 // than a component render, matching the pattern in docs-selfhost-activation-paths.test.ts.
 const ROUTES_WITH_CALLOUT = [
   ["/docs/self-hosting-operations", "content/docs/self-hosting-operations.mdx"],

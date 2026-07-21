@@ -12,7 +12,7 @@ import { docsMdxComponents } from "@/lib/docs-mdx-components";
 // unimported provided-component name there is a bare, unresolved identifier: a raw ReferenceError,
 // not fumadocs' friendly message.
 //
-// That alone would only break the one page. It broke every docs page because docs-source.ts (used by
+// That alone would only break the one page. It broke every docs page because docs-source.server.ts (used by
 // every docs.*.tsx route's server loader) imports fumadocs-mdx's generated collections/server module,
 // which globs *all* content/docs/*.mdx files with `eager: true` -- so one file with this defect throws
 // during module evaluation and takes down every docs route's SSR loader, not just its own page.

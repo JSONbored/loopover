@@ -9,7 +9,7 @@ import {
 } from "./docs.miner-coding-agent";
 
 // Renders from content/docs/miner-coding-agent.mdx via the fumadocs client-loader (see
-// docs-source.ts's comment) -- a synchronous component render can't exercise that path
+// docs-source.server.ts's comment) -- a synchronous component render can't exercise that path
 // without a full router context, so this is now a content drift-guard on the .mdx source,
 // matching the pattern in docs-selfhost-activation-paths.test.ts.
 const MDX_PATH = "content/docs/miner-coding-agent.mdx";

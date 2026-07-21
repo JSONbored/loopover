@@ -4,17 +4,17 @@ import { Suspense } from "react";
 import { DocsPage } from "@/components/site/docs-page";
 import { LoadingState } from "@/components/site/state-views";
 import { docsClientLoader } from "@/lib/docs-client-loader";
+import { getDocPage } from "@/lib/docs-source.functions";
 
 // Rendered from content/docs/capacity.mdx via fumadocs-mdx's browser entry
 // (docsClientLoader), through the existing DocsPage/Callout/CodeBlock/FeatureRow
-// primitives -- not fumadocs-ui's bundled components. See docs-source.ts's comment
+// primitives -- not fumadocs-ui's bundled components. See docs-source.server.ts's comment
 // for why the loader below resolves only a plain, serializable path string.
 export const Route = createFileRoute("/docs/capacity")({
   loader: async () => {
-    const { docsSource } = await import("@/lib/docs-source");
-    const page = docsSource.getPage(["capacity"]);
+    const page = await getDocPage({ data: { slugs: ["capacity"] } });
     if (!page) throw notFound();
-    return { path: page.path, title: page.data.title, description: page.data.description };
+    return page;
   },
   head: () => ({
     meta: [

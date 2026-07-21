@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -165,6 +165,56 @@ describe("preview-url pagination (#7450)", () => {
     vi.stubGlobal("fetch", failLater);
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
     expect(failLater).toHaveBeenCalledTimes(2);
+  });
+
+  it("getLatestDeploymentStatus follows Link: rel=next on deployments and finds the preview URL on page 2 (#7805)", async () => {
+    const page1Deployments = Array.from({ length: 10 }, (_v, i) => ({ id: i + 1 }));
+    const page2Deployments = [{ id: 99 }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?") && url.includes("sha=abc")) {
+        return isPage2(input)
+          ? Response.json(page2Deployments)
+          : Response.json(page1Deployments, { headers: { link: NEXT_LINK } });
+      }
+      if (url.includes("/deployments/99/statuses")) {
+        return Response.json([{ state: "success", environment_url: "https://pr-99.app.workers.dev" }]);
+      }
+      if (url.includes("/deployments/") && url.includes("/statuses")) {
+        return Response.json([{ state: "failure" }]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: "https://pr-99.app.workers.dev",
+      failed: false,
+    });
+    expect(fetchMock.mock.calls.some((c) => /\/deployments\?.*page=2/.test(String(c[0])))).toBe(true);
+    expect(String(fetchMock.mock.calls.find((c) => String(c[0]).includes("/deployments?"))![0])).not.toContain("&page=");
+  });
+
+  it("getLatestDeploymentStatus follows Link: rel=next on deployment statuses and finds environment_url on page 2 (#7805)", async () => {
+    const page1Statuses = Array.from({ length: 10 }, () => ({ state: "pending" }));
+    const page2Statuses = [{ state: "success", environment_url: "https://deep-status.app.workers.dev" }];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) {
+        return Response.json([{ id: 7 }]);
+      }
+      if (url.includes("/deployments/7/statuses")) {
+        return isPage2(input) ? Response.json(page2Statuses) : Response.json(page1Statuses, { headers: { link: NEXT_LINK } });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "deep" })).resolves.toEqual({
+      url: "https://deep-status.app.workers.dev",
+      failed: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

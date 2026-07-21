@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import type { RepoStackResult } from "./stack-detection.js";
 /** Failure taxonomy surfaced in per-repo reports. Readiness-mode categories (#4788) plus the full-execution
  *  categories (#7634) that classify how a live discover → plan → code → test attempt fell short. */
@@ -156,6 +157,15 @@ export declare function evaluateRepoReadiness(entry: CrossRepoEvaluationManifest
 export declare function runCrossRepoEvaluation(parsed: ParsedCrossRepoEvaluationManifest, options?: {
     repoFilter?: string;
 } & EvaluateRepoReadinessOptions): CrossRepoEvaluationResult[];
+/** Real default local-command runner: split the detected command into an argv and spawn it directly in the clone
+ *  dir with NO shell (`shell: false`), so shell metacharacters in untrusted repo metadata (e.g. a crafted
+ *  package.json script name) cannot inject extra commands (#7641). Stack commands are plain whitespace-separated
+ *  argv (`npm run build`, `cargo test`, `go build ./...`). Resolve-not-throw: a non-zero exit becomes `ok: false`
+ *  with its captured output rather than an exception (#7634). Exported for direct unit coverage. */
+export declare function defaultRunLocalCommand(command: string, context: {
+    cwd: string;
+    env?: NodeJS.ProcessEnv;
+}, spawn?: typeof spawnSync): LocalCommandResult;
 /**
  * Run one benchmark repo's full-execution attempt (#7634): gate on readiness, then run the live discover → plan
  * → code → test loop against the local clone and classify the outcome. Dry-run only — no forge writes, no PR

@@ -483,16 +483,23 @@ function firstOutputLine(output: string | undefined): string {
   return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
-/** Real default local-command runner: a synchronous `sh -c` in the clone dir, resolve-not-throw so a non-zero
- *  exit becomes `ok: false` with its captured output rather than an exception (#7634). */
-function defaultRunLocalCommand(
+/** Real default local-command runner: split the detected command into an argv and spawn it directly in the clone
+ *  dir with NO shell (`shell: false`), so shell metacharacters in untrusted repo metadata (e.g. a crafted
+ *  package.json script name) cannot inject extra commands (#7641). Stack commands are plain whitespace-separated
+ *  argv (`npm run build`, `cargo test`, `go build ./...`). Resolve-not-throw: a non-zero exit becomes `ok: false`
+ *  with its captured output rather than an exception (#7634). Exported for direct unit coverage. */
+export function defaultRunLocalCommand(
   command: string,
   context: { cwd: string; env?: NodeJS.ProcessEnv },
+  spawn: typeof spawnSync = spawnSync,
 ): LocalCommandResult {
-  const result = spawnSync("sh", ["-c", command], {
+  const [file, ...args] = command.trim().split(/\s+/).filter(Boolean);
+  if (!file) return { ok: false, code: null, output: "empty command" };
+  const result = spawn(file, args, {
     cwd: context.cwd,
     env: context.env ?? process.env,
     encoding: "utf8",
+    shell: false,
   });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   if (result.error) {

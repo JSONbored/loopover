@@ -11,6 +11,7 @@ import {
   CROSS_REPO_FAILURE_CATEGORY,
   DEFAULT_CROSS_REPO_MANIFEST_RELATIVE_PATH,
   MAX_CROSS_REPO_MANIFEST_BYTES,
+  defaultRunLocalCommand,
   executeRepoAttempt,
   formatCrossRepoEvaluationReport,
   evaluateRepoReadiness,
@@ -760,6 +761,57 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(outcome.diff).toContain("diff --git");
       expect(calls[0]).toEqual(["git", "add", "-A"]);
       expect(calls[1]).toEqual(["git", "--no-pager", "diff", "--cached"]);
+    });
+
+    it("defaultRunLocalCommand spawns the argv directly with no shell (no `sh -c` injection surface)", () => {
+      let seen: { file: string; args: string[]; opts: Record<string, unknown> } | null = null;
+      const fakeSpawn = ((file: string, args: string[], opts: Record<string, unknown>) => {
+        seen = { file, args, opts };
+        return { stdout: "out", stderr: "err", status: 0 };
+      }) as never;
+
+      const result = defaultRunLocalCommand("npm run build", { cwd: "/clone", env: { FOO: "1" } }, fakeSpawn);
+
+      expect(result).toEqual({ ok: true, code: 0, output: "outerr" });
+      // The command must be split into a real argv and run WITHOUT a shell — never `sh -c "<command>"`.
+      expect(seen!.file).toBe("npm");
+      expect(seen!.args).toEqual(["run", "build"]);
+      expect(seen!.opts.shell).toBe(false);
+      expect(seen!.opts.cwd).toBe("/clone");
+      expect(seen!.opts.env).toEqual({ FOO: "1" });
+    });
+
+    it("defaultRunLocalCommand keeps a crafted script name as an inert argv token (no metacharacter injection)", () => {
+      let seen: { file: string; args: string[] } | null = null;
+      const fakeSpawn = ((file: string, args: string[]) => {
+        seen = { file, args };
+        return { status: 1 };
+      }) as never;
+
+      // A malicious repo whose build script is named `build; rm -rf ~` would inject via `sh -c`; here it stays one token.
+      const result = defaultRunLocalCommand("npm run build;rm", { cwd: "/clone" }, fakeSpawn);
+
+      // Missing stdout/stderr default to empty; a non-zero exit resolves to ok:false rather than throwing.
+      expect(result).toEqual({ ok: false, code: 1, output: "" });
+      expect(seen!.file).toBe("npm");
+      expect(seen!.args).toEqual(["run", "build;rm"]);
+    });
+
+    it("defaultRunLocalCommand surfaces a spawn error as ok:false with the error message", () => {
+      const fakeSpawn = (() => ({ error: new Error("spawn ENOENT") })) as never;
+      const result = defaultRunLocalCommand("cargo build", { cwd: "/clone" }, fakeSpawn);
+      expect(result).toEqual({ ok: false, code: null, output: "spawn ENOENT" });
+    });
+
+    it("defaultRunLocalCommand rejects an empty command without spawning anything", () => {
+      let spawned = false;
+      const fakeSpawn = (() => {
+        spawned = true;
+        return { status: 0 };
+      }) as never;
+      const result = defaultRunLocalCommand("   ", { cwd: "/clone" }, fakeSpawn);
+      expect(result).toEqual({ ok: false, code: null, output: "empty command" });
+      expect(spawned).toBe(false);
     });
 
     it("runCrossRepoExecutionCli drives a fixture manifest with injected primitives", async () => {

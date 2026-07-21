@@ -92,4 +92,17 @@ describe("MCP loopover_plan_idea_claims", () => {
     expect(data.ok).toBe(false);
     expect(data.errors).toEqual(expect.arrayContaining(["id_required", "body_required", "target_repo_malformed"]));
   });
+
+  it("rejects a provision target for claim planning (no concrete owner/name yet)", async () => {
+    const client = await connect();
+    const result = await client.callTool({
+      name: "loopover_plan_idea_claims",
+      arguments: {
+        id: "idea-P", title: "New product", body: "Spin up a fresh APR repo.", targetRepo: { kind: "provision" },
+      },
+    });
+    const data = result.structuredContent as { ok: boolean; errors: string[] };
+    expect(data.ok).toBe(false);
+    expect(data.errors).toContain("target_repo_required");
+  });
 });

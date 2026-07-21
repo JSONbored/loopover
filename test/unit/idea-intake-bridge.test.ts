@@ -91,10 +91,24 @@ describe("validateIdeaSubmission", () => {
     expect(validateIdeaSubmission({ id: "i", title: "t", body: "b", targetRepo: { kind: "other" } }).ok).toBe(false);
   });
 
+  it("flags an array or null targetRepo as required/malformed (not a valid IdeaTarget)", () => {
+    const arr = validateIdeaSubmission({ id: "i", title: "t", body: "b", targetRepo: ["owner/name"] });
+    expect(arr.ok).toBe(false);
+    if (!arr.ok) expect(arr.errors).toContain("target_repo_malformed");
+    const nil = validateIdeaSubmission({ id: "i", title: "t", body: "b", targetRepo: null });
+    expect(nil.ok).toBe(false);
+    if (!nil.ok) expect(nil.errors).toContain("target_repo_required");
+  });
+
   it("flags an existing target with a blank repo as required", () => {
     const r = validateIdeaSubmission({ id: "i", title: "t", body: "b", targetRepo: { kind: "existing", repo: "  " } });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors).toContain("target_repo_required");
+  });
+
+  it("existingTargetRepo returns the repo for existing and null for provision", () => {
+    expect(existingTargetRepo({ kind: "existing", repo: "acme/widgets" })).toBe("acme/widgets");
+    expect(existingTargetRepo({ kind: "provision" })).toBeNull();
   });
 
   it("flags invalid constraints (non-array, non-string element, over-length entry)", () => {

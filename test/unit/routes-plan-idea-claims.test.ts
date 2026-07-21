@@ -83,6 +83,8 @@ describe("POST /v1/loop/plan-idea-claims (#6756)", () => {
       { ...VALID, title: "" },
       { ...VALID, body: "" },
       { ...VALID, targetRepo: "" },
+      // Valid IdeaTarget, but claim/code/submit needs a concrete owner/name (#7635).
+      { ...VALID, targetRepo: { kind: "provision" } },
     ];
     for (const body of cases) {
       const response = await post(env, body);

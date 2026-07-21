@@ -40,6 +40,7 @@ import {
   listBountiesByRepo,
   getContributorEvidence,
   getLatestRepoGithubTotalsSnapshot,
+  getLatestUpstreamRulesetSnapshot,
   getInstallation,
   getIssue,
   getPendingAgentAction,
@@ -1407,6 +1408,23 @@ const upstreamDriftOutputSchema = {
   reports: z.unknown().optional(),
 };
 
+// Public upstream ruleset snapshot (#7807) — same shape the REST route returns (or the not-found error body).
+const upstreamRulesetOutputSchema = {
+  id: z.string().optional(),
+  sourceRepo: z.string().optional(),
+  sourceRef: z.string().optional(),
+  commitSha: z.string().nullable().optional(),
+  sourceSnapshotIds: z.unknown().optional(),
+  activeModel: z.string().optional(),
+  registryRepoCount: z.number().optional(),
+  totalEmissionShare: z.number().optional(),
+  semanticHash: z.string().optional(),
+  payload: z.unknown().optional(),
+  warnings: z.unknown().optional(),
+  generatedAt: z.string().optional(),
+  error: z.string().optional(),
+};
+
 const localStatusOutputSchema = {
   apiAvailable: z.boolean().optional(),
   sourceUploadDefault: z.boolean().optional(),
@@ -1836,6 +1854,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_bounty_advisory: "discovery",
   loopover_get_registry_changes: "utility",
   loopover_get_upstream_drift: "utility",
+  loopover_get_upstream_ruleset: "utility",
   loopover_get_issue_quality: "maintainer",
   loopover_get_pr_reviewability: "review",
   loopover_validate_linked_issue: "discovery",
@@ -2334,6 +2353,17 @@ export class LoopoverMcp {
         outputSchema: upstreamDriftOutputSchema,
       },
       async () => this.toolResult(await this.getUpstreamDrift()),
+    );
+
+    register(
+      "loopover_get_upstream_ruleset",
+      {
+        description:
+          "Return the latest cached upstream Gittensor ruleset snapshot (public static discovery data). No input; returns not-found when no snapshot exists yet.",
+        inputSchema: {},
+        outputSchema: upstreamRulesetOutputSchema,
+      },
+      async () => this.toolResult(await this.getUpstreamRuleset()),
     );
 
     register(
@@ -4005,6 +4035,23 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver upstream drift status: ${detail}.`,
       data: status as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7807 — public raw ruleset snapshot (distinct from getUpstreamDrift's status+reports payload).
+  // Mirrors GET /v1/upstream/ruleset: return the snapshot when present; otherwise a normal not-found
+  // result (never throw), matching the REST route's upstream_ruleset_not_found body.
+  private async getUpstreamRuleset(): Promise<ToolPayload> {
+    const ruleset = await getLatestUpstreamRulesetSnapshot(this.env);
+    if (!ruleset) {
+      return {
+        summary: "LoopOver has no upstream ruleset snapshot yet.",
+        data: { error: "upstream_ruleset_not_found" },
+      };
+    }
+    return {
+      summary: `LoopOver upstream ruleset snapshot ${ruleset.id} (${ruleset.activeModel}).`,
+      data: ruleset as unknown as Record<string, unknown>,
     };
   }
 

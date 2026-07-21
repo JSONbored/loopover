@@ -1086,6 +1086,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the latest cached Gittensor upstream ruleset drift status (stale/drift warnings) for MCP planning.",
   },
   {
+    name: "loopover_get_upstream_ruleset",
+    category: "utility",
+    description: "Return the latest cached upstream Gittensor ruleset snapshot (public static discovery data). Read-only; takes no parameters.",
+  },
+  {
     name: "loopover_get_bounty_advisory",
     category: "discovery",
     description:
@@ -1919,6 +1924,15 @@ registerStdioTool(
     inputSchema: {},
   },
   async () => toolResult("LoopOver upstream drift status.", await apiGet("/v1/upstream/drift")),
+);
+
+registerStdioTool(
+  "loopover_get_upstream_ruleset",
+  {
+    description: stdioToolDescription("loopover_get_upstream_ruleset"),
+    inputSchema: {},
+  },
+  async () => toolResult("LoopOver upstream ruleset snapshot.", await apiGet("/v1/upstream/ruleset")),
 );
 
 registerStdioTool(

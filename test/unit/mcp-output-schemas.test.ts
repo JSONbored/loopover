@@ -34,6 +34,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_validate_config",
   "loopover_get_registry_changes",
   "loopover_get_upstream_drift",
+  "loopover_get_upstream_ruleset",
   "loopover_local_status",
   "loopover_remediation_plan",
   "loopover_explain_score_breakdown",
@@ -169,6 +170,14 @@ describe("MCP tool calls return schema-valid structured content", () => {
     expect(result.isError).toBeFalsy();
     const data = result.structuredContent as Record<string, unknown>;
     expect(["current", "drift_detected", "stale", "unavailable"]).toContain(data.status);
+  });
+
+  it("loopover_get_upstream_ruleset returns validated structured content (not-found is normal)", async () => {
+    const { client } = await connectTestClient();
+    const result = await client.callTool({ name: "loopover_get_upstream_ruleset", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.error).toBe("upstream_ruleset_not_found");
   });
 
   it("loopover_get_registry_changes returns validated structured content", async () => {
@@ -614,7 +623,7 @@ describe("MCP output schemas do not declare private financial fields", () => {
   it("structured content from public-safe tools never includes redacted financial keys", async () => {
     const { client } = await connectTestClient();
 
-    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_registry_changes"]) {
+    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_upstream_ruleset", "loopover_get_registry_changes"]) {
       const result = await client.callTool({ name, arguments: {} });
       const serialized = JSON.stringify(result.structuredContent ?? {});
       expect(serialized, `tool "${name}" structured content must not leak financial fields`).not.toMatch(

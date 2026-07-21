@@ -462,6 +462,16 @@ const markNotificationsReadShape = {
   ids: z.array(z.string().min(1)).optional(),
 };
 
+// #7763: stdio mirror of the remote loopover_watch_issues shape (src/mcp/server.ts). login is optional here,
+// resolved from `login` / the active session / LOOPOVER_LOGIN like the `watch` CLI; action defaults to `list`,
+// and watch/unwatch need repoFullName. labels filter which issues a watch surfaces.
+const watchIssuesShape = {
+  login: z.string().min(1).optional(),
+  action: z.enum(["watch", "unwatch", "list"]).default("list"),
+  repoFullName: z.string().min(3).max(200).optional(),
+  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
+};
+
 const loginRepoShape = {
   login: z.string().min(1),
   owner: z.string().min(1),
@@ -1260,6 +1270,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "utility",
     description:
       "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all.",
+  },
+  {
+    name: "loopover_watch_issues",
+    category: "utility",
+    description:
+      "Watch repos for NEW grabbable, high-multiplier issues (maintainer-created, not WIP). action=watch subscribes a repo (optional label filter), unwatch removes it, list (default) returns your watches. When a matching issue opens you're notified via loopover_list_notifications. Self-scoped to the authenticated login.",
   },
   {
     name: "loopover_compare_pr_variants",
@@ -2368,6 +2384,23 @@ registerStdioTool(
     const contributorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     return toolResult(`Marked LoopOver notifications read for ${contributorLogin}.`, await postMarkNotificationsRead(contributorLogin, ids));
+  },
+);
+
+// #7763: stdio mirror of the remote loopover_watch_issues + the `watch` CLI. Reuses the shared
+// watchIssuesRequest helper (same /v1/contributors/:login/watches routes the CLI calls); login resolves the
+// same way (arg / active session / LOOPOVER_LOGIN), action defaults to list, watch/unwatch need repoFullName.
+registerStdioTool(
+  "loopover_watch_issues",
+  {
+    description: stdioToolDescription("loopover_watch_issues"),
+    inputSchema: watchIssuesShape,
+  },
+  async ({ login, action, repoFullName, labels }: any) => {
+    const contributorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
+    if ((action === "watch" || action === "unwatch") && !repoFullName) throw new Error(`action "${action}" requires repoFullName.`);
+    return toolResult(`Issue-watch subscriptions for ${contributorLogin}.`, await watchIssuesRequest(contributorLogin, action, repoFullName, labels));
   },
 );
 
@@ -4394,16 +4427,27 @@ async function notificationsCli(options: any) {
   }
 }
 
+// #7763: shared REST dispatch for a contributor's issue-watch subscriptions, reused by the `watch` CLI and the
+// loopover_watch_issues stdio tool so there is no duplicated HTTP logic. action maps list=GET, watch=POST,
+// unwatch=DELETE on the /v1/contributors/:login/watches route family (the same routes the CLI already hit).
+function watchIssuesRequest(login: any, action: any, repoFullName?: any, labels?: any) {
+  const base = `/v1/contributors/${encodeURIComponent(login)}/watches`;
+  if (action === "watch") return apiPost(base, { repoFullName, ...(labels && labels.length > 0 ? { labels } : {}) });
+  if (action === "unwatch") return apiDelete(base, { repoFullName });
+  return apiGet(base);
+}
+
 // #6746: contributor-scoped mirror of the loopover_watch_issues MCP tool and the /v1/contributors/{login}/watches
 // route family. The MCP tool's action enum maps to subcommands here: list=GET, add=POST, remove=DELETE.
-async function watchCli(args: any) {
+// Exported (like maintainCli, #7764) so an in-process test can cover the shared watchIssuesRequest call sites
+// that a subprocess spawn can't instrument (#7763).
+export async function watchCli(args: any) {
   const subcommand = args[0];
   if (!subcommand || subcommand === "--help" || subcommand === "help") return printWatchHelp();
   const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
   const options = parseOptions(args.slice(1));
   const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
-  const base = `/v1/contributors/${encodeURIComponent(login)}/watches`;
   // The API chooses `changed` / repo / label text, so the plain-text path is sanitized (#6261); `login` is the
   // user's own value.
   const render = (payload: any) =>
@@ -4420,7 +4464,7 @@ async function watchCli(args: any) {
   };
 
   if (subcommand === "list") {
-    emit(await apiGet(base));
+    emit(await watchIssuesRequest(login, "list"));
     return;
   }
   if (subcommand === "add" || subcommand === "remove") {
@@ -4430,9 +4474,9 @@ async function watchCli(args: any) {
     if (subcommand === "add") {
       const labels =
         typeof options.labels === "string" ? options.labels.split(",").map((label: any) => label.trim()).filter(Boolean) : [];
-      emit(await apiPost(base, { repoFullName: positional, ...(labels.length > 0 ? { labels } : {}) }));
+      emit(await watchIssuesRequest(login, "watch", positional, labels));
     } else {
-      emit(await apiDelete(base, { repoFullName: positional }));
+      emit(await watchIssuesRequest(login, "unwatch", positional));
     }
     return;
   }

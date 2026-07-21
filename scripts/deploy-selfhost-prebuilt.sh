@@ -104,7 +104,13 @@ services:
       LOOPOVER_VERSION: "\${SENTRY_RELEASE}"
 YAML
 
-  mapfile -t compose_args < <(compose_file_args)
+  # #7765: capture via a checked assignment so compose_file_args's `exit 1` on a missing compose file
+  # actually aborts this script -- `mapfile < <(compose_file_args)` ran it in a subshell whose non-zero
+  # exit was swallowed (mapfile itself returns 0), leaving compose_args empty/truncated.
+  if ! compose_args_raw="$(compose_file_args)"; then
+    exit 1
+  fi
+  mapfile -t compose_args <<< "$compose_args_raw"
   compose_args+=(-f "$override_file")
 
   echo "selfhost deploy: building $SERVICE runtime-prebuilt image"

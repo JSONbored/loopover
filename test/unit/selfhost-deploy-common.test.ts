@@ -175,3 +175,55 @@ describe("env_put (#7766 -- atomic write + mode preservation)", () => {
     }
   });
 });
+
+describe("compose_file_args exit propagation (#7765)", () => {
+  // The exact idiom the callers (deploy-selfhost-image.sh etc.) now use to consume compose_file_args.
+  // Under the old `mapfile -t compose_args < <(compose_file_args)` the function ran in a subshell whose
+  // `exit 1` on a missing file was swallowed (mapfile returns 0), so the caller continued with an
+  // empty/truncated -f arg list. The checked assignment must instead abort before REACHED_END.
+  const CONSUMER = `
+set -euo pipefail
+. "${libPath.replace(/\\/g, "/")}"
+if ! compose_args_raw="$(compose_file_args)"; then
+  exit 1
+fi
+mapfile -t compose_args <<< "$compose_args_raw"
+printf 'REACHED_END args=[%s]\\n' "\${compose_args[*]}"
+`;
+
+  function runConsumer(env: Record<string, string> = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-compose-args-"));
+    try {
+      // Give the default-branch a real docker-compose.yml so the happy path has a file to find.
+      writeFileSync(join(dir, "docker-compose.yml"), "services: {}\n");
+      writeFileSync(join(dir, "base.yml"), "services: {}\n");
+      return spawnSync("bash", ["-c", CONSUMER], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, ...env },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("continues with the -f args when every compose file exists", () => {
+    const result = runConsumer();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("REACHED_END args=[-f docker-compose.yml]");
+  });
+
+  it("aborts (never reaching the consumer) when the sole compose file is missing", () => {
+    const result = runConsumer({ SELFHOST_COMPOSE_FILES: "does-not-exist.yml" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("REACHED_END");
+    expect(result.stderr).toContain("compose file not found: does-not-exist.yml");
+  });
+
+  it("aborts instead of continuing with a TRUNCATED arg list when a later compose file is missing", () => {
+    const result = runConsumer({ SELFHOST_COMPOSE_FILES: "base.yml missing.yml" });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("REACHED_END");
+    expect(result.stderr).toContain("compose file not found: missing.yml");
+  });
+});

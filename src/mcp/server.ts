@@ -115,6 +115,7 @@ import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/mai
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRegistrationReadinessResponse, buildGittensorConfigRecommendationResponse } from "../api/routes";
 import { loadGatePrecisionReport } from "../services/gate-precision";
+import { listOverrideAudit, type StorageEnv as OverrideAuditStorageEnv } from "../review/auto-apply";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -216,6 +217,14 @@ const ownerRepoWindowShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
   windowDays: z.number().int().positive().optional(),
+};
+
+// #7798 - self-tune override audit trail. Same owner/repo gate as gate-precision; optional limit mirrors
+// GET .../selftune/overrides/audit?limit (absent → server default of 50 via listOverrideAudit).
+const ownerRepoLimitShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  limit: z.number().int().positive().optional(),
 };
 
 const windowOnlyShape = {
@@ -991,6 +1000,13 @@ const gatePrecisionOutputSchema = {
   perGateType: z.array(z.unknown()).optional(),
   overall: z.unknown().optional(),
   signals: z.array(z.string()).optional(),
+};
+
+// #7798 - self-tune override audit trail over MCP. Mirrors the REST route's {repoFullName, audit} envelope;
+// audit row shape stays owned by listOverrideAudit (z.unknown() elements).
+const selftuneOverrideAuditOutputSchema = {
+  repoFullName: z.string().optional(),
+  audit: z.array(z.unknown()).optional(),
 };
 
 // #5825 - maintainer-authenticated skipped-PR audit trail, mirroring GET /v1/app/skipped-pr-audit's
@@ -1807,6 +1823,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_outcome_patterns: "maintainer",
   loopover_get_outcome_calibration: "maintainer",
   loopover_get_gate_precision: "maintainer",
+  loopover_get_selftune_override_audit: "maintainer",
   loopover_get_skipped_pr_audit: "maintainer",
   loopover_get_fleet_analytics: "maintainer",
   loopover_get_recommendation_quality: "maintainer",
@@ -2022,6 +2039,17 @@ export class LoopoverMcp {
         outputSchema: gatePrecisionOutputSchema,
       },
       async (input) => this.toolResult(await this.getGatePrecision(input)),
+    );
+
+    register(
+      "loopover_get_selftune_override_audit",
+      {
+        description:
+          "Return the self-tune override audit trail for a repo — why LOOPOVER_REVIEW_SELFTUNE promoted a live override — newest first. Optionally capped by limit. Maintainer-authenticated; read-only.",
+        inputSchema: ownerRepoLimitShape,
+        outputSchema: selftuneOverrideAuditOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getSelftuneOverrideAudit(input)),
     );
 
     register(
@@ -3484,6 +3512,19 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver gate precision for ${fullName}: ${report.overall.blocked} gate blocks, overall false-positive rate ${report.overall.falsePositiveRate ?? "n/a (below sample threshold)"}.`,
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7798 - surface GET .../selftune/overrides/audit over MCP. Same per-repo read gate as getGatePrecision
+  // (requireRepoAccess); listOverrideAudit is read-only and already scoped to the single project. An omitted
+  // limit falls through to listOverrideAudit's default (50), matching the REST route when ?limit is absent.
+  private async getSelftuneOverrideAudit(input: { owner: string; repo: string; limit?: number | undefined }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const audit = await listOverrideAudit(this.env as unknown as OverrideAuditStorageEnv, fullName, input.limit);
+    return {
+      summary: `LoopOver self-tune override audit for ${fullName}: ${audit.length} event(s).`,
+      data: { repoFullName: fullName, audit } as unknown as Record<string, unknown>,
     };
   }
 

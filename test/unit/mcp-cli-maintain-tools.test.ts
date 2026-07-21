@@ -22,7 +22,7 @@ async function connect() {
   const apiUrl = await startFixtureServer({
     onApiRequest: (request) => {
       const url = request.url ?? "";
-      if (/pending-actions|settings|gate-precision/.test(url)) capturedRequests.push({ url, method: request.method ?? "GET" });
+      if (/pending-actions|settings|gate-precision|selftune\/overrides\/audit/.test(url)) capturedRequests.push({ url, method: request.method ?? "GET" });
     },
   });
   transport = new StdioClientTransport({
@@ -58,16 +58,17 @@ const MAINTAIN_TOOLS = [
   { name: "loopover_set_agent_paused", args: { ...REPO, paused: true }, contains: "agentPaused" },
   { name: "loopover_set_action_autonomy", args: { ...REPO, action: "merge", level: "auto" }, contains: "autonomy" },
   { name: "loopover_get_gate_precision", args: REPO, contains: "falsePositiveRate" },
+  { name: "loopover_get_selftune_override_audit", args: REPO, contains: "override.promoted" },
 ] as const;
 
 describe("loopover-mcp maintain stdio proxies (#6152)", () => {
-  it("registers all 5 maintain tools in the stdio server tool list", async () => {
+  it("registers all 6 maintain tools in the stdio server tool list", async () => {
     await connect();
     const names = (await client!.listTools()).tools.map((tool) => tool.name);
     for (const tool of MAINTAIN_TOOLS) expect(names).toContain(tool.name);
   });
 
-  it("lists all 5 maintain tools via `loopover-mcp tools --json` with non-empty descriptions", async () => {
+  it("lists all 6 maintain tools via `loopover-mcp tools --json` with non-empty descriptions", async () => {
     await connect();
     const payload = JSON.parse(run(["tools", "--json"])) as { tools: Array<{ name: string; description: string; category?: string }> };
     for (const tool of MAINTAIN_TOOLS) {
@@ -97,6 +98,18 @@ describe("loopover-mcp maintain stdio proxies (#6152)", () => {
       expect(JSON.stringify(result.content)).toMatch(/404|not_found/);
     });
   }
+
+  it("get_selftune_override_audit forwards limit as ?limit (#7798)", async () => {
+    await connect();
+    const result = await client!.callTool({
+      name: "loopover_get_selftune_override_audit",
+      arguments: { ...REPO, limit: 1 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.stringify(result)).toContain("override.promoted");
+    expect(JSON.stringify(result)).not.toContain("override.applied");
+    expect(capturedRequests.some((request) => request.url.includes("limit=1"))).toBe(true);
+  });
 
   // GET /agent/pending-actions takes no query parameters and hardcodes status "pending" (src/api/routes.ts), so
   // this server cannot honour the `status` filter its remote counterpart offers. The tool therefore doesn't

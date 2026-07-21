@@ -646,6 +646,22 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7798 self-tune override audit (read-only). Echoes ?limit so the CLI/stdio limit pass-through is testable.
+    if (request.url?.startsWith("/v1/repos/owner/repo/selftune/overrides/audit") && request.method === "GET") {
+      const limitRaw = new URL(request.url, "http://localhost").searchParams.get("limit");
+      const rows = [
+        { eventType: "override.promoted", detail: '{"floor":0.95}', createdAt: "2026-05-30T01:00:00.000Z" },
+        { eventType: "override.applied", detail: '{"cap":"3f/120l"}', createdAt: "2026-05-30T00:00:00.000Z" },
+      ];
+      const limit = limitRaw ? Number(limitRaw) : undefined;
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          audit: limit && limit > 0 ? rows.slice(0, limit) : rows,
+        }),
+      );
+      return;
+    }
     if (request.url?.startsWith("/v1/repos/owner/repo/outcome-calibration") && request.method === "GET") {
       const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");
       response.end(

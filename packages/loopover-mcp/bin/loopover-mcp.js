@@ -95,7 +95,7 @@ const CLI_COMMAND_SPEC = {
     profile: ["list", "create", "switch", "remove"],
     cache: ["status", "clear", "list"],
     agent: ["plan", "status", "explain", "packet"],
-    maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts"],
+    maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -861,6 +861,12 @@ const gatePrecisionShape = {
     repo: z.string().min(1),
     windowDays: z.number().int().positive().optional(),
 };
+// #7798 - mirrors GET .../selftune/overrides/audit?limit (optional positive limit).
+const selftuneOverrideAuditShape = {
+    owner: z.string().min(1),
+    repo: z.string().min(1),
+    limit: z.number().int().positive().optional(),
+};
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
@@ -1218,6 +1224,11 @@ const STDIO_TOOL_DESCRIPTORS = [
         name: "loopover_get_gate_precision",
         category: "maintainer",
         description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
+    },
+    {
+        name: "loopover_get_selftune_override_audit",
+        category: "maintainer",
+        description: "Return the self-tune override audit trail for a repo — why LOOPOVER_REVIEW_SELFTUNE promoted a live override — newest first. Optionally capped by limit. Maintainer-authenticated; read-only. Same as `loopover-mcp maintain selftune-audit`.",
     },
     {
         name: "loopover_open_pr",
@@ -2143,6 +2154,15 @@ registerStdioTool("loopover_get_gate_precision", {
     const payload = await apiGet(`${toolRepoBase(owner, repo)}/gate-precision${query}`);
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
 });
+registerStdioTool("loopover_get_selftune_override_audit", {
+    description: stdioToolDescription("loopover_get_selftune_override_audit"),
+    inputSchema: selftuneOverrideAuditShape,
+}, async ({ owner, repo, limit }) => {
+    // Schema rejects a non-positive limit; omit ?limit so the route applies listOverrideAudit's default (50).
+    const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/selftune/overrides/audit${query}`);
+    return toolResult(`Self-tune override audit for ${owner}/${repo}.`, payload);
+});
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.
@@ -2608,6 +2628,7 @@ function printMaintainHelp() {
         `                               actions: ${MAINTAIN_ACTION_CLASSES.join(", ")}`,
         `                               levels:  ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}`,
         "  precision [--window-days N]  Show gate false-positive telemetry (blocked-then-merged per gate type).",
+        "  selftune-audit [--limit N]   Show the self-tune override audit trail (why a live override was promoted).",
         "  outcome-calibration          Show slop-band merge rates and recommendation-outcome calibration.",
         "             [--window-days N]  Bound the recommendation window (default: full history).",
         "  onboarding-pack [--refresh]  Preview the repo's contributor onboarding pack.",
@@ -2736,6 +2757,21 @@ async function maintainCli(args) {
         emit(payload, lines.join("\n"));
         return;
     }
+    if (subcommand === "selftune-audit") {
+        // #7798 self-tune override audit: read-only trail of why LOOPOVER_REVIEW_SELFTUNE promoted a live override.
+        // Same emit/--json handling as precision; optional --limit mirrors the route's ?limit (non-positive omits it,
+        // so the server applies listOverrideAudit's default of 50).
+        const limit = Number(options.limit);
+        const query = limit > 0 ? `?limit=${encodeURIComponent(limit)}` : "";
+        const payload = await apiGet(`${repoBase}/selftune/overrides/audit${query}`);
+        const audit = payload.audit ?? [];
+        const lines = [
+            `Self-tune override audit for ${repoFullName}: ${audit.length} event${audit.length === 1 ? "" : "s"}.`,
+            ...audit.map((row) => `- ${row.createdAt ?? "?"}  ${row.eventType ?? "?"}${row.detail ? `  ${row.detail}` : ""}`),
+        ];
+        emit(payload, lines.join("\n"));
+        return;
+    }
     if (subcommand === "outcome-calibration") {
         // #6735 outcome calibration: read-only measurement of whether higher-slop bands merge less often and how
         // agent recommendations panned out. Same --window-days handling the sibling precision command uses (a
@@ -2837,7 +2873,7 @@ async function maintainCli(args) {
         emit(payload, lines.join("\n"));
         return;
     }
-    throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts.`);
+    throw new Error(`Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | selftune-audit | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts.`);
 }
 async function runCli(args) {
     const command = args[0];
@@ -4071,7 +4107,7 @@ function printHelp() {
   loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   loopover-mcp cache status|list|clear [--json]
   loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
-  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
+  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
   loopover-mcp decision-pack --login <github-login> [--json]
   loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   loopover-mcp contributor-profile [--login <github-login>] [--json]

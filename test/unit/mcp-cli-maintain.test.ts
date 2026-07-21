@@ -123,6 +123,36 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(json).toMatchObject({ dryRun: true, createRequested: false });
   });
 
+  it("plan-issues requires --goal and dry-runs by default, never forwarding create (#7764)", async () => {
+    const bodies: Array<{ goal?: string; dryRun?: boolean; create?: boolean; limit?: number }> = [];
+    const e = await env({ onPlanIssuesRequest: (b) => bodies.push(b) });
+    // Missing --goal fails before any request is made.
+    await expect(runAsync(["maintain", "plan-issues", "--repo", "owner/repo"], e)).rejects.toThrow(/planning goal/);
+    const out = await runAsync(["maintain", "plan-issues", "--repo", "owner/repo", "--goal", "Improve docs"], e);
+    // A bare invocation must send {create:false, dryRun:true} — the CLI can never silently create.
+    expect(bodies[0]).toMatchObject({ goal: "Improve docs", create: false, dryRun: true });
+    expect(out).toMatch(/Issue plan for owner\/repo \(dry-run, status=ok\): 1 proposed, 0 created/);
+    // The AI-generated draft title carries an ANSI escape; the plain-text path must strip it (#6261).
+    expect(out).toContain("Add cursor pagination");
+    expect(out).not.toContain("[31m");
+  });
+
+  it("plan-issues --create forwards {create:true, dryRun:false} and reports created issues (#7764)", async () => {
+    const bodies: Array<{ goal?: string; dryRun?: boolean; create?: boolean; limit?: number }> = [];
+    const e = await env({ onPlanIssuesRequest: (b) => bodies.push(b) });
+    const out = await runAsync(["maintain", "plan-issues", "--repo", "owner/repo", "--goal", "Ship it", "--create", "--limit", "3"], e);
+    // --create maps to the exact {create:true, dryRun:false} shape the route's create-safety guard demands,
+    // and --limit is forwarded as a number.
+    expect(bodies[0]).toMatchObject({ goal: "Ship it", create: true, dryRun: false, limit: 3 });
+    expect(out).toMatch(/\(create, status=ok\): 0 proposed, 1 created/);
+    expect(out).toMatch(/#51 https:\/\/github\.com\/owner\/repo\/issues\/51/);
+    const json = JSON.parse(await runAsync(["maintain", "plan-issues", "--repo", "owner/repo", "--goal", "x", "--json"], e)) as {
+      dryRun: boolean;
+      createRequested: boolean;
+    };
+    expect(json).toMatchObject({ dryRun: true, createRequested: false });
+  });
+
   it("outcome-calibration reports slop-band merge rates + recommendation outcomes (plain + json), passing the window through (#6735)", async () => {
     const e = await env();
     const out = await runAsync(["maintain", "outcome-calibration", "--repo", "owner/repo"], e);

@@ -320,6 +320,7 @@ import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
+import { generateIssuePlanDrafts } from "../services/issue-plan-draft";
 import { buildRepoSettingsPreview, PUBLIC_SURFACE_SKIP_REASONS, skippedPrAuditRemediation } from "../signals/settings-preview";
 import {
   buildGittensorConfigRecommendation,
@@ -952,6 +953,17 @@ const contributorIssueDraftGenerateSchema = z.object({
   dryRun: z.boolean().optional().default(true),
   create: z.boolean().optional().default(false),
   limit: z.number().int().min(1).max(20).optional().default(5),
+});
+
+// #7764: REST mirror of the loopover_plan_repo_issues MCP tool (src/mcp/server.ts's planRepoIssuesShape).
+// Unlike the contributor-issue-draft schema above, `goal` is a REQUIRED maintainer-supplied free-form string
+// and `limit` is capped lower (10, not 20): every draft here costs real LLM spend, unlike that tool's zero-cost
+// static signals. dryRun/create keep the same create-safety contract (create alone is rejected below).
+const issuePlanDraftGenerateSchema = z.object({
+  goal: z.string().trim().min(1).max(2000),
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(10).optional().default(5),
 });
 
 const settingsPreviewSchema = z.object({
@@ -2785,6 +2797,43 @@ export function createApp() {
     }
     return c.json(
       await generateContributorIssueDrafts(c.env, fullName, {
+        dryRun: parsed.data.dryRun,
+        create: parsed.data.create,
+        limit: parsed.data.limit,
+        requestedBy: identity?.kind === "session" ? identity.actor : "api",
+      }),
+    );
+  });
+
+  // #7764: REST mirror of the loopover_plan_repo_issues MCP tool (src/mcp/server.ts) and the
+  // `maintain plan-issues` CLI. Gated EXACTLY like the sibling contributor-issue-drafts route above
+  // (requireAppRole maintainer/owner/operator, then per-repo requireSessionRepoAccess for sessions), and it
+  // preserves the same create-safety: dry-run by default, and the write path is entered only when the caller
+  // passes BOTH create:true and dryRun:false -- which additionally requires live repo write access. The
+  // required `goal` is a maintainer-supplied free-form planning goal the service turns into issue drafts.
+  app.post("/v1/repos/:owner/:repo/issue-plan-drafts/generate", async (c) => {
+    const fullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    const repo = await getRepository(c.env, fullName);
+    if (identity?.kind === "session") {
+      const repoForbidden = await requireSessionRepoAccess(c, identity, fullName, repo);
+      if (repoForbidden) return repoForbidden;
+    }
+    const body = await c.req.json().catch(() => null);
+    if (body === null) return c.json({ error: "invalid_json" }, 400);
+    const parsed = issuePlanDraftGenerateSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_issue_plan_draft_request", issues: parsed.error.issues }, 400);
+    if (parsed.data.create && parsed.data.dryRun !== false) {
+      return c.json({ error: "explicit_create_requires_dry_run_false" }, 400);
+    }
+    if (parsed.data.create && parsed.data.dryRun === false) {
+      const writeForbidden = await requireRepoWriteAccess(c, fullName);
+      if (writeForbidden instanceof Response) return writeForbidden;
+    }
+    return c.json(
+      await generateIssuePlanDrafts(c.env, fullName, parsed.data.goal, {
         dryRun: parsed.data.dryRun,
         create: parsed.data.create,
         limit: parsed.data.limit,
@@ -6393,6 +6442,7 @@ function canSessionAccessPath(env: Env, identity: Extract<AuthIdentity, { kind: 
   if (isRepoAgentPendingActionsPath(path)) return true; // list (GET, requireRepoMaintainer) + propose (POST, requireRepoWriteAccess); decision POSTs on /:id/:decision require server tokens
   if (isRepoIncidentReportsPath(path)) return true; // #5672: route's requireRepoMaintainer enforces per-repo authority (contributors → 403)
   if (isRepoContributorIssueDraftGeneratePath(path)) return true;
+  if (isRepoIssuePlanDraftGeneratePath(path)) return true;
   if (path === OPPORTUNITIES_FIND_PATH) return true;
   if (path === ISSUE_RAG_RETRIEVE_PATH) return true;
   if (path === LINT_PR_TEXT_PATH || path === VALIDATE_FOCUS_MANIFEST_PATH || path === LINT_SLOP_RISK_PATH || path === LINT_ISSUE_SLOP_PATH) return true;
@@ -6440,6 +6490,12 @@ function isRepoOnboardingPackPreviewPath(path: string): boolean {
 
 function isRepoContributorIssueDraftGeneratePath(path: string): boolean {
   return /^\/v1\/repos\/[^/]+\/[^/]+\/contributor-issue-drafts\/generate$/.test(path);
+}
+
+// #7764: coarse path admission for the issue-plan-drafts generate route -- the route's own requireAppRole +
+// requireSessionRepoAccess gate enforces real per-repo maintainer authority, exactly like the sibling above.
+function isRepoIssuePlanDraftGeneratePath(path: string): boolean {
+  return /^\/v1\/repos\/[^/]+\/[^/]+\/issue-plan-drafts\/generate$/.test(path);
 }
 
 function isRepoCheckBeforeStartPath(path: string): boolean {

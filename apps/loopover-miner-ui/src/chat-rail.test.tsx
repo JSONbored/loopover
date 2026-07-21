@@ -20,13 +20,7 @@ vi.mock("@tanstack/react-router", async () => {
 vi.mock("./components/chat/conversation", () => ({
   ChatConversation: () => {
     const [draft, setDraft] = React.useState("");
-    return (
-      <input
-        aria-label="chat draft"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-    );
+    return <input aria-label="chat draft" value={draft} onChange={(event) => setDraft(event.target.value)} />;
   },
 }));
 

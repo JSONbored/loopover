@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromChecks, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -49,6 +49,57 @@ describe("preview-url GitHub reads", () => {
       resetAt: "2026-06-24T12:10:00.000Z",
       observedAtMs: Date.parse("2026-06-24T12:00:00.000Z"),
     });
+  });
+});
+
+describe("findPreviewUrlFromChecks pagination (#7779)", () => {
+  const isStatus = (input: RequestInfo | URL) => /\/status\b/.test(String(input));
+  const isCheckRuns = (input: RequestInfo | URL) => /\/check-runs\b/.test(String(input));
+
+  it("follows Link: rel=next and finds a preview check-run on page 2", async () => {
+    // Page 1 carries only an unrelated check-run; the Cloudflare Workers Builds check-run (with the preview
+    // link) is on page 2 -- the exact >100-check-runs case a page-1-only read used to miss.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (isStatus(input)) return Response.json({ statuses: [] });
+      if (isCheckRuns(input) && isPage2(input)) {
+        return Response.json({ check_runs: [{ status: "completed", conclusion: "success", details_url: "https://pr-1.app.workers.dev" }] });
+      }
+      // page 1: an unrelated passing check with no preview link, advertising a next page
+      return Response.json({ check_runs: [{ status: "completed", conclusion: "success", details_url: "https://ci.example.com/run/1" }] }, { headers: { link: NEXT_LINK } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc123" })).resolves.toBe("https://pr-1.app.workers.dev");
+    // Proves it actually walked to page 2 (the whole point of the fix) rather than stopping at page 1.
+    expect(fetchMock.mock.calls.some((c) => isCheckRuns(c[0] as RequestInfo | URL) && isPage2(c[0] as RequestInfo | URL))).toBe(true);
+  });
+
+  it("returns null when every page advertises more but none carries check_runs (bounded walk)", async () => {
+    // Payloads with no `check_runs` field exercise the empty-page fallback; the always-next Link can't loop
+    // unboundedly (findAcrossPages caps the walk), so this resolves to null instead of hanging.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (isStatus(input)) return Response.json({ statuses: [] });
+      return Response.json({}, { headers: { link: NEXT_LINK } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc123" })).resolves.toBeNull();
+  });
+
+  it("skips a failed check-run and still finds the preview link on page 1 without an extra request", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (isStatus(input)) return Response.json({ statuses: [] });
+      return Response.json({
+        check_runs: [
+          { status: "completed", conclusion: "failure", details_url: "https://pr-9.app.workers.dev" }, // failed → skipped, its URL must NOT win
+          { status: "completed", conclusion: "success", details_url: "https://pr-real.app.workers.dev" },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc123" })).resolves.toBe("https://pr-real.app.workers.dev");
+    expect(fetchMock.mock.calls.some((c) => isPage2(c[0] as RequestInfo | URL))).toBe(false);
   });
 });
 

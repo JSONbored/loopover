@@ -243,15 +243,24 @@ export async function findPreviewUrlFromChecks(params: {
       const url = extractPreviewUrl(status.target_url);
       if (url) return url;
     }
-    const checks = await githubJson<{ check_runs?: Array<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }> }>(
+    // Walk every page of check-runs (#7779): a head SHA with >100 check-runs can push the Cloudflare Workers
+    // Builds check-run onto page 2+, and a page-1-only read would then miss it -- the same failure the file's
+    // header reasons about, already handled by getPreviewBuildState/findPreviewUrlFromPrComments for this
+    // identical endpoint via findAcrossPages.
+    const checkUrl = await findAcrossPages<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }, string>(
       `${base}/commits/${encodeURIComponent(params.sha)}/check-runs?per_page=100`,
       opts,
-    ).catch(() => null);
-    for (const run of checks?.check_runs ?? []) {
-      if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
-      const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
-      if (url) return url;
-    }
+      (payload) => (payload as { check_runs?: Array<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }> })?.check_runs ?? [],
+      (runs) => {
+        for (const run of runs) {
+          if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
+          const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
+          if (url) return url;
+        }
+        return null;
+      },
+    );
+    if (checkUrl) return checkUrl;
   } catch (error) {
     console.log(JSON.stringify({ event: "preview_from_checks_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
   }

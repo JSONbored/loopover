@@ -92,6 +92,11 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     defaultValue: null,
   },
   {
+    name: "LOOPOVER_MINER_FULL_EXECUTION_STUB",
+    firstReference: "lib/cross-repo-evaluation.js",
+    defaultValue: "",
+  },
+  {
     name: "LOOPOVER_MINER_GOVERNOR_LEDGER_DB",
     firstReference: "lib/governor-ledger.js",
     defaultValue: null,
@@ -232,6 +237,7 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   '| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `lib/discovery-index-client.js` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `lib/discovery-index-client.js` | `""` |',
   "| `LOOPOVER_MINER_EVENT_LEDGER_DB` | `lib/event-ledger.js` | (none) |",
+  '| `LOOPOVER_MINER_FULL_EXECUTION_STUB` | `lib/cross-repo-evaluation.js` | `""` |',
   "| `LOOPOVER_MINER_GOVERNOR_LEDGER_DB` | `lib/governor-ledger.js` | (none) |",
   "| `LOOPOVER_MINER_GOVERNOR_STATE_DB` | `lib/governor-state.js` | (none) |",
   '| `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.js` | `""` |',

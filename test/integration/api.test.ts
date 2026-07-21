@@ -2528,6 +2528,7 @@ describe("api routes", () => {
     const forbiddenMiner = await app.request("/v1/app/miner-dashboard?login=oktofeesh1", { headers: { cookie: `loopover_session=${otherToken}` } }, env);
     expect(forbiddenMiner.status).toBe(403);
     expect((await app.request("/v1/app/maintainer-dashboard", {}, env)).status).toBe(401);
+    expect((await app.request("/v1/app/digest", {}, env)).status).toBe(401);
 
     // #129 in-UI "refresh decision pack": contributor-authed enqueue of the decision-pack rebuild.
     const refreshMissingLogin = await app.request("/v1/app/miner-dashboard/refresh", { method: "POST", headers: apiHeaders(env) }, env);
@@ -2571,6 +2572,7 @@ describe("api routes", () => {
     await expect(unknownOverview.json()).resolves.toMatchObject({ error: "insufficient_role" });
     expect((await app.request("/v1/app/operator-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/maintainer-dashboard", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
+    expect((await app.request("/v1/app/digest", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect((await app.request("/v1/app/commands/usefulness", { headers: unknownHeaders }, unknownEnv)).status).toBe(403);
     expect(
       (
@@ -2676,6 +2678,18 @@ describe("api routes", () => {
     expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("victim-org");
     expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("Victim confidential release plan");
     expect(JSON.stringify(ownerMaintainerDashboardBody)).not.toContain("victim install needs privileged recovery");
+
+    // REGRESSION (#7659): /v1/app/digest lacked the tenant-scoping its sibling /v1/app/maintainer-dashboard
+    // already applies above -- before the fix, victim-org's unhealthy install and rate-limit telemetry leaked
+    // straight into a non-operator owner's digest (an "install" item literally titled "victim-org installation
+    // needs attention", plus an inflated rate-limit count), same fixture as the maintainer-dashboard assertions
+    // above so a regression here is caught by the same victim-org data already set up.
+    const ownerDigest = await app.request("/v1/app/digest", { headers: ownerHeaders }, ownerEnv);
+    expect(ownerDigest.status).toBe(200);
+    const ownerDigestBody = (await ownerDigest.json()) as { signal: string; items: Array<{ kind: string; title: string; detail: string }> };
+    expect(ownerDigestBody.items.some((item) => item.kind === "install")).toBe(false);
+    expect(JSON.stringify(ownerDigestBody)).not.toContain("victim-org");
+    expect(JSON.stringify(ownerDigestBody)).not.toContain("victim install needs privileged recovery");
     expect((await app.request("/v1/app/notification-model", { headers: ownerHeaders }, ownerEnv)).status).toBe(200);
     expect((await app.request("/v1/app/operator-dashboard", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);
     expect((await app.request("/v1/app/analytics/daily-rollups", { headers: ownerHeaders }, ownerEnv)).status).toBe(403);

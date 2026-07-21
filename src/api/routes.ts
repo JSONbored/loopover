@@ -2166,17 +2166,31 @@ export function createApp() {
   });
 
   app.get("/v1/app/digest", async (c) => {
-    const forbidden = await requireAppRole(c, ["maintainer", "owner", "operator"]);
-    if (forbidden) return forbidden;
     const identity = await authenticateRequestIdentity(c);
-    const login = identity?.kind === "session" ? identity.actor : null;
-    const [repositories, health, upstreamDrift, rateLimits, subscriptions] = await Promise.all([
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const summary = await getRoleSummaryForIdentity(c.env, identity);
+    if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
+    const login = identity.kind === "session" ? identity.actor : null;
+    const [allRepositories, allHealth, upstreamDrift, allRateLimits, subscriptions] = await Promise.all([
       listRepositories(c.env),
       listInstallationHealth(c.env),
       loadUpstreamStatus(c.env),
       listLatestGitHubRateLimitObservations(c.env, 10),
       login ? listDigestSubscriptionsForLogin(c.env, login) : Promise.resolve([]),
     ]);
+    // Tenant-scoped identically to /v1/app/maintainer-dashboard (#7659) -- a non-operator session must
+    // only ever see their own repositories/installations/rate-limit telemetry, never the full fleet.
+    const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
+    const scopedRepoNames = new Set(scope?.repositoryFullNames.map((repo) => repo.toLowerCase()) ?? []);
+    const scopedInstallationIds = new Set(scope?.installationIds ?? []);
+    const scopedAccountLogins = new Set(scope?.accountLogins.map((accountLogin) => accountLogin.toLowerCase()) ?? []);
+    const repositories = scope ? allRepositories.filter((repo) => scopedRepoNames.has(repo.fullName.toLowerCase())) : allRepositories;
+    const health = scope
+      ? allHealth.filter((record) => scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase()))
+      : allHealth;
+    const rateLimits = scope
+      ? allRateLimits.filter((record) => record.repoFullName !== undefined && record.repoFullName !== null && scopedRepoNames.has(record.repoFullName.toLowerCase()))
+      : allRateLimits;
     const items = buildDigestItems({ repositories, health, upstreamDrift, rateLimits });
     return c.json({
       generatedAt: nowIso(),

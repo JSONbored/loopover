@@ -168,7 +168,7 @@ import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadi
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
@@ -909,6 +909,15 @@ const activationPreviewOutputSchema = {
   samples: z.array(z.unknown()).optional(),
   recommendedAction: z.string().nullable().optional(),
   summary: z.string().optional(),
+};
+
+// #7808: the repo's own persisted focus manifest plus its compiled policy, mirroring the
+// GET /v1/repos/:owner/:repo/focus-manifest response ({ repoFullName, manifest, policy }). Both
+// nested payloads are large structured objects, so they follow the house z.unknown() style.
+const focusManifestOutputSchema = {
+  repoFullName: z.string().optional(),
+  manifest: z.unknown().optional(),
+  policy: z.unknown().optional(),
 };
 
 const labelAuditOutputSchema = {
@@ -1816,6 +1825,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_repo_context: "maintainer",
   loopover_get_maintainer_noise: "maintainer",
   loopover_get_activation_preview: "maintainer",
+  loopover_get_repo_focus_manifest: "maintainer",
   loopover_get_label_audit: "maintainer",
   loopover_get_maintainer_lane: "maintainer",
   loopover_get_repo_onboarding_pack: "maintainer",
@@ -1956,6 +1966,16 @@ export class LoopoverMcp {
         outputSchema: activationPreviewOutputSchema,
       },
       async (input) => this.toolResult(await this.getActivationPreview(input)),
+    );
+
+    register(
+      "loopover_get_repo_focus_manifest",
+      {
+        description: "Return a repo's own persisted focus manifest plus its compiled policy. Same as GET /v1/repos/:owner/:repo/focus-manifest; read-only, maintainer-authenticated.",
+        inputSchema: ownerRepoShape,
+        outputSchema: focusManifestOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getRepoFocusManifest(input)),
     );
 
     register(
@@ -3165,6 +3185,21 @@ export class LoopoverMcp {
     return {
       summary: report.summary,
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7808: mirror GET /v1/repos/:owner/:repo/focus-manifest exactly -- read the repo's own stored
+  // manifest and compile its policy. That route gates on requireAppRole(["maintainer","owner","operator"])
+  // plus a session-repo-access check; in the MCP layer requireRepoAccess is the faithful read-level mirror
+  // (the stricter requireRepoApprovalQueueAccess above adds a live-write check the GET route does not).
+  private async getRepoFocusManifest(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    await this.requireRepoAccess(fullName);
+    const manifest = await loadRepoFocusManifest(this.env, fullName);
+    const policy = compileFocusManifestPolicy(manifest);
+    return {
+      summary: `Focus manifest for ${fullName}.`,
+      data: { repoFullName: fullName, manifest, policy } as unknown as Record<string, unknown>,
     };
   }
 

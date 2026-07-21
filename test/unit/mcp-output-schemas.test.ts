@@ -7,6 +7,7 @@ import { LoopoverMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { REPO_OUTCOME_PATTERNS_SIGNAL } from "../../src/services/repo-outcome-patterns";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 // Tools that ship an MCP-native output schema so modern clients can validate/render responses.
@@ -14,6 +15,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_repo_context",
   "loopover_get_maintainer_noise",
   "loopover_get_activation_preview",
+  "loopover_get_repo_focus_manifest",
   "loopover_get_label_audit",
   "loopover_get_maintainer_lane",
   "loopover_get_repo_onboarding_pack",
@@ -311,6 +313,31 @@ describe("MCP tool calls return schema-valid structured content", () => {
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    expect(result.structuredContent).toBeUndefined();
+  });
+
+  it("loopover_get_repo_focus_manifest returns the repo's stored focus manifest and compiled policy (#7808)", async () => {
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { name: "demo", full_name: "octo/demo", private: false, owner: { login: "octo" }, default_branch: "main" });
+    // Seed a persisted api_record manifest so loadRepoFocusManifest returns it from cache (no live GitHub fetch).
+    await upsertRepoFocusManifest(env, "octo/demo", { wantedPaths: ["src/"], preferredLabels: ["bug"] });
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBeFalsy();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.repoFullName).toBe("octo/demo");
+    expect((data.manifest as Record<string, unknown>).present).toBe(true);
+    expect(data.policy).toBeDefined();
+    expect(JSON.stringify(data)).not.toMatch(/hotkey|coldkey|wallet|payout|reward/i);
+  });
+
+  it("loopover_get_repo_focus_manifest forbids a static mcp identity outside the read allowlist (#7808)", async () => {
+    // Mirrors the GET route's session-repo-access denial: requireRepoAccess rejects the shared, end-user-obtainable
+    // mcp token for a repo it wasn't explicitly allowlisted for. Covers the forbidden branch of the new tool's gate.
+    const { client } = await connectTestClient(createTestEnv({ MCP_READ_REPO_ALLOWLIST: "" }));
+    const result = await client.callTool({ name: "loopover_get_repo_focus_manifest", arguments: { owner: "octo", repo: "demo" } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/cannot access this repository/i);
     expect(result.structuredContent).toBeUndefined();
   });
 

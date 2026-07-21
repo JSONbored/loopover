@@ -571,6 +571,16 @@ export async function startFixtureServer(
       );
       return;
     }
+    if (request.url === "/v1/repos/owner/repo/focus-manifest" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          manifest: { version: 1, focusPaths: ["src/"], generatedAt: "2026-06-01T00:00:00.000Z" },
+          policy: { pathAllowlist: ["src/"], compiled: true },
+        }),
+      );
+      return;
+    }
     if (request.url === "/v1/repos/owner/repo/outcome-patterns" && request.method === "GET") {
       response.end(
         JSON.stringify({

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import {
   PREDICTION_LEDGER_PURGE_SPEC,
   PREDICTION_LEDGER_RETENTION_SPEC,
@@ -87,6 +88,9 @@ function normalizeRepoFullName(repoFullName: string): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  // #7795: reject `.`/`..`/control-char segments (via repo-clone.js's shared guard) before this value backs a
+  // SQLite key or is echoed through a CLI -- the same path-safety check #5831/#7525 rolled out to every sibling.
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

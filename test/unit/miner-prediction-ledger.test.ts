@@ -68,6 +68,9 @@ describe("miner prediction ledger (#4263)", () => {
   it("rejects invalid inputs field by field", () => {
     const ledger = tempLedger();
     expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "no-slash" })).toThrow(/invalid_repo_full_name/);
+    // #7795: `.`/`..`/control-char segments must be rejected too (both owner and repo), not just missing/extra slashes.
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "../etc" })).toThrow(/invalid_repo_full_name/);
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "owner/.." })).toThrow(/invalid_repo_full_name/);
     expect(() => ledger.appendPrediction({ ...VALID, targetId: 0 })).toThrow(/invalid_target_id/);
     expect(() => ledger.appendPrediction({ ...VALID, conclusion: "" })).toThrow(/invalid_conclusion/);
     expect(() => ledger.appendPrediction({ ...VALID, engineVersion: "" })).toThrow(/invalid_engine_version/);

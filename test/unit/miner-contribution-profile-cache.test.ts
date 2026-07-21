@@ -158,6 +158,9 @@ describe("contribution-profile cache store (#6797)", () => {
     expect(() => store.put({ repoFullName: 42 } as never)).toThrow(
       "invalid_repo_full_name",
     );
+    // #7795: `.`/`..`/control-char segments must be rejected too (both owner and repo), not just missing/extra slashes.
+    expect(() => store.get("../etc")).toThrow("invalid_repo_full_name");
+    expect(() => store.get("owner/..")).toThrow("invalid_repo_full_name");
   });
 
   it("exposes module-level get/put helpers backed by the default DB path", () => {

@@ -47,7 +47,7 @@ function happyPathScripts(overrides: Array<{ match: (args: readonly string[]) =>
     ...overrides,
     { match: isWorktreeAdd, result: ok() },
     { match: isTargetDate, result: ok("2026-01-05T00:00:00+00:00\n") },
-    { match: isHistory, result: ok(`abc123${FIELD_SEP}2026-01-05T00:00:00+00:00${FIELD_SEP}the target commit\n`) },
+    { match: isHistory, result: ok(`abc1234def0${FIELD_SEP}2026-01-05T00:00:00+00:00${FIELD_SEP}the target commit\n`) },
     { match: isTag, result: ok(`v1.0.0${FIELD_SEP}2026-01-01T00:00:00+00:00${FIELD_SEP}abc000${FIELD_SEP}tag\n`) },
     { match: isLsTree, result: ok("README.md\nsrc\npackage.json\n") },
     { match: isShow, result: ok("# hello\n") },
@@ -72,10 +72,29 @@ afterEach(() => {
 
 describe("planReplaySnapshotPath (#3010) — pure, deterministic", () => {
   it("same (repoPath, commitSha) always yields the same path", () => {
-    const a = planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc123" });
-    expect(a.replaceAll("\\", "/")).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/abc123`);
-    expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc123" })).toBe(a);
-    expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "def456" })).not.toBe(a);
+    const a = planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc1234def0" });
+    expect(a.replaceAll("\\", "/")).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/abc1234def0`);
+    expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc1234def0" })).toBe(a);
+    expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "def4567aa1" })).not.toBe(a);
+  });
+
+  it("rejects a non-hex commitSha so a traversal value can't escape the repo path (#7796)", () => {
+    // Before #7796 any non-empty string was joined straight into the on-disk path — a `../`-laden value escaped
+    // the repo. A commit SHA is 7-40 hex chars; anything else (traversal sequences, too-short, non-hex) throws.
+    expect(() => planReplaySnapshotPath({ repoPath: "/repo", commitSha: "../../../../tmp/evil" })).toThrow(
+      "invalid_commit_sha",
+    );
+    expect(() => planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc" })).toThrow("invalid_commit_sha");
+    expect(() => planReplaySnapshotPath({ repoPath: "/repo", commitSha: "nothexvalue!" })).toThrow(
+      "invalid_commit_sha",
+    );
+    // A genuine SHA still resolves to a path inside the snapshot subdir.
+    expect(
+      planReplaySnapshotPath({ repoPath: "/repo", commitSha: "0123456789abcdef0123456789abcdef01234567" }).replaceAll(
+        "\\",
+        "/",
+      ),
+    ).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/0123456789abcdef0123456789abcdef01234567`);
   });
 });
 
@@ -129,14 +148,14 @@ describe("exportReplaySnapshot (#3010)", () => {
     const store = tempStore();
 
     const snapshot = await exportReplaySnapshot(
-      { repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" },
+      { repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" },
       { exec, store },
     );
 
     expect(snapshot.repoFullName).toBe("acme/widgets");
-    expect(snapshot.commitSha).toBe("abc123");
+    expect(snapshot.commitSha).toBe("abc1234def0");
     expect(snapshot.targetDate).toBe("2026-01-05T00:00:00+00:00");
-    expect(snapshot.commits).toEqual([{ sha: "abc123", date: "2026-01-05T00:00:00+00:00", subject: "the target commit" }]);
+    expect(snapshot.commits).toEqual([{ sha: "abc1234def0", date: "2026-01-05T00:00:00+00:00", subject: "the target commit" }]);
     expect(snapshot.tags).toEqual([{ name: "v1.0.0", date: "2026-01-01T00:00:00+00:00", targetSha: "abc000" }]);
     expect(snapshot.readme).toEqual({ filename: "README.md", content: "# hello\n" });
   });
@@ -144,10 +163,10 @@ describe("exportReplaySnapshot (#3010)", () => {
   it("returns the cached snapshot on a repeat export of the same (repo, commit) pair, without calling git again", async () => {
     const store = tempStore();
     const first = scriptedExec(happyPathScripts());
-    await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec: first.exec, store });
+    await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec: first.exec, store });
 
     const second = scriptedExec([]); // no scripts at all -- any call would throw "no script matched"
-    const result = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec: second.exec, store });
+    const result = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec: second.exec, store });
 
     expect(result.commits).toHaveLength(1);
     expect(second.calls).toHaveLength(0);
@@ -157,7 +176,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTag, result: ok("") }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
     expect(snapshot.tags).toEqual([]);
   });
@@ -170,7 +189,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTag, result: ok(tagStdout) }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
     expect(snapshot.tags).toEqual([
       { name: "v1.0.0", date: "2025-12-01T00:00:00+00:00", targetSha: "sha1" },
@@ -186,7 +205,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTag, result: ok(tagStdout) }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
     expect(snapshot.tags).toEqual([{ name: "v1.0.0", date: "2025-12-01T00:00:00+00:00", targetSha: "sha1" }]);
   });
@@ -201,16 +220,16 @@ describe("exportReplaySnapshot (#3010)", () => {
     );
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "root000" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "faceb00c" }, { exec, store });
 
-    expect(snapshot.commits).toEqual([{ sha: "root000", date: "2020-01-01T00:00:00+00:00", subject: "initial commit" }]);
+    expect(snapshot.commits).toEqual([{ sha: "faceb00c", date: "2020-01-01T00:00:00+00:00", subject: "initial commit" }]);
   });
 
   it("no README present at the commit: readme is null, and show is never called for a nonexistent file", async () => {
     const { exec, calls } = scriptedExec(happyPathScripts([{ match: isLsTree, result: ok("src\npackage.json\n") }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
     expect(snapshot.readme).toBeNull();
     expect(calls.some((c) => c.args[0] === "show")).toBe(false);
@@ -220,7 +239,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isLsTree, result: ok("src\nReadme.rst\npackage.json\n") }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
     expect(snapshot.readme?.filename).toBe("Readme.rst");
   });
@@ -229,19 +248,19 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec, calls } = scriptedExec(happyPathScripts([{ match: isTag, result: ok(`v-future${FIELD_SEP}2026-06-01T00:00:00+00:00${FIELD_SEP}abc000${FIELD_SEP}tag\n`) }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /replay_snapshot_freshness_violation/,
     );
-    expect(store.getSnapshot("acme/widgets", "abc123")).toBeNull();
+    expect(store.getSnapshot("acme/widgets", "abc1234def0")).toBeNull();
     const removeCall = calls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
-    expect(removeCall?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc123"]);
+    expect(removeCall?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc1234def0"]);
   });
 
   it("removes the worktree and rethrows the ORIGINAL error (not a cleanup error) when a git read after the worktree exists fails", async () => {
     const { exec, calls } = scriptedExec(happyPathScripts([{ match: isHistory, result: { code: 1, stderr: "fatal: history read failed" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_log_history_failed/,
     );
     const removeCall = calls.find((c) => c.args[0] === "worktree" && c.args[1] === "remove");
@@ -257,7 +276,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     );
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_log_history_failed/,
     );
   });
@@ -266,16 +285,16 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isWorktreeAdd, result: { code: 0 } }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
-    expect(snapshot.commitSha).toBe("abc123");
+    expect(snapshot.commitSha).toBe("abc1234def0");
   });
 
   it("throws when git worktree add fails", async () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isWorktreeAdd, result: { code: 1, stderr: "fatal: invalid reference" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "bogus" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "b0605ca7" }, { exec, store })).rejects.toThrow(
       /git_worktree_add_failed.*fatal: invalid reference/,
     );
   });
@@ -284,7 +303,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTargetDate, result: { code: 128, stderr: "fatal: bad revision" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "bogus" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "b0605ca7" }, { exec, store })).rejects.toThrow(
       /git_log_target_failed/,
     );
   });
@@ -293,7 +312,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTargetDate, result: ok("") }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "bogus" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "b0605ca7" }, { exec, store })).rejects.toThrow(
       /git_log_target_failed: no commit found/,
     );
   });
@@ -302,7 +321,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isHistory, result: { code: 1, stderr: "fatal: history read failed" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_log_history_failed/,
     );
   });
@@ -311,7 +330,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isTag, result: { code: 1, stderr: "fatal: tag read failed" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_tag_merged_failed/,
     );
   });
@@ -320,7 +339,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isLsTree, result: { code: 1, stderr: "fatal: ls-tree failed" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_ls_tree_failed/,
     );
   });
@@ -329,7 +348,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isShow, result: { code: 1, stderr: "fatal: show failed" } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_show_readme_failed/,
     );
   });
@@ -347,18 +366,18 @@ describe("exportReplaySnapshot (#3010)", () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isWorktreeAdd, result: { code: 1 } }]));
     const store = tempStore();
 
-    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store })).rejects.toThrow(
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store })).rejects.toThrow(
       /git_worktree_add_failed: exit_1/,
     );
   });
 
   it("tolerates a commit-history line missing the subject field, defaulting it to an empty string", async () => {
-    const { exec } = scriptedExec(happyPathScripts([{ match: isHistory, result: ok(`abc123${FIELD_SEP}2026-01-05T00:00:00+00:00\n`) }]));
+    const { exec } = scriptedExec(happyPathScripts([{ match: isHistory, result: ok(`abc1234def0${FIELD_SEP}2026-01-05T00:00:00+00:00\n`) }]));
     const store = tempStore();
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec, store });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec, store });
 
-    expect(snapshot.commits).toEqual([{ sha: "abc123", date: "2026-01-05T00:00:00+00:00", subject: "" }]);
+    expect(snapshot.commits).toEqual([{ sha: "abc1234def0", date: "2026-01-05T00:00:00+00:00", subject: "" }]);
   });
 
   it("fails closed on a malformed input", async () => {
@@ -369,12 +388,12 @@ describe("exportReplaySnapshot (#3010)", () => {
     await expect(exportReplaySnapshot(null as never, deps)).rejects.toThrow("invalid_replay_snapshot_input");
     await expect(exportReplaySnapshot({ commitSha: "a" } as never, deps)).rejects.toThrow("invalid_repo_full_name");
     await expect(exportReplaySnapshot({ repoFullName: "acme/widgets" } as never, deps)).rejects.toThrow("invalid_commit_sha");
-    await expect(exportReplaySnapshot({ repoFullName: "acme/widgets", commitSha: "abc123" } as never, deps)).rejects.toThrow("invalid_repo_path");
+    await expect(exportReplaySnapshot({ repoFullName: "acme/widgets", commitSha: "abc1234def0" } as never, deps)).rejects.toThrow("invalid_repo_path");
   });
 
   it("fails closed when exec is missing or invalid", async () => {
     const store = tempStore();
-    const candidate = { repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" };
+    const candidate = { repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" };
     await expect(exportReplaySnapshot(candidate, null as never)).rejects.toThrow("invalid_exec");
     await expect(exportReplaySnapshot(candidate, { store } as never)).rejects.toThrow("invalid_exec");
   });
@@ -385,7 +404,7 @@ describe("exportReplaySnapshot (#3010)", () => {
     vi.stubEnv("LOOPOVER_MINER_REPLAY_SNAPSHOT_DB", join(root, "default.sqlite3"));
     const { exec } = scriptedExec(happyPathScripts());
 
-    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc123" }, { exec });
+    const snapshot = await exportReplaySnapshot({ repoPath: "/repo", repoFullName: "acme/widgets", commitSha: "abc1234def0" }, { exec });
 
     expect(snapshot.repoFullName).toBe("acme/widgets");
     vi.unstubAllEnvs();
@@ -395,9 +414,9 @@ describe("exportReplaySnapshot (#3010)", () => {
 describe("removeReplaySnapshotWorktree (#3010)", () => {
   it("delegates to the shared removeWorktree primitive", async () => {
     const { exec, calls } = scriptedExec([{ match: () => true, result: ok() }]);
-    const result = await removeReplaySnapshotWorktree(exec, "/repo", "/repo/.loopover-replay-snapshots/abc123");
+    const result = await removeReplaySnapshotWorktree(exec, "/repo", "/repo/.loopover-replay-snapshots/abc1234def0");
     expect(result).toEqual({ ok: true, removed: true });
-    expect(calls[0]?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc123"]);
+    expect(calls[0]?.args).toEqual(["worktree", "remove", "--force", "/repo/.loopover-replay-snapshots/abc1234def0"]);
   });
 });
 
@@ -406,24 +425,24 @@ describe("openReplaySnapshotStore (#3010) — round-trip persistence", () => {
     const store = tempStore();
     const saved = store.saveSnapshot({
       repoFullName: "acme/widgets",
-      commitSha: "abc123",
-      worktreePath: "/repo/.loopover-replay-snapshots/abc123",
+      commitSha: "abc1234def0",
+      worktreePath: "/repo/.loopover-replay-snapshots/abc1234def0",
       targetDate: "2026-01-05T00:00:00+00:00",
-      commits: [{ sha: "abc123", date: "2026-01-05T00:00:00+00:00", subject: "t" }],
+      commits: [{ sha: "abc1234def0", date: "2026-01-05T00:00:00+00:00", subject: "t" }],
       tags: [{ name: "v1", date: "2026-01-01T00:00:00+00:00", targetSha: "abc000" }],
       readme: { filename: "README.md", content: "# hi\n" },
     });
 
     expect(saved.readme).toEqual({ filename: "README.md", content: "# hi\n" });
-    expect(store.getSnapshot("acme/widgets", "abc123")).toEqual(saved);
+    expect(store.getSnapshot("acme/widgets", "abc1234def0")).toEqual(saved);
   });
 
   it("round-trips a snapshot with no README as null, not a partial object", () => {
     const store = tempStore();
     const saved = store.saveSnapshot({
       repoFullName: "acme/widgets",
-      commitSha: "abc123",
-      worktreePath: "/repo/.loopover-replay-snapshots/abc123",
+      commitSha: "abc1234def0",
+      worktreePath: "/repo/.loopover-replay-snapshots/abc1234def0",
       targetDate: "2026-01-05T00:00:00+00:00",
       commits: [],
       tags: [],
@@ -435,6 +454,6 @@ describe("openReplaySnapshotStore (#3010) — round-trip persistence", () => {
 
   it("getSnapshot returns null for an unknown (repo, commit) pair", () => {
     const store = tempStore();
-    expect(store.getSnapshot("acme/widgets", "nope")).toBeNull();
+    expect(store.getSnapshot("acme/widgets", "deadbeef01")).toBeNull();
   });
 });

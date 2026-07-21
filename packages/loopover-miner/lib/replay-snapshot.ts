@@ -77,7 +77,12 @@ function normalizeRepoFullName(repoFullName: string): string {
 
 function normalizeCommitSha(commitSha: string): string {
   if (typeof commitSha !== "string" || !commitSha.trim()) throw new Error("invalid_commit_sha");
-  return commitSha.trim();
+  const trimmed = commitSha.trim();
+  // A commit SHA is 7-40 hex chars; reject anything else (#7796) so an unvalidated value — e.g. a `../../..`
+  // traversal sequence — can never be join()'d into planReplaySnapshotPath's on-disk path and escape the repo.
+  // Mirrors the format check replay-task-generation.ts already applies (`/^[0-9a-f]{7,40}$/i`).
+  if (!/^[0-9a-f]{7,40}$/i.test(trimmed)) throw new Error("invalid_commit_sha");
+  return trimmed;
 }
 
 /** Worktree exports live under this dir inside the repo, mirroring worktree-allocator.ts's WORKTREE_SUBDIR. */

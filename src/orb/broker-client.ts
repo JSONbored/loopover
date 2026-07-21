@@ -242,7 +242,7 @@ export async function drainOrbRelay(
   env: { ORB_ENROLLMENT_SECRET?: string | undefined; ORB_BROKER_URL?: string | undefined },
   ack: string[] = [],
   fetchImpl: typeof fetch = fetch,
-): Promise<{ deliveryId: string; eventName: string; rawBody: string }[]> {
+): Promise<{ deliveryId: string; eventName: string; rawBody: string; kind: string }[]> {
   if (!isOrbBrokerMode(env)) return [];
   try {
     const base = orbBrokerBaseUrl(env);
@@ -253,11 +253,14 @@ export async function drainOrbRelay(
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) throw new Error(`orb_relay_drain_http_${res.status}`);
-    const body = (await res.json()) as { events?: Array<{ deliveryId?: unknown; eventName?: unknown; rawBody?: unknown }> };
-    const out: { deliveryId: string; eventName: string; rawBody: string }[] = [];
+    const body = (await res.json()) as { events?: Array<{ deliveryId?: unknown; eventName?: unknown; rawBody?: unknown; kind?: unknown }> };
+    const out: { deliveryId: string; eventName: string; rawBody: string; kind: string }[] = [];
     for (const e of body.events ?? []) {
       if (typeof e.deliveryId === "string" && typeof e.eventName === "string" && typeof e.rawBody === "string") {
-        out.push({ deliveryId: e.deliveryId, eventName: e.eventName, rawBody: e.rawBody });
+        // #7523: an older Orb server predating the `kind` column omits the field entirely -- default to
+        // 'github_webhook' (the only kind that ever existed before this) so a rolling deploy never
+        // misroutes an old-shaped event.
+        out.push({ deliveryId: e.deliveryId, eventName: e.eventName, rawBody: e.rawBody, kind: typeof e.kind === "string" ? e.kind : "github_webhook" });
         continue;
       }
       // #zero-trace-webhook-loss: a batch entry missing/mistyping one of the three required fields was

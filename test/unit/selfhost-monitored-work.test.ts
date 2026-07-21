@@ -199,6 +199,101 @@ describe("self-host monitored recurring work", () => {
     errors.mockRestore();
   });
 
+  // #7523 (piece 2 of #4902's design): a config_push row must never reach args.enqueue (which unconditionally
+  // does JSON.parse(rawBody) as GitHubWebhookPayload) and must route to the dedicated receive-and-log handler.
+  describe("kind-based dispatch (#7523)", () => {
+    it("routes a kind='github_webhook' row (and a legacy row with no kind set) through the EXISTING enqueue path, unchanged", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockResolvedValue([
+        { deliveryId: "webhook-1", eventName: "pull_request", rawBody: "{}", kind: "github_webhook" },
+        { deliveryId: "legacy-1", eventName: "issues", rawBody: "{}" }, // no kind field at all (pre-#7523 shape)
+      ]);
+      const enqueue = vi.fn().mockResolvedValue("queued");
+      const log = vi.fn();
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue, log });
+
+      expect(enqueue).toHaveBeenCalledTimes(2);
+      expect(enqueue).toHaveBeenNthCalledWith(1, {}, "webhook-1", "pull_request", "{}");
+      expect(enqueue).toHaveBeenNthCalledWith(2, {}, "legacy-1", "issues", "{}");
+      expect(state.pendingAck).toEqual(["webhook-1", "legacy-1"]);
+      const metrics = await renderMetrics();
+      expect(metrics).toContain('loopover_orb_webhook_total{event="pull_request",result="queued"} 1');
+      expect(metrics).not.toContain("loopover_orb_config_push_received_total");
+    });
+
+    it("routes a kind='config_push' row to the dedicated handler instead, and does NOT call enqueue", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const payload = { pushId: "push-1", message: "capability x is now available", capability: "x" };
+      const drain = vi.fn().mockResolvedValue([
+        { deliveryId: "push-1:111", eventName: "config_push", rawBody: JSON.stringify(payload), kind: "config_push" },
+      ]);
+      const enqueue = vi.fn();
+      const log = vi.fn();
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue, log });
+
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(state.pendingAck).toEqual(["push-1:111"]);
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "orb_config_push_received", deliveryId: "push-1:111", payload }));
+      const metrics = await renderMetrics();
+      expect(metrics).toContain("loopover_orb_config_push_received_total 1");
+      expect(metrics).not.toContain("loopover_orb_webhook_total");
+    });
+
+    it("surfaces (not null) a config_push row whose rawBody isn't valid JSON, instead of throwing", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockResolvedValue([{ deliveryId: "push-2:222", eventName: "config_push", rawBody: "{not json", kind: "config_push" }]);
+      const log = vi.fn();
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn(), log });
+
+      expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "orb_config_push_received", deliveryId: "push-2:222", payload: null }));
+      expect(state.pendingAck).toEqual(["push-2:222"]);
+    });
+
+    it("REGRESSION: a config_push handler that throws does not abort the rest of the batch and is not acked", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockResolvedValue([
+        { deliveryId: "push-throws", eventName: "config_push", rawBody: "{}", kind: "config_push" },
+        { deliveryId: "webhook-after", eventName: "pull_request", rawBody: "{}", kind: "github_webhook" },
+      ]);
+      const enqueue = vi.fn().mockResolvedValue("queued");
+      // Throws only for the config_push event's own log call -- the loop's trailing "orb_relay_drained"
+      // summary log (unrelated pre-existing behavior, called once more after the loop) must stay unaffected.
+      const log = vi.fn((line: string) => {
+        if (JSON.parse(line).event === "orb_config_push_received") throw new Error("log sink down");
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue, log });
+
+      // The throwing config_push event is NOT acked, but the webhook event after it is still reached and acked.
+      expect(state.pendingAck).toEqual(["webhook-after"]);
+      expect(enqueue).toHaveBeenCalledTimes(1);
+      const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_config_push_handler_threw"));
+      expect(logged).toBeDefined();
+      expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "orb_config_push_handler_threw", deliveryId: "push-throws", error: "log sink down" });
+      errors.mockRestore();
+    });
+
+    it("defaults the log sink to console.log for a config_push row too (mirrors the webhook path's own default)", async () => {
+      const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        await drainOrbRelayWithMonitor({
+          state: { pendingAck: [], lastDrainAtMs: null },
+          relayEnv: {},
+          env: {} as Env,
+          drain: vi.fn().mockResolvedValue([{ deliveryId: "push-3:333", eventName: "config_push", rawBody: "{}", kind: "config_push" }]),
+          enqueue: vi.fn(),
+        });
+        expect(consoleLog).toHaveBeenCalledWith(JSON.stringify({ event: "orb_config_push_received", deliveryId: "push-3:333", payload: {} }));
+      } finally {
+        consoleLog.mockRestore();
+      }
+    });
+  });
+
   it("clears previous Orb relay acks and stays quiet when the broker has no events", async () => {
     const state: OrbRelayDrainState = { pendingAck: ["previous-delivery"], lastDrainAtMs: null };
     const drain = vi.fn().mockResolvedValue([]);

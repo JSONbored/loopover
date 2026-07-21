@@ -264,7 +264,10 @@ const RELAY_PENDING_BATCH_SIZE = 50;
 const RELAY_PENDING_TTL_HOURS = 24;
 const RELAY_PENDING_MAX_PER_INSTALLATION = 500;
 
-export type RelayPendingEvent = { deliveryId: string; eventName: string; rawBody: string };
+// #7523: 'kind' rides along on every pulled event so a self-host drain client can tell a config_push notice
+// apart from a GitHub webhook BEFORE treating rawBody as a GitHubWebhookPayload — see
+// src/selfhost/monitored-work.ts's drainOrbRelayWithMonitor.
+export type RelayPendingEvent = { deliveryId: string; eventName: string; rawBody: string; kind: string };
 
 // Bulk-delete drop logs (this function and retryFailedRelays below) sample at most this many rows' identifying
 // info — an operator needs to see WHICH installation(s) lost events without a direct DB query, but a busy prune
@@ -419,10 +422,10 @@ export async function pullRelayPending(
       : RELAY_PENDING_BATCH_SIZE;
   const limit = Math.min(requestedLimit, RELAY_PENDING_BATCH_SIZE);
   const { results } = await env.DB
-    .prepare("SELECT delivery_id, event_name, raw_body FROM orb_relay_pending WHERE installation_id = ? ORDER BY created_at, delivery_id LIMIT ?")
+    .prepare("SELECT delivery_id, event_name, raw_body, kind FROM orb_relay_pending WHERE installation_id = ? ORDER BY created_at, delivery_id LIMIT ?")
     .bind(installationId, limit)
-    .all<{ delivery_id: string; event_name: string; raw_body: string }>();
-  return results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, rawBody: r.raw_body }));
+    .all<{ delivery_id: string; event_name: string; raw_body: string; kind: string }>();
+  return results.map((r) => ({ deliveryId: r.delivery_id, eventName: r.event_name, rawBody: r.raw_body, kind: r.kind }));
 }
 
 /** Record a failed relay forward in the retry queue. Idempotent on delivery_id — a duplicate insert (e.g. from a

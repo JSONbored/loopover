@@ -812,7 +812,7 @@ describe("pullRelayPending", () => {
     await enqueueRelayPending(e, { deliveryId: "other", installationId: 9999, eventName: "pull_request", rawBody: "{}" }); // a different install
     const events = await pullRelayPending(e, 9701);
     expect(events.map((ev) => ev.deliveryId)).toEqual(["a", "b"]); // only this install, ordered
-    expect(events[0]).toEqual({ deliveryId: "a", eventName: "pull_request", rawBody: "{}" });
+    expect(events[0]).toEqual({ deliveryId: "a", eventName: "pull_request", rawBody: "{}", kind: "github_webhook" });
   });
 
   it("ACK-deletes only the named rows, scoped to this installation (can't ack another install's row)", async () => {
@@ -1039,7 +1039,7 @@ describe("POST /v1/orb/relay/pull", () => {
     await enqueueRelayPending(e, { deliveryId: "pe-1", installationId: 8502, eventName: "pull_request", rawBody: '{"x":1}' });
     const res = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ events: [{ deliveryId: "pe-1", eventName: "pull_request", rawBody: '{"x":1}' }] });
+    expect(await res.json()).toEqual({ events: [{ deliveryId: "pe-1", eventName: "pull_request", rawBody: '{"x":1}', kind: "github_webhook" }] });
   });
 
   it("passes a valid ack[] through (acked rows are deleted), and tolerates a non-string ack entry", async () => {
@@ -1049,7 +1049,7 @@ describe("POST /v1/orb/relay/pull", () => {
     await enqueueRelayPending(e, { deliveryId: "ack-b", installationId: 8503, eventName: "issues", rawBody: "{}" });
     const res = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ ack: ["ack-a", 123] }) }, e); // 123 filtered out
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ events: [{ deliveryId: "ack-b", eventName: "issues", rawBody: "{}" }] }); // ack-a removed
+    expect(await res.json()).toEqual({ events: [{ deliveryId: "ack-b", eventName: "issues", rawBody: "{}", kind: "github_webhook" }] }); // ack-a removed
   });
 
   it("tolerates a non-array ack field and an unparseable body (no ack, returns events)", async () => {
@@ -1057,10 +1057,10 @@ describe("POST /v1/orb/relay/pull", () => {
     const secret = await enroll(e, 8504);
     await enqueueRelayPending(e, { deliveryId: "keep-1", installationId: 8504, eventName: "pull_request", rawBody: "{}" });
     const nonArray = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ ack: "nope" }) }, e); // ack not an array
-    expect(await nonArray.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}" }] });
+    expect(await nonArray.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}", kind: "github_webhook" }] });
     const bad = await app.request("/v1/orb/relay/pull", { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: "{not json" }, e); // unparseable → catch
     expect(bad.status).toBe(200);
-    expect(await bad.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}" }] });
+    expect(await bad.json()).toEqual({ events: [{ deliveryId: "keep-1", eventName: "pull_request", rawBody: "{}", kind: "github_webhook" }] });
   });
 
   it("REGRESSION (#4995, GITTENSORY-1C): a DB error inside pullRelayPending returns a clean 503 broker_error instead of an unhandled framework 500", async () => {

@@ -7,6 +7,11 @@ export type OrbRelayEvent = {
   deliveryId: string;
   eventName: string;
   rawBody: string;
+  // #7523: 'github_webhook' (the only kind before this) vs 'config_push' (an operator-addressed notice,
+  // never a GitHub payload -- see handleConfigPushRelayEvent below). Anything other than the literal string
+  // 'config_push' is treated as a webhook, so an unrecognized/old-shaped value degrades to the existing,
+  // unchanged behavior rather than a new failure mode.
+  kind: string;
 };
 
 export type OrbRelayDrainState = {
@@ -34,6 +39,20 @@ const ORB_RELAY_METRIC_EVENTS = new Set([
 
 function orbRelayMetricEvent(eventName: string): string {
   return ORB_RELAY_METRIC_EVENTS.has(eventName) ? eventName : "other";
+}
+
+/** Receive-and-surface only (#7523, v1 scope per #4902's design comment): a config_push row's rawBody is a
+ *  JSON-stringified ConfigPushPayload (src/orb/relay.ts), never a GitHubWebhookPayload -- this deliberately
+ *  does NOT hand it to enqueueWebhookByEnv. No capability-toggle or config-mutation side effect is implemented
+ *  here; that's explicit, separately-scoped follow-up work, not something this function grows into silently. */
+function handleConfigPushRelayEvent(ev: OrbRelayEvent, log: (line: string) => void): void {
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(ev.rawBody);
+  } catch {
+    payload = null; // surfaced as-is below -- a malformed payload is still worth a visible trace, not a throw
+  }
+  log(JSON.stringify({ event: "orb_config_push_received", deliveryId: ev.deliveryId, payload }));
 }
 
 export async function runScheduledLoopWithMonitor<T>(
@@ -86,6 +105,30 @@ export async function drainOrbRelayWithMonitor(args: {
         result: events.length > 0 ? "events" : "empty",
       });
       for (const ev of events) {
+        // #7523: a config_push row is Orb-operational state, never a GitHub payload -- branch BEFORE
+        // args.enqueue (which unconditionally does JSON.parse(rawBody) as GitHubWebhookPayload) so it's
+        // never misinterpreted. Everything else (any value other than the literal 'config_push', including
+        // 'github_webhook' and an old-shaped/missing kind) falls through to the existing path below,
+        // byte-for-byte unchanged.
+        if (ev.kind === "config_push") {
+          try {
+            handleConfigPushRelayEvent(ev, args.log ?? console.log);
+            incr("loopover_orb_config_push_received_total");
+          } catch (error) {
+            // Same per-event isolation stance as the webhook path below: don't ack, let the relay redeliver.
+            console.error(
+              JSON.stringify({
+                level: "error",
+                event: "orb_config_push_handler_threw",
+                deliveryId: ev.deliveryId,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+            continue;
+          }
+          args.state.pendingAck.push(ev.deliveryId);
+          continue;
+        }
         // #audit-orb-relay-enqueue-isolation: an enqueue can throw uncaught (e.g. a D1/Postgres write failure
         // inside recordWebhookEvent, not just the anticipated failures enqueueWebhookByEnv already returns as a
         // string result) -- that must not abort the REST of this batch, or every event after the failing one

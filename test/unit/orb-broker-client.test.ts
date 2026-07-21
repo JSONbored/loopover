@@ -369,16 +369,16 @@ describe("drainOrbRelay (pull-mode drain)", () => {
     const { fetchImpl, calls } = captureFetch(
       Response.json({
         events: [
-          { deliveryId: "d1", eventName: "pull_request", rawBody: "{\"a\":1}" },
-          { deliveryId: "d2", eventName: "check_suite", rawBody: "{}" },
+          { deliveryId: "d1", eventName: "pull_request", rawBody: "{\"a\":1}", kind: "config_push" },
+          { deliveryId: "d2", eventName: "check_suite", rawBody: "{}" }, // no kind (older Orb) → defaults below
           { deliveryId: "bad", eventName: "x" }, // no rawBody → filtered out
         ],
       }),
     );
     const out = await drainOrbRelay({ ORB_ENROLLMENT_SECRET: "s" }, ["prev-1"], fetchImpl);
     expect(out).toEqual([
-      { deliveryId: "d1", eventName: "pull_request", rawBody: "{\"a\":1}" },
-      { deliveryId: "d2", eventName: "check_suite", rawBody: "{}" },
+      { deliveryId: "d1", eventName: "pull_request", rawBody: "{\"a\":1}", kind: "config_push" },
+      { deliveryId: "d2", eventName: "check_suite", rawBody: "{}", kind: "github_webhook" }, // #7523 fallback
     ]);
     expect(calls[0]?.url).toBe("https://api.loopover.ai/v1/orb/relay/pull");
     expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer s");

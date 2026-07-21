@@ -54,11 +54,11 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           NODE
 
-      # Pushed with the default GITHUB_TOKEN, which does NOT fire release-selfhost.yml's own
-      # `push: tags:` trigger (GitHub suppresses workflow-triggered-workflow pushes to prevent
-      # recursion) -- that's why the next step dispatches it explicitly instead of relying on this
-      # push alone. Mirrors publish-engine.yml / publish-mcp.yml's identical reasoning and tagging
-      # idiom.
+      # Pushed with the default GITHUB_TOKEN whenever that alone will work, which does NOT fire
+      # release-selfhost.yml's own `push: tags:` trigger (GitHub suppresses workflow-triggered-workflow
+      # pushes to prevent recursion) -- that's why the next step dispatches it explicitly instead of
+      # relying on this push alone. Mirrors publish-engine.yml / publish-mcp.yml's identical reasoning
+      # and tagging idiom.
       # Exposes created=true/false so the dispatch step below never fires against a tag this run didn't
       # actually just create -- a defense-in-depth backstop (independent of orb-release-core.mjs's own
       # correctness) against ever re-triggering a build for an already-published version/tag.
@@ -73,9 +73,14 @@ jobs:
           # "refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without
           # `workflows` permission" even with contents/actions both set to write above). ORB_RELEASE_WORKFLOW_TOKEN
           # is an OPTIONAL repo secret (a fine-grained PAT scoped to Contents: write + Workflows: write on
-          # this repo only) for exactly that case -- falls back to the default token when the secret is
-          # unset, which still works fine for any cut whose commits don't happen to touch a workflow file.
-          GH_TOKEN: ${{ secrets.ORB_RELEASE_WORKFLOW_TOKEN || github.token }}
+          # this repo only) held in reserve for exactly that case -- the push below always tries the default
+          # token FIRST and only reaches for this one on the specific failure it's meant to fix. Using it
+          # unconditionally would defeat the recursion suppression above on every cut, not just the rare one
+          # that actually needs it (confirmed live: 2026-07-21, orb-v3.2.0-beta.11 produced duplicate runs
+          # 29821878879 and 29821880057 for the same tag because this env used to be
+          # `${{ secrets.ORB_RELEASE_WORKFLOW_TOKEN || github.token }}` unconditionally).
+          GH_TOKEN: ${{ github.token }}
+          ORB_RELEASE_WORKFLOW_TOKEN: ${{ secrets.ORB_RELEASE_WORKFLOW_TOKEN }}
           TAG: ${{ steps.report.outputs.tag }}
           VERSION: ${{ steps.report.outputs.version }}
         run: |
@@ -93,7 +98,17 @@ jobs:
             git tag -a "$TAG" -m "loopover-orb ${VERSION}"
             git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
             gh auth setup-git
-            git push origin "$TAG"
+            if ! git push origin "$TAG" 2>push-error.log; then
+              cat push-error.log >&2
+              if [ -n "$ORB_RELEASE_WORKFLOW_TOKEN" ] && grep -qi "workflow" push-error.log; then
+                echo "::warning::Default token can't push $TAG (its history touches .github/workflows/*); retrying with ORB_RELEASE_WORKFLOW_TOKEN. That token is a PAT, not GITHUB_TOKEN, so this push will ALSO fire release-selfhost.yml's own tag-push trigger -- expect a duplicate run alongside the dispatch step below for this cut only."
+                export GH_TOKEN="$ORB_RELEASE_WORKFLOW_TOKEN"
+                gh auth setup-git
+                git push origin "$TAG"
+              else
+                exit 1
+              fi
+            fi
             echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 

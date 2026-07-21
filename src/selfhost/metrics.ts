@@ -108,6 +108,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_orb_relay_register_consecutive_failures", { help: "Current consecutive orb relay registration failure streak, reset to 0 on any success.", type: "gauge" }],
   ["loopover_orb_relay_drain_seconds_since_last", { help: "Seconds since the pull-mode orb relay drain loop last completed successfully, or -1 if never (or in push mode).", type: "gauge" }],
   ["loopover_orb_webhook_total", { help: "Orb webhook outcomes.", type: "counter" }],
+  ["loopover_orb_config_push_received_total", { help: "Config-push relay rows received and logged by the pull-drain loop (#7523).", type: "counter" }],
   ["loopover_ai_requests_total", { help: "AI provider request outcomes.", type: "counter" }],
   ["loopover_ai_cost_usd_total", { help: "Estimated AI provider cost in USD.", type: "counter" }],
   ["loopover_ai_input_tokens_total", { help: "AI provider input tokens consumed.", type: "counter" }],

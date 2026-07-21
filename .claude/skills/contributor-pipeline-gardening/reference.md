@@ -57,6 +57,49 @@ Two products, self-host-first:
   per source file. Check #6012's sub-issue completion state before assuming this work still needs
   scoping from scratch.
 
+## Rent-a-Loop / hosted-product direction (as of 2026-07-21 — actively evolving, re-check before trusting)
+
+The maintainer confirmed the end vision explicitly: a hosted cloud product with **two separate
+customer-facing apps/dashboards** — one for miners (AMS-facing, codenamed "AMS" for now, may rebrand),
+one for maintainers (ORB-facing, codenamed "ORB" for now) — sharing backend primitives/design system but
+with genuinely different UX per persona. The maintainer is designing the actual frontends in Lovable and
+will replace the existing dashboard UI; **this skill's job is backend/wiring/functionality/gap
+planning only, never frontend visual design** — don't file issues that presuppose a specific page
+layout or design element, only what data/actions a surface needs to expose.
+
+**Settlement/economics — externally blocked, direction still in flux.** #6098's pluggable
+settlement-backend interface (gittensor-owned or self-built) is the correct spec-level answer and
+isn't changing. But *which* backend wins is blocked on gittensor subnet-side alignment (#4781) and, as
+of 2026-07-21, that conversation is still live — gittensor's own team was independently discussing
+replacing a pool-funding model with a live repo-registry + emission-share-reweight endpoint instead
+(see #6569's comment history). Do not assume either model is final when scoping new economics-adjacent
+issues; if a gap's shape depends on which one wins, it's a decision-scoping issue (maintainer-only),
+not buildable work yet.
+
+**BYOR + APR are both confirmed in scope** (#7589 epic). One concrete, expensive lesson from
+2026-07-21: APR repo creation does **not** use a new GitHub org or App-installation-token — everything
+stays under the JSONbored personal account, and repo creation goes through the *existing* "Loopover
+OAuth" app (`src/auth/github-oauth.ts`) with a `repo`-scope extension, calling `POST /user/repos`. An
+earlier version of this plan (org + installation token) was filed as a real issue, had to be corrected
+publicly, and nearly cost a contributor wasted work before anyone picked it up. If a future run touches
+repo-provisioning issues, verify against `github-oauth.ts`'s actual current scope handling before
+citing this from memory — this is exactly the kind of assumption that must be grounded in the real
+code, not restated from a summary (this file included).
+
+**Tenant execution sandboxing — real security decisions were made, none are built yet.** #7180 (real
+provisioning driver), #7648 (network-egress default), #7649 (per-attempt data fork for APR), and a
+research-grounded comment on #7180 itself (Cloudflare Containers vs. microVM isolation tiers, secret
+injection should target a Vercel-style header-injection pattern, not plaintext env vars) are all filed
+maintainer-only. This is the single most security-critical area in the whole roadmap — never generate
+a contributor-eligible issue touching sandbox provisioning, secret injection, or network egress without
+explicit maintainer sign-off first, even if the underlying code change looks mechanical.
+
+**When genuinely uncertain whether a hosted-product gap is safe to unlock: default maintainer-only,
+every time.** The `github-oauth.ts` mistake above is the concrete proof this isn't hypothetical —
+getting this wrong publishes wrong information to real contributors who move on issues within minutes
+of them being filed. A wrongly-locked issue costs one manual unlock later; a wrongly-unlocked one
+costs a contributor's wasted PR and a public correction.
+
 ## Milestone taxonomy (as of 2026-07-14 — re-check before trusting, this moves fast)
 
 | Milestone | Nature | Contributor-open? |

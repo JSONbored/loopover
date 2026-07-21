@@ -452,7 +452,7 @@ export type ModelReview = {
 export type AiReviewDiagnostic = {
   model: string;
   attempt: number;
-  status: "parsed" | "empty_output" | "unparseable_output" | "provider_error";
+  status: "parsed" | "empty_output" | "unparseable_output" | "provider_error" | "missing_assessment";
   responseChars?: number | undefined;
   hasJsonObject?: boolean | undefined;
   error?: string | undefined;
@@ -1091,6 +1091,14 @@ async function runWorkersOpinion(
   let lastUnparseable:
     | { model: string; attempt: number; responseChars: number; hasJsonObject: boolean; responseSnippet: string }
     | undefined;
+  // #missing-assessment-retry: the system prompt declares `assessment` REQUIRED and never empty, but a model
+  // occasionally returns valid JSON with real blockers/nits and an empty assessment anyway -- parseModelReview
+  // correctly parses that (it only returns null when EVERYTHING is empty), so without this, the very first
+  // such response would have been accepted immediately and surfaced downstream as a misleading "did not include
+  // a separate narrative summary" placeholder instead of retrying for a real one. Kept as a fallback candidate
+  // ONLY for the case where every attempt across every model comes back this way -- degrades to exactly today's
+  // behavior in that (expected to be rare) worst case, never worse.
+  let bestIncompleteReview: ModelReview | null = null;
   const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
   for (const [modelIndex, model] of models.entries()) {
     if (modelIndex > 0) {
@@ -1132,9 +1140,26 @@ async function runWorkersOpinion(
         const usage = coerceAiUsage(result);
         const usageFields = usage ? { usage } : {};
         const parsed = parseModelReview(text);
-        if (parsed) {
+        if (parsed && parsed.assessment.trim() !== "") {
           diagnostics.push({ model, attempt, status: "parsed", responseChars: text.length, hasJsonObject: Boolean(extractLastJsonObject(text)), ...usageFields });
           return { review: parsed };
+        }
+        if (parsed) {
+          // Valid JSON, real blockers/nits/suggestions, but the REQUIRED assessment came back empty --
+          // keep it as a last-resort candidate and retry for a real one instead of accepting immediately.
+          bestIncompleteReview = parsed;
+          diagnostics.push({ model, attempt, status: "missing_assessment", responseChars: text.length, hasJsonObject: true, ...usageFields });
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "ai_review_missing_assessment",
+              model,
+              attempt,
+              blockersCount: parsed.blockers.length,
+              nitsCount: parsed.nits.length,
+            }),
+          );
+          continue;
         }
         const hasJsonObject = Boolean(extractLastJsonObject(text));
         const trimmedText = text.trim();
@@ -1222,6 +1247,23 @@ async function runWorkersOpinion(
         responseSnippet: lastUnparseable.responseSnippet,
       }),
     );
+  }
+  // Every attempt across every model came back with valid blockers/nits/suggestions but no assessment --
+  // surface it as a real, alertable outage signal (this should be rare; the retry above exists specifically
+  // to make it rare) but still return the usable content rather than discarding it. Matches today's exact
+  // downstream degrade (fallbackPublicAssessment) as the worst case, never worse.
+  if (bestIncompleteReview) {
+    console.log(
+      JSON.stringify({
+        level: "error",
+        event: "ai_review_missing_assessment_exhausted",
+        primary,
+        fallback,
+        blockersCount: bestIncompleteReview.blockers.length,
+        nitsCount: bestIncompleteReview.nits.length,
+      }),
+    );
+    return { review: bestIncompleteReview };
   }
   return { review: null };
 }

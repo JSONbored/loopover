@@ -3104,6 +3104,62 @@ describe("pure helpers", () => {
     expect(totalAttempts).toBe(2); // 1 per model, NOT 3 per model (6 total) -- each model's own bail is deliberate.
   });
 
+  it("REGRESSION (#missing-assessment-retry): runWorkersOpinion retries when the model returns real blockers/nits but an empty assessment, despite the prompt requiring it", async () => {
+    let attempts = 0;
+    const run = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) return { response: reviewJson({ assessment: "" }) };
+      return { response: reviewJson({ assessment: "The change looks reasonable and focused." }) };
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string; model: string; attempt: number }> = [];
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    expect(parsed.review?.assessment).toBe("The change looks reasonable and focused.");
+    expect(attempts).toBe(2); // 1 missing-assessment attempt, then a real one -- same model, no fallback needed.
+    expect(diagnostics[0]).toMatchObject({ model: "primary", attempt: 0, status: "missing_assessment" });
+    expect(diagnostics[1]).toMatchObject({ model: "primary", attempt: 1, status: "parsed" });
+  });
+
+  it("REGRESSION (#missing-assessment-retry): falls back to the last incomplete-but-usable review when EVERY attempt across EVERY model comes back with an empty assessment", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = vi.fn(async () => ({
+      response: reviewJson({ assessment: "", blockers: [], nits: ["Edge case on empty input is untested.", "Naming could be clearer."] }),
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256);
+    // Real content is preserved (the exact degrade this PR set out to avoid discarding) even though no
+    // attempt ever produced the required assessment field.
+    expect(parsed.review?.assessment).toBe("");
+    expect(parsed.review?.nits).toEqual(["Edge case on empty input is untested.", "Naming could be clearer."]);
+    expect(run).toHaveBeenCalledTimes(6); // 3 attempts x 2 models -- the full budget, since nothing here is a deliberate bail.
+    const exhausted = logSpy.mock.calls
+      .map((c) => c[0])
+      .find((l) => typeof l === "string" && l.includes("ai_review_missing_assessment_exhausted"));
+    expect(exhausted).toBeDefined();
+    expect(JSON.parse(exhausted as string)).toMatchObject({
+      level: "error",
+      event: "ai_review_missing_assessment_exhausted",
+      primary: "primary",
+      fallback: "fallback",
+      blockersCount: 0,
+      nitsCount: 2,
+    });
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("does not treat the deliberate INCOHERENT_DIFF_ASSESSMENT bail as a missing assessment (it's a non-empty sentinel string)", async () => {
+    const run = vi.fn(async () => ({
+      response: reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT, blockers: [], nits: [], suggestions: [] }),
+    }));
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const diagnostics: Array<{ status: string }> = [];
+    const parsed = await runWorkersOpinion(env, "m", "m", "sys", "user", 256, diagnostics as never);
+    expect(parsed.review).toBeNull(); // INCOHERENT_DIFF_ASSESSMENT parses to null (see parseModelReview)
+    expect(diagnostics.some((d) => d.status === "missing_assessment")).toBe(false);
+  });
+
   it("isIncoherentDiffBail recognizes exactly the model's own INCOHERENT_DIFF_ASSESSMENT text, not a generic parse failure or a look-alike assessment", () => {
     expect(isIncoherentDiffBail(reviewJson({ assessment: INCOHERENT_DIFF_ASSESSMENT }))).toBe(true);
     // Real-world shape (LOOPOVER-29): empty blockers/nits/suggestions alongside the bail assessment.

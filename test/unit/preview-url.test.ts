@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromChecks, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -165,6 +165,63 @@ describe("preview-url pagination (#7450)", () => {
     vi.stubGlobal("fetch", failLater);
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
     expect(failLater).toHaveBeenCalledTimes(2);
+  });
+
+  it("findPreviewUrlFromChecks follows Link: rel=next and finds the preview check-run on page 2 (#7779)", async () => {
+    // A commit with >100 check-runs: the Workers preview check lands on page 2. Page 1 also carries a FAILED run
+    // with a preview URL — it must be skipped (completed + non-success), so the asserted result is page 2's URL,
+    // not the failed run's. Proves both pagination and the failed-run guard.
+    const page1 = {
+      check_runs: [
+        { status: "completed", conclusion: "failure", details_url: "https://failed.pages.dev" },
+        ...Array.from({ length: 99 }, () => ({ status: "completed", conclusion: "success" })),
+      ],
+    };
+    const page2 = { check_runs: [{ status: "completed", conclusion: "success", details_url: "https://pr-9.app.workers.dev" }] };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/status")) return Response.json({ statuses: [] });
+      return isPage2(input) ? Response.json(page2) : Response.json(page1, { headers: { link: NEXT_LINK } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "abc" })).resolves.toBe("https://pr-9.app.workers.dev");
+    expect(fetchMock.mock.calls.some((call) => isPage2(call[0]))).toBe(true); // page 2 really was walked
+  });
+
+  it("findPreviewUrlFromChecks reads a preview URL from a check-run's output summary when details_url has none", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/status")) return Response.json({ statuses: [] });
+      return Response.json({ check_runs: [{ status: "completed", conclusion: "success", output: { summary: "preview at https://sum.pages.dev" } }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "sum" })).resolves.toBe("https://sum.pages.dev");
+  });
+
+  it("findPreviewUrlFromChecks falls back to a check-run's output text when summary lacks a URL", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/status")) return Response.json({ statuses: [] });
+      return Response.json({ check_runs: [{ status: "in_progress", output: { text: "see https://txt.workers.dev" } }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "txt" })).resolves.toBe("https://txt.workers.dev");
+  });
+
+  it("findPreviewUrlFromChecks returns null when a payload carries no check_runs array at all", async () => {
+    // Empty object (no `check_runs`) exercises the selectItems `?? []` fallback, so the probe sees an empty list.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/status")) return Response.json({ statuses: [] });
+      return Response.json({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "none" })).resolves.toBeNull();
+  });
+
+  it("findPreviewUrlFromChecks degrades to null when the check-runs read throws", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/status")) return Response.json({ statuses: [] });
+      throw new Error("network down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(findPreviewUrlFromChecks({ token: "t", repo: REPO, sha: "err" })).resolves.toBeNull();
   });
 });
 

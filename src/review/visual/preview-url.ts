@@ -228,15 +228,25 @@ export async function findPreviewUrlFromChecks(params: {
       const url = extractPreviewUrl(status.target_url);
       if (url) return url;
     }
-    const checks = await githubJson<{ check_runs?: Array<{ status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } }> }>(
+    // #7779: walk ALL pages of check-runs via the same findAcrossPages helper getPreviewBuildState and
+    // findPreviewUrlFromPrComments already use for this identical endpoint. A commit with >100 check-runs can push
+    // the preview check-run onto page 2+, where the old page-1-only read returned null as if it did not exist (the
+    // exact failure mode this file's header comment reasons about).
+    type PreviewCheckRun = { status?: string; conclusion?: string; details_url?: string; output?: { summary?: string; text?: string } };
+    const fromChecks = await findAcrossPages<PreviewCheckRun, string>(
       `${base}/commits/${encodeURIComponent(params.sha)}/check-runs?per_page=100`,
       opts,
-    ).catch(() => null);
-    for (const run of checks?.check_runs ?? []) {
-      if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
-      const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
-      if (url) return url;
-    }
+      (payload) => (payload as { check_runs?: PreviewCheckRun[] })?.check_runs ?? [],
+      (runs) => {
+        for (const run of runs) {
+          if (run.status === "completed" && run.conclusion && run.conclusion !== "success") continue;
+          const url = extractPreviewUrl(run.details_url) ?? extractPreviewUrl(run.output?.summary) ?? extractPreviewUrl(run.output?.text);
+          if (url) return url;
+        }
+        return null;
+      },
+    );
+    if (fromChecks) return fromChecks;
   } catch (error) {
     console.log(JSON.stringify({ event: "preview_from_checks_error", repo: `${params.repo.owner}/${params.repo.repo}`, message: String(error).slice(0, 200) }));
   }

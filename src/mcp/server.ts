@@ -172,7 +172,7 @@ import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVer
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
 import { buildSlopAssessment } from "../signals/slop";
-import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
+import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan, claimPlanTargetRepo } from "../idea-intake";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
 import { evaluateEscalation } from "../loop-escalation";
@@ -3700,7 +3700,7 @@ export class LoopoverMcp {
       };
     }
     const graph = buildTaskGraph(validated.idea, input.decomposition);
-    const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+    const claimPlan = buildClaimPlan(graph, claimPlanTargetRepo(validated.idea.targetRepo));
     return {
       summary: `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
       data: { ok: true, verdict: claimPlan.graphVerdict, claimPlan } as unknown as Record<string, unknown>,

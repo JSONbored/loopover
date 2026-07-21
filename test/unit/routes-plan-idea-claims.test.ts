@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { buildClaimPlan, buildTaskGraph, validateIdeaSubmission } from "../../src/idea-intake";
+import { buildClaimPlan, buildTaskGraph, claimPlanTargetRepo, validateIdeaSubmission } from "../../src/idea-intake";
 import { createTestEnv } from "../helpers/d1";
 
 // #6756: POST /v1/loop/plan-idea-claims — the REST mirror bringing loopover_plan_idea_claims to the same
@@ -28,7 +28,7 @@ function expectedPayload(body: unknown) {
   const validated = validateIdeaSubmission(body);
   if (!validated.ok) return { ok: false as const, errors: validated.errors };
   const graph = buildTaskGraph(validated.idea, (body as { decomposition?: never }).decomposition);
-  const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+  const claimPlan = buildClaimPlan(graph, claimPlanTargetRepo(validated.idea.targetRepo));
   return { ok: true as const, verdict: claimPlan.graphVerdict, claimPlan };
 }
 

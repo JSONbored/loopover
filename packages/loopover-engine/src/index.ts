@@ -608,6 +608,7 @@ export {
 export {
   buildClaimPlan,
   buildTaskGraph,
+  claimPlanTargetRepo,
   scoreTaskGraph,
   validateIdeaSubmission,
   IDEA_TITLE_MAX_CHARS,
@@ -621,6 +622,7 @@ export {
   type ConstituentIssueDraft,
   type IdeaPriority,
   type IdeaSubmission,
+  type IdeaTarget,
   type IdeaValidationResult,
   type TaskGraph,
   type TaskGraphIssueScore,

@@ -19,12 +19,16 @@ export const IDEA_CONSTRAINT_MAX_CHARS = 200;
 
 export type IdeaPriority = "normal" | "high";
 
+export type IdeaTarget =
+  | { kind: "existing"; repo: string }
+  | { kind: "provision" };
+
 /** The raw input a renter provides (spec §1). */
 export type IdeaSubmission = {
   id: string;
   title: string;
   body: string;
-  targetRepo: string;
+  targetRepo: IdeaTarget;
   constraints?: string[] | undefined;
   acceptanceHints?: string[] | undefined;
   priority?: IdeaPriority | undefined;
@@ -92,9 +96,15 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
   if (!isNonEmptyString(input.body)) errors.push("body_required");
   else if (input.body.length > IDEA_BODY_MAX_CHARS) errors.push("body_too_long");
   // `owner/name`, each segment a GitHub-legal slug — an uninstallable/malformed repo is rejected at intake,
-  // never scored, since it can never produce a `go`.
-  if (!isNonEmptyString(input.targetRepo)) errors.push("target_repo_required");
-  else if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input.targetRepo)) errors.push("target_repo_malformed");
+  // never scored, since it can never produce a `go`. A bare non-empty STRING targetRepo is the back-compat
+  // wire form for an existing repo; a `{ kind: "provision" }` object requests a not-yet-created repo.
+  let resolvedTarget: IdeaTarget | undefined;
+  if (isNonEmptyString(input.targetRepo)) {
+    if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input.targetRepo)) resolvedTarget = { kind: "existing", repo: input.targetRepo };
+    else errors.push("target_repo_malformed");
+  } else if (typeof input.targetRepo === "object" && input.targetRepo !== null && (input.targetRepo as Record<string, unknown>).kind === "provision") {
+    resolvedTarget = { kind: "provision" };
+  } else errors.push("target_repo_required");
 
   const constraints = input.constraints;
   if (constraints !== undefined) {
@@ -116,7 +126,7 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
       id: input.id as string,
       title: input.title as string,
       body: input.body as string,
-      targetRepo: input.targetRepo as string,
+      targetRepo: resolvedTarget as IdeaTarget,
       constraints: constraints as string[] | undefined,
       acceptanceHints: acceptanceHints as string[] | undefined,
       priority: priority as IdeaPriority | undefined,
@@ -224,6 +234,12 @@ export function buildTaskGraph(idea: IdeaSubmission, drafts?: ConstituentIssueDr
   const graph: TaskGraph = { ideaId: idea.id, issues, rubric: { verdict: "go", perIssue: [] } };
   graph.rubric = scoreTaskGraph(graph);
   return graph;
+}
+
+/** The repo a claim plan targets. buildClaimPlan stays repo-string-based (#7635 out of scope to change);
+ *  a not-yet-provisioned target has no repo yet, so it resolves to "". */
+export function claimPlanTargetRepo(target: IdeaTarget): string {
+  return target.kind === "existing" ? target.repo : "";
 }
 
 /** One constituent issue routed to a loop disposition, carrying the target repo the loop will act on. */

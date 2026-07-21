@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildClaimPlan, buildTaskGraph, validateIdeaSubmission } from "../../src/idea-intake";
+import { buildClaimPlan, buildTaskGraph, claimPlanTargetRepo, validateIdeaSubmission } from "../../src/idea-intake";
 
 // #6756: the local mirror of loopover_plan_idea_claims. Like its same-tier sibling loopover_check_slop_risk,
 // it computes IN-PROCESS from @loopover/engine — no API round-trip — so claim planning works fully offline.
@@ -27,7 +27,7 @@ function expectedPayload(body: unknown) {
   const validated = validateIdeaSubmission(body);
   if (!validated.ok) return { ok: false as const, errors: validated.errors };
   const graph = buildTaskGraph(validated.idea, (body as { decomposition?: never }).decomposition);
-  const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+  const claimPlan = buildClaimPlan(graph, claimPlanTargetRepo(validated.idea.targetRepo));
   return { ok: true as const, verdict: claimPlan.graphVerdict, claimPlan };
 }
 

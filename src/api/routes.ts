@@ -217,7 +217,7 @@ import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { evaluateEscalation } from "../loop-escalation";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
-import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan } from "../idea-intake";
+import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan, claimPlanTargetRepo } from "../idea-intake";
 import { loadPrAiReviewFindings } from "../mcp/pr-ai-review-findings";
 import {
   buildMcpCompatibilityMetadata,
@@ -3715,7 +3715,7 @@ export function createApp() {
     const validated = validateIdeaSubmission(parsed.data);
     if (!validated.ok) return c.json({ ok: false, errors: validated.errors }, 400);
     const graph = buildTaskGraph(validated.idea, parsed.data.decomposition);
-    const claimPlan = buildClaimPlan(graph, validated.idea.targetRepo);
+    const claimPlan = buildClaimPlan(graph, claimPlanTargetRepo(validated.idea.targetRepo));
     return c.json({ ok: true, verdict: claimPlan.graphVerdict, claimPlan });
   });
 

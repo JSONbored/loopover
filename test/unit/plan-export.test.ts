@@ -5,6 +5,7 @@ import {
   type PlanDag,
   type PlanStep,
 } from "../../packages/loopover-engine/src/plan-export";
+import { nextReadySteps } from "../../packages/loopover-engine/src/plan-step-readiness";
 
 function step(over: Partial<PlanStep> & { id: string; title: string }): PlanStep {
   return {
@@ -53,9 +54,24 @@ describe("renderPlanAsMarkdown", () => {
     expect(md).toBe("- [ ] A — pending\n- [ ] B — pending");
   });
 
-  it("treats an unknown dependency id as already satisfied", () => {
-    const md = renderPlanAsMarkdown({ steps: [step({ id: "a", title: "A", dependsOn: ["ghost"] })] });
-    expect(md).toBe("- [ ] A — pending");
+  it("treats an unknown dependency id as unsatisfied, deferring that step after the ready ones (#7729)", () => {
+    // 'a' depends on a dangling id ('ghost'); 'b' has no deps. A dangling dependency is now treated as UNsatisfied
+    // (matching nextReadySteps), so 'b' emits first and 'a' is appended after via the unsatisfiable fallback —
+    // never emitted up front as if the dangling dep were already satisfied.
+    const md = renderPlanAsMarkdown({
+      steps: [step({ id: "a", title: "A", dependsOn: ["ghost"] }), step({ id: "b", title: "B" })],
+    });
+    expect(md.split("\n")).toEqual(["- [ ] B — pending", "- [ ] A — pending"]);
+  });
+
+  it("orderByDependency (via render) and nextReadySteps agree a dangling dependency is unsatisfied (#7729)", () => {
+    const plan: PlanDag = {
+      steps: [step({ id: "a", title: "A", dependsOn: ["ghost"] }), step({ id: "b", title: "B" })],
+    };
+    // nextReadySteps: 'a' is blocked by the dangling 'ghost', so only 'b' is ready now.
+    expect(nextReadySteps(plan).map((entry) => entry.id)).toEqual(["b"]);
+    // The render order agrees: 'b' (ready) before 'a' (deferred) — no step is shown ready-now here yet blocked there.
+    expect(renderPlanAsMarkdown(plan).split("\n")).toEqual(["- [ ] B — pending", "- [ ] A — pending"]);
   });
 
   it("appends steps caught in a dependency cycle in original order instead of dropping or looping", () => {

@@ -9,7 +9,8 @@ export type ClaimLedgerExpiryStore = {
 };
 /**
  * Return active claims whose age is strictly greater than `maxAgeMs`. A claim whose age equals `maxAgeMs` exactly
- * is still considered within the window (not expired).
+ * is still considered within the window (not expired). A claim with an unparseable `claimedAt` (null age) is swept
+ * (fail-closed, #7732) rather than left permanently un-expirable.
  */
 export declare function findExpiredClaims(claims: ClaimEntry[], nowMs: number, maxAgeMs: number): ClaimEntry[];
 export declare function sweepExpiredClaims(store: ClaimLedgerExpiryStore, nowMs: number, maxAgeMs?: number): ClaimEntry[];

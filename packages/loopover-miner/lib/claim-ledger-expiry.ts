@@ -17,7 +17,8 @@ function claimAgeMs(claim: ClaimEntry, nowMs: number): number | null {
 
 /**
  * Return active claims whose age is strictly greater than `maxAgeMs`. A claim whose age equals `maxAgeMs` exactly
- * is still considered within the window (not expired).
+ * is still considered within the window (not expired). A claim with an unparseable `claimedAt` (null age) is swept
+ * (fail-closed, #7732) rather than left permanently un-expirable.
  */
 export function findExpiredClaims(claims: ClaimEntry[], nowMs: number, maxAgeMs: number): ClaimEntry[] {
   if (!Number.isFinite(nowMs) || nowMs < 0) throw new Error("invalid_now_ms");
@@ -28,8 +29,10 @@ export function findExpiredClaims(claims: ClaimEntry[], nowMs: number, maxAgeMs:
   for (const claim of claims) {
     if (claim?.status !== "active") continue;
     const ageMs = claimAgeMs(claim, nowMs);
-    if (ageMs === null) continue;
-    if (ageMs > maxAgeMs) expired.push(claim);
+    // An unparseable claimedAt yields a null age. Fail closed and sweep it (#7732): claimedAt is always written via
+    // new Date().toISOString(), so a null age only reaches a corrupted/hand-edited row, which must not stay stuck
+    // active forever — matching this file's fail-closed posture toward unusable rows.
+    if (ageMs === null || ageMs > maxAgeMs) expired.push(claim);
   }
   return expired;
 }

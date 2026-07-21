@@ -211,10 +211,12 @@ describe("operator dashboard payload", () => {
 
     const payload = await buildOperatorDashboardPayload(env);
     expect(payload.metrics).toEqual(
-      expect.arrayContaining([expect.objectContaining({ label: "Contributor fairness flags", value: "1", delta: "3 contributor(s) evaluated" })]),
+      expect.arrayContaining([expect.objectContaining({ label: "Contributor fairness flags", value: "1", delta: "3 (login, project) row(s) evaluated" })]),
     );
     // #global-contributor-trust: every login here touches exactly one project, so the blended fold degenerates
-    // to the same per-login numbers as the per-project fold -- same outlier, same evaluated count.
+    // to the same per-login numbers as the per-project fold -- same outlier, same evaluated count. Here the
+    // "3 contributor(s)" wording IS accurate (unlike the per-project tile above): blendedContributorGateEval
+    // folds by login alone, so its row count genuinely is a count of unique contributors.
     expect(payload.metrics).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: "Global contributor fairness flags", value: "1", delta: "3 contributor(s) evaluated" })]),
     );

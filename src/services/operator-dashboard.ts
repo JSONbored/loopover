@@ -273,7 +273,10 @@ export async function buildOperatorDashboardPayload(
         // contributor via GET /v1/internal/fairness/contributors/:login instead.
         label: "Contributor fairness flags",
         value: String(contributorFairnessFlagCount),
-        delta: contributorFairnessFlagCount > 0 ? `${contributorGateEval.rows.length} contributor(s) evaluated` : "no outliers detected",
+        // contributorGateEval.rows is one row per (login, project) -- the SAME login active on two repos
+        // contributes two rows, so this counts evaluated rows, not unique contributors (that count lives on
+        // the "Global contributor fairness flags" tile below, via blendedContributorGateEval's per-login fold).
+        delta: contributorFairnessFlagCount > 0 ? `${contributorGateEval.rows.length} (login, project) row(s) evaluated` : "no outliers detected",
       },
       {
         // #global-contributor-trust: the cross-repo blended counterpart -- one row per LOGIN (pooled across

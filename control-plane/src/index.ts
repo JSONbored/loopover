@@ -18,3 +18,13 @@ export {
   type TenantDeprovisioningResult,
   type TenantProvisioningResult,
 } from "./provisioning.js";
+export {
+  createFakeSettlementBackendDriver,
+  type FakeSettlementBackendDriver,
+  type FakeSettlementCall,
+  type FakeSettlementStep,
+  type PayoutEligibleEvent,
+  type PoolId,
+  type SettlementBackendDriver,
+  type SettlementReversalReason,
+} from "./settlement-backend-driver.js";

@@ -943,6 +943,14 @@ const gatePrecisionShape = {
   windowDays: z.number().int().positive().optional(),
 };
 
+// #7754: mirrors the remote loopover_refresh_repo_docs tool's input (src/mcp/server.ts's refreshRepoDocsShape)
+// and the `maintain refresh-docs` CLI subcommand -- both owner and repo, nothing else; the route itself decides
+// eligibility/diffing, this is just the addressing.
+const refreshRepoDocsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+};
+
 // #7764: mirrors the remote loopover_plan_repo_issues tool's input (src/mcp/server.ts's planRepoIssuesShape),
 // minus the create-only `milestone` which this proxy (and the `maintain plan-issues` CLI) does not expose --
 // forwarded to POST /v1/repos/:owner/:repo/issue-plan-drafts/generate. `goal` is the required maintainer
@@ -1348,6 +1356,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "maintainer",
     description:
       "AI-plan a small set of concrete GitHub issue drafts for a repo from a maintainer-supplied free-form goal, same as `loopover-mcp maintain plan-issues --goal ...`. Dry-run BY DEFAULT: only previews the drafted title/body/labels unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Maintainer access required.",
+  },
+  {
+    name: "loopover_refresh_repo_docs",
+    category: "maintainer",
+    description:
+      "Force an immediate repo-doc refresh (AGENTS.md/CLAUDE.md, and a skill file when warranted) for one repo, without waiting for the scheduled interval. Only ever opens a pull request -- never a direct commit -- and only when repoDocGeneration is enabled and the generated content actually changed. Same as `loopover-mcp maintain refresh-docs`. Maintainer access required.",
   },
   {
     name: "loopover_open_pr",
@@ -2704,6 +2718,24 @@ registerStdioTool(
       `Issue plan for ${owner}/${repo} (status=${payload.status}, dryRun=${payload.dryRun}): ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created.`,
       payload,
     );
+  },
+);
+
+registerStdioTool(
+  "loopover_refresh_repo_docs",
+  {
+    description: stdioToolDescription("loopover_refresh_repo_docs"),
+    inputSchema: refreshRepoDocsShape,
+  },
+  async ({ owner, repo }: any) => {
+    // #7754: proxies POST {repoBase}/repo-docs/refresh (the same endpoint `maintain refresh-docs` already
+    // calls, and the REST mirror of this same tool id) -- no body, since eligibility/diffing is entirely the
+    // route's own decision.
+    const payload = await apiPost(`${toolRepoBase(owner, repo)}/repo-docs/refresh`, {});
+    const line = payload.opened
+      ? `${payload.reused ? "Found the already-open" : "Opened a new"} repo-doc pull request for ${owner}/${repo}: ${payload.url}`
+      : `No repo-doc pull request opened for ${owner}/${repo}: ${payload.reason}`;
+    return toolResult(line, payload);
   },
 );
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool

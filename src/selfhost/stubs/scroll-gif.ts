@@ -1,5 +1,5 @@
 // Self-host replacement for src/review/visual/scroll-gif.ts (#3612). Swapped in by
-// scripts/build-selfhost.mjs's esbuild plugin, the same mechanism used for pixel-diff and
+// scripts/build-selfhost.ts's esbuild plugin, the same mechanism used for pixel-diff and
 // @cloudflare/puppeteer — this file is only ever bundled into dist/server.mjs, never the Worker entry, so
 // it's safe to depend on pngjs (Node `Buffer` + PNG decode) and gifenc (pure-JS GIF encode, no ffmpeg/native
 // dependency — Workers-safe by itself, but useless here without the PNG-decode step next to it) here.

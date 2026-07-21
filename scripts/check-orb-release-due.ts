@@ -4,14 +4,16 @@
 // hidden inside this script. See scripts/orb-release-core.ts for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag } from "./orb-release-core.js";
+import { buildOrbReleaseReport, latestOrbTag, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core.js";
 
 const MANIFEST_PATH = "orb-manifest.json";
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const manifestVersion = JSON.parse(readFileSync(MANIFEST_PATH, "utf8")).version;
-  const tags = git(["tag", "--list", "orb-v*"]).split("\n").filter(Boolean);
+  const tags = git(["tag", "--list", "orb-v*"])
+    .split("\n")
+    .filter(Boolean);
 
   const stableTagName = latestStableOrbTag(tags)?.tag ?? null;
   const anyTagName = latestOrbTag(tags)?.tag ?? null;
@@ -32,14 +34,16 @@ function main() {
   }
 }
 
-function parseArgs(argv) {
-  const args = { json: false, output: null };
+type ParsedArgs = { json: boolean; output: string | null };
+
+function parseArgs(argv: readonly string[]): ParsedArgs {
+  const args: ParsedArgs = { json: false, output: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--json") {
       args.json = true;
     } else if (arg === "--output") {
-      args.output = argv[++index];
+      args.output = argv[++index]!;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -47,7 +51,7 @@ function parseArgs(argv) {
   return args;
 }
 
-function readCommits(revisionRange) {
+function readCommits(revisionRange: string): OrbReleaseCommit[] {
   const format = "%x1e%H%x1f%s%x1f%B";
   const logOutput = git(["log", "--reverse", "--no-merges", `--format=${format}`, revisionRange]);
   return logOutput
@@ -56,15 +60,17 @@ function readCommits(revisionRange) {
     .filter(Boolean)
     .map((entry) => {
       const [sha, subject, ...bodyParts] = entry.split("\x1f");
-      return { sha, subject: subject?.split("\n")[0] ?? "", body: bodyParts.join("\x1f"), files: readCommitFiles(sha) };
+      return { sha: sha!, subject: subject?.split("\n")[0] ?? "", body: bodyParts.join("\x1f"), files: readCommitFiles(sha!) };
     });
 }
 
-function readCommitFiles(sha) {
-  return git(["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).split("\n").filter(Boolean);
+function readCommitFiles(sha: string): string[] {
+  return git(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+    .split("\n")
+    .filter(Boolean);
 }
 
-function git(args) {
+function git(args: readonly string[]): string {
   return execFileSync("git", args, { encoding: "utf8", maxBuffer: 1024 * 1024 * 200 });
 }
 

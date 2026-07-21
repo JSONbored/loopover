@@ -2022,7 +2022,7 @@ export function changedPathsForGuardrail(
 }
 
 /**
- * Live premerge migrations/** collision recheck (#2550). `check-migrations.mjs` (CI) only validates against
+ * Live premerge migrations/** collision recheck (#2550). `check-migrations.ts` (CI) only validates against
  * THIS PR's own branch snapshot at the time CI ran — it can never see a sibling PR that merged a
  * same-numbered migration file to `baseRef` in the meantime. This does the live check right before the
  * merge-decision moment: fetch the base branch's CURRENT migration filenames, drop any filename THIS PR's
@@ -2031,7 +2031,7 @@ export function changedPathsForGuardrail(
  * this PR merges), union what's left with THIS PR's own new migration filenames (the live tree never
  * contains this PR's own not-yet-merged files, so checking main alone could never detect a collision from
  * this PR's perspective — the union is load-bearing, not optional), then run the SAME collision-detection
- * function scripts/check-migrations.mjs uses.
+ * function scripts/check-migrations.ts uses.
  *
  * Deliberately scoped to a collision involving THIS PR's own migration number(s) only (via `prNumbers`) — a
  * pre-existing collision between two OTHER already-merged files (which would mean `main` itself is already

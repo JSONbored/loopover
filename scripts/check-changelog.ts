@@ -5,6 +5,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
+type ChangelogCheck = {
+  label: string;
+  output: string;
+  command: string;
+  selector: string;
+  runner: () => string;
+};
+
 function main() {
   const requestedChecks = new Set(process.argv.slice(2));
   const validArgs = new Set(["--root", "--mcp"]);
@@ -18,7 +26,7 @@ function main() {
   const tempDir = mkdtempSync(join(tmpdir(), "loopover-changelog-"));
 
   try {
-    const checks = [
+    const checks: ChangelogCheck[] = [
       {
         label: "root changelog",
         output: "CHANGELOG.md",
@@ -39,13 +47,17 @@ function main() {
           const generatedPath = join(tempDir, "MCP_CHANGELOG.md");
           const version = JSON.parse(readFileSync("packages/loopover-mcp/package.json", "utf8")).version;
           writeFileSync(generatedPath, readFileSync("packages/loopover-mcp/CHANGELOG.md", "utf8"));
-          run(["node", "scripts/generate-mcp-changelog.mjs", "--output", generatedPath, "--version", version], "MCP package changelog");
+          // generate-mcp-changelog.ts imports mcp-release-core.ts directly, so it needs tsx (not plain node) to
+          // resolve that local .ts import -- same reason test/unit/check-schema-drift-script.test.ts spawns tsx
+          // directly via node_modules/.bin rather than through an npm script.
+          const tsxBin = join(process.cwd(), "node_modules", ".bin", "tsx");
+          run([tsxBin, "scripts/generate-mcp-changelog.ts", "--output", generatedPath, "--version", version], "MCP package changelog");
           return generatedPath;
         },
       },
     ].filter((check) => requestedChecks.size === 0 || requestedChecks.has(check.selector));
 
-    const failures = [];
+    const failures: string[] = [];
     for (const check of checks) {
       const generatedPath = check.runner();
       const expected = readFileSync(generatedPath, "utf8");
@@ -68,20 +80,24 @@ function main() {
  *  injectable purely for testability; every real caller uses the defaults. When the command cannot even
  *  launch (`status` is null, e.g. the binary is not on PATH), `result.error` holds the actual ENOENT/EACCES
  *  reason -- surface its message (#7772) instead of the generic `${label} failed`, which wastes debugging time. */
-export function run(command, label, { spawn = spawnSync, onFailure = defaultOnFailure } = {}) {
-  const result = spawn(command[0], command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+export function run(
+  command: readonly string[],
+  label: string,
+  { spawn = spawnSync, onFailure = defaultOnFailure }: { spawn?: typeof spawnSync; onFailure?: (message: string, code: number) => void } = {},
+): void {
+  const result = spawn(command[0]!, command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.status !== 0) {
     const message = result.stderr || result.stdout || (result.error ? `${label}: ${result.error.message}\n` : `${label} failed`);
     onFailure(message, result.status ?? 1);
   }
 }
 
-function defaultOnFailure(message, code) {
+function defaultOnFailure(message: string, code: number): never {
   process.stderr.write(message);
   process.exit(code);
 }
 
-function normalize(value) {
+function normalize(value: string): string {
   return value.replace(/\r\n/g, "\n").trimEnd();
 }
 

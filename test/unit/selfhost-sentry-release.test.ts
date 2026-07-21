@@ -71,7 +71,7 @@ describe("self-host Sentry release wiring", () => {
     );
 
     for (const path of [
-      "scripts/build-selfhost.mjs",
+      "scripts/build-selfhost.ts",
       "Dockerfile",
       ".github/workflows/selfhost.yml",
     ]) {

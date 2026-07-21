@@ -5,7 +5,7 @@
 // missing one in a composite action is a silent hard failure at actual run time, not a parse-time
 // error).
 //
-// actionlint (this repo's usual workflow linter, scripts/actionlint.mjs) does NOT support action.yml
+// actionlint (this repo's usual workflow linter, scripts/actionlint.ts) does NOT support action.yml
 // files at all -- confirmed this is a genuine, long-standing upstream limitation
 // (github.com/rhysd/actionlint/issues/46 and /issues/401, open since 2021), not a configuration gap on
 // this repo's side: even the raw actionlint binary, invoked directly with no wrapper, treats any file

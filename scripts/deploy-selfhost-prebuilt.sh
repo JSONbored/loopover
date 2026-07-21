@@ -36,7 +36,7 @@ run_node_build() {
     -v "$PWD:/work" \
     -w /work \
     "$NODE_IMAGE" \
-    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node scripts/build-selfhost.mjs --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
+    sh -lc 'npm ci --ignore-scripts && npm --workspace @loopover/engine run build && node --experimental-strip-types scripts/build-selfhost.ts --all && node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts'
 }
 
 run_sentry_upload() {

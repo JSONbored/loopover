@@ -2,13 +2,13 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// tsx, not plain node: check-miner-package.mjs imports forbidden-content.ts directly, so plain node can't
+// tsx, not plain node: check-miner-package.ts imports forbidden-content.ts directly, so plain node can't
 // resolve that local .ts import.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
 function runChecker(env: Record<string, string | undefined> = {}): { status: number; out: string } {
   try {
-    const stdout = execFileSync(TSX_BIN, ["scripts/check-miner-package.mjs"], {
+    const stdout = execFileSync(TSX_BIN, ["scripts/check-miner-package.ts"], {
       encoding: "utf8",
       env: { ...process.env, ...env },
     });

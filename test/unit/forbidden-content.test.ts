@@ -5,17 +5,17 @@ import { describe, expect, it } from "vitest";
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content.js";
 
 // forbidden-content.ts calls itself the single source of truth for the packaged secret-shape detector, but
-// nothing enforced it: check-mcp-package.mjs re-declared the regex as its own local constant and the two could
+// nothing enforced it: check-mcp-package.ts re-declared the regex as its own local constant and the two could
 // drift apart unnoticed (#6290). These assertions pin both halves of the claim -- the structural one (each
 // checker imports the constant rather than owning a copy) and the behavioral one (each checker actually rejects
 // what the shared detector matches).
-const PACKAGE_CHECKERS = ["scripts/check-miner-package.mjs", "scripts/check-mcp-package.mjs"];
+const PACKAGE_CHECKERS = ["scripts/check-miner-package.ts", "scripts/check-mcp-package.ts"];
 
 // A minimal file list that passes each checker's path/allowlist/required-file guards, so the run reaches the
 // shared secret-content read. Mirrors the file lists each checker's own "rejects secret-like content" test uses.
 const REACHABLE_FILES: Record<string, string[]> = {
-  "scripts/check-miner-package.mjs": ["package.json", "bin/loopover-miner.js", "lib/cli.js"],
-  "scripts/check-mcp-package.mjs": ["package.json", "bin/loopover-mcp.js"],
+  "scripts/check-miner-package.ts": ["package.json", "bin/loopover-miner.js", "lib/cli.js"],
+  "scripts/check-mcp-package.ts": ["package.json", "bin/loopover-mcp.js"],
 };
 
 // Assembled from fragments so this file never itself contains a credential-shaped literal -- the same
@@ -25,7 +25,7 @@ const SECRET_SHAPED_PROBE = ["PROBE", "_", "SECRET", "=", "value"].join("");
 // Run a checker as a subprocess (never import it): both scripts run `npm pack` at import time, and neither has a
 // .d.mts, so importing them from TS would also break the typecheck gate. Their env seams let a single file drive
 // the whole file list + content. Run via tsx, not plain node: both scripts import forbidden-content.ts (and
-// check-mcp-package.mjs also imports mcp-package-allowlist.ts) directly, so plain node can't resolve those
+// check-mcp-package.ts also imports mcp-package-allowlist.ts) directly, so plain node can't resolve those
 // local .ts imports.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
@@ -68,10 +68,10 @@ describe("FORBIDDEN_CONTENT is the single source of truth (#6290)", () => {
   // Scoped to the MCP checker: the miner one layers required-file / lib-artifact / docs guards on top of a
   // minimal file list, so a clean-content pass there would be asserting its allowlist rather than the shared
   // detector. The reject case above already proves the miner checker runs content through the shared constant.
-  it("scripts/check-mcp-package.mjs accepts content the shared detector leaves alone", () => {
+  it("scripts/check-mcp-package.ts accepts content the shared detector leaves alone", () => {
     const result = runChecker(
-      "scripts/check-mcp-package.mjs",
-      REACHABLE_FILES["scripts/check-mcp-package.mjs"]!,
+      "scripts/check-mcp-package.ts",
+      REACHABLE_FILES["scripts/check-mcp-package.ts"]!,
       "export const answer = 42;",
     );
     expect(result.status).toBe(0);

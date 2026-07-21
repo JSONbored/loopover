@@ -7,7 +7,7 @@
 // in ./pixel-diff — depends on Node's `Buffer` and a native-leaning image-decode step the Cloudflare Workers
 // runtime doesn't guarantee. `test/unit/worker-entry-boundary.test.ts` enforces the same boundary here as it
 // does for the pixel-diff module. `capture.ts` (Worker-reachable) imports ONLY this file; never the self-host
-// module directly. `scripts/build-selfhost.mjs`'s esbuild plugin swaps this exact specifier for a real
+// module directly. `scripts/build-selfhost.ts`'s esbuild plugin swaps this exact specifier for a real
 // implementation when bundling the self-host entry (`src/server.ts`) — the same module-substitution pattern
 // already used for pixel-diff and `@cloudflare/puppeteer` in that same build. The Worker's own (wrangler)
 // bundle never applies that swap, so hosted mode always uses this no-op — zero behavior change, zero added

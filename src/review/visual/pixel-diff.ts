@@ -5,7 +5,7 @@
 // guarantee — that's why `test/unit/worker-entry-boundary.test.ts` forbids importing (or even naming, in
 // worker-reachable file content) that module from the Worker entry (`src/index.ts`). This file is the seam:
 // `capture.ts` (which IS Worker-reachable) imports ONLY this file, never the self-host module directly.
-// `scripts/build-selfhost.mjs`'s esbuild plugin swaps this exact specifier for a real implementation when
+// `scripts/build-selfhost.ts`'s esbuild plugin swaps this exact specifier for a real implementation when
 // bundling the self-host entry (`src/server.ts`) — the SAME module-substitution pattern already used for
 // `@cloudflare/puppeteer` in that same build. The Worker's own (wrangler) bundle never applies that swap, so
 // hosted mode always uses this no-op — zero behavior change, zero added cost, until a Workers-compatible

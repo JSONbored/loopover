@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-// @ts-expect-error -- plain .mjs script with no type declarations
-import { run } from "../../scripts/check-changelog.mjs";
+import { run } from "../../scripts/check-changelog.js";
 
 /**
  * #7772: when a command can't even launch (binary missing from PATH), spawnSync returns `status: null` with

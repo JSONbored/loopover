@@ -79,7 +79,7 @@ describe("self-host observability trace config", () => {
 
   it("ships an operator smoke probe that verifies collector to Tempo retrieval", () => {
     const script = readFileSync(
-      join(process.cwd(), "scripts/smoke-observability-traces.mjs"),
+      join(process.cwd(), "scripts/smoke-observability-traces.ts"),
       "utf8",
     );
 
@@ -91,7 +91,7 @@ describe("self-host observability trace config", () => {
 
   it("ships an operator smoke probe that verifies collector-to-Prometheus-exporter metrics retrieval, plus the app's own /metrics shape (2026-07 fix)", () => {
     const script = readFileSync(
-      join(process.cwd(), "scripts/smoke-observability-metrics.mjs"),
+      join(process.cwd(), "scripts/smoke-observability-metrics.ts"),
       "utf8",
     );
 
@@ -103,7 +103,7 @@ describe("self-host observability trace config", () => {
 
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8"));
     expect(packageJson.scripts["test:smoke:observability:metrics"]).toBe(
-      "node scripts/smoke-observability-metrics.mjs",
+      "node --experimental-strip-types scripts/smoke-observability-metrics.ts",
     );
   });
 

@@ -1,6 +1,6 @@
 // Single source of truth for the miner package's secret-shape detector.
 //
-// scripts/check-miner-package.mjs + scripts/check-mcp-package.mjs use this to reject any packed miner/mcp file
+// scripts/check-miner-package.ts + scripts/check-mcp-package.ts use this to reject any packed miner/mcp file
 // that embeds a secret-like value, and the AMS MCP contract test (test/unit/miner-mcp-contract.test.ts) reuses
 // the SAME pattern to assert no MCP tool response ever leaks one — importing it here rather than hand-duplicating
 // the regex keeps every consumer byte-for-byte in sync instead of relying on manual vigilance.

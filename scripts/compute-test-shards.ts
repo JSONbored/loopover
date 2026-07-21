@@ -19,7 +19,7 @@
 // rather than risk it: a hard failure here (a broken CI step everyone sees) is a wildly better outcome
 // than a silent one (missing coverage nobody notices until something ships broken).
 
-import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const TEST_ROOT = "test";
@@ -30,8 +30,8 @@ const timingArg = process.argv.find((a) => a.startsWith("--timing="))?.split("="
 const outputArg = process.argv.find((a) => a.startsWith("--output="))?.split("=")[1];
 if (!outputArg) throw new Error("--output=<path> is required");
 
-function discoverTestFiles(dir) {
-  const results = [];
+function discoverTestFiles(dir: string): string[] {
+  const results: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -44,20 +44,22 @@ function discoverTestFiles(dir) {
   return results;
 }
 
-function loadTimingData(path) {
+function loadTimingData(path: string | undefined): Record<string, number> {
   if (!path || !existsSync(path)) return {};
   const parsed = JSON.parse(readFileSync(path, "utf8"));
   return parsed.averageSecondsByFile ?? {};
 }
 
-function median(values) {
+function median(values: readonly number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
-function packShards(files, durationByFile, shardCount) {
+type Shard = { index: number; files: string[]; total: number };
+
+function packShards(files: readonly string[], durationByFile: Record<string, number>, shardCount: number): Shard[] {
   // New/untracked files (no historical row -- a file added since the last timing refresh, or the
   // refresh workflow hasn't run yet at all) get the median of known files' durations rather than 0:
   // treating an unknown file as free would let a burst of newly-added heavy test files land in the
@@ -68,11 +70,9 @@ function packShards(files, durationByFile, shardCount) {
   const knownDurations = Object.values(durationByFile);
   const fallback = median(knownDurations);
 
-  const weighted = files
-    .map((file) => ({ file, duration: durationByFile[file] ?? fallback }))
-    .sort((a, b) => b.duration - a.duration);
+  const weighted = files.map((file) => ({ file, duration: durationByFile[file] ?? fallback })).sort((a, b) => b.duration - a.duration);
 
-  const shards = Array.from({ length: shardCount }, (_unused, index) => ({ index, files: [], total: 0 }));
+  const shards: Shard[] = Array.from({ length: shardCount }, (_unused, index) => ({ index, files: [], total: 0 }));
   // Picking the lightest shard via a plain reduce always resolves ties in favor of the FIRST shard
   // (shard.total < min.total is never true between two equal totals, so the running minimum never
   // moves off its starting candidate) -- harmless when durations vary, but catastrophic whenever many
@@ -85,9 +85,9 @@ function packShards(files, durationByFile, shardCount) {
   // across all shards instead, regardless of whether the tied weight happens to be zero or not.
   let tiebreakStart = 0;
   for (const { file, duration } of weighted) {
-    let lightest = shards[tiebreakStart];
+    let lightest = shards[tiebreakStart]!;
     for (let offset = 1; offset < shardCount; offset += 1) {
-      const candidate = shards[(tiebreakStart + offset) % shardCount];
+      const candidate = shards[(tiebreakStart + offset) % shardCount]!;
       if (candidate.total < lightest.total) lightest = candidate;
     }
     lightest.files.push(file);
@@ -97,10 +97,10 @@ function packShards(files, durationByFile, shardCount) {
   return shards;
 }
 
-function assertInvariant(files, shards) {
+function assertInvariant(files: readonly string[], shards: readonly Shard[]): void {
   const original = new Set(files);
-  const seen = new Set();
-  const duplicates = [];
+  const seen = new Set<string>();
+  const duplicates: string[] = [];
   for (const shard of shards) {
     for (const file of shard.files) {
       if (seen.has(file)) duplicates.push(file);
@@ -132,7 +132,7 @@ const durationByFile = loadTimingData(timingArg);
 const shards = packShards(files, durationByFile, shardsArg);
 assertInvariant(files, shards);
 
-const assignment = {};
+const assignment: Record<string, string[]> = {};
 shards.forEach((shard, index) => {
   assignment[String(index + 1)] = shard.files;
 });

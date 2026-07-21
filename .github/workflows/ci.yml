@@ -160,14 +160,14 @@ jobs:
               # and the pack check only inspects the tarball. Root src/ cannot
               # affect it, so it is intentionally NOT a trigger here.
               - 'packages/loopover-mcp/**'
-              - 'scripts/check-mcp-package.mjs'
+              - 'scripts/check-mcp-package.ts'
               - 'package-lock.json'
             engine:
               - 'packages/loopover-engine/**'
               - 'package-lock.json'
             miner:
               - 'packages/loopover-miner/**'
-              - 'scripts/check-miner-package.mjs'
+              - 'scripts/check-miner-package.ts'
               - 'package-lock.json'
             # No dedicated build/pack script (unlike mcp/engine/miner above) -- discovery-index is a normal
             # vitest-covered workspace package (packages/discovery-index/src/**/*.ts is in vitest.config.ts's
@@ -217,7 +217,7 @@ jobs:
               - 'control-plane/**'
               - '.github/workflows/ci.yml'
             # Both miner-package test files are self-contained w.r.t. root src/**, the same trust boundary as
-            # mcpCliHarness above: check-miner-package.test.ts only spawns scripts/check-miner-package.mjs as a
+            # mcpCliHarness above: check-miner-package.test.ts only spawns scripts/check-miner-package.ts as a
             # real subprocess (node:child_process + vitest, nothing else), and miner-calibration-types.test.ts
             # only imports the scaffolded packages/loopover-miner/lib/calibration.ts -- neither ever loads
             # root src/ in-process. Mirrors mcpCliHarness's filter shape for the same reason (tooling/config
@@ -927,7 +927,7 @@ jobs:
       # across every push-to-main run). key never actually matches (no save ever uses this literal
       # string); it exists only so the step always falls through to the restore-keys prefix match,
       # picking whatever the most recent refresh wrote. A cache MISS here is always safe: see
-      # scripts/compute-test-shards.mjs's fallback -- it splits evenly across shards when no timing
+      # scripts/compute-test-shards.ts's fallback -- it splits evenly across shards when no timing
       # data is available for a file (or none at all), the same balance vitest's own --shard already
       # gives today, so this can only make shard balance better than today's baseline, never worse.
       - name: Restore test timing cache
@@ -1036,11 +1036,11 @@ jobs:
             # shards, every run sampled. Deliberately not applied to the scoped-selection branch above:
             # that file set isn't known until vitest resolves --changed itself, so a precomputed
             # assignment can't cover it without duplicating vitest's own dependency-graph resolution here.
-            # compute-test-shards.mjs enforces its own hard invariant (the union of all 3 shards' files
+            # compute-test-shards.ts enforces its own hard invariant (the union of all 3 shards' files
             # must exactly equal the discovered file set, no file missing or duplicated) and refuses to
             # write output at all if that's ever violated, so a bug here fails this step loudly rather
             # than silently dropping a test file from CI.
-            node scripts/compute-test-shards.mjs --shards=3 --timing=test-timing.json --output=shard-assignment.json
+            node --experimental-strip-types scripts/compute-test-shards.ts --shards=3 --timing=test-timing.json --output=shard-assignment.json
             mapfile -t SHARD_FILES < <(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")
             npm run test:coverage -- --maxWorkers=4 "${SHARD_FILES[@]}" --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
           fi

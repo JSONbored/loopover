@@ -202,8 +202,8 @@ describe("Codecov policy", () => {
     expect(vitestConfig).not.toMatch(/review-enrichment\/src\/analyzers\/codeowners\.ts/);
 
     const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
-    expect(rootPkg.scripts["rees:coverage"]).toBe("node scripts/rees-coverage.mjs");
-    const reesCoverageScript = readFileSync("scripts/rees-coverage.mjs", "utf8");
+    expect(rootPkg.scripts["rees:coverage"]).toBe("node --experimental-strip-types scripts/rees-coverage.ts");
+    const reesCoverageScript = readFileSync("scripts/rees-coverage.ts", "utf8");
     expect(reesCoverageScript).toContain("c8");
     expect(reesCoverageScript).toContain("review-enrichment");
     expect(reesCoverageScript).toContain("coverage");

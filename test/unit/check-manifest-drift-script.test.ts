@@ -5,7 +5,7 @@ import { checkManifestDrift } from "../../scripts/check-manifest-drift.js";
 import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML } from "../../src/config/loopover-repo-focus-manifest";
 
 // The script imports src/config/loopover-repo-focus-manifest.ts (a .ts module), so -- like
-// check-schema-drift.ts, check-migrations.mjs, and check-openapi-settings-parity.ts -- it must run via
+// check-schema-drift.ts, check-migrations.ts, and check-openapi-settings-parity.ts -- it must run via
 // `tsx`, the same binary package.json's manifest:drift-check uses, rather than plain `node`.
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 

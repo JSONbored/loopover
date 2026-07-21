@@ -104,7 +104,7 @@ docker compose up -d loopover`}
 There is no dedicated rollback command. Roll back by re-running `scripts/deploy-selfhost-image.sh` pinned to the prior image tag or digest (or `scripts/deploy-selfhost-prebuilt.sh` against an older checkout) — the same script you upgrade with, pointed backward.
 
 <Callout variant="warn" title="Migrations are forward-only">
-  This repo has no down-migration convention (`scripts/check-migrations.mjs` and `migrations/` only
+  This repo has no down-migration convention (`scripts/check-migrations.ts` and `migrations/` only
   ever add forward). If a migration already ran forward before you need to roll back, reverting the
   app image does not revert the schema — the rolled-back code now runs against a newer schema than
   it expects. Keep backups and read release notes for migration changes before upgrading a live

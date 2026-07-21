@@ -16,7 +16,7 @@ import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist.js";
 
 export const RELEASE_TAG_PATTERN = /^mcp-v(\d+)\.(\d+)\.(\d+)$/;
 
-// Canonical allowlist lives in mcp-package-allowlist.ts (shared with check-mcp-package.mjs).
+// Canonical allowlist lives in mcp-package-allowlist.ts (shared with check-mcp-package.ts).
 export { MCP_PACKAGE_ALLOWED_FILE_PATTERNS };
 const ALLOWED_FILE_PATTERNS = MCP_PACKAGE_ALLOWED_FILE_PATTERNS;
 const FORBIDDEN_PATH_PATTERN = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;

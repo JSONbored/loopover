@@ -135,7 +135,7 @@ jobs:
         run: npm run build --workspace @loopover/engine
 
       - name: Build self-host bundle for release
-        run: node scripts/build-selfhost.mjs --all
+        run: node --experimental-strip-types scripts/build-selfhost.ts --all
 
       - name: Validate release source map
         run: node --experimental-strip-types scripts/validate-selfhost-sourcemap.ts

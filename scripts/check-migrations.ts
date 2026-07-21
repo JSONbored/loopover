@@ -30,14 +30,14 @@
 //     merged independently from the same base and were both applied to production before the collision
 //     surfaced; bare ADD COLUMN statements, same grandfather reasoning as 0074/0090.
 import { readdirSync, readFileSync } from "node:fs";
-import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.ts";
-import { detectColumnCollisions } from "../src/db/migration-column-extraction.ts";
+import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../src/db/migration-collisions.js";
+import { detectColumnCollisions } from "../src/db/migration-column-extraction.js";
 
 const DIR = process.env.CHECK_MIGRATIONS_DIR || "migrations";
 const NAME = MIGRATION_FILENAME_PATTERN;
 const KNOWN_DUPLICATES = KNOWN_MIGRATION_DUPLICATES;
 
-const fail = (message) => {
+const fail = (message: string): never => {
   process.stderr.write(`check-migrations: ${message}\n`);
   process.exit(1);
 };
@@ -51,7 +51,7 @@ const fail = (message) => {
 // `BEGIN`/`END` and mid-statement words don't trip.
 // The anchored patterns use a variable-length lookbehind (`(?<=(?:^|;)\s*)`, supported by V8/Node) so the
 // match starts on the keyword itself — reported line numbers point at the statement, not the preceding `;`.
-const D1_FORBIDDEN = [
+const D1_FORBIDDEN: Array<[RegExp, string]> = [
   [/create\s+(?:temp(?:orary)?\b|(?:unique\s+)?(?:table|index|view|trigger)\s+(?:if\s+not\s+exists\s+)?temp\s*\.)/gi, "temporary object (CREATE TEMP/TEMPORARY or temp schema) — D1 rejects temp tables/triggers/views/indexes; rewrite without one (e.g. DELETE the losers, then UPDATE the survivors)"],
   [/(?<=(?:^|;)\s*)attach\b/gi, "ATTACH is not supported on D1"],
   [/(?<=(?:^|;)\s*)detach\b/gi, "DETACH is not supported on D1"],
@@ -73,7 +73,7 @@ const D1_FORBIDDEN = [
 // by a `.`; an ordinary name or value never is. Peeking past the closing quote for one, uniformly across
 // all four quoting styles, distinguishes "used as a schema qualifier" from "used as a name or value"
 // without a real SQL parser.
-function cleanSql(sql) {
+function cleanSql(sql: string): string {
   let out = "";
   for (let i = 0; i < sql.length; ) {
     const c = sql[i];
@@ -117,7 +117,7 @@ function cleanSql(sql) {
         j += 1;
       }
       let k = j + 1;
-      while (k < sql.length && /\s/.test(sql[k])) k += 1;
+      while (k < sql.length && /\s/.test(sql[k]!)) k += 1;
       const usedAsSchemaQualifier = k < sql.length && sql[k] === ".";
       out += " ";
       for (const ch of content) out += usedAsSchemaQualifier ? ch : ch === "\n" ? "\n" : " ";
@@ -141,14 +141,16 @@ if (malformed.length > 0) {
   fail(`migration filenames must be NNNN_snake_case.sql (4-digit zero-padded number): ${malformed.join(", ")}`);
 }
 
-const filesByNumber = new Map();
+// Every file is guaranteed NAME-conforming past the malformed check above (fail() exits the process), so
+// extractMigrationNumber's null case -- reserved for a non-conforming filename -- can't occur here.
+const filesByNumber = new Map<number, string[]>();
 for (const file of files) {
-  const number = extractMigrationNumber(file);
+  const number = extractMigrationNumber(file)!;
   if (!filesByNumber.has(number)) filesByNumber.set(number, []);
-  filesByNumber.get(number).push(file);
+  filesByNumber.get(number)!.push(file);
 }
 
-const nextFree = () => {
+const nextFree = (): string => {
   let n = Math.max(...filesByNumber.keys()) + 1;
   while (filesByNumber.has(n)) n += 1;
   return String(n).padStart(4, "0");
@@ -159,20 +161,20 @@ const nextFree = () => {
 // is the identical import, so CI and the Worker can never silently disagree about what counts as a collision.
 const collisions = detectMigrationCollisions(files, KNOWN_DUPLICATES);
 if (collisions.length > 0) {
-  const { paddedNumber, files: group } = collisions[0];
+  const { paddedNumber, files: group } = collisions[0]!;
   fail(`duplicate migration number ${paddedNumber}: ${group.map((f) => `"${f}"`).join(", ")}. Two PRs grabbed the same number — renumber the newest to the next free number (${nextFree()}).`);
 }
 
 const numbers = [...filesByNumber.keys()].sort((a, b) => a - b);
 for (let i = 1; i < numbers.length; i += 1) {
-  if (numbers[i] !== numbers[i - 1] + 1) {
+  if (numbers[i] !== numbers[i - 1]! + 1) {
     const prev = String(numbers[i - 1]).padStart(4, "0");
     const curr = String(numbers[i]).padStart(4, "0");
     fail(`migration number gap: ${prev} -> ${curr}. Migrations must be a contiguous sequence (no skipped numbers).`);
   }
 }
 
-const sqlViolations = [];
+const sqlViolations: string[] = [];
 for (const file of files) {
   const cleaned = cleanSql(readFileSync(`${DIR}/${file}`, "utf8"));
   for (const [re, why] of D1_FORBIDDEN) {
@@ -198,9 +200,9 @@ if (sqlViolations.length > 0) {
 // which detectColumnCollisions requires so a documented DROP TABLE + CREATE TABLE recreate (e.g.
 // migrations/0060_orb_fleet_collector.sql's orb_signals) correctly clears the table it replaces instead of
 // reading as a collision with it.
-const columnCollisions = detectColumnCollisions(files.map((file) => [file, readFileSync(`${DIR}/${file}`, "utf8")]));
+const columnCollisions = detectColumnCollisions(files.map((file): [string, string] => [file, readFileSync(`${DIR}/${file}`, "utf8")]));
 if (columnCollisions.length > 0) {
-  const { table, column, files: group } = columnCollisions[0];
+  const { table, column, files: group } = columnCollisions[0]!;
   fail(
     `duplicate column ${table}.${column} defined by more than one migration: ${group.map((f) => `"${f}"`).join(", ")}. Two migrations independently added the same column under different numbers — this passes CI and shows a clean merge state, but fails at "wrangler d1 migrations apply" deploy time. Rename or remove the newer migration's column (or confirm the table is DROPped and recreated before it).`,
   );

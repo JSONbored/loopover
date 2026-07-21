@@ -1,5 +1,5 @@
 // Self-host replacement for src/review/visual/pixel-diff.ts (#3674). Swapped in by
-// scripts/build-selfhost.mjs's esbuild plugin, the same mechanism used for @cloudflare/puppeteer — this
+// scripts/build-selfhost.ts's esbuild plugin, the same mechanism used for @cloudflare/puppeteer — this
 // file is only ever bundled into dist/server.mjs, never the Worker entry, so it's safe to depend on
 // pixelmatch/pngjs (Node `Buffer` + PNG decode) here. Unlike puppeteer-core, pixelmatch/pngjs are
 // unconditional package.json dependencies (no INSTALL_VISUAL_REVIEW-style opt-in), so a plain static

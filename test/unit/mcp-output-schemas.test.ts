@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
-import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment } from "../../src/db/repositories";
+import { persistSignalSnapshot, upsertBounty, upsertIssueFromGitHub, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, updatePullRequestSlopAssessment, persistUpstreamRulesetSnapshot } from "../../src/db/repositories";
 import type { AuthIdentity } from "../../src/auth/security";
 import { LoopoverMcp } from "../../src/mcp/server";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
@@ -36,6 +36,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_registry_changes",
   "loopover_get_registry_snapshot",
   "loopover_get_upstream_drift",
+  "loopover_get_upstream_ruleset",
   "loopover_local_status",
   "loopover_remediation_plan",
   "loopover_explain_score_breakdown",
@@ -142,6 +143,10 @@ describe("MCP output schema discovery", () => {
     const registrySnapshot = byName.get("loopover_get_registry_snapshot");
     const registrySnapshotProps = Object.keys((registrySnapshot?.outputSchema?.properties ?? {}) as Record<string, unknown>);
     expect(registrySnapshotProps).toEqual(expect.arrayContaining(["id", "repoCount", "repositories", "error"]));
+
+    const upstreamRuleset = byName.get("loopover_get_upstream_ruleset");
+    const upstreamRulesetProps = Object.keys((upstreamRuleset?.outputSchema?.properties ?? {}) as Record<string, unknown>);
+    expect(upstreamRulesetProps).toEqual(expect.arrayContaining(["id", "activeModel", "registryRepoCount", "payload", "error"]));
   });
 
   it("preserves the full tool inventory while adding output schemas", async () => {
@@ -215,6 +220,27 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const result = await client.callTool({ name: "loopover_get_registry_snapshot", arguments: {} });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({ error: "registry_snapshot_not_found" });
+  });
+
+  it("loopover_get_upstream_ruleset returns the latest ruleset when one exists (#7807)", async () => {
+    const env = createTestEnv();
+    await seedUpstreamRulesetSnapshot(env);
+    const { client } = await connectTestClient(env);
+    const result = await client.callTool({ name: "loopover_get_upstream_ruleset", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      id: "fixture-upstream-ruleset",
+      activeModel: "pending_saturation_model",
+      registryRepoCount: 1,
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("upstream_ruleset_not_found");
+  });
+
+  it("loopover_get_upstream_ruleset returns a normal not-found result when empty (#7807)", async () => {
+    const { client } = await connectTestClient(createTestEnv());
+    const result = await client.callTool({ name: "loopover_get_upstream_ruleset", arguments: {} });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ error: "upstream_ruleset_not_found" });
   });
 
   it("loopover_get_repo_context returns validated structured content", async () => {
@@ -682,7 +708,7 @@ describe("MCP output schemas do not declare private financial fields", () => {
   it("structured content from public-safe tools never includes redacted financial keys", async () => {
     const { client } = await connectTestClient();
 
-    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_registry_changes", "loopover_get_registry_snapshot"]) {
+    for (const name of ["loopover_local_status", "loopover_get_upstream_drift", "loopover_get_upstream_ruleset", "loopover_get_registry_changes", "loopover_get_registry_snapshot"]) {
       const result = await client.callTool({ name, arguments: {} });
       const serialized = JSON.stringify(result.structuredContent ?? {});
       expect(serialized, `tool "${name}" structured content must not leak financial fields`).not.toMatch(
@@ -717,6 +743,29 @@ async function seedRegistryChangeSnapshots(env: Env) {
       "2026-05-25T00:00:00.000Z",
     ),
   );
+}
+
+async function seedUpstreamRulesetSnapshot(env: Env) {
+  await persistUpstreamRulesetSnapshot(env, {
+    id: "fixture-upstream-ruleset",
+    sourceRepo: "entrius/gittensor",
+    sourceRef: "test",
+    commitSha: "fixture-commit",
+    sourceSnapshotIds: [],
+    activeModel: "pending_saturation_model",
+    registryRepoCount: 1,
+    totalEmissionShare: 0.01,
+    semanticHash: "fixture-semantic-hash",
+    payload: {
+      registry: {
+        repoCount: 1,
+        totalEmissionShare: 0.01,
+        repositories: [],
+      },
+    },
+    warnings: [],
+    generatedAt: "2026-05-30T00:00:00.000Z",
+  });
 }
 
 function repoOutcomePatternsPayload(repoFullName: string, generatedAt: string) {

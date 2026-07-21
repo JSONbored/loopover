@@ -779,6 +779,26 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7807: public upstream ruleset snapshot (raw current ruleset, not the drift report). No auth.
+    if (request.url === "/v1/upstream/ruleset" && request.method === "GET") {
+      response.end(
+        JSON.stringify({
+          id: "fixture-ruleset",
+          sourceRepo: "entrius/gittensor",
+          sourceRef: "test",
+          commitSha: "fixture-commit",
+          sourceSnapshotIds: [],
+          activeModel: "pending_saturation_model",
+          registryRepoCount: 1,
+          totalEmissionShare: 0.01,
+          semanticHash: "fixture-semantic-hash",
+          payload: { registry: { repoCount: 1 } },
+          warnings: [],
+          generatedAt: "2026-05-30T00:00:00.000Z",
+        }),
+      );
+      return;
+    }
     // #7803: public registry snapshot (raw current snapshot, not a diff). No auth.
     if (request.url === "/v1/registry/snapshot" && request.method === "GET") {
       response.end(

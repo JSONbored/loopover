@@ -183,6 +183,22 @@ the existing X pattern not invent a new one," etc.):**
   acting — don't assume it will also read this skill file, the repo's CLAUDE.md, or common sense
   about the file type.
 
+**Reuse-existing-pattern is mandatory, not implied, whenever a real precedent exists (maintainer's
+own words, 2026-07-21: "gittensor miners are lazy and don't care, so we need to be extremely clear
+about what's wanted/needed").** If the codebase already has an analogous implementation (a sibling
+`vite-*-api.ts` plugin, an existing alerting integration, an existing driver-factory shape, an
+existing CLI command family), the issue must name the *exact* file to mirror as a leading, standalone
+`> ⚠️ Required pattern` callout — not buried in prose Context — and must state explicitly what does
+NOT satisfy the issue (a differently-shaped implementation, a second/parallel mechanism, an
+unspecified choice among multiple plausible artifacts). **What this broke once already:** a batch of
+issues re-labeled contributor-eligible on 2026-07-21 had their labels flipped but their body text
+left saying "maintainer-only" verbatim in the footer, and one issue's own Deliverables left the
+actual artifact ambiguous ("a CLI command, MCP tool, or miner-ui data source" — three different
+things, no pick). Caught only because the maintainer asked to re-verify rather than take it on faith.
+Every contributor-facing issue's *entire* body — not just its labels — has to be internally
+consistent and unambiguous, checked by rereading the finished body end-to-end before publishing, not
+assumed correct because the individual edits each seemed right in isolation.
+
 ## Labels
 
 - `gittensor:bug` — 0.05x multiplier. Bug fixes.

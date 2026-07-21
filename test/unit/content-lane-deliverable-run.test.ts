@@ -176,6 +176,42 @@ describe("runContentLaneDeliverableCheckForAdvisory (processor wiring, #content-
     expect(adv.findings).toEqual([]);
   });
 
+  // #7060-class gap: METAGRAPHED_LANE_SPEC (resolved via the LOOPOVER_REVIEW_REPOS allowlist fallback when no
+  // explicit `contentLane:` manifest config is present -- the real production path for JSONbored/metagraphed
+  // itself) now catches its ~120 "MCP execute: verify + wire SN*" issues even though their bodies name no
+  // literal registry path, via the issue title threaded through from fetchLinkedIssueFacts.
+  it("REGRESSION (#7060-class gap): pushes a finding for METAGRAPHED_LANE_SPEC's own issue-title family even when the body names no literal path", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_CONTENT_LANE: "true", LOOPOVER_REVIEW_REPOS: "JSONbored/metagraphed" });
+    stubIssueFetch({
+      title: "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+      body: "Fix that surface's entry in `registry/subnets/<slug>.json` and append a note. See https://zipcode.ai/openapi.json.",
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.endsWith("/issues/1275")) {
+        return Response.json({
+          number: 1275,
+          state: "open",
+          title: "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+          body: "Fix that surface's entry in `registry/subnets/<slug>.json` and append a note. See https://zipcode.ai/openapi.json.",
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    const adv = advisory();
+    await runContentLaneDeliverableCheckForAdvisory(env, {
+      mode: "live",
+      settings: blockMode,
+      advisory: adv,
+      repoFullName: "JSONbored/metagraphed",
+      pr,
+      files,
+      installationId: 1,
+    });
+    expect(adv.findings.map((f) => f.code)).toEqual(["content_lane_deliverable_missing"]);
+  });
+
   it("fetch_error from fetchLinkedIssueFacts (e.g. the issue request rejecting outright) degrades to no-op, never throws (fetchLinkedIssueFacts's own internal try/catch never rethrows)", async () => {
     const env = createTestEnv({ LOOPOVER_REVIEW_CONTENT_LANE: "true" });
     await seedContentLaneRepo(env);

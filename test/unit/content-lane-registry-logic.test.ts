@@ -578,6 +578,91 @@ describe("checkContentLaneDeliverable (generic, spec-driven — #content-lane-de
     expect(checkContentLaneDeliverable(entryOnlySpec, issueText, ["registry/subnets/foo.json"]).verdict).toBe("delivered");
     expect(checkContentLaneDeliverable(entryOnlySpec, issueText, ["tests/foo.test.mjs"]).verdict).toBe("missing");
   });
+
+  // #content-lane-deliverable follow-up (metagraphed #7060-class gap): the literal-path scan alone is BLIND
+  // to metagraphed's own ~120 "MCP execute: verify + wire SN*" issues, whose bodies write the registry path
+  // with a generic `<slug>` documentation placeholder rather than the real resolved filename — confirmed
+  // empirically against the actual body of issue #7060 (which names zero registry/subnets/*.json-shaped
+  // tokens at all, only an unrelated external `zipcode.ai/openapi.json` URL). issueTitleImpliesEntryPattern is
+  // a narrow, opt-in fallback signal for exactly this known title shape.
+  describe("checkContentLaneDeliverable — issueTitleImpliesEntryPattern fallback (#7060-class gap)", () => {
+    const titleFallbackSpec: RegistryLaneSpec = {
+      entryFilePattern: SUBNET_ENTRY_PATTERN,
+      providerFilePattern: FLAT_PROVIDER_PATTERN,
+      collectionField: "surfaces",
+      issueTitleImpliesEntryPattern: /^MCP execute:\s*verify\s*\+\s*wire\s+SN\d+/i,
+    };
+    // A realistic stand-in for issue #7060's actual body shape: a generic `<slug>` placeholder and an
+    // unrelated external URL, but no literal registry/subnets/*.json token anywhere.
+    const genericPlaceholderIssueText = [
+      "Confirm SN46 (Zipcode)'s callable surface(s) actually work end-to-end.",
+      "",
+      "## Deliverable",
+      "Fix that surface's entry in `registry/subnets/<slug>.json` and append a note.",
+      "See https://zipcode.ai/openapi.json for the schema.",
+    ].join("\n");
+
+    it("is 'missing' when the title matches the known family and the body's own literal-path scan finds nothing (the confirmed #7060 gap)", () => {
+      const result = checkContentLaneDeliverable(
+        titleFallbackSpec,
+        genericPlaceholderIssueText,
+        ["tests/sn46-call-subnet-surface-verify.test.mjs"],
+        "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+      );
+      expect(result.verdict).toBe("missing");
+      expect((result as { mentionedPath: string }).mentionedPath).toContain(SUBNET_ENTRY_PATTERN.source);
+    });
+
+    it("is 'delivered' when the title matches the known family and the PR touches a real registry entry file", () => {
+      const result = checkContentLaneDeliverable(
+        titleFallbackSpec,
+        genericPlaceholderIssueText,
+        ["registry/subnets/zipcode.json"],
+        "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+      );
+      expect(result).toEqual({ verdict: "delivered" });
+    });
+
+    it("stays not-applicable when the title does NOT match the family and the body names no literal path (no accidental over-triggering)", () => {
+      const result = checkContentLaneDeliverable(titleFallbackSpec, genericPlaceholderIssueText, ["tests/unrelated.test.mjs"], "Fix a flaky CI timeout");
+      expect(result).toEqual({ verdict: "not-applicable" });
+    });
+
+    it("ignores the title signal when the spec doesn't configure issueTitleImpliesEntryPattern (existing callers keep today's behavior verbatim)", () => {
+      const specWithoutTitlePattern: RegistryLaneSpec = { entryFilePattern: SUBNET_ENTRY_PATTERN, providerFilePattern: FLAT_PROVIDER_PATTERN, collectionField: "surfaces" };
+      const result = checkContentLaneDeliverable(
+        specWithoutTitlePattern,
+        genericPlaceholderIssueText,
+        ["tests/sn46-call-subnet-surface-verify.test.mjs"],
+        "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+      );
+      expect(result).toEqual({ verdict: "not-applicable" });
+    });
+
+    it("ignores the title signal when the caller omits issueTitle entirely (optional param, backward-compatible)", () => {
+      const result = checkContentLaneDeliverable(titleFallbackSpec, genericPlaceholderIssueText, ["tests/sn46-call-subnet-surface-verify.test.mjs"]);
+      expect(result).toEqual({ verdict: "not-applicable" });
+    });
+
+    it("prefers a literal path in the body over the title signal when BOTH are present (mentionedPath reflects the real path, not the title-fallback description)", () => {
+      const issueTextWithRealPath = "MCP execute: verify + wire SN46 (Zipcode). Add the surface to registry/subnets/zipcode.json.";
+      const result = checkContentLaneDeliverable(titleFallbackSpec, issueTextWithRealPath, ["tests/unrelated.test.mjs"], "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships");
+      expect(result).toEqual({ verdict: "missing", mentionedPath: "registry/subnets/zipcode.json" });
+    });
+
+    // Real-world regression: the ACTUAL production spec + the ACTUAL confirmed anti-pattern shape (PR #7359,
+    // a test-only PR, against issue #7060 — verified empirically by calling this exact function against the
+    // real fetched issue #7060 body during this fix's own investigation).
+    it("REGRESSION: METAGRAPHED_LANE_SPEC now catches the real #7060/#7359 test-only-PR anti-pattern", () => {
+      const result = checkContentLaneDeliverable(
+        METAGRAPHED_LANE_SPEC,
+        genericPlaceholderIssueText,
+        ["tests/sn46-call-subnet-surface-verify.test.mjs"],
+        "MCP execute: verify + wire SN46 (Zipcode) once Phase 1 ships",
+      );
+      expect(result.verdict).toBe("missing");
+    });
+  });
 });
 
 describe("isBaseLayerKind", () => {

@@ -690,6 +690,22 @@ export interface RegistryLaneSpec {
    *  domain-specific check, analogous to `assessAppendedEntry` but for the provider-file scope. Omitted ⇒ the
    *  orchestrator returns "manual" for provider submissions to this registry. */
   assessProviderEntry?: (document: unknown, opts?: { secretsScan?: boolean; sourceUrlValidation?: boolean }) => ProviderAssessment;
+  /** Optional (#content-lane-deliverable follow-up): a regex tested against a linked issue's TITLE (not body)
+   *  that, when it matches, marks the issue as requiring an entry/provider-file edit even when
+   *  `checkContentLaneDeliverable`'s own literal-path scan of the issue BODY finds nothing to check against.
+   *  Exists for a KNOWN, confirmed gap: metagraphed's ~120 "MCP execute: verify + wire SN<netuid> (<name>)"
+   *  issues (#7017-#7136) ask a contributor to add missing surfaces to `registry/subnets/<slug>.json`, but their
+   *  bodies write that path with the LITERAL, generic `<slug>` placeholder (a documentation convention, not a
+   *  template variable meant to be filled in), never the real resolved filename — confirmed empirically against
+   *  issue #7060's actual body, which contains zero `registry/subnets/*.json`-shaped tokens at all. Without this
+   *  field, the literal-path-only check returns "not-applicable" for the ENTIRE family, providing no protection
+   *  against exactly the anti-pattern it exists to catch (a merged PR that adds only a test file, zero registry
+   *  changes — confirmed live 2026-07-21, see metagraphed's own contributor-pipeline-gardening skill). Omitted
+   *  ⇒ only the literal-path signal applies (today's behavior for any spec that doesn't opt in). Deliberately a
+   *  TITLE match, not a fuzzy body/slug inference — a specific, known issue-title shape is a safe, zero-
+   *  hallucination signal; guessing a subnet's file name from its display name is not, and a false "missing" on
+   *  a genuinely-delivered PR is the more expensive mistake here. */
+  issueTitleImpliesEntryPattern?: RegExp;
 }
 
 export type RegistryPrScope = "entry-submission" | "provider-submission" | "mixed-files" | "not-direct-submission";
@@ -847,26 +863,47 @@ export function extractPathTokens(text: string): string[] {
   return [...new Set(text.match(PATH_TOKEN_PATTERN) ?? [])];
 }
 
-/** `not-applicable`: the issue text names no path matching this spec's own patterns at all — nothing to check
- *  (an unrelated issue, e.g. a docs or code-fix issue, on the same content-lane repo). `delivered`: the issue
- *  names such a path AND the PR's changed files touch at least one file matching the spec — the common,
- *  expected case for a real contribution. `missing`: the issue names such a path but the PR touches NONE
- *  matching — the gap this check exists to catch, independent of AI judgment, CI status, or a closing keyword. */
+/** `not-applicable`: the issue names no path matching this spec's own patterns AND (when the spec opts into
+ *  `issueTitleImpliesEntryPattern`) the issue's title doesn't match that pattern either — nothing to check (an
+ *  unrelated issue, e.g. a docs or code-fix issue, on the same content-lane repo). `delivered`: the issue names
+ *  such a path (or its title matches the spec's title pattern) AND the PR's changed files touch at least one
+ *  file matching the spec — the common, expected case for a real contribution. `missing`: the issue implies a
+ *  delivery (by either signal) but the PR touches NONE matching — the gap this check exists to catch,
+ *  independent of AI judgment, CI status, or a closing keyword. `mentionedPath` is the literal path found in
+ *  the body when that signal fired, or a description of the spec's expected file when only the title signal
+ *  fired (no literal path was ever found in that case — see checkContentLaneDeliverable). */
 export type ContentLaneDeliverableCheck = { verdict: "not-applicable" } | { verdict: "delivered" } | { verdict: "missing"; mentionedPath: string };
 
 /**
- * Determine whether a PR's changed files deliver the content-lane file its linked issue's own text names.
- * PURE — no I/O, no registry-specific hardcoding; entirely driven by `spec` (the caller's already-resolved
- * RegistryLaneSpec) and the two text inputs. `changedFiles` are matched the SAME way classifyRegistryPrScope
- * matches them (canonicalized: lowercased + `./`-stripped + `\`→`/`), so an uppercase / `./`-prefixed /
- * `\`-separated changed path is recognized identically to how the rest of the content lane already treats it.
+ * Determine whether a PR's changed files deliver the content-lane file its linked issue implies. PURE — no I/O,
+ * no registry-specific hardcoding; entirely driven by `spec` (the caller's already-resolved RegistryLaneSpec)
+ * and the text inputs. `changedFiles` are matched the SAME way classifyRegistryPrScope matches them
+ * (canonicalized: lowercased + `./`-stripped + `\`→`/`), so an uppercase / `./`-prefixed / `\`-separated
+ * changed path is recognized identically to how the rest of the content lane already treats it.
+ *
+ * Two independent, deterministic signals decide whether the issue implies a delivery, checked in this order:
+ *  1. A literal path in the issue BODY matching the spec (the general case — works for any hand-written issue
+ *     that names the real file).
+ *  2. Failing that, `issueTitle` against the spec's OWN `issueTitleImpliesEntryPattern` (when configured) — a
+ *     narrow, opt-in fallback for a KNOWN issue-title shape whose body only ever contains a generic path
+ *     placeholder, never the real resolved filename (see that field's own doc comment for why this exists as a
+ *     separate, deliberately non-fuzzy signal rather than inferring a slug from the issue's prose).
+ * Neither signal firing ⇒ "not-applicable". `issueTitle` is optional so an existing caller that doesn't pass
+ * one keeps today's literal-path-only behavior verbatim.
  */
-export function checkContentLaneDeliverable(spec: RegistryLaneSpec, issueText: string, changedFiles: readonly string[]): ContentLaneDeliverableCheck {
+export function checkContentLaneDeliverable(
+  spec: RegistryLaneSpec,
+  issueText: string,
+  changedFiles: readonly string[],
+  issueTitle?: string,
+): ContentLaneDeliverableCheck {
   const matchesSpec = (candidate: string): boolean => spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);
   const mentionedPath = extractPathTokens(issueText).find(matchesSpec);
-  if (!mentionedPath) return { verdict: "not-applicable" };
+  const titleImplies = !mentionedPath && Boolean(issueTitle && spec.issueTitleImpliesEntryPattern?.test(issueTitle));
+  if (!mentionedPath && !titleImplies) return { verdict: "not-applicable" };
   const delivered = changedFiles.some((file) => matchesSpec(canonicalize(file)));
-  return delivered ? { verdict: "delivered" } : { verdict: "missing", mentionedPath };
+  if (delivered) return { verdict: "delivered" };
+  return { verdict: "missing", mentionedPath: mentionedPath ?? `a registry entry file matching ${spec.entryFilePattern} (implied by this issue's title)` };
 }
 
 // metagraphed's spec — the first RegistryLaneSpec. surfaces[] live in registry/subnets/<slug>.json; providers
@@ -893,4 +930,13 @@ export const METAGRAPHED_LANE_SPEC: RegistryLaneSpec = {
   // checks) — supplied here, not hardcoded into the orchestrator, so a different registry can supply its own.
   assessAppendedEntry: assessSubnetDocument,
   assessProviderEntry: assessProviderDocument,
+  // #content-lane-deliverable follow-up: metagraphed's ~120 "MCP execute: verify + wire SN<netuid> (<name>)
+  // once Phase 1 ships" issues (#7017-#7136, tracked under epic #7013/#7014) ask a contributor to add missing
+  // surfaces to registry/subnets/<slug>.json, but their bodies spell that path with the literal, generic
+  // `<slug>` placeholder — never the real resolved filename — so checkContentLaneDeliverable's own literal-
+  // path scan of the body finds nothing to check against for this entire family (confirmed empirically against
+  // issue #7060's actual body). Matches metagraphed's own contributor-pipeline-gardening skill's documented
+  // title convention for this exact family; deliberately anchored + narrow so it can't accidentally match an
+  // unrelated issue.
+  issueTitleImpliesEntryPattern: /^MCP execute:\s*verify\s*\+\s*wire\s+SN\d+/i,
 };

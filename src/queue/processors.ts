@@ -7577,7 +7577,7 @@ export async function runContentLaneDeliverableCheckForAdvisory(
       .join("\n\n");
     if (!issueText.trim()) return;
     const changedFiles = args.files.map((file) => file.path);
-    const result = checkContentLaneDeliverable(spec, issueText, changedFiles);
+    const result = checkContentLaneDeliverable(spec, issueText, changedFiles, issueFetch.facts.title ?? undefined);
     if (result.verdict !== "missing") return;
     args.advisory.findings.push({
       code: "content_lane_deliverable_missing",

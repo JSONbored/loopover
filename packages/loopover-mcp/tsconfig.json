@@ -24,9 +24,9 @@
     // repo root and corrupt each other's incremental state.
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
-  // Only files already converted to real TypeScript are included -- everything else in bin/lib stays
-  // plain, hand-maintained .js until its own migration phase lands (#7291). No edits needed here as
-  // later phases convert more files: the glob picks them up automatically.
+  // Every bin/lib runtime module is real TypeScript (#7291, phased across #7328/#7329/#7330): tsc owns
+  // the in-place .js emit. The glob stays the include surface; test/unit/mcp-typescript-migration-complete.test.ts
+  // fails closed if a hand-maintained .js orphan ever reappears.
   "include": ["bin/**/*.ts", "lib/**/*.ts"],
   // Without this, tsc's default exclude list (which always adds outDir) resolves to "." -- the whole
   // package root -- and silently excludes every include match, since outDir is "." for in-place emit.

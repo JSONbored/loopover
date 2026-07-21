@@ -89,9 +89,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Miner ships hand-written, checked-in JS (no tsc build) -- "build" here is node --check syntax
-      # validation over every bin/lib file, the same script test:ci already runs on every PR.
-      - name: Miner syntax validation
+      # Real tsc build (in-place emit -- see packages/loopover-miner/tsconfig.json), same as ci.yml's own
+      # "Build miner CLI" step, followed by node --check syntax validation over every bin/lib file (the
+      # same two-part script test:ci already runs on every PR). Re-running the compile here means this
+      # job always packs from a freshly-built tree even if the tagged commit's committed .js/.d.ts had
+      # somehow drifted from its .ts source (ci.yml's build-drift check on every PR is what keeps that
+      # from happening in the first place).
+      - name: Miner build + syntax validation
         run: npm run build --workspace @loopover/miner
 
       # Reuses the exact allowlist/required-files/forbidden-content check test:ci already runs on

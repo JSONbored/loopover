@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../src/orb/relay", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/orb/relay")>();
+  return { ...actual, pruneRelayPending: vi.fn(actual.pruneRelayPending) };
+});
+
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
+import { pruneRelayPending } from "../../src/orb/relay";
 import { createTestEnv } from "../helpers/d1";
 
 // #7522 (piece 1 of #4902's 3-piece design): the config-push write path. Mirrors routes-kill-switch.test.ts's
@@ -18,6 +25,26 @@ async function relayRows(env: Env): Promise<Array<{ delivery_id: string; install
 }
 
 describe("config-push operator route (#7522)", () => {
+  it("REGRESSION (#7611 review fix): prunes ONCE per request, not once per target installation", async () => {
+    vi.mocked(pruneRelayPending).mockClear();
+    const app = createApp();
+    const env = createTestEnv();
+    const res = await app.request(
+      "/v1/app/fleet/config-push",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ installationIds: [1, 2, 3, 4, 5], pushId: "push-prune", message: "x" }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    // A single request fanning out over 5 installationIds must trigger exactly ONE global TTL-prune scan,
+    // not 5 -- the whole point of the fix (pruneRelayPending previously lived inside enqueueConfigPushRelay
+    // itself, so it re-ran once per target in the Promise.all fan-out below).
+    expect(pruneRelayPending).toHaveBeenCalledTimes(1);
+  });
+
   it("enqueues one orb_relay_pending row per target installation, kind = 'config_push'", async () => {
     const app = createApp();
     const env = createTestEnv();

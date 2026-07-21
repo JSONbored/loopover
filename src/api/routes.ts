@@ -158,6 +158,7 @@ import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/b
 import {
   enqueueConfigPushRelay,
   MAX_ORB_RELAY_REGISTER_BODY_BYTES,
+  pruneRelayPending,
   pullRelayPending,
   readOrbRelayRegisterBody,
   registerValidatedOrbRelay,
@@ -1948,6 +1949,10 @@ export function createApp() {
     const parsed = configPushSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_config_push", issues: parsed.error.issues }, 400);
     const { installationIds, ...payload } = parsed.data;
+    // #7611 review fix: prune ONCE for the whole request, not once per target -- enqueueConfigPushRelay no
+    // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
+    // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
+    await pruneRelayPending(c.env);
     await Promise.all(installationIds.map((installationId) => enqueueConfigPushRelay(c.env, installationId, payload)));
     await recordAuditEvent(c.env, {
       eventType: "operator.config_push_enqueued",

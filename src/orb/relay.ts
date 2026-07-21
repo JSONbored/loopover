@@ -274,8 +274,10 @@ export type RelayPendingEvent = { deliveryId: string; eventName: string; rawBody
 // can span hundreds of rows, so the log payload itself must stay bounded.
 const RELAY_DROP_LOG_SAMPLE_SIZE = 20;
 
-/** Drop pull-mode rows that exceeded the raw-body retention window, even if their engine never polls. */
-async function pruneRelayPending(env: Env): Promise<number> {
+/** Drop pull-mode rows that exceeded the raw-body retention window, even if their engine never polls. Exported
+ *  (#7611 review fix) so a multi-target caller like the config-push route can prune ONCE per request instead of
+ *  once per target -- see enqueueConfigPushRelay's own doc comment below for why it no longer prunes itself. */
+export async function pruneRelayPending(env: Env): Promise<number> {
   // Sampled BEFORE the delete: a plain DELETE reports only a count, and the rows are unrecoverable once gone.
   // Same WHERE predicate as the delete below, capped so a large backlog can't inflate the log payload.
   const expiring = await env.DB
@@ -353,12 +355,17 @@ export type ConfigPushPayload = {
 /** An Orb-operational notice (#7522, piece 1 of #4902's 3-piece design) addressed to one installation — NOT a
  *  GitHub webhook, so unlike enqueueRelayPending above this skips coalesce-key derivation entirely (that logic
  *  assumes `rawBody` parses as a GitHubWebhookPayload; a config_push payload never does). Still shares the same
- *  pending queue as the webhook path — same TTL pruning, same per-installation backlog cap — since both kinds
- *  drain through the same pull loop (`kind` is how the drain side, #7523, tells them apart before touching
- *  `rawBody`). `deliveryId` is derived from `pushId` + `installationId` (not caller-supplied) so re-posting the
- *  same push is idempotent per target, matching every other ON CONFLICT DO NOTHING write in this file. */
+ *  pending queue as the webhook path — same per-installation backlog cap — since both kinds drain through the
+ *  same pull loop (`kind` is how the drain side, #7523, tells them apart before touching `rawBody`).
+ *  `deliveryId` is derived from `pushId` + `installationId` (not caller-supplied) so re-posting the same push
+ *  is idempotent per target, matching every other ON CONFLICT DO NOTHING write in this file.
+ *
+ *  Deliberately does NOT prune here (#7611 review fix): enqueueRelayPending prunes per-call because it's
+ *  invoked once per individually-arriving webhook, but this function is fanned out over up to 500
+ *  `installationIds` from a SINGLE request (POST /v1/app/fleet/config-push) — pruning inside it would turn one
+ *  request into up to 500 redundant global TTL-prune scans/deletes against the shared table. The caller prunes
+ *  ONCE before the fan-out instead (see that route's own handler). */
 export async function enqueueConfigPushRelay(env: Env, installationId: number, payload: ConfigPushPayload): Promise<void> {
-  await pruneRelayPending(env);
   const deliveryId = `config-push:${payload.pushId}:${installationId}`;
   await env.DB
     .prepare(

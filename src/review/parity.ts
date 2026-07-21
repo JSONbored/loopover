@@ -92,20 +92,23 @@ export const REVERSAL_DISCOUNT_WEIGHT = 0;
 export async function computeGateEval(env: Env, opts: { days: number; nowMs: number; source?: string; minerOnly?: boolean }): Promise<GateEvalReport> {
   const days = Number.isFinite(opts.days) && opts.days > 0 ? Math.min(opts.days, 730) : 90;
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10);
-  // SQLite "bare column with MAX()" picks the column from the max-created_at row → the LATEST decision /
-  // outcome per target (a reopened+reclosed PR keeps its final state).
+  // Latest row per target_id via ROW_NUMBER()+rn=1 -- NOT SQLite's "bare column with MAX()" trick (a column
+  // absent from GROUP BY, picked non-deterministically from within the group). SQLite tolerates that; Postgres
+  // rejects it outright ("column must appear in the GROUP BY clause"), so this query never returned a row on
+  // the self-host Postgres backend. Mirrors federated-bundle.ts's LOCAL_CALIBRATION_QUERY / orb-collector.ts's
+  // FLEET_QUERY, both written portable for exactly this reason (and contributor-gate-eval.ts's identical fix).
   const sourceFilter = opts.source ? "AND source = ?" : "";
   const minerFilter = opts.minerOnly ? "AND miner_authored = 1" : "";
   const sql = `
     WITH gd AS (
-      SELECT target_id, project, decision AS pred, MAX(created_at) AS t
+      SELECT target_id, project, decision AS pred, created_at,
+             ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
       FROM review_audit WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND created_at >= ? ${sourceFilter} ${minerFilter}
-      GROUP BY target_id
     ),
     po AS (
-      SELECT target_id, decision AS truth, MAX(created_at) AS t
+      SELECT target_id, decision AS truth, created_at,
+             ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY created_at DESC) AS rn
       FROM review_audit WHERE event_type = 'pr_outcome' AND decision IS NOT NULL
-      GROUP BY target_id
     ),
     rev AS (
       SELECT DISTINCT target_id FROM review_audit WHERE event_type IN ('reversal_reverted', 'reversal_reopened')
@@ -114,6 +117,7 @@ export async function computeGateEval(env: Env, opts: { days: number; nowMs: num
            CASE WHEN rev.target_id IS NOT NULL THEN 1 ELSE 0 END AS reversed, COUNT(*) AS n
     FROM gd JOIN po ON gd.target_id = po.target_id
     LEFT JOIN rev ON gd.target_id = rev.target_id
+    WHERE gd.rn = 1 AND po.rn = 1
     GROUP BY gd.project, gd.pred, po.truth, reversed`;
 
   let cells: Array<{ project: string; pred: string; truth: string; reversed: number; n: number }> = [];
@@ -256,29 +260,32 @@ export async function computeGateParity(
   const fromIso = new Date(opts.nowMs - days * 86_400_000).toISOString().slice(0, 10);
 
   // Per-source latest decision per (project, target_id, head_sha). head_sha MUST be non-null so the
-  // self-join compares the same commit (a NULL head_sha can't anchor a per-commit comparison). The "bare
-  // column with MAX(created_at)" trick picks the latest row's decision/summary per group (SQLite/our PG
-  // parser both honour this for our single-writer-per-commit data).
+  // self-join compares the same commit (a NULL head_sha can't anchor a per-commit comparison). Latest row per
+  // key via ROW_NUMBER()+rn=1 -- NOT SQLite's "bare column with MAX(created_at)" trick, which Postgres
+  // rejects outright ("column must appear in the GROUP BY clause") -- confirmed live against a real Postgres,
+  // contrary to this comment's prior (unverified) claim that both engines honour it. See computeGateEval's
+  // identical fix above for the full rationale.
   const projectFilter = opts.project ? "AND project = ?" : "";
   const sql = `
     WITH auth AS (
-      SELECT project, target_id, head_sha, decision AS act, summary AS reason, MAX(created_at) AS t
+      SELECT project, target_id, head_sha, decision AS act, summary AS reason, created_at,
+             ROW_NUMBER() OVER (PARTITION BY project, target_id, head_sha ORDER BY created_at DESC) AS rn
       FROM review_audit
       WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND head_sha IS NOT NULL
         AND source = ? AND created_at >= ? ${projectFilter}
-      GROUP BY project, target_id, head_sha
     ),
     shad AS (
-      SELECT project, target_id, head_sha, decision AS act, MAX(created_at) AS t
+      SELECT project, target_id, head_sha, decision AS act, created_at,
+             ROW_NUMBER() OVER (PARTITION BY project, target_id, head_sha ORDER BY created_at DESC) AS rn
       FROM review_audit
       WHERE event_type = 'gate_decision' AND decision IS NOT NULL AND head_sha IS NOT NULL
         AND source = ? AND created_at >= ? ${projectFilter}
-      GROUP BY project, target_id, head_sha
     )
     SELECT auth.project AS project, auth.act AS auth_act, shad.act AS shadow_act,
            COALESCE(auth.reason, '') AS reason, COUNT(*) AS n
     FROM auth JOIN shad
       ON auth.project = shad.project AND auth.target_id = shad.target_id AND auth.head_sha = shad.head_sha
+    WHERE auth.rn = 1 AND shad.rn = 1
     GROUP BY auth.project, auth.act, shad.act, reason`;
 
   type Cell = { project: string; auth_act: string; shadow_act: string; reason: string; n: number };

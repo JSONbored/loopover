@@ -11,6 +11,7 @@ import { processJob } from "../../src/queue/processors";
 import { getGateBlockOutcome, markGateOutcomeOverridden, recordGateBlockOutcome } from "../../src/db/repositories";
 import { backfillContributorGateHistory } from "../../src/review/contributor-gate-history-backfill";
 import { computeContributorGateEval } from "../../src/review/contributor-gate-eval";
+import { computeGateEval, computeGateParity } from "../../src/review/parity";
 
 const URL = process.env.PG_TEST_URL;
 const suite = URL ? describe : describe.skip;
@@ -84,6 +85,41 @@ suite("Postgres backend (#977) — real Postgres", () => {
     expect(report.rows).toEqual([
       expect.objectContaining({ login: "pg-latest-row", project: "owner/latest-row", wouldMerge: 1, mergeConfirmed: 1, wouldClose: 0 }),
     ]);
+  });
+
+  it("REGRESSION: computeGateEval's identical ROW_NUMBER()-based query (parity.ts) runs against real Postgres and picks the latest gate_decision/pr_outcome per target", async () => {
+    const db = createPgAdapter(pool);
+    const env = { DB: db } as unknown as Env;
+
+    await db.prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, 'owner/gate-eval-pg', 'owner/gate-eval-pg#1', 'gate_decision', 'close', 'gittensory-native', ?)`)
+      .bind("gd-eval-old", "2026-01-01T00:00:00.000Z")
+      .run();
+    await db.prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, 'owner/gate-eval-pg', 'owner/gate-eval-pg#1', 'gate_decision', 'merge', 'gittensory-native', ?)`)
+      .bind("gd-eval-new", "2026-01-02T00:00:00.000Z")
+      .run();
+    await db.prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, 'owner/gate-eval-pg', 'owner/gate-eval-pg#1', 'pr_outcome', 'merged', 'github', ?)`)
+      .bind("po-eval-1", "2026-01-03T00:00:00.000Z")
+      .run();
+
+    const report = await computeGateEval(env, { days: 730, nowMs: Date.parse("2026-01-10T00:00:00.000Z") });
+    expect(report.rows).toEqual([expect.objectContaining({ project: "owner/gate-eval-pg", wouldMerge: 1, mergeConfirmed: 1, wouldClose: 0 })]);
+  });
+
+  it("REGRESSION: computeGateParity's identical ROW_NUMBER()-based self-join (parity.ts) runs against real Postgres and picks the latest per-source decision per commit", async () => {
+    const db = createPgAdapter(pool);
+    const env = { DB: db } as unknown as Env;
+
+    const insertGd = (id: string, source: string, decision: string, createdAt: string) =>
+      db.prepare(`INSERT INTO review_audit (id, project, target_id, event_type, decision, source, head_sha, created_at) VALUES (?, 'owner/gate-parity-pg', 'owner/gate-parity-pg#1', 'gate_decision', ?, ?, 'sha-1', ?)`)
+        .bind(id, decision, source, createdAt)
+        .run();
+    // authoritative source re-decided at a later created_at (same head_sha) -- only the latest should count.
+    await insertGd("gd-parity-auth-old", "reviewbot", "close", "2026-01-01T00:00:00.000Z");
+    await insertGd("gd-parity-auth-new", "reviewbot", "merge", "2026-01-02T00:00:00.000Z");
+    await insertGd("gd-parity-shadow", "loopover", "merge", "2026-01-01T12:00:00.000Z");
+
+    const report = await computeGateParity(env, { days: 730, nowMs: Date.parse("2026-01-10T00:00:00.000Z") });
+    expect(report.rows).toEqual([expect.objectContaining({ project: "owner/gate-parity-pg", pairedSamples: 1, bothMerge: 1 })]);
   });
 
   it("batch is transactional (rolls back on error)", async () => {

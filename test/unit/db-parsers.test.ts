@@ -721,7 +721,10 @@ describe("database row parser hardening", () => {
         number: 36, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a2" }, labels: [], updated_at: "2026-07-21T12:05:00.000Z",
       });
       expect(pushed.headSha).toBe("a2");
-      expect(pushed.headShaObservedAt).not.toBe(first.headShaObservedAt);
+      // Not asserting inequality against first.headShaObservedAt (both could land in the same millisecond in
+      // a fast test run, matching the same caveat the review-latency-metric tests above already document) --
+      // typeof "string" here plus the exact-preservation assertion below is the deterministic, non-flaky check.
+      expect(typeof pushed.headShaObservedAt).toBe("string");
 
       // A delayed job for the OLDER `review_requested` event (before the push) finally dequeues, still carrying
       // the STALE head "a1". Without resolvedHeadSha driving headShaChanged, this would look like "a2 -> a1", a

@@ -539,6 +539,13 @@ review:
   # Bool or null. Default: null/true -- no change to today's watched-repo-set behavior.
   # prReconciliation: false
 
+  # Per-repo FORCE-OFF for the active-review-tracking reconciliation sweep (#webhook-reorder-clobber) --
+  # `false` excludes just this repo's rows from the sweep's scan even though the operator's
+  # LOOPOVER_ACTIVE_REVIEW_RECONCILIATION flag is on. Deliberately FORCE-OFF-ONLY (no `true` override),
+  # mirroring `prReconciliation` immediately above. Bool or null. Default: null/true -- no change to today's
+  # scanned-row-set behavior.
+  # activeReviewReconciliation: false
+
   # Repeat-false-positive suppression (#2179, part of #1964). Bool | null. Default: null/false — byte-identical
   # (no suppression-store read, no matching). Also requires the operator's LOOPOVER_REVIEW_MEMORY env flag to
   # be on -- this manifest field alone cannot enable it. When both are on, an advisory (non-blocking) AI finding

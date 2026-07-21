@@ -37,7 +37,9 @@ import { buildResultsPayload } from "@loopover/engine";
 // #6753: the same pure composer the remote MCP tool + /v1/loop/progress-snapshot both call.
 import { buildProgressSnapshot } from "@loopover/engine";
 // #6755: the same pure bridge the remote MCP tool + /v1/loop/intake-idea both call.
-import { validateIdeaSubmission, buildTaskGraph, buildClaimPlan, existingTargetRepo } from "@loopover/engine";
+import { validateIdeaSubmission, buildTaskGraph } from "@loopover/engine";
+// #6756: shared claim-plan handler (in-process testable; #7635).
+import { planIdeaClaimsPayload } from "../lib/plan-idea-claims.js";
 import { z } from "zod";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
@@ -1748,15 +1750,12 @@ registerStdioTool(
     inputSchema: intakeIdeaShape,
   },
   (input: any) => {
-    const validated = validateIdeaSubmission(input);
-    if (!validated.ok) return toolResult(`Invalid idea submission: ${validated.errors.join(", ")}.`, { ok: false, errors: validated.errors });
-    const graph = buildTaskGraph(validated.idea, input.decomposition);
-    const repo = existingTargetRepo(validated.idea.targetRepo);
-    if (repo === null) return toolResult("Invalid idea submission: target_repo_required.", { ok: false, errors: ["target_repo_required"] });
-    const claimPlan = buildClaimPlan(graph, repo);
+    const result = planIdeaClaimsPayload(input);
+    if (!result.ok) return toolResult(`Invalid idea submission: ${result.errors.join(", ")}.`, result);
+    const { claimPlan } = result;
     return toolResult(
       `Claim plan: ${claimPlan.claimable.length} claimable, ${claimPlan.deferred.length} deferred, ${claimPlan.skipped.length} skipped.`,
-      { ok: true, verdict: claimPlan.graphVerdict, claimPlan },
+      result,
     );
   },
 );

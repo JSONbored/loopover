@@ -81,9 +81,13 @@ export function runCrossRepoEvaluationCli(options = {}) {
 // only: builds/tests run the target repo's OWN commands in its clone, and the coding-agent step edits the clone,
 // captures the diff, and then hard-resets it back to HEAD -- nothing is ever pushed and no PR is ever opened.
 
-/** Run one of the target repo's own commands (build or test) in its clone. `ok` is a clean exit 0. */
+/** Run one of the target repo's own commands (build or test) in its clone. `ok` is a clean exit 0. The command
+ *  string comes from stack detection (`detectRepoStack`, e.g. "npm test", "pytest", "cargo build"); it is split on
+ *  whitespace and spawned WITHOUT a shell, so there is no shell metacharacter interpretation of the command. */
 function spawnRepoCommand({ repoPath, command }) {
-  const child = spawnSync("sh", ["-c", command], { cwd: repoPath, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const [bin, ...args] = String(command).split(/\s+/).filter(Boolean);
+  if (!bin) return { ok: false, detail: "empty command" };
+  const child = spawnSync(bin, args, { cwd: repoPath, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false });
   if (child.error) return { ok: false, detail: child.error.message };
   const ok = child.status === 0;
   const detail = ok ? undefined : (child.stderr || child.stdout || `exit ${child.status}`).trim().split("\n").slice(-3).join("\n");

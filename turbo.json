@@ -161,7 +161,16 @@
     },
     "@loopover/mcp#build": {
       "dependsOn": ["^build"],
-      "outputs": []
+      // Was `[]` (log-only caching, correct back when bin/lib's compiled .js was always committed --
+      // present via git regardless of whether turbo actually ran tsc or replayed a cached log). Now that
+      // compiled output is gitignored (build(mcp,miner): stop committing compiled .js/.d.ts entirely),
+      // `[]` means a cache HIT never restores the real files turbo never snapshotted, only replays the
+      // log text -- confirmed live: validate-tests' 3 parallel shards share one turbo-tests- cache key,
+      // and whichever shard's Save lands first can make a LATER shard's Restore see a "hit" for content
+      // it never actually built on that runner, leaving bin/lib empty while the log claims success
+      // (#7705 CI, shard 2 vs. shard 1/3 on the same commit). Declaring the real outputs makes a hit
+      // restore the actual files instead of only the log.
+      "outputs": ["bin/**/*.js", "lib/**/*.js"]
     },
     "@loopover/miner#build:tsc": {
       "dependsOn": ["^build"],

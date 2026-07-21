@@ -11,7 +11,10 @@ describe("loopover-engine package scaffold", () => {
     expect(enginePkg.type).toBe("module");
     expect(enginePkg.license).toBe("AGPL-3.0-only");
     expect(enginePkg.publishConfig?.access).toBe("public");
-    expect(enginePkg.engines?.node).toBe(">=22.0.0");
+    // Upper-bounded (#7613) so a local install/run on a Node major past .nvmrc's pin fails loudly via
+    // engine-strict instead of silently drifting -- exactly how the Node 26 jsdom/localStorage gap
+    // (#7592/#7597, #7612) went undetected until someone happened to run tests on a newer Node.
+    expect(enginePkg.engines?.node).toBe(">=22.0.0 <23.0.0");
   });
 
   it("points its entry points at the built dist output", () => {

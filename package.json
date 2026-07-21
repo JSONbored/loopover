@@ -73,6 +73,7 @@
     "branding-drift:update": "node scripts/check-branding-drift.mjs --update",
     "manifest:drift-check": "tsx scripts/check-manifest-drift.mjs",
     "engine-parity:drift-check": "tsx scripts/check-engine-parity.ts",
+    "engines-nvmrc:check": "node scripts/check-engines-nvmrc-sync.mjs",
     "release-manifest:sync": "node scripts/sync-release-manifest.mjs",
     "release-manifest:sync:check": "node scripts/sync-release-manifest.mjs --check",
     "ui:deploy": "npm run ui:build && npm run ui:deploy:built",
@@ -102,7 +103,7 @@
     "test:smoke:observability:metrics": "node scripts/smoke-observability-metrics.mjs",
     "test:smoke:browser:install": "playwright install chromium",
     "test:smoke:browser": "node scripts/smoke-ui-browser.mjs",
-    "test:ci": "git diff --check && npm run actionlint && npm run lint:composite-actions && npm run db:migrations:check && npm run db:schema-drift:check && npm run selfhost:env-reference:check && npm run miner:env-reference:check && npm run selfhost:validate-observability && npm run cf-typegen:check && npm run build --workspace @loopover/engine && npm run build --workspace @loopover/discovery-index && npm run typecheck && npm run test:coverage && npm run test:engine-parity && npm run test:live-gate-parity && npm run test:driver-parity && npm run test --workspace @loopover/engine && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run build:miner && npm run test:miner-pack && npm run test:miner-deployment-docs-audit && npm run rees:test && npm run ui:openapi:check && npm run ui:openapi:settings-parity && npm run ui:version-audit && npm run docs:drift-check && npm run branding-drift:check && npm run manifest:drift-check && npm run engine-parity:drift-check && npm run release-manifest:sync:check && npm run command-reference:check && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build",
+    "test:ci": "git diff --check && npm run actionlint && npm run lint:composite-actions && npm run db:migrations:check && npm run db:schema-drift:check && npm run selfhost:env-reference:check && npm run miner:env-reference:check && npm run selfhost:validate-observability && npm run cf-typegen:check && npm run build --workspace @loopover/engine && npm run build --workspace @loopover/discovery-index && npm run typecheck && npm run test:coverage && npm run test:engine-parity && npm run test:live-gate-parity && npm run test:driver-parity && npm run test --workspace @loopover/engine && npm run test:workers && npm run build:mcp && npm run test:mcp-pack && npm run build:miner && npm run test:miner-pack && npm run test:miner-deployment-docs-audit && npm run rees:test && npm run ui:openapi:check && npm run ui:openapi:settings-parity && npm run ui:version-audit && npm run docs:drift-check && npm run branding-drift:check && npm run manifest:drift-check && npm run engine-parity:drift-check && npm run engines-nvmrc:check && npm run release-manifest:sync:check && npm run command-reference:check && npm run ui:lint && npm run ui:typecheck && npm run ui:test && npm run ui:build",
     "test:release": "npm run test:ci && npm run changelog:check",
     "test:release:mcp": "npm run test:ci",
     "test:watch": "vitest",
@@ -152,6 +153,7 @@
     "pixelmatch": "^7.2.0",
     "playwright": "^1.61.1",
     "pngjs": "^7.0.0",
+    "semver": "^7.8.4",
     "tsx": "^4.22.5",
     "turbo": "^2.10.5",
     "typescript": "^5.9.3",
@@ -159,7 +161,7 @@
     "wrangler": "^4.107.0"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <23.0.0"
   },
   "overrides": {
     "@lovable.dev/vite-plugin-dev-server-bridge": "1.0.3",

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "LoopOver hosted discovery-index service (#4250) — a shared, cached GitHub issue/search fan-out and soft-claim coordinator opted-in miner instances can query instead of each independently hammering GitHub. Deploys standalone; see #7164.",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0 <23.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -88,6 +88,7 @@ jobs:
               - 'wrangler.jsonc'
               - 'worker-configuration.d.ts'
               - '.loopover.yml'
+              - '.nvmrc'
               - '.release-please-manifest.json'
               - 'release-please-config.json'
             observability:
@@ -323,6 +324,17 @@ jobs:
       - name: Branding drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
         run: npm run branding-drift:check
+      # Every engines.node in this repo used to be open-ended (">=22.0.0", no upper bound), so npm never
+      # warned or blocked a Node 23+ install locally -- exactly how the Node 26 jsdom/localStorage gap
+      # (nodejs/node#60303) went undetected in apps/loopover-miner-ui (#7592/#7597), then again in
+      # apps/loopover-ui + packages/loopover-ui-kit, with zero CI signal either time (CI itself was never
+      # at risk: setup-workspace pins node-version-file: .nvmrc). This is the same local-only-until-now gap
+      # as the drift checks above. Gated the same broad way as branding-drift-check: every workspace group
+      # that can declare its own engines.node (mcp/engine/miner/ui/discoveryIndex) plus backend, which now
+      # also covers a `.nvmrc`-only bump.
+      - name: Engines/.nvmrc sync check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run engines-nvmrc:check
       # .release-please-manifest.json is release-please's own state file -- it normally keeps this in
       # sync itself when its generated Release PR merges, but the documented human-override path for
       # a stuck release tag (publish-mcp.yml's own header comment) bumps package.json directly with

@@ -39,7 +39,8 @@ describe("loopover-miner package skeleton (#2287)", () => {
     });
     expect(miner.publishConfig).toEqual(mcp.publishConfig);
     expect(miner.dependencies["@loopover/engine"]).toBeDefined();
-    expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2}$/);
+    // Upper-bounded (#7613): a floor of >=22.x with an explicit <23.0.0 ceiling excluding the next major.
+    expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2} <23\.0\.0$/);
     expect(miner.files).toEqual(expect.arrayContaining(["bin", "lib"]));
     // build is split into build:tsc (the real tsc compile; output is committed alongside sources as the
     // package's published in-place emit) and

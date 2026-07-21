@@ -35,7 +35,9 @@ describe("loopover-miner run-state store (#2289)", () => {
       readFileSync("packages/loopover-miner/package.json", "utf8"),
     ) as { engines?: { node?: string } };
 
-    expect(packageJson.engines?.node).toBe(">=22.13.0");
+    // Upper-bounded (#7613) on top of the node:sqlite floor this test is named for -- the floor (22.13.0)
+    // is unchanged, only a <23.0.0 ceiling excluding the next major was added.
+    expect(packageJson.engines?.node).toBe(">=22.13.0 <23.0.0");
   });
 
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {

@@ -12,10 +12,12 @@ import {
   DEFAULT_CROSS_REPO_MANIFEST_RELATIVE_PATH,
   MAX_CROSS_REPO_MANIFEST_BYTES,
   formatCrossRepoEvaluationReport,
+  evaluateRepoExecution,
   evaluateRepoReadiness,
   normalizeCrossRepoFullName,
   parseCrossRepoEvaluationManifest,
   runCrossRepoEvaluation,
+  runCrossRepoExecution,
   scanPositiveLoopoverAssumptions,
   summarizeCrossRepoEvaluation,
 } from "../../packages/loopover-miner/lib/cross-repo-evaluation.js";
@@ -25,6 +27,7 @@ import {
   parseCrossRepoEvaluationArgs,
   resolveDefaultManifestPath,
   runCrossRepoEvaluationCli,
+  runCrossRepoExecutionCli,
 } from "../../packages/loopover-miner/scripts/cross-repo-evaluation.mjs";
 
 const roots: string[] = [];
@@ -371,6 +374,204 @@ describe("cross-repo evaluation harness (#4788)", () => {
     });
   });
 
+  describe("evaluateRepoExecution --full-execution (dry-run) (#7634)", () => {
+    // A node fixture whose real stack detection yields a non-null test command, so readiness passes and the
+    // execution loop reaches the clone/agent/test steps.
+    const nodeRepo = () => tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+    const readySpec = () => ({ ready: true, instructions: "Fix the failing test." });
+
+    it("returns the readiness failure unchanged when the repo is not even ready (reuses the gate)", async () => {
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/missing", requireTestCommand: false },
+        { repoPath: "/tmp/definitely-missing-repo-path", existsSync: () => false },
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.CLONE_SETUP);
+      // Readiness-only failure never entered the execution loop.
+      expect(result.executed).toBeUndefined();
+    });
+
+    it("fails exec_setup_gap when the clone step reports not-ok", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/clone-fail", requireTestCommand: false },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: false, error: "git clone exited 128" }),
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.EXEC_SETUP);
+      expect(result.reason).toContain("128");
+      expect(result.executed).toBe(true);
+    });
+
+    it("fails exec_setup_gap when the clone step throws", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/clone-throws", requireTestCommand: false },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => {
+            throw new Error("network down");
+          },
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.EXEC_SETUP);
+      expect(result.reason).toBe("network down");
+    });
+
+    it("fails plan_compile_gap when the coding agent does not converge into a compiling change", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/agent-fail", requireTestCommand: false },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => ({ ok: false, error: "compile error: TS2322" }),
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.PLAN_COMPILE);
+      expect(result.reason).toContain("TS2322");
+    });
+
+    it("fails other when the coding agent throws", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/agent-throws", requireTestCommand: false },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => {
+            throw new Error("agent-boom");
+          },
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.OTHER);
+      expect(result.reason).toBe("agent-boom");
+    });
+
+    it("fails test_failure when the target repo's own tests are red", async () => {
+      const repoPath = nodeRepo();
+      let ranCommand: string | null = null;
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/tests-red", requireTestCommand: true },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => ({ ok: true, changedFiles: ["src/foo.ts", "src/foo.test.ts"], summary: "guard + test" }),
+          runTests: (command) => {
+            ranCommand = command;
+            return { code: 1, stdout: "", stderr: "1 failing", timedOut: false };
+          },
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.TEST_FAILURE);
+      expect(result.testExitCode).toBe(1);
+      expect(ranCommand).toBeTruthy(); // the detected test command was actually handed to the runner
+      expect(result.changedFiles).toEqual(["src/foo.ts", "src/foo.test.ts"]);
+    });
+
+    it("fails test_failure when the target repo's own tests time out", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/tests-timeout", requireTestCommand: true },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => ({ ok: true, changedFiles: ["src/foo.ts"] }),
+          runTests: () => ({ code: null, stdout: "", stderr: "", timedOut: true }),
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.TEST_FAILURE);
+      expect(result.reason).toContain("timed out");
+    });
+
+    it("fails no_op_diff when tests pass but the agent produced an empty diff", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/no-op", requireTestCommand: true },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => ({ ok: true, changedFiles: [] }),
+          runTests: () => ({ code: 0, stdout: "ok", stderr: "", timedOut: false }),
+        },
+      );
+      expect(result.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.NO_OP_DIFF);
+      expect(result.testExitCode).toBe(0);
+      expect(result.changedFiles).toEqual([]);
+    });
+
+    it("passes end-to-end when clone, agent, and target tests all succeed with a real diff", async () => {
+      const repoPath = nodeRepo();
+      const result = await evaluateRepoExecution(
+        { repoFullName: "acme/full-pass", requireTestCommand: true },
+        {
+          repoPath,
+          existsSync: () => true,
+          buildCodingTaskSpec: readySpec,
+          cloneRepo: () => ({ ok: true, repoPath }),
+          runCodingAgent: () => ({ ok: true, changedFiles: ["src/fix.ts"], summary: "applied fix" }),
+          runTests: () => ({ code: 0, stdout: "all green", stderr: "", timedOut: false }),
+        },
+      );
+      expect(result.passed).toBe(true);
+      expect(result.executed).toBe(true);
+      expect(result.changedFiles).toEqual(["src/fix.ts"]);
+      expect(result.testExitCode).toBe(0);
+      expect(result.failureCategory).toBeNull();
+    });
+
+    it("runCrossRepoExecution drives every manifest repo through the dry-run loop", async () => {
+      const repoA = nodeRepo();
+      const repoB = nodeRepo();
+      const parsed = parseCrossRepoEvaluationManifest(
+        JSON.stringify({
+          repos: [
+            { repoFullName: "acme/exec-a", fixturePath: repoA, requireTestCommand: true },
+            { repoFullName: "acme/exec-b", fixturePath: repoB, requireTestCommand: true },
+          ],
+        }),
+      );
+      const results = await runCrossRepoExecution(parsed, {
+        existsSync: () => true,
+        buildCodingTaskSpec: readySpec,
+        cloneRepo: (entry) => ({ ok: true, repoPath: entry.fixturePath ?? "" }),
+        runCodingAgent: (context) =>
+          context.repoFullName.includes("exec-b")
+            ? { ok: true, changedFiles: [] } // exec-b makes no change -> no_op_diff
+            : { ok: true, changedFiles: ["src/a.ts"] },
+        runTests: () => ({ code: 0, stdout: "", stderr: "", timedOut: false }),
+      });
+      expect(results).toHaveLength(2);
+      expect(results[0]?.passed).toBe(true);
+      expect(results[1]?.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.NO_OP_DIFF);
+
+      const summary = summarizeCrossRepoEvaluation(results);
+      expect(summary.executedCount).toBe(2);
+      expect(summary.passed).toBe(1);
+      expect(summary.failuresByCategory[CROSS_REPO_FAILURE_CATEGORY.NO_OP_DIFF]).toBe(1);
+
+      const report = formatCrossRepoEvaluationReport(results, summary);
+      expect(report).toContain("dry-run full-execution: 2/2 entered the code+test loop");
+      expect(report).toContain("- no_op_diff: 1");
+    });
+  });
+
   describe("runCrossRepoEvaluation + summarizeCrossRepoEvaluation", () => {
     it("filters to a single repo and computes majority + category counts", () => {
       const parsed = parseCrossRepoEvaluationManifest(
@@ -495,10 +696,21 @@ describe("cross-repo evaluation harness (#4788)", () => {
         json: true,
         repoFilter: "acme/widgets",
         requireMajority: true,
+        fullExecution: false,
       });
       expect(parseCrossRepoEvaluationArgs(["--manifest"])).toEqual({ error: "Missing value for --manifest." });
       expect(parseCrossRepoEvaluationArgs(["--nope"])).toEqual({ error: "Unknown argument: --nope" });
       expect(parseCrossRepoEvaluationArgs(["--help"])).toEqual({ help: true });
+    });
+
+    it("parses the --full-execution dry-run flag (#7634)", () => {
+      expect(parseCrossRepoEvaluationArgs(["--full-execution"])).toEqual({
+        manifestPath: resolveDefaultManifestPath(),
+        json: false,
+        repoFilter: null,
+        requireMajority: false,
+        fullExecution: true,
+      });
     });
 
     it("runs the harness driver against a fixture manifest", () => {
@@ -523,6 +735,50 @@ describe("cross-repo evaluation harness (#4788)", () => {
       expect(formatCrossRepoEvaluationReport(results, summary)).toContain("PASS acme/fixture");
     });
 
+    it("runCrossRepoExecutionCli drives a dry-run full-execution loop over >=2 repos with injected seams (#7634)", async () => {
+      const repoA = tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+      const repoB = tempRepo({ "package.json": pkg({ scripts: { test: "node --test" } }) });
+      const manifestDir = tempRepo();
+      writeFileSync(
+        join(manifestDir, "manifest.json"),
+        JSON.stringify({
+          repos: [
+            { repoFullName: "acme/exec-pass", fixturePath: repoA, requireTestCommand: true },
+            { repoFullName: "acme/exec-red", fixturePath: repoB, requireTestCommand: true },
+          ],
+        }),
+        "utf8",
+      );
+
+      const { results, summary } = await runCrossRepoExecutionCli({
+        manifestPath: join(manifestDir, "manifest.json"),
+        // Every side-effecting seam is a fake -> zero real clone / agent / test-run / network.
+        buildCodingTaskSpec: () => ({ ready: true, instructions: "Apply the smallest correct fix." }),
+        cloneRepo: (entry: { fixturePath?: string }) => ({ ok: true, repoPath: entry.fixturePath ?? "" }),
+        runCodingAgent: (context: { repoFullName: string }) => ({
+          ok: true,
+          changedFiles: ["src/change.ts"],
+          summary: `edited ${context.repoFullName}`,
+        }),
+        runTests: (command: string, cwd: string) => ({
+          code: cwd === repoB ? 1 : 0, // exec-red's suite is red
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+        }),
+      });
+
+      expect(results).toHaveLength(2);
+      expect(results[0]?.passed).toBe(true);
+      expect(results[0]?.executed).toBe(true);
+      expect(results[1]?.failureCategory).toBe(CROSS_REPO_FAILURE_CATEGORY.TEST_FAILURE);
+      expect(summary.passed).toBe(1);
+      expect(summary.executedCount).toBe(2);
+      const report = formatCrossRepoEvaluationReport(results, summary);
+      expect(report).toContain("dry-run full-execution: 2/2");
+      expect(report).toContain("- test_failure: 1");
+    });
+
     it("parseCrossRepoEvaluationArgs treats a missing --repo value as an error", () => {
       expect(parseCrossRepoEvaluationArgs(["--repo"])).toEqual({ error: "Missing value for --repo." });
     });
@@ -534,5 +790,8 @@ describe("cross-repo evaluation harness (#4788)", () => {
     expect(doc).toContain("stack_detection_gap");
     expect(doc).toContain("cross-repo-evaluation.mjs");
     expect(doc).toContain("benchmarks/cross-repo/manifest.json");
+    // The dry-run full-execution mode (#7634) and its execution-specific categories are documented in-style.
+    expect(doc).toContain("--full-execution");
+    expect(doc).toContain("no_op_diff");
   });
 });

@@ -60,6 +60,35 @@ fleet run-manifest).
    - `--repo owner/repo` — evaluate a single manifest entry
    - `--manifest path/to/manifest.json` — alternate benchmark set (e.g. a fixture manifest in tests)
    - `--require-majority` — exit `1` unless a strict majority of repos pass (for CI-style gating)
+   - `--full-execution` — **dry-run** execution mode (#7634): clone each repo, run the
+     discover→plan→code→test loop locally, and run the target repo's own tests. See below.
+
+## Full execution mode (dry-run) (#7634)
+
+`--full-execution` opts into a **dry-run** that goes one step past readiness: for every repo that already passes the
+readiness gate above, it actually runs the discover→plan→code→test loop **locally** and reports pass/fail with
+execution-specific categories. It is strictly **read/execute-locally-and-discard**:
+
+1. **Clone / checkout** the repo locally (via `ensureRepoCloned`; a read-only local clone — never a write-back)
+2. **Plan** — recompose the same (leak-free) coding-task spec used by readiness
+3. **Code** — run the coding agent to produce a diff (the default is a **non-spawning shadow** that produces no
+   diff and uses no credentials; inject `runCodingAgent` to drive a real/fake agent)
+4. **Test** — run the **target repo's own** inferred test command locally against the produced change
+
+The execution-specific failure categories extend (never replace) the readiness taxonomy:
+
+| Category | Meaning |
+| --- | --- |
+| `exec_setup_gap` | Clone / checkout of the target repo failed before the loop could start |
+| `plan_compile_gap` | Plan formed but the code phase did not produce a compiling change |
+| `test_failure` | Change compiled but the target repo's own tests failed (or timed out) |
+| `no_op_diff` | Tests passed but the coding agent produced an empty (no-op) diff |
+
+The report gains one line, `dry-run full-execution: N/total entered the code+test loop`, and the readiness format is
+otherwise unchanged. **Dry-run safety is structural:** there is no PR-open / forge-write / credential path anywhere
+in the execution loop — the clone, coding-agent, and test-run steps are all injectable seams (`cloneRepo`,
+`runCodingAgent`, `runTests`) that unit tests replace with fakes for zero real IO. No `gh pr create`, no forge API,
+no third-party write ever runs.
 
 ## Library API
 
@@ -68,11 +97,17 @@ Pure functions live in [`lib/cross-repo-evaluation.js`](../lib/cross-repo-evalua
 - `parseCrossRepoEvaluationManifest(content)`
 - `evaluateRepoReadiness(entry, options)` — inject `existsSync`, `detectRepoStack`, etc. for unit tests
 - `runCrossRepoEvaluation(parsed, options)`
+- `evaluateRepoExecution(entry, options)` — dry-run full-execution (#7634); inject `cloneRepo`, `runCodingAgent`,
+  `runTests` for unit tests
+- `runCrossRepoExecution(parsed, options)` — full-execution across a parsed manifest
 - `summarizeCrossRepoEvaluation(results)`
 - `formatCrossRepoEvaluationReport(results, summary)`
 
 ## Wiring
 
-This harness is **readiness-only**: it does not run the coding agent, open PRs, or call forge APIs. A green report
-means the miner’s repo-agnostic stack-detection and coding-task-spec path is prepared for the benchmark repo; a live
-attempt still needs credentials, governor policy, and queue state as documented in [`DEPLOYMENT.md`](../DEPLOYMENT.md).
+By default this harness is **readiness-only**: it does not run the coding agent, open PRs, or call forge APIs. A
+green report means the miner’s repo-agnostic stack-detection and coding-task-spec path is prepared for the benchmark
+repo. `--full-execution` opts into a live-ish **dry-run** that additionally clones, runs the coding agent, and runs
+the target repo's own tests locally — but still **never opens a PR or writes to the third-party repo**; a real
+attempt that submits a PR still needs credentials, governor policy, and queue state as documented in
+[`DEPLOYMENT.md`](../DEPLOYMENT.md).

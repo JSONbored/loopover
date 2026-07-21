@@ -115,6 +115,7 @@ import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/mai
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRegistrationReadinessResponse, buildGittensorConfigRecommendationResponse } from "../api/routes";
 import { loadGatePrecisionReport } from "../services/gate-precision";
+import { loadOverride, loadShadowOverride, type StorageEnv } from "../review/auto-apply";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import {
   applyMcpPlanningChoices,
@@ -993,6 +994,16 @@ const gatePrecisionOutputSchema = {
   signals: z.array(z.string()).optional(),
 };
 
+// #7800 - mirrors the REST route's response shape (`GET /v1/repos/:owner/:repo/gate-config/effective`,
+// src/api/routes.ts) exactly: no freshness/report wrapper, just the resolved effective thresholds plus a
+// forbidden/status escape hatch for the canAccessRepo failure path (matching getIssueQuality/getPrReviewability).
+const gateConfigEffectiveOutputSchema = {
+  status: z.string().optional(),
+  repoFullName: z.string().optional(),
+  effective: z.unknown().optional(),
+  shadowPending: z.boolean().optional(),
+};
+
 // #5825 - maintainer-authenticated skipped-PR audit trail, mirroring GET /v1/app/skipped-pr-audit's
 // filters (all optional: a bare call returns the caller's own repo-scoped feed). No owner/repo shape
 // here on purpose: unlike ownerRepoShape tools this report can legitimately span every repo the caller
@@ -1838,6 +1849,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_get_upstream_drift: "utility",
   loopover_get_issue_quality: "maintainer",
   loopover_get_pr_reviewability: "review",
+  loopover_get_gate_config_effective: "maintainer",
   loopover_validate_linked_issue: "discovery",
   loopover_check_before_start: "discovery",
   loopover_find_opportunities: "discovery",
@@ -2355,6 +2367,17 @@ export class LoopoverMcp {
         outputSchema: freshnessResponseOutputSchema,
       },
       async (input) => this.toolResult(await this.getPrReviewability(input)),
+    );
+
+    register(
+      "loopover_get_gate_config_effective",
+      {
+        description:
+          "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap) resolved from the live override, plus whether a shadow recommendation is soaking. Read-only, repo-scoped, no GitHub writes.",
+        inputSchema: ownerRepoShape,
+        outputSchema: gateConfigEffectiveOutputSchema,
+      },
+      async (input) => this.toolResult(await this.getGateConfigEffective(input)),
     );
 
     register(
@@ -3278,6 +3301,39 @@ export class LoopoverMcp {
         repoFullName: fullName,
         generatedAt: report.generatedAt,
         report,
+      } as unknown as Record<string, unknown>,
+    };
+  }
+
+  // #7800 - mirrors GET /v1/repos/:owner/:repo/gate-config/effective (src/api/routes.ts), which is itself
+  // "gated behind the same most-conservative repo-scoped read precedent the reviewability route (#6154)
+  // uses" per that route's own comment; canAccessRepo below is that identical precedent, already enforced
+  // by every other ownerRepoShape maintainer tool (getIssueQuality, getGatePrecision). Calls the same
+  // loadOverride/loadShadowOverride pair the route calls and returns the identical response shape -
+  // loadOverride/loadShadowOverride stay the single source of truth for both surfaces.
+  private async getGateConfigEffective(input: { owner: string; repo: string }): Promise<ToolPayload> {
+    const fullName = `${input.owner}/${input.repo}`;
+    if (!(await this.canAccessRepo(fullName))) {
+      return {
+        summary: `Forbidden: session cannot access gate config for ${fullName}.`,
+        data: { status: "forbidden", repoFullName: fullName },
+      };
+    }
+    const storageEnv = this.env as unknown as StorageEnv;
+    const [override, shadow] = await Promise.all([loadOverride(storageEnv, fullName), loadShadowOverride(storageEnv, fullName)]);
+    const shadowPending = shadow !== null;
+    return {
+      summary: `LoopOver effective gate config for ${fullName}: confidenceFloor=${override?.confidenceFloor ?? "n/a"}, shadowPending=${shadowPending}.`,
+      data: {
+        repoFullName: fullName,
+        effective: {
+          confidenceFloor: override?.confidenceFloor ?? null,
+          scopeCap: {
+            files: override?.scopeCap?.files ?? null,
+            lines: override?.scopeCap?.lines ?? null,
+          },
+        },
+        shadowPending,
       } as unknown as Record<string, unknown>,
     };
   }

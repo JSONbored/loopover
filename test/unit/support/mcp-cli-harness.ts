@@ -192,6 +192,8 @@ export async function startFixtureServer(
     validateConfigWarnings?: string[];
     openPrMonitor?: Record<string, unknown>;
     prOutcomes?: Record<string, unknown>;
+    /** #7800: overrides GET /v1/repos/owner/repo/gate-config/effective's default fixture response. */
+    gateConfigEffective?: Record<string, unknown>;
     /** #6980: overrides POST /v1/preflight/review-risk and captures the request body. */
     reviewRisk?: Record<string, unknown>;
     onReviewRiskRequest?: (body: unknown) => void;
@@ -656,6 +658,20 @@ export async function startFixtureServer(
           overall: { blocked: 11, blockedThenMerged: 2, falsePositiveRate: 0.182 },
           signals: ["Highest false-positive gate: `duplicate-pr` — 25% of its 8 blocks merged anyway (1 overridden). Keep it advisory until this drops."],
         }),
+      );
+      return;
+    }
+    // #7800 gate-config/effective (read-only). Mirrors the route's response shape (repoFullName/effective/
+    // shadowPending); a test can override via options.gateConfigEffective to exercise the override branches.
+    if (request.url === "/v1/repos/owner/repo/gate-config/effective" && request.method === "GET") {
+      response.end(
+        JSON.stringify(
+          options.gateConfigEffective ?? {
+            repoFullName: "owner/repo",
+            effective: { confidenceFloor: 0.85, scopeCap: { files: 10, lines: 300 } },
+            shadowPending: false,
+          },
+        ),
       );
       return;
     }

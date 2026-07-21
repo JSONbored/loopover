@@ -1303,6 +1303,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
   },
   {
+    name: "loopover_get_gate_config_effective",
+    category: "maintainer",
+    description: "Return a repo's current effective self-tuned gate thresholds (confidenceFloor, scopeCap) resolved from the live override, plus whether a shadow recommendation is soaking. Read-only, no GitHub writes.",
+  },
+  {
     name: "loopover_open_pr",
     category: "agent",
     description:
@@ -2623,6 +2628,20 @@ registerStdioTool(
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
   );
+
+// #7800 - CLI mirror of the remote server's loopover_get_gate_config_effective. GET .../gate-config/effective
+// is the single source of truth (auto-apply.ts's loadOverride/loadShadowOverride pair); this tool only proxies.
+registerStdioTool(
+  "loopover_get_gate_config_effective",
+  {
+    description: stdioToolDescription("loopover_get_gate_config_effective"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/gate-config/effective`);
+    return toolResult(`Effective gate config for ${owner}/${repo}.`, payload);
+  },
+);
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.

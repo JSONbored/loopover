@@ -86,3 +86,32 @@ describe("useApiResource errorKind/errorStatus (#793)", () => {
     expect(state.errorKind).toBeUndefined();
   });
 });
+
+describe("useApiResource stale-response guard (#7785)", () => {
+  it("drops a superseded response when the path changed before it resolved", async () => {
+    apiFetch.mockReset();
+    let resolveOld!: (value: unknown) => void;
+    let resolveNew!: (value: unknown) => void;
+    apiFetch
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)))
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveNew = resolve)));
+
+    const { result, rerender } = renderHook(
+      ({ path }) => useApiResource<{ page: number }>(path, "Thing"),
+      { initialProps: { path: "/v1/thing?offset=0" } },
+    );
+    // Change the path so a second load starts while the first request is still in flight.
+    rerender({ path: "/v1/thing?offset=20" });
+
+    // The NEWER (second) request resolves first and is applied.
+    resolveNew({ ok: true, data: { page: 2 }, status: 200, durationMs: 1 });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.data).toEqual({ page: 2 });
+
+    // The STALE (first) request resolves last — it must be dropped, not overwrite the current page.
+    resolveOld({ ok: true, data: { page: 1 }, status: 200, durationMs: 1 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(result.current.data).toEqual({ page: 2 });
+  });
+});

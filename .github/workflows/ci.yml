@@ -44,6 +44,20 @@ jobs:
       rees: ${{ steps.filter.outputs.rees }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
+      # Debounce rapid re-pushes to an open PR: every job below (validate-code, all 3 validate-tests
+      # shards, validate-tests-merge, security) has `needs: changes` in its dependency chain, so none of
+      # them get queued for a runner until this job finishes -- and this job lives in the SAME PR-ref-scoped
+      # concurrency group as everything else (top of file), so a newer push cancels this job outright while
+      # it's asleep, well before it ever reaches "Filter changed paths". That means a rapid burst of pushes
+      # only ever lets the LAST push's `changes` run actually complete and unblock the expensive fan-out --
+      # every earlier push in the burst pays for one cheap, cancelled `changes` job instead of the full
+      # ~7-job-slot fan-out starting, queueing, and then getting killed mid-flight. No custom "is this SHA
+      # still current" check is needed: cancel-in-progress already does that for free the moment a newer
+      # push lands. Skipped on push (github.event_name == 'push', i.e. a merge to main) -- that's a
+      # once-per-merge event, not iterative amendment, and main's coverage signal shouldn't be delayed.
+      - name: Debounce rapid pushes
+        if: ${{ github.event_name == 'pull_request' }}
+        run: sleep 45
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:

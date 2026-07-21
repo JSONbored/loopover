@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGitHubResponseCacheForTest, githubRateLimitAdmissionKeyForInstallation, latestGitHubRestRateLimitObservation } from "../../src/github/client";
-import { extractPreviewUrl, findPreviewUrlFromPrComments, getPreviewBuildState } from "../../src/review/visual/preview-url";
+import { extractPreviewUrl, findPreviewUrlFromPrComments, getLatestDeploymentStatus, getPreviewBuildState } from "../../src/review/visual/preview-url";
 
 /** GitHub's `Link` header for a page that advertises a next page (the exact shape findAcrossPages walks). */
 const NEXT_LINK = '<https://api.github.com/resource?per_page=100&page=99>; rel="next", <https://api.github.com/resource?per_page=100&page=99>; rel="last"';
@@ -165,6 +165,190 @@ describe("preview-url pagination (#7450)", () => {
     vi.stubGlobal("fetch", failLater);
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
     expect(failLater).toHaveBeenCalledTimes(2);
+  });
+
+  it("getLatestDeploymentStatus finds a deployment whose environment_url sits on page 2 of the deployments list (#7805)", async () => {
+    // Page 1: 100 deployments none of which carry a usable status; page 2: the deployment with the real URL.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) {
+        if (isPage2(input)) return Response.json([{ id: 777 }]);
+        return Response.json(
+          Array.from({ length: 100 }, (_v, i) => ({ id: i + 1 })),
+          { headers: { link: NEXT_LINK } },
+        );
+      }
+      // Deployment 777's statuses carry the preview URL; every page-1 deployment's statuses are empty.
+      if (url.includes("/deployments/777/statuses")) {
+        return Response.json([{ state: "success", environment_url: "https://p2.pages.dev/" }]);
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: "https://p2.pages.dev/",
+      failed: false,
+    });
+    // Page 1 + page 2 of deployments were both fetched (the bug was that page 2 was never read).
+    expect(fetchMock.mock.calls.some((c) => isPage2(c[0]))).toBe(true);
+  });
+
+  it("getLatestDeploymentStatus finds a usable status on page 2 of a deployment's statuses (#7805)", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 42 }]);
+      if (url.includes("/deployments/42/statuses")) {
+        if (isPage2(input)) return Response.json([{ state: "success", environment_url: "https://s2.workers.dev/" }]);
+        // Page 1: 100 older statuses, none usable, advertising a next page.
+        return Response.json(
+          Array.from({ length: 100 }, () => ({ state: "queued" })),
+          { headers: { link: NEXT_LINK } },
+        );
+      }
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: "https://s2.workers.dev/",
+      failed: false,
+    });
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/statuses") && isPage2(c[0]))).toBe(true);
+  });
+
+  it("getLatestDeploymentStatus reports failed when a deployment's latest status is a failure and none are pending (#7805)", async () => {
+    // No usable environment_url anywhere, and the single deployment's latest (statuses[0]) is a hard failure:
+    // sawFailure is set, sawPending stays false, so the terminal verdict is failed:true.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 5 }]);
+      if (url.includes("/deployments/5/statuses")) return Response.json([{ state: "failure" }, { state: "success" }]);
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: true,
+    });
+  });
+
+  it("getLatestDeploymentStatus is NOT failed when another deployment is still pending, even if one failed (#7805)", async () => {
+    // Two deployments: one failed, one still in_progress. sawPending being set suppresses the failed verdict, so
+    // the caller keeps polling rather than declaring a false terminal failure.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 1 }, { id: 2 }]);
+      if (url.includes("/deployments/1/statuses")) return Response.json([{ state: "error" }]);
+      if (url.includes("/deployments/2/statuses")) return Response.json([{ state: "in_progress" }]);
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
+  });
+
+  it("getLatestDeploymentStatus swallows a per-deployment statuses-fetch error and treats that deployment as URL-less (#7805)", async () => {
+    // A statuses read throwing must not abort the whole lookup: findDeploymentUrl's .catch degrades that one
+    // deployment to null, so the overall result is a clean "no URL yet, not failed".
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 9 }]);
+      if (url.includes("/deployments/9/statuses")) throw new Error("statuses network down");
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
+  });
+
+  it("getLatestDeploymentStatus skips a deployment whose id is absent, leaving no statuses to inspect (#7805)", async () => {
+    // The id filter drops an id-less deployment entry, so there is nothing to fetch statuses for -> no URL, not
+    // failed. (A statuses fetch for a real id is never issued here.)
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ notAnId: true }]);
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
+  });
+
+  it("getLatestDeploymentStatus treats a non-array deployments payload as an empty page (#7805)", async () => {
+    // Array.isArray(payload) ? ... : [] -- the deployments list read returning a non-array object degrades to an
+    // empty page rather than throwing.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json({ message: "unexpected non-array deployments shape" });
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
+  });
+
+  it("getLatestDeploymentStatus treats a non-array statuses payload for a deployment as empty (#7805)", async () => {
+    // The inner Array.isArray(payload) ? ... : [] guard: a deployment's /statuses returning a non-array object is
+    // treated as "no statuses", so that deployment contributes no URL and no failed/pending signal.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 3 }]);
+      if (url.includes("/deployments/3/statuses")) return Response.json({ message: "unexpected non-array statuses shape" });
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
+  });
+
+  it("getLatestDeploymentStatus builds a ref-scoped deployments query when given a ref instead of a sha (#7805)", async () => {
+    // The selector ternary's ref arm: with params.ref (and no sha) the deployments list is queried by ref=..., and
+    // a usable status still resolves to its environment_url.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return Response.json([{ id: 8 }]);
+      if (url.includes("/deployments/8/statuses")) return Response.json([{ state: "success", environment_url: "https://ref.pages.dev/" }]);
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, ref: "feature-branch" })).resolves.toEqual({
+      url: "https://ref.pages.dev/",
+      failed: false,
+    });
+    // The deployments query was scoped by ref=..., not sha=...
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("/deployments?ref=feature-branch"))).toBe(true);
+  });
+
+  it("getLatestDeploymentStatus returns error:true when the deployments read fails with a non-404 status (#7805)", async () => {
+    // A 403/5xx (not a 404 "genuinely no deployments") must surface error:true so the caller keeps polling rather
+    // than showing a false terminal "no preview" state.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return new Response("forbidden", { status: 403 });
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+      error: true,
+    });
+  });
+
+  it("getLatestDeploymentStatus returns no-preview (not error) when the deployments read 404s (#7805)", async () => {
+    // A 404 means the ref genuinely has no deployments -> a clean {url:null, failed:false}, distinct from the
+    // non-404 error path above.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/deployments?")) return new Response("not found", { status: 404 });
+      return Response.json([]);
+    });
+    await expect(getLatestDeploymentStatus({ token: "t", repo: REPO, sha: "abc" })).resolves.toEqual({
+      url: null,
+      failed: false,
+    });
   });
 });
 

@@ -277,6 +277,24 @@ describe("self-host monitored recurring work", () => {
       errors.mockRestore();
     });
 
+    it("logs a non-Error config_push handler throw by stringifying it (the false ternary arm, mirrors the webhook path's own test)", async () => {
+      const state: OrbRelayDrainState = { pendingAck: [], lastDrainAtMs: null };
+      const drain = vi.fn().mockResolvedValue([{ deliveryId: "push-throws-2", eventName: "config_push", rawBody: "{}", kind: "config_push" }]);
+      // Throws only for the config_push event's own log call -- the loop's trailing "orb_relay_drained"
+      // summary log (unrelated pre-existing behavior, called once more after the loop) must stay unaffected.
+      const log = vi.fn((line: string) => {
+        // eslint-disable-next-line no-throw-literal -- deliberately a non-Error throw, exercising the ternary's false arm
+        if (JSON.parse(line).event === "orb_config_push_received") throw "not an Error instance";
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await drainOrbRelayWithMonitor({ state, relayEnv: {}, env: {} as Env, drain, enqueue: vi.fn(), log });
+
+      const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("orb_config_push_handler_threw"));
+      expect(JSON.parse(logged!)).toMatchObject({ error: "not an Error instance" });
+      errors.mockRestore();
+    });
+
     it("defaults the log sink to console.log for a config_push row too (mirrors the webhook path's own default)", async () => {
       const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
       try {

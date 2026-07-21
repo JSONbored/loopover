@@ -7577,6 +7577,10 @@ export async function runContentLaneDeliverableCheckForAdvisory(
       .join("\n\n");
     if (!issueText.trim()) return;
     const changedFiles = args.files.map((file) => file.path);
+    // facts.title is string | null (fetchLinkedIssueFacts maps an empty/absent title to null) --
+    // checkContentLaneDeliverable's issueTitle param is string | undefined, so a null title degrades to
+    // undefined here rather than being passed through: the title-pattern signal simply doesn't fire,
+    // and the literal-path-in-body signal still applies on its own.
     const result = checkContentLaneDeliverable(spec, issueText, changedFiles, issueFetch.facts.title ?? undefined);
     if (result.verdict !== "missing") return;
     args.advisory.findings.push({

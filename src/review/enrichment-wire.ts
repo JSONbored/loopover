@@ -489,9 +489,11 @@ export async function buildReviewEnrichment(
       const bodyPreview = await response.text().catch(() => "");
       // A non-2xx from REES (auth/5xx/bad-gateway) silently degraded the review to no-enrichment with no signal.
       // Surface it at ERROR level (same event as the catch below) so the Sentry forwarder catches a broken REES.
-      console.error(
+      // 413 is an expected boundary condition (oversized payload) and is logged at WARN to avoid noisy Sentry alerts.
+      const logFn = response.status === 413 ? console.warn : console.error;
+      logFn(
         JSON.stringify({
-          level: "error",
+          level: response.status === 413 ? "warn" : "error",
           event: "review_context_fetch_failed",
           contextType: "enrichment",
           ev: "enrichment_http_error",

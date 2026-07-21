@@ -341,6 +341,9 @@ describe("exportReplaySnapshot (#3010)", () => {
 
     await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "noslash", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
     await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "a/b/c", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
+    // #7795: `.`/`..`/control-char segments must be rejected too (both owner and repo), not just missing/extra slashes.
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "../etc", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
+    await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "owner/..", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
   });
 
   it("assertExecResult falls back to a generic exit-code message when stderr is entirely absent", async () => {

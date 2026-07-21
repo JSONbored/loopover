@@ -129,6 +129,9 @@ describe("loopover-miner run-state store (#2289)", () => {
     try {
       expect(() => store.getRunState("not-a-full-name")).toThrow("invalid_repo_full_name");
       expect(() => store.setRunState("owner/repo/extra", "idle")).toThrow("invalid_repo_full_name");
+      // #7795: `.`/`..`/control-char segments must be rejected too (both owner and repo), not just missing/extra slashes.
+      expect(() => store.getRunState("../etc")).toThrow("invalid_repo_full_name");
+      expect(() => store.setRunState("owner/..", "idle")).toThrow("invalid_repo_full_name");
       expect(() => store.setRunState("owner/repo", "blocked" as never)).toThrow("invalid_run_state");
       expect(store.getRunState("owner/repo")).toBeNull();
     } finally {

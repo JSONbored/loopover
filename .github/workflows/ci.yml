@@ -728,12 +728,12 @@ jobs:
     name: validate-tests
     needs: changes
     # Also runs on REES/mcp/engine/miner/discoveryIndex-only changes: Codecov holds codecov/patch until
-    # `after_n_builds` (6) coverage uploads land (codecov.yml), and a PR scoped to just one of those
+    # `after_n_builds` (3) coverage uploads land (codecov.yml), and a PR scoped to just one of those
     # self-contained packages doesn't otherwise touch `backend`, so without the shards it would upload no
     # coverage report at all and codecov/patch would never post -- not even a vacuous pass, no check at
     # all, and the required `validate` aggregate treats a skipped job as success (#7318-#7321: 3
     # packages/loopover-miner/lib-only PRs merged this way with validate-tests never running). Running the
-    # shards guarantees the 6 uploads so Codecov posts a real patch verdict covering whichever package
+    # shards guarantees the 3 uploads so Codecov posts a real patch verdict covering whichever package
     # actually changed (review-enrichment/** via the `rees` flag from validate-code; packages/loopover-mcp,
     # packages/loopover-engine, packages/loopover-miner, and packages/discovery-index via their entries in
     # vitest.config.ts's coverage.include, exercised by the root test/** suite these shards already run).
@@ -744,7 +744,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3]
     env:
       VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
     steps:
@@ -805,7 +805,7 @@ jobs:
           key: test-timing-unused
           restore-keys: |
             test-timing-
-      - name: Test with coverage (shard ${{ matrix.shard }}/6)
+      - name: Test with coverage (shard ${{ matrix.shard }}/3)
         id: coverage
         env:
           # Disables vitest.config.ts's own global 90% threshold check for THIS per-shard invocation -- a
@@ -861,7 +861,7 @@ jobs:
             # ~2,900-file suite is 0% covered, polluting Codecov's project trend on every scoped PR. Real
             # coverage for files actually exercised is unaffected either way.
             SCOPE_ARGS+=(--changed=origin/main --coverage.all=false)
-            npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/6 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}"
+            npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/3 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}"
           else
             # Duration-aware sharding (#ci-duration-aware-sharding), full-suite case only: vitest's own
             # --shard splits by file COUNT alone, no duration awareness -- confirmed via real per-shard CI
@@ -869,18 +869,18 @@ jobs:
             # shards, every run sampled. Deliberately not applied to the scoped-selection branch above:
             # that file set isn't known until vitest resolves --changed itself, so a precomputed
             # assignment can't cover it without duplicating vitest's own dependency-graph resolution here.
-            # compute-test-shards.mjs enforces its own hard invariant (the union of all 6 shards' files
+            # compute-test-shards.mjs enforces its own hard invariant (the union of all 3 shards' files
             # must exactly equal the discovered file set, no file missing or duplicated) and refuses to
             # write output at all if that's ever violated, so a bug here fails this step loudly rather
             # than silently dropping a test file from CI.
-            node scripts/compute-test-shards.mjs --shards=6 --timing=test-timing.json --output=shard-assignment.json
+            node scripts/compute-test-shards.mjs --shards=3 --timing=test-timing.json --output=shard-assignment.json
             mapfile -t SHARD_FILES < <(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")
             npm run test:coverage -- --maxWorkers=4 "${SHARD_FILES[@]}" --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
           fi
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Tests::The backend test coverage suite failed (shard ${{ matrix.shard }}/6)."
+          echo "::error title=Tests::The backend test coverage suite failed (shard ${{ matrix.shard }}/3)."
           echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from all shards' merged lcov."
           echo "Reproduce locally with: 'npm run test:coverage' (unsharded, runs the whole suite)."
       - name: Verify coverage report exists

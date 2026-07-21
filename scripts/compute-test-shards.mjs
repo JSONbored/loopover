@@ -2,8 +2,8 @@
 // Bin-packs the full test/**/*.test.ts file set into N balanced shards by historical duration (greedy
 // LPT -- Longest Processing Time first: sort files descending by duration, repeatedly assign the next
 // file to whichever shard currently has the smallest total), replacing vitest's own --shard (file
-// COUNT only, no duration awareness -- confirmed this session via real per-shard CI timing data to
-// produce a consistent ~20-30% gap between the slowest and fastest of 6 shards, every sampled run).
+// COUNT only, no duration awareness -- confirmed via real per-shard CI timing data to produce a
+// consistent ~20-30% gap between the slowest and fastest shard, every sampled run at the time).
 //
 // Deliberately scoped to the full-suite case only -- see ci.yml's "Test with coverage" step for how
 // this output is (and is NOT) consumed. A PR using scoped test selection (--changed=origin/main)
@@ -25,7 +25,7 @@ import { join } from "node:path";
 const TEST_ROOT = "test";
 const EXCLUDED_DIR = join(TEST_ROOT, "workers"); // mirrors vitest.config.ts's exclude: ["test/workers/**/*.test.ts"]
 
-const shardsArg = Number(process.argv.find((a) => a.startsWith("--shards="))?.split("=")[1] ?? 6);
+const shardsArg = Number(process.argv.find((a) => a.startsWith("--shards="))?.split("=")[1] ?? 3);
 const timingArg = process.argv.find((a) => a.startsWith("--timing="))?.split("=")[1];
 const outputArg = process.argv.find((a) => a.startsWith("--output="))?.split("=")[1];
 if (!outputArg) throw new Error("--output=<path> is required");

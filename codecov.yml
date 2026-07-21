@@ -11,21 +11,21 @@ codecov:
   # Don't post a verdict until the CI run that produced the report has finished.
   require_ci_to_pass: true
   notify:
-    # The 6 backend test shards (validate-tests matrix, ci.yml) each upload their own lcov.info
+    # The 3 backend test shards (validate-tests matrix, ci.yml) each upload their own lcov.info
     # directly (flags: shard-N) -- additive by design, but Codecov re-evaluates and re-posts the
     # status check after EVERY individual upload, not just the last one. Without this, codecov/patch
-    # can report a wildly wrong verdict (as low as ~20% "patch coverage") after only 1-2 of 6 shards
+    # can report a wildly wrong verdict (as low as ~20% "patch coverage") after only 1-2 of 3 shards
     # have landed, before self-correcting once the rest arrive -- require_ci_to_pass above only checks
     # the GH Actions run's own conclusion, it says nothing about upload completeness. Waiting for all
-    # 6 coverage uploads (JUnit test_results uploads are a separate stream and don't count here) before
+    # 3 coverage uploads (JUnit test_results uploads are a separate stream and don't count here) before
     # posting a status removes that premature-fail/premature-pass window entirely.
     #
-    # Stays 6, not 7, even though review-enrichment adds a `rees` upload on REES PRs: 6 is the count that
+    # Stays 3, not 4, even though review-enrichment adds a `rees` upload on REES PRs: 3 is the count that
     # ALWAYS lands whenever validate-tests runs (the minimum floor), while the `rees` upload only exists on
     # REES PRs. The `rees` report is produced by validate-code, which finishes its REES steps in seconds and
-    # so uploads well before any ~10-minute shard -- it is already merged in by the time the 6th shard trips
+    # so uploads well before any ~10-minute shard -- it is already merged in by the time the 3rd shard trips
     # this threshold, so no premature window opens for the review-enrichment diff either.
-    after_n_builds: 6
+    after_n_builds: 3
 
 coverage:
   status:

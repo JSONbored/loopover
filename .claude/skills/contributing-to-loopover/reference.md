@@ -34,7 +34,7 @@ jobs run only if their path filter matched; on push to `main`, everything runs.
 | lint → miner-env-reference | miner/AMS env-var doc drift | `npm run miner:env-reference:check` | committed `packages/loopover-miner/docs/env-reference.md` / `apps/loopover-ui/src/lib/ams-env-reference.ts` is stale (run `npm run miner:env-reference`) — miner/AMS twin of the selfhost check above |
 | lint → observability | Grafana/Prometheus/alert config validation | `npm run selfhost:validate-observability` | a self-host observability config (dashboard/rule/datasource) is malformed |
 | lint → typecheck | `tsc --noEmit` | `npm run typecheck` | any backend type error |
-| test (1/6..6/6) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
+| test (1/3..3/3) | sharded vitest + coverage | `npm run test:coverage` (unsharded) | any failing `test/**/*.test.ts` (excl. `test/workers/**`) |
 | workers | workers-pool vitest | `npm run test:workers` | any failing `test/workers/**` |
 | mcp → build | MCP pkg build | `npm run build:mcp` | MCP package build error |
 | mcp → pack | tarball hygiene | `npm run test:mcp-pack` | unexpected/forbidden file or stale README in the npm tarball |
@@ -101,7 +101,7 @@ these for a normal PR:**
 
 | Local command | Why it's not in the table above |
 |---|---|
-| `npm run test:engine-parity`, `npm run test:live-gate-parity`, `npm run test:driver-parity` | Plain `test/contract/*.test.ts` files — no dedicated CI job, but they DO run in CI as part of whichever `test (1/6..6/6)` shard happens to contain them (sharded `vitest run`). |
+| `npm run test:engine-parity`, `npm run test:live-gate-parity`, `npm run test:driver-parity` | Plain `test/contract/*.test.ts` files — no dedicated CI job, but they DO run in CI as part of whichever `test (1/3..3/3)` shard happens to contain them (sharded `vitest run`). |
 | `npm run test --workspace @loopover/engine` | The engine package's own `node --test` suite. **Not run by `ci.yml` on a PR at all** — only by `.github/workflows/publish-engine.yml` at release time. A regression here is invisible to Codecov and to every PR-gating CI check; `test:ci` locally is the only pre-merge signal. |
 
 This is a real, previously-hit gap, not a hypothetical: a past PR shipped a genuine, undetected
@@ -122,7 +122,7 @@ checks go green) is the only way to know you didn't break it.
 - **Ignored paths** (no coverage obligation): `apps/**`, `test/**`, `scripts/**`, `src/env.d.ts`.
   Coverage `include` is `src/**/*.ts` only. → A UI-only / test-only / script-only change owes **no**
   patch coverage; a backend `src/**` change owes coverage on **every changed line + branch**.
-- **Measure unsharded locally:** `npm run test:coverage`. CI shards into 6 and Codecov merges them,
+- **Measure unsharded locally:** `npm run test:coverage`. CI shards into 3 and Codecov merges them,
   so a single local shard under-reports — never trust it.
 - **Flaky tests are already tracked.** Every shard uploads a JUnit report (`report_type: test_results`),
   which auto-enables Codecov Test Analytics with no extra config — check a PR's "Tests" tab or its

@@ -28,7 +28,13 @@ export function findExpiredClaims(claims: ClaimEntry[], nowMs: number, maxAgeMs:
   for (const claim of claims) {
     if (claim?.status !== "active") continue;
     const ageMs = claimAgeMs(claim, nowMs);
-    if (ageMs === null) continue;
+    // #7732: an unparseable claimedAt (ageMs === null) must be SWEPT, not silently retained forever —
+    // fail-closed, matching this file's posture (a corrupted/hand-edited row is otherwise permanently
+    // un-expirable). A valid but not-yet-old age still stays within the window below.
+    if (ageMs === null) {
+      expired.push(claim);
+      continue;
+    }
     if (ageMs > maxAgeMs) expired.push(claim);
   }
   return expired;

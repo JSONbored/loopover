@@ -42,13 +42,17 @@
       {
         "name": "DISCOVERY_INDEX_CONTAINER",
         "class_name": "DiscoveryIndexContainer"
+      },
+      {
+        "name": "DISCOVERY_INDEX_RATE_LIMITER",
+        "class_name": "DiscoveryIndexRateLimiter"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["DiscoveryIndexContainer"]
+      "new_sqlite_classes": ["DiscoveryIndexContainer", "DiscoveryIndexRateLimiter"]
     }
   ]
 }

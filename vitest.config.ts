@@ -78,8 +78,13 @@ export default defineConfig({
       //
       // packages/discovery-index/src/worker.ts (#7167) is the Cloudflare Container/Durable Object entry
       // point -- pure infra glue exercised only by real Cloudflare Containers infrastructure, same
-      // reasoning as server.ts above. env.d.ts is an ambient .d.ts (no executable statements, matches
-      // src/env.d.ts's own exclusion above). worker-configuration.d.ts is wrangler-generated.
+      // reasoning as server.ts above. rate-limiter.ts is NOT excluded despite living alongside it -- its
+      // DiscoveryIndexRateLimiter DO and enforceDiscoveryIndexRateLimit are unit-tested directly with a
+      // fake DurableObjectState/namespace, the same pattern the main app's own RateLimiter DO already uses
+      // (test/unit/auth.test.ts's memoryDurableObjectState helper) -- see
+      // test/unit/discovery-index/rate-limiter.test.ts. env.d.ts is an ambient .d.ts (no executable
+      // statements, matches src/env.d.ts's own exclusion above). worker-configuration.d.ts is
+      // wrangler-generated.
       //
       // packages/loopover-miner/lib/**/*.ts (above) also glob-matches its own emitted *.d.ts siblings
       // (a ".d.ts" path ends in ".ts" too) -- those aren't real modules and can't be

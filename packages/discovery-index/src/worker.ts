@@ -14,10 +14,17 @@
 // into the Durable Object's own transactional storage (real cross-instance consistency), not multiplying
 // instances under the current in-memory design.
 //
+// Also applies the blanket IP-keyed rate limit (rate-limiter.ts, #4250's "rate-limiting/abuse posture"
+// deliverable) at the Worker layer, in front of the Container -- an abusive caller gets rejected before it
+// ever reaches (and wakes) the container instance.
+//
 // Not unit-tested: exercised only by real Cloudflare Containers infrastructure, matching server.ts's own
 // existing exclusion (see codecov.yml / vitest.config.ts).
 import { Container } from "@cloudflare/containers";
 import { env } from "cloudflare:workers";
+import { DiscoveryIndexRateLimiter, enforceDiscoveryIndexRateLimit } from "./rate-limiter.js";
+
+export { DiscoveryIndexRateLimiter };
 
 const SINGLETON_INSTANCE_NAME = "discovery-index-singleton";
 
@@ -35,12 +42,24 @@ export class DiscoveryIndexContainer extends Container {
 
 interface WorkerEnv {
   DISCOVERY_INDEX_CONTAINER: DurableObjectNamespace<DiscoveryIndexContainer>;
+  DISCOVERY_INDEX_RATE_LIMITER: DurableObjectNamespace<DiscoveryIndexRateLimiter>;
   DISCOVERY_INDEX_SHARED_SECRET: string;
   DISCOVERY_INDEX_GITHUB_TOKEN: string;
 }
 
+// /health, /ready, /metrics are cheap liveness/monitoring routes a legitimate uptime checker may poll
+// frequently -- only the real, potentially-abusable work (query/soft-claim) is rate-limited, mirroring the
+// main app's own isPreAuthRateLimitPath exclusion for equivalent routes (src/auth/rate-limit.ts).
+function isRateLimited(path: string): boolean {
+  return path.startsWith("/v1/discovery-index/");
+}
+
 export default {
   async fetch(request: Request, workerEnv: WorkerEnv): Promise<Response> {
+    if (isRateLimited(new URL(request.url).pathname)) {
+      const limited = await enforceDiscoveryIndexRateLimit(request, workerEnv.DISCOVERY_INDEX_RATE_LIMITER);
+      if (limited) return limited;
+    }
     const container = workerEnv.DISCOVERY_INDEX_CONTAINER.getByName(SINGLETON_INSTANCE_NAME);
     return container.fetch(request);
   },

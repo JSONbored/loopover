@@ -14,5 +14,5 @@
     // over the same package must not share one cache file.
     "tsBuildInfoFile": "./.worker.tsbuildinfo"
   },
-  "include": ["src/worker.ts", "src/env.d.ts", "worker-configuration.d.ts"]
+  "include": ["src/worker.ts", "src/rate-limiter.ts", "src/env.d.ts", "worker-configuration.d.ts"]
 }

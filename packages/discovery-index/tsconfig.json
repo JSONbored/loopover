@@ -20,7 +20,8 @@
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
   "include": ["src"],
-  // worker.ts targets the Cloudflare Workers runtime (Container/Durable Object globals), incompatible with
-  // this config's Node types -- it has its own tsconfig.worker.json, checked via `npm run cf:typecheck`.
-  "exclude": ["src/worker.ts"]
+  // worker.ts/rate-limiter.ts target the Cloudflare Workers runtime (Container/Durable Object globals),
+  // incompatible with this config's Node types -- they have their own tsconfig.worker.json, checked via
+  // `npm run cf:typecheck`.
+  "exclude": ["src/worker.ts", "src/rate-limiter.ts"]
 }

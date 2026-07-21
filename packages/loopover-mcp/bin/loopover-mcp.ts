@@ -1374,6 +1374,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
   },
   {
+    name: "loopover_get_automation_state",
+    category: "agent",
+    description:
+      "Return a repo's DERIVED agent automation state — the effective mode, permissionReadiness, acting action classes, and pending-action count computed over the raw settings row — same as `loopover-mcp maintain automation-state` and the read-side counterpart to the pause/resume/set-level write tools. Maintainer-authenticated; read-only.",
+  },
+  {
     name: "loopover_plan_repo_issues",
     category: "maintainer",
     description:
@@ -2771,6 +2777,24 @@ registerStdioTool(
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
   );
+
+// #7752: read-side counterpart to the pause/resume/set-level write tools above. Proxies the same
+// GET {repoBase}/automation-state the `maintain automation-state` CLI already calls (loopover-mcp.ts),
+// exposing the DERIVED mode/permissionReadiness/acting-classes/pending view the raw settings row omits.
+registerStdioTool(
+  "loopover_get_automation_state",
+  {
+    description: stdioToolDescription("loopover_get_automation_state"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const payload = await apiGet(`${toolRepoBase(owner, repo)}/automation-state`);
+    return toolResult(
+      `Agent automation state for ${owner}/${repo}: mode ${payload.mode ?? "unknown"}, ${(payload.actingActionClasses ?? []).length} acting class(es), ${payload.pendingActionCount ?? 0} pending.`,
+      payload,
+    );
+  },
+);
 
 registerStdioTool(
   "loopover_plan_repo_issues",

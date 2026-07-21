@@ -1,5 +1,6 @@
-// Public entry for @loopover/control-plane: the injectable tenant-provisioning driver contract + fake, and the
-// product-agnostic provisionTenant/deprovisionTenant orchestration built on it (#7524).
+// Public entry for @loopover/control-plane: the injectable tenant-provisioning driver contract + fake, the
+// product-agnostic provisionTenant/deprovisionTenant orchestration built on it (#7524), and the PagerDuty
+// paging that orchestration fires on a provisioning-lifecycle failure (#7667).
 
 export {
   createFakeTenantProvisioningDriver,
@@ -15,9 +16,18 @@ export {
 export {
   deprovisionTenant,
   provisionTenant,
+  type ProvisioningPagerDutyOptions,
   type TenantDeprovisioningResult,
   type TenantProvisioningResult,
 } from "./provisioning.js";
+export {
+  buildProvisioningPagerDutyAlert,
+  notifyProvisioningFailure,
+  pagerDutyFailMessage,
+  type NotifyProvisioningFailure,
+  type PagerDutySeverity,
+  type ProvisioningPagerDutyAlert,
+} from "./pagerduty-notify.js";
 export {
   createFakeSettlementBackendDriver,
   type FakeSettlementBackendDriver,

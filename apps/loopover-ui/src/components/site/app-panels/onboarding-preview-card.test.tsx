@@ -145,4 +145,20 @@ describe("OnboardingPreviewCard", () => {
     expect(screen.queryByText(/Here's what LoopOver would have flagged/)).toBeNull();
     expect(apiFetch).not.toHaveBeenCalled();
   });
+
+  it("migrates a pre-rebrand gittensory_ dismiss flag so the card stays hidden (#7782)", async () => {
+    window.localStorage.setItem(
+      "gittensory_maintainer_onboarding_preview_dismissed",
+      JSON.stringify({ dismissed: true }),
+    );
+    apiFetch.mockResolvedValue({ ok: true, data: preview() });
+    render(<OnboardingPreviewCard reviewability={REVIEWABILITY} />);
+    await waitFor(() =>
+      expect(window.localStorage.getItem("loopover_maintainer_onboarding_preview_dismissed")).toBe(
+        JSON.stringify({ dismissed: true }),
+      ),
+    );
+    expect(screen.queryByText(/Here's what LoopOver would have flagged/)).toBeNull();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
 });

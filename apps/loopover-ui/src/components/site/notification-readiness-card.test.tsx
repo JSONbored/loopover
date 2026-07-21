@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // #6985: a real fetch failure used to render the same generic text as "still loading" — these tests
 // pin the three render paths (loading / error / success) now that LoadingState/ErrorState replace it.
@@ -31,6 +31,10 @@ const notificationModelFixture = {
 };
 
 describe("NotificationReadinessCard loading/error states (#6985)", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("shows a LoadingState (not the generic spinner-free text) while the model loads", () => {
     useApiResource.mockReturnValue({
       status: "loading",
@@ -93,5 +97,21 @@ describe("NotificationReadinessCard loading/error states (#6985)", () => {
 
     expect(container.textContent).toContain("No content leaves the browser without consent.");
     expect(screen.queryByText("Loading notification model…")).toBeNull();
+  });
+
+  it("migrates a pre-rebrand gittensory_ opt-in flag so the pill shows enabled (#7782)", async () => {
+    window.localStorage.setItem("gittensory_notification_opt_in", JSON.stringify(true));
+    useApiResource.mockReturnValue({
+      status: "ready",
+      data: notificationModelFixture,
+      error: null,
+      loadedAt: Date.now(),
+      reload: () => {},
+    });
+
+    render(<NotificationReadinessCard />);
+    await waitFor(() => expect(screen.getByText("opt-in enabled")).toBeTruthy());
+    expect(window.localStorage.getItem("loopover_notification_opt_in")).toBe(JSON.stringify(true));
+    expect(screen.queryByText("opt-in required")).toBeNull();
   });
 });

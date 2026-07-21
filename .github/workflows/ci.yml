@@ -915,10 +915,21 @@ jobs:
           SCOPE_ARGS=()
           if [ "$SCOPED_TEST_SELECTION" = "true" ]; then
             echo "Scoped test selection: no rees/engine paths changed -- running vitest --changed=origin/main instead of the full suite."
-            # This job's checkout already uses fetch-depth: 0 (full history, for Codecov's merge-base
-            # resolution), which should make origin/main resolvable already -- fetch it explicitly anyway
-            # as a cheap, idempotent guarantee rather than relying on that as an assumption.
-            git fetch --depth=1 origin main
+            # REGRESSION (2026-07-21): this used to be `git fetch --depth=1 origin main`, reasoning it was
+            # "a cheap, idempotent guarantee" on top of this job's checkout already using fetch-depth: 0
+            # (full history for every ref, including origin/main -- confirmed sufficient on its own). It
+            # was NOT idempotent: a --depth=1 fetch of a ref that already has full history locally
+            # re-shallows THAT ref specifically, cutting its reachable history at the single fetched
+            # commit. vitest's --changed=origin/main below needs `git merge-base <head>...origin/main` to
+            # resolve, and once origin/main was re-shallowed to one commit with no shared history
+            # reachable from a PR branch forked further back, merge-base returned nothing -- vitest
+            # silently fell back to "no changed files" and every shard printed "No test files found,
+            # exiting with code 0", failing every scoped PR's "Verify coverage report exists" step,
+            # contributor and maintainer alike. Dropping --depth entirely keeps this genuinely idempotent
+            # (a no-op fast-forward on top of history the checkout step already fetched in full) while
+            # still acting as a real defensive top-up for any future scenario where that assumption stops
+            # holding, instead of betting everything on the checkout step with no fallback at all.
+            git fetch origin main
             # --coverage.all=false: without it, v8's default "report every coverage.include-matched file
             # at 0% even if untouched by this run" would make this shard's upload claim the rest of the
             # ~2,900-file suite is 0% covered, polluting Codecov's project trend on every scoped PR. Real

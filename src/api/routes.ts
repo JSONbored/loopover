@@ -156,6 +156,7 @@ import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
 import {
+  enqueueConfigPushRelay,
   MAX_ORB_RELAY_REGISTER_BODY_BYTES,
   pullRelayPending,
   readOrbRelayRegisterBody,
@@ -1010,6 +1011,21 @@ const commandFeedbackSchema = z
 const killSwitchUpdateSchema = z
   .object({
     frozen: z.boolean(),
+  })
+  .strict();
+
+// Config-push write path (#7522, piece 1 of #4902's design): an operator-addressed Orb-operational notice
+// (enrollment lifecycle, capability announcement, deprecation notice) -- explicit installationIds target list
+// only, no percentage/canary selector (no rollout-percentage primitive exists in this codebase to build one on
+// top of; out of scope here). pushId doubles as the idempotency key (see enqueueConfigPushRelay's deliveryId
+// derivation), so it's constrained to the same safe-identifier shape as commandFeedbackSchema's answerId above.
+const configPushSchema = z
+  .object({
+    installationIds: z.array(z.number().int().positive()).min(1).max(500),
+    pushId: z.string().min(1).max(120).regex(/^[A-Za-z0-9_.:-]+$/),
+    message: z.string().min(1).max(500),
+    capability: z.string().min(1).max(120).optional(),
+    deprecatesAt: z.string().datetime().optional(),
   })
   .strict();
 
@@ -1905,6 +1921,42 @@ export function createApp() {
       metadata: { frozen: verified.frozen, identityKind: identity.kind },
     });
     return c.json({ ok: true, ...verified });
+  });
+
+  // Config-push write path (#7522, piece 1 of #4902's 3-piece design): an operator pushes a typed, addressed
+  // Orb-operational notice (capability announcement, deprecation notice, enrollment lifecycle) to an explicit
+  // list of installations, landing in the SAME orb_relay_pending queue the GitHub-webhook relay already uses
+  // (kind = 'config_push' -- see enqueueConfigPushRelay, src/orb/relay.ts). Write side only; the companion
+  // dispatch-side issue (#7523) is how a self-host container's drain loop tells this apart from a webhook row
+  // before touching raw_body. Scope boundary: Orb's own operational state ONLY -- never auto-applies anything
+  // that overrides an operator's own .loopover.yml/DB settings.
+  //
+  // Deliberately under /v1/app/*, NOT /v1/internal/* despite that being this issue's illustrative example path:
+  // the /v1/internal/* prefix's own middleware requires a bearer INTERNAL_JOB_TOKEN and (per requiresApiToken's
+  // explicit `/v1/internal/` exclusion) never even resolves a session identity for it -- canSessionAccessPath is
+  // never consulted -- which would make requireAppRole's session-role branch unreachable dead code for a
+  // control-panel caller. /v1/app/* is where requireAppRole's session-based gate is actually meaningful,
+  // matching the kill-switch endpoint above exactly (a bearer INTERNAL_JOB_TOKEN/api-token caller still passes
+  // requireAppRole's own non-session branch either way).
+  app.post("/v1/app/fleet/config-push", async (c) => {
+    const forbidden = await requireAppRole(c, ["operator"]);
+    if (forbidden) return forbidden;
+    const identity = await authenticateRequestIdentity(c);
+    /* v8 ignore next -- requireAppRole already rejects an unauthenticated caller before this handler runs. */
+    if (!identity) return c.json({ error: "unauthorized" }, 401);
+    const body = await c.req.json().catch(() => null);
+    const parsed = configPushSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_config_push", issues: parsed.error.issues }, 400);
+    const { installationIds, ...payload } = parsed.data;
+    await Promise.all(installationIds.map((installationId) => enqueueConfigPushRelay(c.env, installationId, payload)));
+    await recordAuditEvent(c.env, {
+      eventType: "operator.config_push_enqueued",
+      actor: identity.actor,
+      targetKey: `config_push#${parsed.data.pushId}`,
+      outcome: "completed",
+      metadata: { installationCount: installationIds.length, capability: payload.capability ?? null },
+    });
+    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length });
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer

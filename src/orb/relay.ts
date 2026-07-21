@@ -340,6 +340,44 @@ export async function enqueueRelayPending(
     .run();
 }
 
+export type ConfigPushPayload = {
+  pushId: string;
+  message: string;
+  capability?: string | undefined;
+  deprecatesAt?: string | undefined;
+};
+
+/** An Orb-operational notice (#7522, piece 1 of #4902's 3-piece design) addressed to one installation — NOT a
+ *  GitHub webhook, so unlike enqueueRelayPending above this skips coalesce-key derivation entirely (that logic
+ *  assumes `rawBody` parses as a GitHubWebhookPayload; a config_push payload never does). Still shares the same
+ *  pending queue as the webhook path — same TTL pruning, same per-installation backlog cap — since both kinds
+ *  drain through the same pull loop (`kind` is how the drain side, #7523, tells them apart before touching
+ *  `rawBody`). `deliveryId` is derived from `pushId` + `installationId` (not caller-supplied) so re-posting the
+ *  same push is idempotent per target, matching every other ON CONFLICT DO NOTHING write in this file. */
+export async function enqueueConfigPushRelay(env: Env, installationId: number, payload: ConfigPushPayload): Promise<void> {
+  await pruneRelayPending(env);
+  const deliveryId = `config-push:${payload.pushId}:${installationId}`;
+  await env.DB
+    .prepare(
+      "INSERT INTO orb_relay_pending (delivery_id, installation_id, event_name, raw_body, kind) VALUES (?, ?, 'config_push', ?, 'config_push') ON CONFLICT(delivery_id) DO NOTHING",
+    )
+    .bind(deliveryId, installationId, JSON.stringify(payload))
+    .run();
+  await env.DB
+    .prepare(
+      `DELETE FROM orb_relay_pending
+       WHERE installation_id = ?
+         AND delivery_id IN (
+           SELECT delivery_id FROM orb_relay_pending
+           WHERE installation_id = ?
+           ORDER BY created_at DESC, delivery_id DESC
+           LIMIT -1 OFFSET ?
+         )`,
+    )
+    .bind(installationId, installationId, RELAY_PENDING_MAX_PER_INSTALLATION)
+    .run();
+}
+
 function relayPendingCoalesceKey(eventName: string, rawBody: string): string | null {
   try {
     return githubWebhookCoalesceKey(

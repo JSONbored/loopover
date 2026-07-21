@@ -873,6 +873,11 @@ export const orbRelayPending = sqliteTable(
     rawBody: text("raw_body").notNull(),
     createdAt: text("created_at").notNull().$defaultFn(() => nowIso()),
     coalesceKey: text("coalesce_key"),
+    // Discriminator (#7522): 'github_webhook' (default, every pre-existing row) vs 'config_push' (an
+    // operator-addressed capability/deprecation notice, never a GitHub payload -- see src/orb/relay.ts's
+    // enqueueConfigPushRelay). The dispatch side (#7523) branches on this before treating raw_body as a
+    // GitHubWebhookPayload.
+    kind: text("kind").notNull().default("github_webhook"),
   },
   (table) => ({
     installation: index("idx_orb_relay_pending_install").on(table.installationId, table.createdAt),

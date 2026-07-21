@@ -15,12 +15,20 @@ import { createOrbInstallationToken } from "./app-auth";
 // throttled App doesn't spuriously abort an otherwise-fine request.
 const REPO_TRANSFER_TIMEOUT_MS = 25_000;
 
+// `repoFullName` goes straight into the request URL's path, so it must be a plain `owner/repo` pair — the only
+// characters GitHub allows in a login or repo name (alphanumerics plus `-`, `_`, `.`). Rejecting anything else up
+// front stops a value carrying URL metacharacters (`?`, `#`, extra `/`, …) from silently redirecting the POST to
+// a different endpoint. GitHub logins/repos can't legally contain those, so a match here is never a false reject.
+const REPO_FULL_NAME_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
 /** Outcome of initiating a repo transfer.
  *
  *  `initiated: true` means GitHub ACCEPTED the transfer request (HTTP 202) — it does NOT mean the customer has
  *  accepted it or that the repo has moved. That acceptance is a separate, later event and is out of scope here.
  *  `initiated: false` carries GitHub's HTTP status and (truncated) error body so a caller can tell "target
- *  account doesn't exist" (404) apart from "caller lacks admin access" (403) without catching an exception. */
+ *  account doesn't exist" (404) apart from "caller lacks admin access" (403) without catching an exception. A
+ *  locally-rejected malformed `repoFullName` (see `REPO_FULL_NAME_PATTERN`) uses `status: 0` to signal that no
+ *  request was ever sent to GitHub. */
 export type AprRepoTransferResult =
   | { initiated: true; status: number; repo: string; newOwner: string }
   | { initiated: false; status: number; error: string };
@@ -42,6 +50,15 @@ export async function initiateAprRepoTransfer(
   repoFullName: string,
   newOwner: string,
 ): Promise<AprRepoTransferResult> {
+  // Guard the URL path before spending a token mint or a network round-trip: a `repoFullName` with URL
+  // metacharacters could otherwise redirect the POST to an unintended endpoint.
+  if (!REPO_FULL_NAME_PATTERN.test(repoFullName)) {
+    return {
+      initiated: false,
+      status: 0,
+      error: `invalid repoFullName: ${repoFullName.slice(0, 200)}`,
+    };
+  }
   const { token } = await createOrbInstallationToken(env, installationId);
   const response = await timeoutFetch(
     `https://api.github.com/repos/${repoFullName}/transfer`,

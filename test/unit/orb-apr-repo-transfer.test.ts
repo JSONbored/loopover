@@ -100,6 +100,26 @@ describe("initiateAprRepoTransfer", () => {
     });
   });
 
+  it("rejects a malformed repoFullName locally (status 0) without minting a token or hitting GitHub", async () => {
+    // A `?`-carrying value would redirect the POST to a different endpoint, so it's refused before any network I/O.
+    const { calls } = stubTransfer(() => new Response(null, { status: 202 }));
+
+    const result = await initiateAprRepoTransfer(
+      await orbEnv(),
+      42,
+      "loopover-org/acme-app?ref=evil",
+      "customer-login",
+    );
+
+    expect(result).toEqual({
+      initiated: false,
+      status: 0,
+      error: "invalid repoFullName: loopover-org/acme-app?ref=evil",
+    });
+    // No token mint, no transfer POST — nothing reached the stubbed fetch at all.
+    expect(calls).toHaveLength(0);
+  });
+
   it("returns initiated:false with the status + message when the target account doesn't exist (404)", async () => {
     stubTransfer(
       () =>

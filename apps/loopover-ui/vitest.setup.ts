@@ -28,8 +28,8 @@ globalThis.ResizeObserver ??= ResizeObserverStub as unknown as typeof ResizeObse
 // actual fix on Node 26+. A `??=` guard would not help (the broken accessor already counts as "present");
 // the property is configurable so redefining it is safe. Mirrors apps/loopover-miner-ui/vitest.setup.ts's
 // own guard (#7597), which fixed the identical gap there but not here.
-const jsdomLocalStorage = (globalThis as { jsdom?: { window?: { localStorage?: Storage } } }).jsdom?.window
-  ?.localStorage;
+const jsdomLocalStorage = (globalThis as { jsdom?: { window?: { localStorage?: Storage } } }).jsdom
+  ?.window?.localStorage;
 if (jsdomLocalStorage) {
   Object.defineProperty(globalThis, "localStorage", {
     value: jsdomLocalStorage,

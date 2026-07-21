@@ -6,10 +6,21 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const c8Bin = join(root, "review-enrichment", "node_modules", "c8", "bin", "c8.js");
-const reportDir = join(root, "review-enrichment", "coverage");
-const testRoot = join(root, "review-enrichment", "test");
+/** Normalize c8's SF: paths to forward slashes for Codecov. Swallows only a missing report
+ *  (ENOENT on read) — CI's "Verify REES coverage report exists" step fails closed downstream.
+ *  Any other read/write error propagates so a real lcov post-process failure is not masked. */
+export function normalizeLcovSfPaths(lcovPath, { readFile = readFileSync, writeFile = writeFileSync } = {}) {
+  try {
+    const raw = readFile(lcovPath, "utf8");
+    writeFile(
+      lcovPath,
+      raw.replace(/^SF:(.*)$/gm, (_match, path) => `SF:${String(path).replace(/\\/g, "/")}`),
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+}
 
 function collectTests(dir, out = []) {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
@@ -20,40 +31,40 @@ function collectTests(dir, out = []) {
   return out;
 }
 
-const tests = collectTests(testRoot).map((path) => relative(root, path).split("\\").join("/"));
-if (tests.length === 0) {
-  console.error("rees-coverage: no review-enrichment/test/**/*.test.ts files found");
-  process.exit(1);
-}
+function main() {
+  const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+  const c8Bin = join(root, "review-enrichment", "node_modules", "c8", "bin", "c8.js");
+  const reportDir = join(root, "review-enrichment", "coverage");
+  const testRoot = join(root, "review-enrichment", "test");
 
-const result = spawnSync(
-  process.execPath,
-  [
-    c8Bin,
-    "--reporter=lcov",
-    "--reporter=text-summary",
-    `--report-dir=${reportDir}`,
-    "--include=review-enrichment/dist/**/*.js",
-    "--exclude=**/*.d.ts",
-    "--all",
+  const tests = collectTests(testRoot).map((path) => relative(root, path).split("\\").join("/"));
+  if (tests.length === 0) {
+    console.error("rees-coverage: no review-enrichment/test/**/*.test.ts files found");
+    process.exit(1);
+  }
+
+  const result = spawnSync(
     process.execPath,
-    "--test",
-    "--experimental-strip-types",
-    ...tests,
-  ],
-  { cwd: root, stdio: "inherit", env: process.env },
-);
-
-// Codecov expects forward-slash SF: paths; c8 on Windows emits backslashes.
-const lcovPath = join(reportDir, "lcov.info");
-try {
-  const raw = readFileSync(lcovPath, "utf8");
-  writeFileSync(
-    lcovPath,
-    raw.replace(/^SF:(.*)$/gm, (_match, path) => `SF:${String(path).replace(/\\/g, "/")}`),
+    [
+      c8Bin,
+      "--reporter=lcov",
+      "--reporter=text-summary",
+      `--report-dir=${reportDir}`,
+      "--include=review-enrichment/dist/**/*.js",
+      "--exclude=**/*.d.ts",
+      "--all",
+      process.execPath,
+      "--test",
+      "--experimental-strip-types",
+      ...tests,
+    ],
+    { cwd: root, stdio: "inherit", env: process.env },
   );
-} catch {
-  // CI's "Verify REES coverage report exists" step fails closed if the report is missing.
+
+  // Codecov expects forward-slash SF: paths; c8 on Windows emits backslashes.
+  normalizeLcovSfPaths(join(reportDir, "lcov.info"));
+
+  process.exit(result.status === null ? 1 : result.status);
 }
 
-process.exit(result.status === null ? 1 : result.status);
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

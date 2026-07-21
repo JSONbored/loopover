@@ -174,6 +174,8 @@ export async function startFixtureServer(
     prTextLintStatus?: number;
     onPacketRequest?: (body: unknown) => void;
     onIssueDraftRequest?: (body: { dryRun?: boolean; create?: boolean; limit?: number }) => void;
+    /** #7764: overrides POST /v1/repos/owner/repo/issue-plan-drafts/generate and captures the request body. */
+    onIssuePlanRequest?: (body: { goal?: string; dryRun?: boolean; create?: boolean; limit?: number; milestone?: unknown }) => void;
     onWatchRequest?: (req: { method: string; body: { repoFullName?: string; labels?: string[] } }) => void;
     onApiRequest?: (request: IncomingMessage) => void;
     validateConfigWarnings?: string[];
@@ -684,6 +686,38 @@ export async function startFixtureServer(
             {
               status: "proposed",
               title: "Add [31mcursor[0m pagination",
+              ...(requestBody.create ? { issue: { number: 42, url: "https://github.com/owner/repo/issues/42" } } : {}),
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (request.url === "/v1/repos/owner/repo/issue-plan-drafts/generate" && request.method === "POST") {
+      // #7764: reflect the forwarded {goal, dryRun, create, limit, milestone} so the CLI/stdio tests can assert the
+      // exact body they sent. The draft title carries an ANSI escape to prove the plain-text path is sanitized.
+      const requestBody = (await readJsonRequest(request)) as { goal?: string; dryRun?: boolean; create?: boolean; limit?: number; milestone?: unknown };
+      options.onIssuePlanRequest?.(requestBody);
+      response.end(
+        JSON.stringify({
+          repoFullName: "owner/repo",
+          generatedAt: "2026-05-30T00:00:00.000Z",
+          status: "ok",
+          dryRun: requestBody.dryRun ?? true,
+          createRequested: requestBody.create ?? false,
+          proposed: 1,
+          skippedDuplicate: 0,
+          skippedDeclined: 0,
+          skippedUnsafe: 0,
+          created: requestBody.create ? 1 : 0,
+          skippedCreateFailed: 0,
+          ...(requestBody.milestone ? { milestoneNumber: 7 } : {}),
+          drafts: [
+            {
+              status: "proposed",
+              title: "Add [31missue[0m planning",
+              body: "Add pagination.",
+              labels: ["enhancement"],
               ...(requestBody.create ? { issue: { number: 42, url: "https://github.com/owner/repo/issues/42" } } : {}),
             },
           ],

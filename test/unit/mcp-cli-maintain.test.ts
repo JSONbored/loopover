@@ -123,6 +123,66 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     expect(json).toMatchObject({ dryRun: true, createRequested: false });
   });
 
+  it("plan-issues dry-runs by default and never forwards create (#7764)", async () => {
+    const bodies: Array<{ goal?: string; dryRun?: boolean; create?: boolean; limit?: number; milestone?: unknown }> = [];
+    const e = await env({ onIssuePlanRequest: (b) => bodies.push(b) });
+    const out = await runAsync(["maintain", "plan-issues", "--repo", "owner/repo", "--goal", "add pagination"], e);
+    // A bare invocation must send the goal plus {create:false, dryRun:true} — the tool can never silently create.
+    expect(bodies[0]).toMatchObject({ goal: "add pagination", create: false, dryRun: true });
+    expect(out).toMatch(/Issue plan for owner\/repo \(dry-run\): 1 proposed, 0 created/);
+    // The generated draft title carries an ANSI escape; the plain-text path must strip it (#6261).
+    expect(out).toContain("Add issue planning");
+    expect(out).not.toContain("[31m");
+  });
+
+  it("plan-issues --create forwards {create:true, dryRun:false}, the limit, and a milestone (#7764)", async () => {
+    const bodies: Array<{ goal?: string; dryRun?: boolean; create?: boolean; limit?: number; milestone?: unknown }> = [];
+    const e = await env({ onIssuePlanRequest: (b) => bodies.push(b) });
+    const out = await runAsync(
+      [
+        "maintain",
+        "plan-issues",
+        "--repo",
+        "owner/repo",
+        "--goal",
+        "add pagination",
+        "--create",
+        "--limit",
+        "3",
+        "--milestone-title",
+        "Wave 2",
+        "--milestone-description",
+        "Parity work",
+        "--milestone-due",
+        "2026-08-01T00:00:00.000Z",
+      ],
+      e,
+    );
+    // --create maps to the exact {create:true, dryRun:false} shape the route's guard demands; --limit is a number,
+    // and the milestone flags are folded into the maintainer-supplied milestone object.
+    expect(bodies[0]).toMatchObject({
+      goal: "add pagination",
+      create: true,
+      dryRun: false,
+      limit: 3,
+      milestone: { title: "Wave 2", description: "Parity work", dueOn: "2026-08-01T00:00:00.000Z" },
+    });
+    expect(out).toMatch(/\(create\): 1 proposed, 1 created/);
+    expect(out).toMatch(/#42 https:\/\/github\.com\/owner\/repo\/issues\/42/);
+    const json = JSON.parse(await runAsync(["maintain", "plan-issues", "--repo", "owner/repo", "--goal", "add pagination", "--json"], e)) as {
+      dryRun: boolean;
+      createRequested: boolean;
+    };
+    expect(json).toMatchObject({ dryRun: true, createRequested: false });
+  });
+
+  it("plan-issues requires a --goal before any request (#7764)", async () => {
+    const bodies: unknown[] = [];
+    const e = await env({ onIssuePlanRequest: (b) => bodies.push(b) });
+    await expect(runAsync(["maintain", "plan-issues", "--repo", "owner/repo"], e)).rejects.toThrow(/Usage: loopover-mcp maintain plan-issues/);
+    expect(bodies).toHaveLength(0);
+  });
+
   it("outcome-calibration reports slop-band merge rates + recommendation outcomes (plain + json), passing the window through (#6735)", async () => {
     const e = await env();
     const out = await runAsync(["maintain", "outcome-calibration", "--repo", "owner/repo"], e);

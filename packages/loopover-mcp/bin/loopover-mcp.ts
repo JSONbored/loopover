@@ -107,7 +107,7 @@ const CLI_COMMAND_SPEC = {
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
   agent: ["plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts"],
+  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
@@ -915,6 +915,25 @@ const gatePrecisionShape = {
   windowDays: z.number().int().positive().optional(),
 };
 
+// #7764: mirrors the remote planRepoIssuesShape (src/mcp/server.ts) and the REST route's
+// issuePlanDraftGenerateSchema EXACTLY, so this stdio tool cannot drift from the surface it proxies. Dry-run by
+// default; the route re-applies the explicit_create_requires_dry_run_false guard and enforces write access, so the
+// tool never decides locally.
+const planRepoIssuesMilestoneShape = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(2000).optional(),
+  dueOn: z.string().datetime({ offset: true }).optional(),
+});
+const planRepoIssuesShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  goal: z.string().min(1).max(2000),
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(10).optional().default(5),
+  milestone: planRepoIssuesMilestoneShape.optional(),
+};
+
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
@@ -1290,6 +1309,11 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_get_gate_precision",
     category: "maintainer",
     description: "Return per-gate-type false-positive precision for a repo's recorded gate blocks — blocked / blocked-then-merged counts and false-positive rates with low-sample guards. Optionally bounded by windowDays. Maintainer-authenticated; measurement only.",
+  },
+  {
+    name: "loopover_plan_repo_issues",
+    category: "maintainer",
+    description: "AI-plan a small set of concrete GitHub issue drafts for a repo from a maintainer-supplied free-form goal, same as `loopover-mcp maintain plan-issues --goal`. Dry-run BY DEFAULT: only PREVIEWS drafts unless BOTH create:true and dryRun:false are passed, and creation additionally requires repo write access. An optional milestone (title/description/dueOn, all maintainer-supplied) groups any created issues. Makes a real LLM call. Maintainer access required.",
   },
   {
     name: "loopover_open_pr",
@@ -2597,6 +2621,31 @@ registerStdioTool(
     return toolResult(`Gate precision for ${owner}/${repo}.`, payload);
   },
   );
+
+// #7764: local mirror of the remote loopover_plan_repo_issues tool. Proxies to the same REST route
+// `maintain plan-issues` calls (POST /issue-plan-drafts/generate); the API re-applies the
+// explicit_create_requires_dry_run_false guard and enforces maintainer + write access, so this never decides
+// locally. Schema defaults mean dryRun/create/limit always arrive resolved.
+registerStdioTool(
+  "loopover_plan_repo_issues",
+  {
+    description: stdioToolDescription("loopover_plan_repo_issues"),
+    inputSchema: planRepoIssuesShape,
+  },
+  async ({ owner, repo, goal, dryRun, create, limit, milestone }: any) => {
+    const payload = await apiPost(`${toolRepoBase(owner, repo)}/issue-plan-drafts/generate`, {
+      goal,
+      dryRun,
+      create,
+      limit,
+      ...(milestone ? { milestone } : {}),
+    });
+    return toolResult(
+      `Issue plan for ${owner}/${repo} (status=${payload.status ?? "ok"}, dryRun=${payload.dryRun ?? true}): ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created.`,
+      payload,
+    );
+  },
+);
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.
@@ -3202,6 +3251,10 @@ function printMaintainHelp() {
       "  generate-issue-drafts        Preview contributor issue drafts (dry-run). Never creates without --create.",
       "             [--create]        Actually open the drafted issues (requires repo write access).",
       "             [--limit N]       Cap the drafts generated (1-20, default 5).",
+      "  plan-issues --goal TEXT      AI-plan issue drafts from a free-form goal (dry-run). Never creates without --create.",
+      "             [--create]        Actually open the planned issues (requires repo write access).",
+      "             [--limit N]       Cap the drafts planned (1-10, default 5).",
+      "             [--milestone-title T] Group created issues under a milestone (also --milestone-description, --milestone-due ISO).",
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",
@@ -3439,8 +3492,48 @@ async function maintainCli(args: any) {
     emit(payload, lines.join("\n"));
     return;
   }
+  if (subcommand === "plan-issues") {
+    // #7764: session-authenticated mirror of POST {repoBase}/issue-plan-drafts/generate (and the remote
+    // loopover_plan_repo_issues tool). Dry-run BY DEFAULT — only a bare `--create` opts into the write path, and it
+    // is forwarded as {create:true, dryRun:false}, the exact shape the route's explicit_create_requires_dry_run_false
+    // guard demands. A plain `plan-issues` can never create. The optional milestone (title/description/dueOn) is
+    // maintainer-supplied, never model-generated, and only ever consulted server-side when actually creating.
+    const goal = typeof options.goal === "string" ? options.goal : "";
+    if (!goal.trim()) {
+      throw new Error('Usage: loopover-mcp maintain plan-issues --goal "..." --repo owner/repo [--create] [--limit N] [--milestone-title ...].');
+    }
+    const create = options.create === true;
+    const parsedLimit = Number(options.limit);
+    const milestone =
+      typeof options.milestoneTitle === "string"
+        ? {
+            title: options.milestoneTitle,
+            ...(typeof options.milestoneDescription === "string" ? { description: options.milestoneDescription } : {}),
+            ...(typeof options.milestoneDue === "string" ? { dueOn: options.milestoneDue } : {}),
+          }
+        : undefined;
+    const body = {
+      goal,
+      create,
+      dryRun: !create,
+      ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}),
+      ...(milestone ? { milestone } : {}),
+    };
+    const payload = await apiPost(`${repoBase}/issue-plan-drafts/generate`, body);
+    const mode = payload.dryRun ? "dry-run" : "create";
+    const lines = [
+      `Issue plan for ${repoFullName} (${mode}): ${payload.proposed ?? 0} proposed, ${payload.created ?? 0} created, ${payload.skippedDuplicate ?? 0} duplicate, ${payload.skippedDeclined ?? 0} declined, ${payload.skippedUnsafe ?? 0} unsafe, ${payload.skippedCreateFailed ?? 0} create-failed.`,
+      // draft.title/body are generated from a free-form goal, so the plain-text path is sanitized (#6261).
+      ...(payload.drafts ?? []).map((draft: any) => {
+        const ref = draft.issue ? ` -> #${draft.issue.number} ${draft.issue.url}` : "";
+        return `- [${sanitizePlainTextTerminalOutput(draft.status)}] ${sanitizePlainTextTerminalOutput(draft.title)}${sanitizePlainTextTerminalOutput(ref)}`;
+      }),
+    ];
+    emit(payload, lines.join("\n"));
+    return;
+  }
   throw new Error(
-    `Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts.`,
+    `Unknown maintain subcommand: ${subcommand}. Use status | queue | propose <action-class> <pull-number> | approve <id> | reject <id> | pause | resume | set-level <action> <level> | precision | outcome-calibration | onboarding-pack | audit-feed | automation-state | refresh-docs | generate-issue-drafts | plan-issues.`,
   );
 }
 
@@ -4642,7 +4735,7 @@ function printHelp() {
   loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
   loopover-mcp cache status|list|clear [--json]
   loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
-  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
+  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts|plan-issues --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
   loopover-mcp decision-pack --login <github-login> [--json]
   loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
   loopover-mcp contributor-profile [--login <github-login>] [--json]

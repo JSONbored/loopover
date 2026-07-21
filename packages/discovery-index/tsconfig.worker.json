@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // worker.ts runs in the Cloudflare Workers runtime only -- Node types (this package's main tsconfig.json)
+    // would incorrectly permit Node-only APIs this file can never actually call, and would conflict with
+    // Workers-only globals (DurableObjectNamespace, `cloudflare:workers`) the Node types don't know about.
+    "types": ["@cloudflare/workers-types"],
+    "declaration": false,
+    "rootDir": "src",
+    "noEmit": true,
+    // Separate buildinfo file, same reasoning as tsconfig.json's own comment on this: two tsc invocations
+    // over the same package must not share one cache file.
+    "tsBuildInfoFile": "./.worker.tsbuildinfo"
+  },
+  "include": ["src/worker.ts", "src/env.d.ts", "worker-configuration.d.ts"]
+}

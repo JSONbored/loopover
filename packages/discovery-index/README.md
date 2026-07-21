@@ -30,11 +30,22 @@ Soft-claim design note: the shipped client payload never carries caller identity
 
 ## Deployment
 
-Build and run via the included `Dockerfile` (build context = the **repository root**, since this service depends on the `@loopover/engine` workspace package):
+The production deployment (#7167) is a **Cloudflare Container**, not a bare VPS/Docker host: `wrangler.jsonc` runs the exact same `Dockerfile` as a Container behind a Durable Object, giving it a public URL (`discovery.loopover.ai`) and TLS with no manual DNS/reverse-proxy setup. This was chosen over a raw VPS/PaaS deploy because it reuses the same platform already chosen for the ORB+AMS hosted control-plane (#7173), and over native (non-Container) Workers because this service's cache (`cache.ts`) and soft-claim dedup store (`soft-claim.ts`) are both in-process memory — a Container is one real, persistent process (so that state behaves correctly, exactly as already tested), where Workers' distributed isolates would not reliably share it. See `src/worker.ts`'s header comment for why the config pins `max_instances: 1` (a correctness requirement for soft-claim dedup, not just a cost choice).
+
+**First-time setup**, from this directory:
+
+```sh
+npx wrangler secret put DISCOVERY_INDEX_SHARED_SECRET   # never commit a real value
+npx wrangler secret put DISCOVERY_INDEX_GITHUB_TOKEN    # never commit a real value
+npx wrangler types                                       # regenerate worker-configuration.d.ts after any wrangler.jsonc change
+npx wrangler deploy
+```
+
+`npm run cf:dev` runs it locally against Cloudflare's dev runtime; `npm run cf:typecheck` type-checks `src/worker.ts` against the Workers runtime types (kept in a separate `tsconfig.worker.json` from this package's own Node build — see that file's header comment for why).
+
+**Local, non-Cloudflare testing** (no wrangler/Containers involved) still works exactly as before via the plain Docker image:
 
 ```sh
 docker build -f packages/discovery-index/Dockerfile -t loopover-discovery-index .
 docker run -p 8080:8080 -e DISCOVERY_INDEX_SHARED_SECRET=... -e DISCOVERY_INDEX_GITHUB_TOKEN=... loopover-discovery-index
 ```
-
-Hosting/DNS/TLS/observability wiring for a public deployment is tracked separately (#7167), not part of this service's own code.

@@ -1,11 +1,12 @@
-# LoopOver discovery-index service (#4250, #7164). Standalone Hono/Node service, deployment shape mirrors
-# review-enrichment/ (own Dockerfile, own port, no Cloudflare Worker involvement). Build context =
-# the packages/discovery-index/ directory — but it depends on the @loopover/engine workspace package
+# LoopOver discovery-index service (#4250, #7164, #7167). Standalone Hono/Node service (the actual runtime
+# CMD below is unchanged whether run via plain Docker or, per #7167, a Cloudflare Container). Build context
+# is the REPOSITORY ROOT, not this directory — it depends on the @loopover/engine workspace package
 # (packages/loopover-engine), so the build stage copies the whole monorepo root and installs via npm
-# workspaces rather than `npm ci` inside this directory alone.
+# workspaces rather than `npm ci` inside this directory alone. See README.md's Deployment section for the
+# exact build invocation (`docker build -f packages/discovery-index/Dockerfile .` from the repo root).
 FROM node:22-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.json ./
 COPY packages/loopover-engine/package.json packages/loopover-engine/package.json
 COPY packages/discovery-index/package.json packages/discovery-index/package.json
 RUN npm ci --workspace @loopover/engine --workspace @loopover/discovery-index --include-workspace-root

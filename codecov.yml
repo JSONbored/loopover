@@ -78,6 +78,11 @@ ignore:
   # discovery-index's process entrypoint (#7164) -- same "Docker build+boot, not unit-coverable" reasoning
   # as src/server.ts above; app.ts (everything it wires together) is what tests actually import.
   - "packages/discovery-index/src/server.ts"
+  # discovery-index's Cloudflare Container/Durable Object entry point (#7167) -- pure infra glue exercised
+  # only by real Cloudflare Containers infrastructure, same reasoning as server.ts above.
+  - "packages/discovery-index/src/worker.ts"
+  - "packages/discovery-index/src/env.d.ts"
+  - "packages/discovery-index/worker-configuration.d.ts"
   # NOTE: packages/loopover-miner/bin/loopover-miner.ts and (once #7291 migrates it)
   # packages/loopover-mcp/bin/loopover-mcp.ts are plain CLI dispatchers (no exports, terminate via
   # process.exit()) exercised only via real subprocess spawn (test/unit/support/{miner,mcp}-cli-harness.ts),

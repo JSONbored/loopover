@@ -76,6 +76,11 @@ export default defineConfig({
       // build+boot path, not unit-coverable without actually binding a port. See codecov.yml's matching
       // ignore entry; app.ts (everything server.ts wires together) is what tests actually import.
       //
+      // packages/discovery-index/src/worker.ts (#7167) is the Cloudflare Container/Durable Object entry
+      // point -- pure infra glue exercised only by real Cloudflare Containers infrastructure, same
+      // reasoning as server.ts above. env.d.ts is an ambient .d.ts (no executable statements, matches
+      // src/env.d.ts's own exclusion above). worker-configuration.d.ts is wrangler-generated.
+      //
       // packages/loopover-miner/lib/**/*.ts (above) also glob-matches its own emitted *.d.ts siblings
       // (a ".d.ts" path ends in ".ts" too) -- those aren't real modules and can't be
       // parsed as coverage source, so they're excluded the same way src/env.d.ts already is. Same story
@@ -85,6 +90,9 @@ export default defineConfig({
         "src/env.d.ts",
         "apps/**",
         "packages/discovery-index/src/server.ts",
+        "packages/discovery-index/src/worker.ts",
+        "packages/discovery-index/src/env.d.ts",
+        "packages/discovery-index/worker-configuration.d.ts",
         "packages/loopover-miner/lib/**/*.d.ts",
         "packages/loopover-miner/bin/**/*.d.ts",
         "packages/loopover-mcp/lib/**/*.d.ts",

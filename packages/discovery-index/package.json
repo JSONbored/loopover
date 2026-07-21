@@ -10,15 +10,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "dev": "node --experimental-strip-types --watch src/server.ts"
+    "dev": "node --experimental-strip-types --watch src/server.ts",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:typecheck": "tsc -p tsconfig.worker.json --noEmit"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.3.7",
     "@hono/node-server": "^1.19.14",
     "@loopover/engine": "^3.4.0",
     "hono": "^4.12.27"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260721.1",
     "@types/node": "^22.20.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "wrangler": "^4.112.0"
   }
 }

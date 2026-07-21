@@ -19,5 +19,8 @@
     // mismatched buildinfo and rechecks from scratch), but real on every local `npm run test:ci`.
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": ["src"],
+  // worker.ts targets the Cloudflare Workers runtime (Container/Durable Object globals), incompatible with
+  // this config's Node types -- it has its own tsconfig.worker.json, checked via `npm run cf:typecheck`.
+  "exclude": ["src/worker.ts"]
 }

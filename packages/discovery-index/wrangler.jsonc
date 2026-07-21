@@ -1,0 +1,54 @@
+{
+  // Cloudflare Worker + Container deployment for the discovery-index service (#7167, #4250). This Worker
+  // adds no application logic of its own -- it's a thin router (src/worker.ts) in front of a Container
+  // running the SAME, unmodified Docker image the existing Dockerfile already builds and the Node
+  // entrypoint (src/server.ts) already runs on port 8080.
+  //
+  // Before first deploy, set both real secrets (never commit real values, and never put them in this file):
+  //   npx wrangler secret put DISCOVERY_INDEX_SHARED_SECRET
+  //   npx wrangler secret put DISCOVERY_INDEX_GITHUB_TOKEN
+  "name": "loopover-discovery-index",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-21",
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "routes": [
+    {
+      "pattern": "discovery.loopover.ai",
+      "custom_domain": true
+    }
+  ],
+  "containers": [
+    {
+      "name": "loopover-discovery-index-container",
+      "class_name": "DiscoveryIndexContainer",
+      // Build context must be the repo root, not this directory -- the image depends on the
+      // @loopover/engine workspace package (see the Dockerfile's own header comment).
+      "image": "./Dockerfile",
+      "image_build_context": "../../",
+      // Deliberately 1, not a pool -- see worker.ts's header comment on why a single fixed instance is a
+      // correctness requirement (in-memory cache + soft-claim dedup state), not just a cost choice.
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DISCOVERY_INDEX_CONTAINER",
+        "class_name": "DiscoveryIndexContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DiscoveryIndexContainer"]
+    }
+  ]
+}

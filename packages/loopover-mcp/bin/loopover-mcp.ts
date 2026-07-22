@@ -1057,6 +1057,12 @@ const STDIO_TOOL_DESCRIPTORS = [
       "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
   },
   {
+    name: "loopover_refresh_repo_docs",
+    category: "maintainer",
+    description:
+      "Force an immediate repo-doc refresh (AGENTS.md/CLAUDE.md, and a skill file when warranted) for one repo, without waiting for the scheduled interval. Only ever opens a pull request -- never a direct commit -- and only when repoDocGeneration is enabled for this repo and the generated content actually changed. Maintainer access required.",
+  },
+  {
     name: "loopover_get_ams_miner_cohort",
     category: "maintainer",
     description:
@@ -1701,6 +1707,21 @@ registerStdioTool(
     if (limit !== undefined) query.set("limit", String(limit));
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver agent audit feed for ${owner}/${repo}.`, await apiGet(`${prefix}/agent/audit-feed${query.size > 0 ? `?${query}` : ""}`));
+  },
+);
+
+// #7754: stdio mirror of the remote loopover_refresh_repo_docs + the `maintain refresh-docs` CLI. Thin POST
+// proxy of the same {repoBase}/repo-docs/refresh route (empty body -- the route only ever opens a PR, never
+// merges/commits, so there is no create-safety flag to forward). Same ownerRepoShape pattern as maintainer_noise.
+registerStdioTool(
+  "loopover_refresh_repo_docs",
+  {
+    description: stdioToolDescription("loopover_refresh_repo_docs"),
+    inputSchema: ownerRepoShape,
+  },
+  async ({ owner, repo }: any) => {
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult(`LoopOver repo-doc refresh for ${owner}/${repo}.`, await apiPost(`${prefix}/repo-docs/refresh`, {}));
   },
 );
 

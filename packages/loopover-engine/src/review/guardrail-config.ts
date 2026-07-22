@@ -28,6 +28,12 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/settings/agent-execution.ts",
   "src/settings/agent-sweep.ts",
   "src/settings/autonomy.ts",
+  // #8012: src/settings/autonomy.ts and src/review/guardrail-config.ts (below) are now 5-line #6203 re-export
+  // shims -- the real, substantive logic lives at these packages/loopover-engine paths instead. Both the shim
+  // AND the real path are listed deliberately: a PR touching only the shim (unlikely, but not impossible)
+  // should still trip the guardrail, and a PR touching the real engine-package file (the common case today)
+  // must trip it too, which the shim-only entries above could never catch on their own.
+  "packages/loopover-engine/src/settings/autonomy.ts",
   "src/queue/**",
   "src/github/pr-actions.ts",
   "src/github/app.ts",
@@ -39,6 +45,10 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/auth/**",
   "src/review/safety.ts",
   "src/review/guardrail-config.ts",
+  // #8012: see the packages/loopover-engine/src/settings/autonomy.ts comment above -- same shim/real-path
+  // pairing, this time for this very file (guardrail-config.ts itself). A PR editing ENGINE_DECISION_GUARDRAIL_GLOBS
+  // or DEFAULT_HARD_GUARDRAIL_GLOBS to quietly remove entries must trip this guardrail too.
+  "packages/loopover-engine/src/review/guardrail-config.ts",
   "src/review/cutover-gate.ts",
   "src/review/linked-issue-hard-rules.ts",
   "src/review/outcomes-wire.ts",

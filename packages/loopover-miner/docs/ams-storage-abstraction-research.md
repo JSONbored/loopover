@@ -140,3 +140,9 @@ pool with `translateSql`/`translateDdl`. Reusing this means AMS gets **D1-or-Pos
 for free, and the follow-up design issue chooses the deployment target without a second abstraction. The
 recommendation here — Postgres-lead, D1-alternative, KV-excluded — is a non-binding input to that
 maintainer-owned design issue.
+
+## See also
+
+- [`ams-shared-store-concurrency-model.md`](ams-shared-store-concurrency-model.md) — post-#7175
+  concurrency guarantees (and non-guarantees) for the shared `SqliteDriver` / `pg-adapter` seam under
+  concurrent sessions (#4942).

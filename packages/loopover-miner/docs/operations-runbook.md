@@ -49,6 +49,11 @@ PRAGMA busy_timeout = 5000;
 
 **Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal scale = **isolated state dirs** (separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`, or the k8s StatefulSet pattern in [`../DEPLOYMENT.md`](../DEPLOYMENT.md)).
 
+For the **shared-service** model (what the `SqliteDriver` / ORB `pg-adapter` seam guarantees under
+concurrent sessions after #7175 — and what it does not), see
+[`ams-shared-store-concurrency-model.md`](ams-shared-store-concurrency-model.md) (#4942). That doc is
+the maintainer reference; this section stays the laptop/fleet operator contract for one SQLite state dir.
+
 ### Quick health check
 
 ```sh

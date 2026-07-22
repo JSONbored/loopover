@@ -96,4 +96,71 @@ describe("formStateToYaml", () => {
       [HEADER, "gate:", "  aiReview:", `    model: ${JSON.stringify(model)}`].join("\n"),
     );
   });
+
+  // Regression (#8022): rees.analyzers overrides never reached the preview at all, since this module
+  // declared its own narrower GeneratorFormState duplicate with no `rees` field.
+  describe("review.enrichment (REES analyzer overrides, #8022)", () => {
+    it("serializes rees.analyzers overrides as a review.enrichment map", () => {
+      const state: GeneratorFormState = {
+        rees: { analyzers: { "deep-nesting": true, "error-swallow": false } },
+      };
+      expect(formStateToYaml(state)).toBe(
+        [
+          HEADER,
+          "review:",
+          "  enrichment:",
+          "    deep-nesting: true",
+          "    error-swallow: false",
+        ].join("\n"),
+      );
+    });
+
+    it("sorts analyzer entries alphabetically regardless of insertion order", () => {
+      const state: GeneratorFormState = {
+        rees: { analyzers: { "zebra-analyzer": true, "alpha-analyzer": true } },
+      };
+      expect(formStateToYaml(state)).toBe(
+        [
+          HEADER,
+          "review:",
+          "  enrichment:",
+          "    alpha-analyzer: true",
+          "    zebra-analyzer: true",
+        ].join("\n"),
+      );
+    });
+
+    it("omits the review.enrichment block when rees.analyzers is empty", () => {
+      expect(formStateToYaml({ rees: { analyzers: {} } })).toBe(HEADER);
+    });
+
+    it("omits the review.enrichment block when rees is entirely unset", () => {
+      expect(formStateToYaml({ rees: undefined })).toBe(HEADER);
+    });
+
+    it("keeps a false override in the output rather than treating it as unset", () => {
+      const state: GeneratorFormState = { rees: { analyzers: { "secret-scan": false } } };
+      expect(formStateToYaml(state)).toBe(
+        [HEADER, "review:", "  enrichment:", "    secret-scan: false"].join("\n"),
+      );
+    });
+
+    it("renders both gate.aiReview and review.enrichment when both are configured", () => {
+      const state: GeneratorFormState = {
+        gate: { aiReview: { provider: "anthropic" } },
+        rees: { analyzers: { "deep-nesting": true } },
+      };
+      expect(formStateToYaml(state)).toBe(
+        [
+          HEADER,
+          "gate:",
+          "  aiReview:",
+          "    provider: anthropic",
+          "review:",
+          "  enrichment:",
+          "    deep-nesting: true",
+        ].join("\n"),
+      );
+    });
+  });
 });

@@ -347,9 +347,6 @@ export function resolveReviewPreMergeChecks(manifest: FocusManifest | null): Pre
   return manifest?.review.preMergeChecks ?? [];
 }
 
-/** Resolve `review.enrichment` analyzer toggles from a possibly-null manifest (null = load failure ⇒ no toggles ⇒
- *  the operator's default analyzer set runs unchanged). Centralized so the enrichment caller threads them in one
- *  place with the null-manifest branch covered here (unit-tested) rather than inline in the processor. (#2050) */
 /** Resolve `review.auto_review` from a possibly-null manifest (null = load failure => no ignored authors). The
  *  runtime eligibility check then fails open instead of suppressing review output on an ambiguous manifest read.
  *  (#2060) */
@@ -373,6 +370,9 @@ export function resolveReviewVisualConfig(manifest: FocusManifest | null): Visua
   return manifest?.review.visual ?? { ...EMPTY_VISUAL_CONFIG };
 }
 
+/** Resolve `review.enrichment` analyzer toggles from a possibly-null manifest (null = load failure ⇒ no toggles ⇒
+ *  the operator's default analyzer set runs unchanged). Centralized so the enrichment caller threads them in one
+ *  place with the null-manifest branch covered here (unit-tested) rather than inline in the processor. (#2050) */
 export function resolveEnrichmentAnalyzerToggles(manifest: FocusManifest | null): Partial<Record<ReesAnalyzerName, boolean>> {
   return manifest?.review.enrichmentAnalyzers ?? {};
 }

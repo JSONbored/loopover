@@ -48,6 +48,7 @@ const TOOLS_WITH_OUTPUT_SCHEMA = [
   "loopover_get_eligibility_plan",
   "loopover_simulate_open_pr_pressure",
   "loopover_get_gate_precision",
+  "loopover_get_selftune_override_audit",
   "loopover_get_skipped_pr_audit",
 ];
 

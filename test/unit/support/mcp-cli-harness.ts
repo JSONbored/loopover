@@ -725,6 +725,21 @@ export async function startFixtureServer(
       );
       return;
     }
+    // #7798: self-tune override audit trail (why an override was promoted/shadowed/cleared).
+    if (request.url?.startsWith("/v1/repos/owner/repo/selftune/overrides/audit") && request.method === "GET") {
+      const limit = new URL(request.url, "http://localhost").searchParams.get("limit");
+      const events = [
+        { eventType: "promoted", detail: '{"confidenceFloor":0.91}', createdAt: "2026-06-02T00:00:00.000Z" },
+        { eventType: "shadow_written", detail: null, createdAt: "2026-06-01T00:00:00.000Z" },
+      ];
+      response.end(JSON.stringify({ repoFullName: "owner/repo", audit: limit ? events.slice(0, Number(limit)) : events }));
+      return;
+    }
+    // #7798: audit-less variant — a payload without rows, for the CLI's defensive audit fallback.
+    if (request.url?.startsWith("/v1/repos/owner/bare/selftune/overrides/audit") && request.method === "GET") {
+      response.end(JSON.stringify({ repoFullName: "owner/bare" }));
+      return;
+    }
     if (request.url?.startsWith("/v1/repos/owner/repo/outcome-calibration") && request.method === "GET") {
       const windowDays = new URL(request.url, "http://localhost").searchParams.get("windowDays");
       response.end(

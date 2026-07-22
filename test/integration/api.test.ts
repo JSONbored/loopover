@@ -5524,6 +5524,7 @@ describe("api routes", () => {
     expect(toolNames).toContain("loopover_preview_local_pr_score");
     expect(toolNames).toContain("loopover_explain_score_breakdown");
     expect(toolNames).toContain("loopover_get_outcome_calibration");
+    expect(toolNames).toContain("loopover_get_selftune_override_audit");
     expect(toolNames).toContain("loopover_get_registry_changes");
     expect(toolNames).toContain("loopover_get_registry_snapshot");
     expect(toolNames).toContain("loopover_get_upstream_drift");

@@ -207,6 +207,7 @@ import {
   buildStaticControlPanelRoleSummary,
   canLoginAccessRepo,
   canWatchRepo,
+  type ControlPanelAccessScope,
   loadControlPanelAccessScope,
   loadControlPanelRoleSummary,
 } from "../services/control-panel-roles";
@@ -2629,6 +2630,59 @@ export function createApp() {
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json({ ...(await buildInstallationRepairDiagnostics(c.env, health)), refreshed: true });
+  });
+
+  // Tenant self-service for installation health/repair (#7661). The operator-only `/v1/installations*` routes
+  // above expose the ENTIRE fleet, so a hosted tenant currently depends on the fleet operator to see or repair
+  // even their own installation. These `/v1/app/installations*` siblings reuse `/v1/app/maintainer-dashboard`'s
+  // exact scoping (`loadControlPanelAccessScope`, via `resolveAppInstallationScope`): an operator (or static
+  // service identity) still sees everything (scope === null), while a non-operator session is limited to
+  // installations under their own account or maintained repos — tenant A can never read or repair tenant B's.
+  app.get("/v1/app/installations", async (c) => {
+    const resolved = await resolveAppInstallationScope(c);
+    if (resolved instanceof Response) return resolved;
+    const { scope } = resolved;
+    const [allInstallations, allHealth] = await Promise.all([listInstallations(c.env), listInstallationHealth(c.env)]);
+    const installations = allInstallations.filter((installation) => installationRecordInScope(scope, { installationId: installation.id, accountLogin: installation.accountLogin }));
+    const health = allHealth.filter((record) => installationRecordInScope(scope, record));
+    return c.json({ installations, health: health.map(enrichInstallationHealth) });
+  });
+
+  app.get("/v1/app/installations/:id/health", async (c) => {
+    const resolved = await resolveAppInstallationScope(c);
+    if (resolved instanceof Response) return resolved;
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
+    return c.json(enrichInstallationHealth(health));
+  });
+
+  app.get("/v1/app/installations/:id/repair", async (c) => {
+    const resolved = await resolveAppInstallationScope(c);
+    if (resolved instanceof Response) return resolved;
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    const health = await getInstallationHealth(c.env, installationId);
+    if (!health) return c.json({ error: "installation_health_not_found" }, 404);
+    if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
+    return c.json(await buildInstallationRepairDiagnostics(c.env, health));
+  });
+
+  app.post("/v1/app/installations/:id/repair/refresh", async (c) => {
+    const resolved = await resolveAppInstallationScope(c);
+    if (resolved instanceof Response) return resolved;
+    const installationId = Number(c.req.param("id"));
+    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    // Ownership is enforced BEFORE the refresh side effect so a tenant can never trigger repair on an
+    // installation they don't own; the existing health record supplies the account the scope is checked against.
+    const existing = await getInstallationHealth(c.env, installationId);
+    if (!existing) return c.json({ error: "installation_health_not_found" }, 404);
+    if (!installationRecordInScope(resolved.scope, existing)) return c.json({ error: "forbidden_installation" }, 403);
+    const refreshed = await refreshInstallationHealthForInstallation(c.env, installationId);
+    if (!refreshed) return c.json({ error: "installation_not_found" }, 404);
+    return c.json({ ...(await buildInstallationRepairDiagnostics(c.env, refreshed)), refreshed: true });
   });
 
   app.get("/v1/repos", async (c) => c.json(await listRepositories(c.env)));
@@ -6590,6 +6644,30 @@ async function requireAppRole(c: ProtectedRouteContext, allowedRoles: ControlPan
   }
   const summary = await loadControlPanelRoleSummary(c.env, identity.actor);
   return summary.roles.some((role) => allowedRoles.includes(role)) ? null : c.json({ error: "insufficient_role" }, 403);
+}
+
+/** Tenant-scoped gate for the `/v1/app/installations*` self-service routes (#7661), mirroring
+ *  `/v1/app/maintainer-dashboard`: requires a maintainer/owner/operator role and, for a non-operator session,
+ *  resolves the caller's installation access scope. Returns `{ identity, scope }` (scope === null means the
+ *  caller — an operator or static service identity — sees the whole fleet), or a Response to short-circuit. */
+async function resolveAppInstallationScope(c: ProtectedRouteContext): Promise<Response | { identity: AuthIdentity; scope: ControlPanelAccessScope | null }> {
+  const identity = await authenticateRequestIdentity(c);
+  /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before reaching the handler. */
+  if (!identity) return c.json({ error: "unauthorized" }, 401);
+  const summary = await getRoleSummaryForIdentity(c.env, identity);
+  if (!summary.roles.some((role) => ["maintainer", "owner", "operator"].includes(role))) return c.json({ error: "insufficient_role" }, 403);
+  const scope = identity.kind === "session" && !summary.roles.includes("operator") ? await loadControlPanelAccessScope(c.env, identity.actor) : null;
+  return { identity, scope };
+}
+
+/** Whether an installation/health record is visible under a resolved installation scope, using the exact
+ *  installation-id / account-login match `/v1/app/maintainer-dashboard` applies. A null scope is the operator
+ *  (whole-fleet) case and matches everything. */
+function installationRecordInScope(scope: ControlPanelAccessScope | null, record: { installationId: number; accountLogin: string }): boolean {
+  if (!scope) return true;
+  const scopedInstallationIds = new Set(scope.installationIds);
+  const scopedAccountLogins = new Set(scope.accountLogins.map((accountLogin) => accountLogin.toLowerCase()));
+  return scopedInstallationIds.has(record.installationId) || scopedAccountLogins.has(record.accountLogin.toLowerCase());
 }
 
 async function requireStaticProtectedApiToken(c: ProtectedRouteContext): Promise<Response | null> {

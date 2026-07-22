@@ -19,6 +19,13 @@
   "name": "loopover-control-plane",
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-21",
+  // Cron-wake for hosted AMS tenants (#7182): every 5 minutes, `scheduled()` (src/worker.ts) checks every
+  // AMS tenant's own `amsSchedule.nextDueAt` (ams-wake.ts) and wakes whichever are due -- there is no
+  // per-resource Cron Trigger primitive to register one schedule per tenant, so a single frequent global
+  // tick is how per-tenant cadence (which can be coarser than 5 minutes, per-tenant) actually gets checked.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   // Required: http-app.ts (via auth.ts/provisioning.ts/pagerduty-notify.ts) uses node:crypto's
   // timingSafeEqual, Buffer, and process.env -- real APIs this flag provides, not a Node-only assumption.
   "compatibility_flags": ["nodejs_compat"],

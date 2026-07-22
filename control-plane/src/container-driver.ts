@@ -48,7 +48,10 @@ export type ContainerDriver = {
   containerExists(request: TenantProvisioningRequest): Promise<boolean>;
 };
 
-function instanceNameFor(request: TenantProvisioningRequest): string {
+/** The `${product}:${name}` composite key a tenant's Container DO is addressed by -- exported so other
+ *  modules that need to reach the SAME instance (e.g. ams-wake.ts's cron-triggered wake) derive it identically
+ *  rather than duplicating the format and risking drift. Matches tenant-registry.ts's own `instanceKeyFor`. */
+export function instanceNameFor(request: TenantProvisioningRequest): string {
   return `${request.product}:${request.tenant.name}`;
 }
 

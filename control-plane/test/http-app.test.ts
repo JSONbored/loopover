@@ -127,6 +127,116 @@ test("POST /v1/tenants rejects a missing product (400)", async () => {
   assert.equal((await res.json() as { error: string }).error, "invalid_request");
 });
 
+test("POST /v1/tenants accepts an optional schedule for an AMS tenant and surfaces it back (#7182)", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "acme", product: "ams", schedule: { command: "discover", args: ["--search", "label:good-first-issue"], intervalMs: 3_600_000 } }),
+    }),
+  );
+
+  assert.equal(res.status, 201);
+  const payload = (await res.json()) as { amsSchedule?: { command: string; args: string[]; intervalMs: number; nextDueAt: string } };
+  assert.equal(payload.amsSchedule?.command, "discover");
+  assert.deepEqual(payload.amsSchedule?.args, ["--search", "label:good-first-issue"]);
+  assert.equal(payload.amsSchedule?.intervalMs, 3_600_000);
+  assert.ok(payload.amsSchedule?.nextDueAt);
+  assert.deepEqual((await registry.get("acme", "ams"))?.amsSchedule, payload.amsSchedule);
+});
+
+test("POST /v1/tenants defaults schedule.args to [] when omitted", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "ams", schedule: { command: "attempt", intervalMs: 1000 } }) }),
+  );
+
+  assert.equal(res.status, 201);
+  assert.deepEqual((await registry.get("acme", "ams"))?.amsSchedule?.args, []);
+});
+
+test("POST /v1/tenants rejects a schedule on a non-AMS product", async () => {
+  const app = createTenantHttpApp(baseDeps());
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "acme", product: "orb", schedule: { command: "discover", intervalMs: 1000 } }),
+    }),
+  );
+
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: "invalid_request", message: 'schedule is only valid for product "ams"' });
+});
+
+test("POST /v1/tenants rejects a malformed schedule without creating the tenant", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  for (const [schedule, message] of [
+    ["not an object", "schedule must be a JSON object"],
+    [["array", "not", "object"], "schedule must be a JSON object"],
+    [{ intervalMs: 1000 }, "schedule.command must be one of: discover, manage-poll, attempt"],
+    [{ command: "loop", intervalMs: 1000 }, "schedule.command must be one of: discover, manage-poll, attempt"],
+    [{ command: "discover", args: "not-an-array", intervalMs: 1000 }, "schedule.args must be an array of strings"],
+    [{ command: "discover", args: [1, 2], intervalMs: 1000 }, "schedule.args must be an array of strings"],
+    [{ command: "discover", intervalMs: 0 }, "schedule.intervalMs must be a positive number of milliseconds"],
+    [{ command: "discover", intervalMs: -1 }, "schedule.intervalMs must be a positive number of milliseconds"],
+    [{ command: "discover", intervalMs: "1000" }, "schedule.intervalMs must be a positive number of milliseconds"],
+    [{ command: "discover" }, "schedule.intervalMs must be a positive number of milliseconds"],
+  ] as const) {
+    const res = await app.request(
+      "/v1/tenants",
+      authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "ams", schedule }) }),
+    );
+    assert.equal(res.status, 400, JSON.stringify(schedule));
+    assert.deepEqual(await res.json(), { error: "invalid_request", message });
+  }
+  assert.equal(await registry.get("acme", "ams"), undefined);
+});
+
+test("POST /v1/tenants without a schedule creates an AMS tenant with no amsSchedule at all", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "ams" }) }),
+  );
+
+  assert.equal(res.status, 201);
+  const payload = (await res.json()) as Record<string, unknown>;
+  assert.equal("amsSchedule" in payload, false);
+  assert.equal((await registry.get("acme", "ams"))?.amsSchedule, undefined);
+});
+
+test("GET /v1/tenants surfaces an AMS tenant's amsSchedule when set", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({
+    tenant: { name: "acme" },
+    product: "ams",
+    state: "active",
+    createdAt: "t0",
+    updatedAt: "t0",
+    amsSchedule: { command: "discover", args: [], intervalMs: 3_600_000, nextDueAt: "2026-01-01T00:00:00.000Z" },
+  });
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request("/v1/tenants", authed());
+
+  const payload = (await res.json()) as { tenants: Array<{ amsSchedule?: unknown }> };
+  assert.deepEqual(payload.tenants[0]?.amsSchedule, { command: "discover", args: [], intervalMs: 3_600_000, nextDueAt: "2026-01-01T00:00:00.000Z" });
+});
+
 test("POST /v1/tenants rejects re-creating an already-active tenant (409, not idempotent)", async () => {
   const registry = createFakeTenantRegistry();
   await registry.upsert({ tenant: { name: "acme" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0" });

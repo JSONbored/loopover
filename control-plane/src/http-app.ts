@@ -8,9 +8,14 @@
 //
 // Deliberately never echoes a tenant's database connection details (host/user/password/connectionString) in
 // any response: `provisionTenant`'s result carries them (#7653) so a caller doesn't lose them, but this admin
-// HTTP surface only returns the safe `{tenant, product, state}` triple. Properly storing/distributing those
-// credentials is #7852's job (the generalized secret broker) -- until it lands, this transport intentionally
-// does not create a new place for them to leak.
+// HTTP surface only returns the safe `{tenant, product, state}` triple (plus `amsSchedule` when set, #7182 --
+// a cron cadence and command name, never a secret). Properly storing/distributing credentials is #7852's job
+// (the generalized secret broker) -- until it lands, this transport intentionally does not create a new
+// place for them to leak.
+//
+// `POST /v1/tenants` also accepts an optional `schedule` field (#7182), valid only for `product: "ams"`:
+// configures the new tenant's cron-wake cadence at creation time. ams-wake.ts's `scheduled()`-triggered
+// handler is what actually reads and acts on it later -- this route only validates and stores it.
 import { Hono } from "hono";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";
 import {
@@ -19,7 +24,7 @@ import {
   type ProvisioningPagerDutyOptions,
 } from "./provisioning.js";
 import type { Product, TenantProvisioningDriver } from "./tenant-provisioning-driver.js";
-import type { TenantRegistry, TenantRegistryRecord } from "./tenant-registry.js";
+import type { AmsCycleSchedule, TenantRegistry, TenantRegistryRecord } from "./tenant-registry.js";
 
 export type TenantHttpAppDeps = {
   driver: TenantProvisioningDriver;
@@ -31,8 +36,36 @@ export type TenantHttpAppDeps = {
   pagerDuty?: ProvisioningPagerDutyOptions;
 };
 
-function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "state">): Record<string, unknown> {
-  return { tenant: record.tenant, product: record.product, state: record.state };
+function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "state" | "amsSchedule">): Record<string, unknown> {
+  return { tenant: record.tenant, product: record.product, state: record.state, ...(record.amsSchedule ? { amsSchedule: record.amsSchedule } : {}) };
+}
+
+/** The only `command` names #7182's hosted entry point (loopover-miner-hosted) actually dispatches --
+ *  mirrors packages/loopover-miner/lib/hosted-entry.ts's own `HOSTED_CYCLE_COMMANDS` keys exactly. Kept as a
+ *  plain string literal here (not imported) since this package has no cross-package type/value coupling with
+ *  loopover-miner anywhere else -- a drift between the two lists would only matter if someone edits one
+ *  without the other, which is why both list comments point at each other. */
+const HOSTED_CYCLE_COMMANDS = ["discover", "manage-poll", "attempt"] as const;
+
+/** Validated body of `POST /v1/tenants`'s optional `schedule` field (#7182): configures a NEW AMS tenant's
+ *  cron-wake cadence at creation time. `undefined` input (the field omitted entirely) is valid and means "no
+ *  schedule yet" -- an AMS tenant with no schedule simply never gets woken, which is a legitimate state, not
+ *  an error. `intervalMs` has no configured maximum: an operator setting an absurdly long interval is their
+ *  own call to make, not something this validation second-guesses. */
+function parseScheduleRequest(value: unknown): AmsCycleSchedule | string | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return "schedule must be a JSON object";
+  const { command, args, intervalMs } = value as Record<string, unknown>;
+  if (typeof command !== "string" || !(HOSTED_CYCLE_COMMANDS as readonly string[]).includes(command)) {
+    return `schedule.command must be one of: ${HOSTED_CYCLE_COMMANDS.join(", ")}`;
+  }
+  if (args !== undefined && (!Array.isArray(args) || !args.every((value): value is string => typeof value === "string"))) {
+    return "schedule.args must be an array of strings";
+  }
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return "schedule.intervalMs must be a positive number of milliseconds";
+  }
+  return { command, args: Array.isArray(args) ? args : [], intervalMs, nextDueAt: new Date().toISOString() };
 }
 
 /** Validated body of `POST /v1/tenants/rollout` (#4898): an explicit tenant-name list (no percentage/canary
@@ -81,9 +114,12 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
   app.post("/v1/tenants", async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
     if (body === null || typeof body !== "object") return c.json({ error: "invalid_json" }, 400);
-    const { name, product } = body as Record<string, unknown>;
+    const { name, product, schedule: scheduleInput } = body as Record<string, unknown>;
     if (typeof name !== "string" || !name.trim()) return c.json({ error: "invalid_request", message: "name is required" }, 400);
     if (typeof product !== "string" || !product.trim()) return c.json({ error: "invalid_request", message: "product is required" }, 400);
+    const schedule = parseScheduleRequest(scheduleInput);
+    if (typeof schedule === "string") return c.json({ error: "invalid_request", message: schedule }, 400);
+    if (schedule && product !== "ams") return c.json({ error: "invalid_request", message: 'schedule is only valid for product "ams"' }, 400);
 
     // Not idempotent by design (tenant-client.ts's own doc comment: "a create is not idempotent, so it must
     // not be silently re-sent") -- a currently-active tenant of the same name *and product* is a real conflict,
@@ -94,8 +130,9 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
 
     const result = await provisionTenant({ name }, product, deps.driver, deps.pagerDuty ?? {});
     const now = new Date().toISOString();
-    await deps.registry.upsert({ tenant: result.tenant, product: result.product, state: result.state, createdAt: now, updatedAt: now });
-    return c.json(safeRecord(result), 201);
+    const record: TenantRegistryRecord = { tenant: result.tenant, product: result.product, state: result.state, createdAt: now, updatedAt: now, ...(schedule ? { amsSchedule: schedule } : {}) };
+    await deps.registry.upsert(record);
+    return c.json(safeRecord(record), 201);
   });
 
   app.get("/v1/tenants", async (c) => {

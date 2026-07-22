@@ -6,12 +6,33 @@
 // credential store (that's #7852's job, via the generalized broker).
 import type { Product, Tenant, TenantLifecycleState } from "./tenant-provisioning-driver.js";
 
+/** One AMS tenant's cron-wake configuration (#7182) -- ORB tenants never have this (they're woken by
+ *  incoming webhooks, #7181, not a schedule). `command`/`args` are forwarded verbatim to
+ *  `loopover-miner-hosted` (packages/loopover-miner/bin/loopover-miner-hosted.ts) as its own argv -- this
+ *  package deliberately does not import loopover-miner's `HostedCycleCommand` type (no cross-package type
+ *  coupling in this codebase's existing convention), so `command` is validated as a plain string against the
+ *  same three known names at the HTTP layer instead (see http-app.ts). */
+export type AmsCycleSchedule = {
+  command: string;
+  args: string[];
+  intervalMs: number;
+  /** When this tenant is next due to be woken. Advances by `intervalMs` after every run (#7182's own
+   *  "wake, run one cycle, sleep" model), regardless of whether that run succeeded. */
+  nextDueAt: string;
+  lastRunAt?: string;
+  /** The hosted entry point's own exit code from the most recent run (0=success, 2=failure, per
+   *  `docs/unattended-scheduling.md`'s existing contract) -- `undefined` until the first run, or if the most
+   *  recent run timed out waiting for the container to stop. */
+  lastExitCode?: number;
+};
+
 export type TenantRegistryRecord = {
   tenant: Tenant;
   product: Product;
   state: TenantLifecycleState;
   createdAt: string;
   updatedAt: string;
+  amsSchedule?: AmsCycleSchedule;
 };
 
 export interface TenantRegistry {

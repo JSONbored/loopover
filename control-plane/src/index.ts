@@ -55,6 +55,7 @@ export {
   createContainerDriver,
   createTenantContainer,
   destroyTenantContainer,
+  instanceNameFor,
   PINNED_VERSION_ENV_VAR,
   tenantContainerExists,
   type ContainerDriver,
@@ -65,9 +66,17 @@ export {
 export {
   createFakeTenantRegistry,
   createKvTenantRegistry,
+  type AmsCycleSchedule,
   type KvNamespaceLike,
   type TenantRegistry,
   type TenantRegistryRecord,
 } from "./tenant-registry.js";
 export { createTenantHttpApp, type TenantHttpAppDeps } from "./http-app.js";
 export { normalizeSharedSecret, verifyBearer } from "./auth.js";
+export {
+  wakeDueAmsTenants,
+  type AmsWakeConfig,
+  type AmsWakeResult,
+  type WakeNamespaceLike,
+  type WakeStubLike,
+} from "./ams-wake.js";

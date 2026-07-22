@@ -7,6 +7,7 @@
 // Not unit-tested: exercised only by real Cloudflare Workers/KV/Containers infrastructure, matching
 // packages/discovery-index/src/worker.ts's own identical exclusion (see scripts/control-plane-coverage.mjs).
 import { Container } from "@cloudflare/containers";
+import { wakeDueAmsTenants } from "./ams-wake.js";
 import { createTenantProvisioningDriver } from "./driver-factory.js";
 import { createTenantHttpApp } from "./http-app.js";
 import { createKvTenantRegistry } from "./tenant-registry.js";
@@ -66,5 +67,19 @@ export default {
       pagerDuty: { env: { LOOPOVER_ENABLE_PAGERDUTY: env.LOOPOVER_ENABLE_PAGERDUTY, PAGERDUTY_ROUTING_KEY: env.PAGERDUTY_ROUTING_KEY } },
     });
     return app.fetch(request, env);
+  },
+
+  // Cron Trigger handler (#7182, wrangler.jsonc's `triggers.crons`): one global tick, on the schedule
+  // wrangler.jsonc declares, checks every AMS tenant's own `amsSchedule.nextDueAt` (there is no per-resource
+  // Cron Trigger primitive to register one per tenant) and wakes whichever ones are due. `ctx.waitUntil`
+  // keeps the tick alive until every due tenant's cycle finishes, since `wakeDueAmsTenants` itself awaits
+  // each one before the Worker would otherwise be allowed to shut the invocation down.
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      wakeDueAmsTenants({
+        binding: env.AMS_TENANT_CONTAINER,
+        registry: createKvTenantRegistry(env.TENANT_REGISTRY),
+      }),
+    );
   },
 };

@@ -3922,6 +3922,24 @@ describe("review-evasion protection (#review-evasion-protection)", () => {
       expect(audit?.detail).toContain("contributor");
     });
 
+    it("terminalizes the active-review tracking row on enforcement close -- leaves no dangling row for the PR's reviewed headSha, matching the four sibling guards", async () => {
+      const calls: Array<{ url: string; method: string }> = [];
+      stubEvasionFetch(calls);
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: generateRsaPrivateKeyPem(), GITHUB_APP_SLUG: "loopover-orb" });
+      await setupEvasionRepo(env, { reviewEvasionProtection: "off", synchronizeClosePolicy: "close" });
+      // A review was actively tracked on the PR's head before the author pushed the amending commit; the
+      // synchronize-amendment close must mark that row terminal, exactly as its four siblings do.
+      await repositoriesModule.startActiveReviewTracking(env, { repoFullName: "JSONbored/gittensory", pullNumber: 42, headSha: "def456", authorLogin: "contributor", deliveryId: "review-start-sync" });
+      expect(await repositoriesModule.hasActiveReviewForHeadSha(env, "JSONbored/gittensory", 42, "def456")).toBe(true);
+
+      await processJob(env, { type: "github-webhook", deliveryId: "sync-policy-terminalize", eventName: "pull_request", payload: synchronizePayload("contributor") });
+
+      expect(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/pulls/42"))).toBe(true);
+      const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?").bind("github_app.synchronize_amend_closed").first<{ outcome: string }>();
+      expect(audit?.outcome).toBe("completed");
+      expect(await repositoriesModule.hasActiveReviewForHeadSha(env, "JSONbored/gittensory", 42, "def456")).toBe(false); // terminalized
+    });
+
     it("does NOT record a moderation strike -- this is a blanket policy against an ordinary push, not a detected abuse pattern", async () => {
       const calls: Array<{ url: string; method: string }> = [];
       stubEvasionFetch(calls);

@@ -1365,4 +1365,6 @@ async function closeSynchronizeAmendmentIfPolicyEnabled(
     /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler. */
     () => undefined,
   );
+  /* v8 ignore next -- best-effort: the guarded CAS update never rejects against a healthy D1, and a cleanup failure here must never block the webhook. */
+  await terminalizeActiveReviewTracking(env, repoFullName, pr.number, { onlyIfHeadSha: pr.headSha }).catch(() => undefined);
 }

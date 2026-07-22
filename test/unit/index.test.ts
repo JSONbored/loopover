@@ -364,6 +364,24 @@ describe("worker entrypoint", () => {
     expect(sent).toEqual([{ type: "agent-regate-sweep", requestedBy: "schedule" }]);
   });
 
+  it("enqueues the APR repo-transfer poll on an hourly tick only when LOOPOVER_APR_TRANSFER_POLL is set (#7741)", async () => {
+    const captured: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      LOOPOVER_APR_TRANSFER_POLL: "1",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          captured.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+
+    expect(captured).toContainEqual({ type: "poll-apr-repo-transfers", requestedBy: "schedule" });
+  });
+
   it("keeps enqueueing scheduled sweeps while prior per-PR regate jobs are queued (#2119)", async () => {
     // Per-PR "agent-regate-pr" backlog is normal, expected, ongoing work (staggered/rate-deferred re-reviews) —
     // it must NOT block the next scheduled fan-out trigger, or the sweep starves under any sustained load.

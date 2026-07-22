@@ -10,6 +10,7 @@ import { isOpsEnabled, resolveOpsManifestOverride } from "./review/ops-wire";
 import { isRecapEnabled, resolveMaintainerRecapManifestOverride, shouldFireMaintainerRecap } from "./review/maintainer-recap-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride } from "./review/sweep-watchdog";
 import { isLoopEscalationSweepEnabled } from "./review/loop-escalation-wire";
+import { isAprRepoTransferPollEnabled } from "./orb/apr-repo-transfer";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } from "./review/pr-reconciliation";
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
@@ -273,6 +274,11 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
     // ZERO new tuning work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isSelfTuneEnabled(env)) jobs.push({ type: "selftune", requestedBy: "schedule" });
+    // APR repo-transfer acceptance/expiry detection (#7741, flag LOOPOVER_APR_TRANSFER_POLL). Hourly poll that
+    // resolves each pending APR transfer (accepted / accepted-and-departed / expired at 7 days) and reconciles
+    // the per-repo AMS pause. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,
+    // so the cron tick does ZERO new work and the enqueued set is byte-identical to today.
+    if (isAprRepoTransferPollEnabled(env)) jobs.push({ type: "poll-apr-repo-transfers", requestedBy: "schedule" });
   }
   if (isHourly && scheduledAt.getUTCDay() === 1 && hour === 12) {
     jobs.push({ type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 });

@@ -34,6 +34,13 @@ import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
 import { retryFailedRelays } from "../orb/relay";
+import {
+  loadPendingAprRepoTransfers,
+  pollPendingAprRepoTransfers,
+  probeAprRepoTransfer,
+  recordAprRepoTransferOutcome,
+  setAprRepoDispatchPaused,
+} from "../orb/apr-repo-transfer";
 import { syncBrokeredInstalledRepos } from "../orb/installed-repos-sync";
 import { incr } from "../selfhost/metrics";
 import { generateSignalSnapshots } from "./signal-snapshot";
@@ -388,6 +395,20 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // an empty table). Never throws.
       await retryFailedRelays(env);
       return;
+    /* v8 ignore start -- live-loop wiring: binds the injectable, unit-tested pollPendingAprRepoTransfers (#7741)
+       to its real dependencies. The detection/expiry/pause logic is covered directly in
+       test/unit/orb-apr-repo-transfer.test.ts; this arm is a no-op today (loadPendingAprRepoTransfers fail-empties
+       until #7664 persists rows) and is enqueued only when LOOPOVER_APR_TRANSFER_POLL is set. */
+    case "poll-apr-repo-transfers":
+      await pollPendingAprRepoTransfers(env, {
+        listPending: loadPendingAprRepoTransfers,
+        probe: probeAprRepoTransfer,
+        now: Date.now,
+        markResolved: recordAprRepoTransferOutcome,
+        setDispatchPaused: setAprRepoDispatchPaused,
+      });
+      return;
+    /* v8 ignore stop */
     default:
       // An unrecognized job type (a stale queued message from a renamed/removed type, a producer/consumer skew
       // during a rolling deploy, or a corrupted payload) would otherwise fall through and be acked with zero

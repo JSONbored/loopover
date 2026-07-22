@@ -279,6 +279,13 @@ export type JobMessage =
       requestedBy: "schedule" | "test";
     }
   | {
+      // APR repo-transfer acceptance/expiry detection (#7741): resolve every pending APR transfer — probe GitHub,
+      // mark accepted / accepted-and-departed / expired (>7 days), reconcile the per-repo AMS pause. Enqueued by
+      // the cron hourly ONLY when LOOPOVER_APR_TRANSFER_POLL is set; flag-OFF (default) it is never created.
+      type: "poll-apr-repo-transfers";
+      requestedBy: "schedule" | "test";
+    }
+  | {
       // Self-host backlog-convergence sweep (#selfhost-backlog-convergence): finds open PRs whose public review
       // surface was never published for their current head (a blind spot the periodic re-gate sweep's dispatch-
       // time stamping can miss — see selfhost/backlog-convergence.ts) and fans out one `agent-regate-pr` job per

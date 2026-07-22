@@ -410,6 +410,11 @@ declare global {
      *  src/review/active-review-reconciliation.ts). Default OFF — unset/false means the cron tick enqueues NO
      *  reconciliation job, so the worker is byte-identical to today. */
     LOOPOVER_ACTIVE_REVIEW_RECONCILIATION?: string;
+    /** APR repo-transfer acceptance/expiry detection (#7741): when truthy, an hourly cron enqueues a
+     *  `poll-apr-repo-transfers` job that, for each pending transfer, probes GitHub and marks it accepted /
+     *  accepted-and-departed / expired (>7 days), reconciling the per-repo AMS-dispatch pause. Default OFF —
+     *  unset/false means the cron tick enqueues NO poll job, so the worker is byte-identical to today. */
+    LOOPOVER_APR_TRANSFER_POLL?: string;
     /** Convergence (RAG retrieval): when truthy, the AI reviewer prompt gains a RELEVANT EXISTING CODE / DOCS
      *  section — at review time the codebase vector index is queried for code/docs semantically related to the
      *  PR's changed files (callers, related modules, existing conventions) and appended as additive reference

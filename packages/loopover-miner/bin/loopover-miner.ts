@@ -228,6 +228,7 @@ if (cliArgs[0] === "loop") {
   process.exit(exitCode);
 }
 
-const exitCode = runCli(cliArgs, { packageName });
+/* v8 ignore next -- bin dispatcher lines are subprocess-only executed (see the packages/loopover-miner/bin note in vitest.config.ts's coverage.include); the awaited runCli fallback, including its #7658 pr-outcomes dispatch, is fully unit-covered in-process via lib/cli.ts + lib/pr-outcomes-cli.ts. */
+const exitCode = await runCli(cliArgs, { packageName });
 await awaitOpportunisticUpdateCheck(updateCheck);
 process.exit(exitCode);

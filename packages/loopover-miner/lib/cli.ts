@@ -1,4 +1,5 @@
 import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { runPrOutcomesCli, type RunPrOutcomesOptions } from "./pr-outcomes-cli.js";
 
 export function printVersion(input: { packageName: string; packageVersion: string }): void {
   console.log(`${input.packageName}/${input.packageVersion} (node ${process.version})`);
@@ -52,6 +53,7 @@ export function printHelp(input: { packageName: string }): void {
       "  loopover-miner governor status [--json]                     Show whether the governor is paused",
       "  loopover-miner governor metrics                              Print governor rate-limit/cap-usage counters in Prometheus text format",
       "  loopover-miner calibration [--json]                         Report predicted-vs-realized gate accuracy",
+      "  loopover-miner pr-outcomes --miner-login <login> [--limit <n>] [--json]   Show your own hosted post-merge PR outcomes",
       "  loopover-miner feasibility <claimStatus> <duplicateClusterRisk> <issueStatus> [--not-found] [--json]",
       "  loopover-miner idea-feasibility <claimStatus> <duplicateClusterRisk> [--not-resolvable] [--hint <text>]... [--json]",
       "                                                                 Pre-compute feasibility gate for a freeform Rent-a-Loop idea (#5671)",
@@ -74,8 +76,15 @@ export function printHelp(input: { packageName: string }): void {
   );
 }
 
-export function runCli(cliArgs: string[], input: { packageName: string }): number {
+export async function runCli(cliArgs: string[], input: { packageName: string }, options: RunPrOutcomesOptions = {}): Promise<number> {
   const command = cliArgs[0] ?? "";
+  // `pr-outcomes` (#7658) dispatches HERE, in the foundation CLI module, rather than growing another branch in
+  // bin/loopover-miner.ts: the bin dispatcher is subprocess-only-tested and genuinely Codecov-graded (see the
+  // packages/loopover-miner/bin note in vitest.config.ts's coverage.include), so a command dispatched in this
+  // in-process-tested module keeps its whole path measurable instead of adding permanently-uncovered bin lines.
+  if (command === "pr-outcomes") {
+    return runPrOutcomesCli(cliArgs.slice(1), options);
+  }
   const message = `Unknown command: ${command}. Run ${input.packageName} --help.`;
   return reportCliFailure(argsWantJson(cliArgs), message, 1);
 }

@@ -65,30 +65,31 @@ describe("loopover-miner CLI helpers", () => {
     expect(text).toContain("loopover-miner --help");
     expect(text).toContain("loopover-miner version");
     expect(text).toContain("loopover-miner metrics");
+    expect(text).toContain("loopover-miner pr-outcomes --miner-login <login> [--limit <n>] [--json]");
     expect(text).toContain("loopover-miner migrate [--json]");
     expect(text).toContain("loopover-miner ledger metrics");
     expect(text).toContain("loopover-miner queue dashboard [--json]");
     expect(text).toContain("--no-update-check");
   });
 
-  it("returns exit code 1 for unknown commands", () => {
+  it("returns exit code 1 for unknown commands", async () => {
     const error = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
-    expect(
+    await expect(
       runCli(["mystery"], { packageName: "@loopover/miner" }),
-    ).toBe(1);
+    ).resolves.toBe(1);
     expect(error).toHaveBeenCalledWith(
       "Unknown command: mystery. Run @loopover/miner --help.",
     );
   });
 
-  it("emits JSON for unknown commands when --json is set (#4836)", () => {
+  it("emits JSON for unknown commands when --json is set (#4836)", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(
+    await expect(
       runCli(["mystery", "--json"], { packageName: "@loopover/miner" }),
-    ).toBe(1);
+    ).resolves.toBe(1);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
       ok: false,
       error: "Unknown command: mystery. Run @loopover/miner --help.",

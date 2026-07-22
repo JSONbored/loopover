@@ -22,7 +22,7 @@ async function connect() {
   const apiUrl = await startFixtureServer({
     onApiRequest: (request) => {
       const url = request.url ?? "";
-      if (/pending-actions|settings|gate-precision|outcome-calibration/.test(url)) capturedRequests.push({ url, method: request.method ?? "GET" });
+      if (/pending-actions|settings|gate-precision|outcome-calibration|automation-state/.test(url)) capturedRequests.push({ url, method: request.method ?? "GET" });
     },
   });
   transport = new StdioClientTransport({
@@ -60,16 +60,17 @@ const MAINTAIN_TOOLS = [
   { name: "loopover_set_action_autonomy", args: { ...REPO, action: "merge", level: "auto" }, contains: "autonomy" },
   { name: "loopover_get_gate_precision", args: REPO, contains: "falsePositiveRate" },
   { name: "loopover_get_outcome_calibration", args: REPO, contains: "positiveRate" },
+  { name: "loopover_get_automation_state", args: REPO, contains: "permissionReadiness" },
 ] as const;
 
 describe("loopover-mcp maintain stdio proxies (#6152)", () => {
-  it("registers all 6 maintain tools in the stdio server tool list", async () => {
+  it("registers all 7 maintain tools in the stdio server tool list", async () => {
     await connect();
     const names = (await client!.listTools()).tools.map((tool) => tool.name);
     for (const tool of MAINTAIN_TOOLS) expect(names).toContain(tool.name);
   });
 
-  it("lists all 6 maintain tools via `loopover-mcp tools --json` with non-empty descriptions", async () => {
+  it("lists all 7 maintain tools via `loopover-mcp tools --json` with non-empty descriptions", async () => {
     await connect();
     const payload = JSON.parse(run(["tools", "--json"])) as { tools: Array<{ name: string; description: string; category?: string }> };
     for (const tool of MAINTAIN_TOOLS) {

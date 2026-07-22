@@ -32,6 +32,17 @@ export const ORB_SECRET_TYPE_GITHUB_TOKEN = "github_token";
 // brokerOrbToken's own secret_type branch below.
 export const ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL = "tenant_db_credential";
 
+// A SECOND mint-style type (#7674, ratified on #4941: hosted AMS reuses ORB's installation-based broker rather
+// than a parallel identity system), mechanically IDENTICAL to ORB_SECRET_TYPE_GITHUB_TOKEN -- a GitHub App
+// installation token's permissions come from the App + what the installer granted, not from anything the
+// broker's caller specifies, so there is no real behavioral difference to build here. The distinct value exists
+// purely so an enrollment row records WHICH product's container it was issued for (audit/bookkeeping), not
+// because AMS needs a different mint mechanism. Deliberately distinct from the self-host session-based GitHub
+// auth `packages/loopover-miner/lib/github-token-resolution.ts` uses (a human's own OAuth token via
+// `/v1/auth/github/token`) -- that flow exists for an interactive human tool acting as themselves; this one is
+// for a headless hosted container acting as the installed App, the same reason ORB's own broker exists at all.
+export const ORB_SECRET_TYPE_AMS_GITHUB_TOKEN = "ams_github_token";
+
 export function isOrbBrokerEnabled(env: Env): boolean {
   return /^(1|true|yes|on)$/i.test(String(env.ORB_BROKER_ENABLED ?? "").trim());
 }
@@ -126,9 +137,10 @@ type OrbEnrollmentRow = {
 };
 
 /** The container's token-exchange: a valid enrollment secret → either a short-lived GitHub installation token
- *  (the original, mint-style flow) or a decrypted stored secret value (#8064's store-style flow), branching on
- *  the enrollment row's own secret_type. installation_id/eligibility only apply to the GitHub-token flow — a
- *  stored secret has no GitHub installation to re-check at all (see issueOrbStoredSecret's header comment). */
+ *  (the mint-style flow, shared identically by GITHUB_TOKEN and AMS_GITHUB_TOKEN, #7674) or a decrypted stored
+ *  secret value (#8064's store-style flow), branching on the enrollment row's own secret_type.
+ *  installation_id/eligibility only apply to the mint-style flow — a stored secret has no GitHub installation
+ *  to re-check at all (see issueOrbStoredSecret's header comment). */
 export async function brokerOrbToken(env: Env, secret: string, options: { forceRefresh?: boolean } = {}): Promise<BrokerResult> {
   // Warn when TOKEN_ENCRYPTION_SECRET is absent — without it, the broker cache is bypassed and every exchange hits
   // GitHub's token endpoint, dramatically increasing exposure to throttle-induced failures.
@@ -146,8 +158,12 @@ export async function brokerOrbToken(env: Env, secret: string, options: { forceR
   if (!row || row.state !== "enrolled" || row.revoked_at !== null) return { error: "invalid_enrollment" };
   if (row.secret_type === ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL) return resolveStoredSecret(env, row);
   // Checked once the caller is already proven to hold a valid enrollment (same ordering rationale as the App-
-  // credential check below, #2710) — anything else here belongs to a mint strategy that doesn't exist yet.
-  if (row.secret_type !== ORB_SECRET_TYPE_GITHUB_TOKEN) return { error: "unsupported_secret_type" };
+  // credential check below, #2710) — GITHUB_TOKEN and AMS_GITHUB_TOKEN both mint the SAME kind of GitHub App
+  // installation token through the identical flow below (#7674): the distinct value is bookkeeping only, not a
+  // different mint strategy. Anything else here belongs to a strategy that doesn't exist yet.
+  if (row.secret_type !== ORB_SECRET_TYPE_GITHUB_TOKEN && row.secret_type !== ORB_SECRET_TYPE_AMS_GITHUB_TOKEN) {
+    return { error: "unsupported_secret_type" };
+  }
   const install = await env.DB
     .prepare("SELECT registered, suspended_at, removed_at FROM orb_github_installations WHERE installation_id = ?")
     .bind(row.installation_id)

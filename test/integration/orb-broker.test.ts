@@ -6,6 +6,7 @@ import {
   isOrbBrokerEnabled,
   issueOrbEnrollment,
   issueOrbStoredSecret,
+  ORB_SECRET_TYPE_AMS_GITHUB_TOKEN,
   ORB_SECRET_TYPE_GITHUB_TOKEN,
   ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
   revokeOrbEnrollment,
@@ -78,6 +79,14 @@ describe("issueOrbEnrollment", () => {
     await issueOrbEnrollment(e, 202, undefined, "ai_provider_key");
     const row = await db(e).prepare("SELECT secret_type FROM orb_enrollments WHERE installation_id=202").first<{ secret_type: string }>();
     expect(row?.secret_type).toBe("ai_provider_key");
+  });
+
+  it("#7674: records ORB_SECRET_TYPE_AMS_GITHUB_TOKEN when issued for a hosted AMS container", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 203, { registered: 1 });
+    await issueOrbEnrollment(e, 203, undefined, ORB_SECRET_TYPE_AMS_GITHUB_TOKEN);
+    const row = await db(e).prepare("SELECT secret_type, installation_id FROM orb_enrollments WHERE installation_id=203").first<{ secret_type: string; installation_id: number }>();
+    expect(row).toMatchObject({ secret_type: ORB_SECRET_TYPE_AMS_GITHUB_TOKEN, installation_id: 203 });
   });
 });
 
@@ -159,6 +168,45 @@ describe("brokerOrbToken", () => {
     const e = await brokerEnvMissingAppCreds("both");
     await seedInstall(e, 314, { registered: 1 });
     const { secret } = (await issueOrbEnrollment(e, 314, undefined, "ai_provider_key")) as { secret: string };
+    expect(await brokerOrbToken(e, secret)).toEqual({ error: "unsupported_secret_type" });
+  });
+
+  it("#7674: mints the SAME kind of GitHub installation token for an ams_github_token enrollment as for github_token", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 320, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 320, undefined, ORB_SECRET_TYPE_AMS_GITHUB_TOKEN)) as { secret: string };
+    tokenFetch("ghs_ams_minted", "2026-06-25T08:00:00Z", { contents: "write" });
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ token: "ghs_ams_minted", installationId: 320, expiresAt: "2026-06-25T08:00:00Z", permissions: { contents: "write" } });
+  });
+
+  it("#7674: an ams_github_token enrollment shares the SAME cache as github_token — a second exchange doesn't re-mint", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-ams-cache-test" });
+    await seedInstall(e, 321, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 321, undefined, ORB_SECRET_TYPE_AMS_GITHUB_TOKEN)) as { secret: string };
+    const fetchCalls = countingTokenFetch("2026-06-25T08:00:00Z");
+
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_1" });
+    expect(await brokerOrbToken(e, secret)).toMatchObject({ token: "ghs_minted_1" });
+    expect(fetchCalls()).toBe(1);
+  });
+
+  it("#7674: an ams_github_token enrollment is re-checked for install eligibility just like github_token", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 322, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 322, undefined, ORB_SECRET_TYPE_AMS_GITHUB_TOKEN)) as { secret: string };
+    await db(e).prepare("UPDATE orb_github_installations SET suspended_at=CURRENT_TIMESTAMP WHERE installation_id=322").run();
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ error: "installation_not_eligible" });
+  });
+
+  it("#7674: a genuinely unrecognized secret type is still rejected (the widened check isn't a blanket allow)", async () => {
+    const e = await brokerEnvMissingAppCreds("both");
+    await seedInstall(e, 323, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 323, undefined, "some_future_type_not_yet_built")) as { secret: string };
+
     expect(await brokerOrbToken(e, secret)).toEqual({ error: "unsupported_secret_type" });
   });
 

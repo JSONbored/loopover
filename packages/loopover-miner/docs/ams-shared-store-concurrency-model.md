@@ -89,9 +89,12 @@ default) — **not** SERIALIZABLE.
 Correctness (not wall-clock) coverage lives in:
 
 - `test/unit/miner-concurrent-store-races.test.ts` — cross-process claim + dequeue (#4867)
-- `test/unit/miner-shared-store-concurrency.test.ts` — #4942: cross-process `claimIssueWithinCap`,
-  concurrent `SqliteDriver` / `createD1Adapter` atomic increments, and (when `PG_TEST_URL` is set)
-  concurrent Postgres `createPgAdapter` increments with no lost updates
+- `test/unit/miner-shared-store-concurrency-*.test.ts` — #4942 split across three files so scoped
+  CI shards each still emit non-empty `coverage/lcov.info` under `--coverage.all=false`:
+  - `…-cap.test.ts` — cross-process `claimIssueWithinCap`
+  - `…-adapter.test.ts` — concurrent `SqliteDriver` / `createD1Adapter` increments (+ optional
+    Postgres `createPgAdapter` when `PG_TEST_URL` is set)
+  - `…-doc.test.ts` — doc-surface assertions (+ a local-store smoke open for coverage)
 
 These suites assert **final counts / uniqueness**, not latency. Informational HTTP/engine load scripts
 (`docs/load-test-worker.md`, engine iterate-loop load test) are out of scope here.

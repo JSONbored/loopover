@@ -155,7 +155,14 @@ import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
 import { handleOrbOAuthCallback } from "../orb/oauth";
-import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment } from "../orb/broker";
+import {
+  brokerOrbToken,
+  isOrbBrokerEnabled,
+  issueOrbEnrollment,
+  issueOrbStoredSecret,
+  ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
+  revokeOrbEnrollment,
+} from "../orb/broker";
 import {
   enqueueConfigPushRelay,
   MAX_ORB_RELAY_REGISTER_BODY_BYTES,
@@ -4615,14 +4622,35 @@ export function createApp() {
   // Operator-only: issue a one-time token-broker enrollment secret for a REGISTERED install, to hand to that
   // maintainer's self-hosted container. The secret is returned ONCE (stored only hashed). Bearer-gated by the
   // /v1/internal/* middleware (INTERNAL_JOB_TOKEN); flag-gated (404 until ORB_BROKER_ENABLED).
+  //
+  // Also accepts an optional `{ secretType: "tenant_db_credential", secretValue }` body (#8064) -- the STORED-
+  // secret issuance path control-plane's hosted provisioning core (#7180/#8066) calls instead, for a credential
+  // that already exists (a tenant's Postgres connection string) rather than a GitHub installation to bind.
+  // `installationId` is irrelevant to that path (see issueOrbStoredSecret's own header comment for why).
   app.post("/v1/internal/orb/enrollments", async (c) => {
     if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
-    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown } | null;
+    const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; secretType?: unknown; secretValue?: unknown } | null;
+    if (payload?.secretType === ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL) {
+      const secretValue = typeof payload.secretValue === "string" ? payload.secretValue : "";
+      const result = await issueOrbStoredSecret(c.env, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue);
+      if ("error" in result) return c.json(result, result.error === "secret_value_required" ? 400 : 503);
+      return c.json(result); // { enrollId, secret } — secret shown exactly once
+    }
     const installationId = Number(payload?.installationId);
     if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
     const result = await issueOrbEnrollment(c.env, installationId);
     if ("error" in result) return c.json(result, result.error === "installation_not_found" ? 404 : 409);
     return c.json(result); // { enrollId, secret } — secret shown exactly once
+  });
+
+  // Operator-only: revoke a token-broker enrollment (#8064) -- works for ANY secret type (GitHub-token or
+  // stored), since brokerOrbToken's own revoked_at check (unchanged, #7174) already refuses any revoked row on
+  // its very next exchange attempt. Idempotent: revoking an already-revoked enrollment still reports success.
+  app.post("/v1/internal/orb/enrollments/:enrollId/revoke", async (c) => {
+    if (!isOrbBrokerEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const result = await revokeOrbEnrollment(c.env, c.req.param("enrollId"));
+    if ("error" in result) return c.json(result, 404);
+    return c.json(result);
   });
 
   // Convergence (ops / observability, flag LOOPOVER_REVIEW_OPS). Cross-repo review-OUTCOME aggregate (gate-block

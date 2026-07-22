@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { brokerOrbToken, isOrbBrokerEnabled, issueOrbEnrollment, ORB_SECRET_TYPE_GITHUB_TOKEN } from "../../src/orb/broker";
+import { hashToken } from "../../src/auth/security";
+import {
+  brokerOrbToken,
+  isOrbBrokerEnabled,
+  issueOrbEnrollment,
+  issueOrbStoredSecret,
+  ORB_SECRET_TYPE_GITHUB_TOKEN,
+  ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL,
+  revokeOrbEnrollment,
+} from "../../src/orb/broker";
 import { MAX_ORB_RELAY_REGISTER_BODY_BYTES } from "../../src/orb/relay";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
 
@@ -69,6 +78,70 @@ describe("issueOrbEnrollment", () => {
     await issueOrbEnrollment(e, 202, undefined, "ai_provider_key");
     const row = await db(e).prepare("SELECT secret_type FROM orb_enrollments WHERE installation_id=202").first<{ secret_type: string }>();
     expect(row?.secret_type).toBe("ai_provider_key");
+  });
+});
+
+describe("issueOrbStoredSecret", () => {
+  it("#8064: rejects an empty secret value without touching the database", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    expect(await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "")).toEqual({ error: "secret_value_required" });
+    expect(await db(e).prepare("SELECT COUNT(*) AS n FROM orb_enrollments").first<{ n: number }>()).toMatchObject({ n: 0 });
+  });
+
+  it("#8064: rejects issuance with no TOKEN_ENCRYPTION_SECRET configured (never stores a value unencrypted)", async () => {
+    const e = await brokerEnv();
+    expect(await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme")).toEqual({ error: "encryption_unavailable" });
+  });
+
+  it("#8064: issues a hashed enrollment secret with the value encrypted at rest, installation_id NULL", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    const issued = await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme:hunter2@neon/acme");
+    expect(issued).toMatchObject({ enrollId: expect.stringMatching(/^orbenr_/), secret: expect.stringMatching(/^orbsec_/) });
+    const { enrollId, secret } = issued as { enrollId: string; secret: string };
+    const row = await db(e)
+      .prepare("SELECT state, installation_id, secret_hash, secret_type, secret_value_ciphertext FROM orb_enrollments WHERE enroll_id = ?")
+      .bind(enrollId)
+      .first<{ state: string; installation_id: number | null; secret_hash: string; secret_type: string; secret_value_ciphertext: string }>();
+    expect(row).toMatchObject({ state: "enrolled", installation_id: null, secret_type: ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL });
+    expect(row?.secret_hash).not.toContain("orbsec"); // stored hashed, never plaintext, same as issueOrbEnrollment
+    expect(row?.secret_value_ciphertext).not.toContain("postgres://"); // encrypted, never plaintext, on the WIRE-adjacent column too
+    expect(secret).not.toContain("postgres://");
+  });
+});
+
+describe("revokeOrbEnrollment", () => {
+  it("#8064: 404s an unknown enrollment id", async () => {
+    const e = await brokerEnv();
+    expect(await revokeOrbEnrollment(e, "orbenr_bogus")).toEqual({ error: "enrollment_not_found" });
+  });
+
+  it("#8064: revokes a real enrollment, and every existing read path (brokerOrbToken) then treats it as invalid", async () => {
+    const e = await brokerEnv();
+    await seedInstall(e, 500, { registered: 1 });
+    const { enrollId, secret } = (await issueOrbEnrollment(e, 500)) as { enrollId: string; secret: string };
+
+    expect(await revokeOrbEnrollment(e, enrollId)).toEqual({ revoked: true });
+
+    const row = await db(e).prepare("SELECT state, revoked_at FROM orb_enrollments WHERE enroll_id = ?").bind(enrollId).first<{ state: string; revoked_at: string | null }>();
+    expect(row?.state).toBe("revoked");
+    expect(row?.revoked_at).not.toBeNull();
+    expect(await brokerOrbToken(e, secret)).toEqual({ error: "invalid_enrollment" });
+  });
+
+  it("#8064: is idempotent — revoking twice keeps the original revoked_at instead of overwriting it", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
+    const e = await brokerEnv();
+    await seedInstall(e, 501, { registered: 1 });
+    const { enrollId } = (await issueOrbEnrollment(e, 501)) as { enrollId: string };
+    await revokeOrbEnrollment(e, enrollId);
+    const firstRevokedAt = (await db(e).prepare("SELECT revoked_at FROM orb_enrollments WHERE enroll_id = ?").bind(enrollId).first<{ revoked_at: string }>())?.revoked_at;
+
+    vi.setSystemTime(new Date("2026-06-25T09:00:00Z"));
+    expect(await revokeOrbEnrollment(e, enrollId)).toEqual({ revoked: true });
+
+    const secondRevokedAt = (await db(e).prepare("SELECT revoked_at FROM orb_enrollments WHERE enroll_id = ?").bind(enrollId).first<{ revoked_at: string }>())?.revoked_at;
+    expect(secondRevokedAt).toBe(firstRevokedAt);
   });
 });
 
@@ -236,6 +309,40 @@ describe("brokerOrbToken", () => {
     expect(await brokerOrbToken(e, secret)).toEqual({ error: "installation_not_eligible" });
   });
 
+  it("#8064: exchanges a stored tenant-db-credential secret verbatim, with no App credentials or install eligibility involved", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    const { secret } = (await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme:hunter2@neon/acme")) as { secret: string };
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ secretValue: "postgres://tenant-acme:hunter2@neon/acme", secretType: ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL });
+    expect((await db(e).prepare("SELECT last_token_at FROM orb_enrollments WHERE secret_hash = ?").bind(await hashToken(secret)).first<{ last_token_at: string | null }>())?.last_token_at).not.toBeNull();
+  });
+
+  it("#8064: refuses to serve a stored secret with no TOKEN_ENCRYPTION_SECRET configured at exchange time", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    const { secret } = (await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme")) as { secret: string };
+
+    const eNoKey = await brokerEnvMissingAppCreds("both", { DB: e.DB });
+    expect(await brokerOrbToken(eNoKey, secret)).toEqual({ error: "broker_misconfigured" });
+  });
+
+  it("#8064: refuses to serve a stored secret it can no longer decrypt (e.g. a rotated encryption key)", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    const { secret } = (await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme")) as { secret: string };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const eRotatedKey = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "a-completely-different-key", DB: e.DB });
+    expect(await brokerOrbToken(eRotatedKey, secret)).toEqual({ error: "broker_misconfigured" });
+    expect(warn.mock.calls.map((c) => String(c[0])).some((line) => line.includes("orb_broker_stored_secret_decrypt_failed"))).toBe(true);
+  });
+
+  it("#8064: refuses to serve a row that claims the stored-secret type but has no value written (defensive)", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    await seedInstall(e, 502, { registered: 1 });
+    const { secret } = (await issueOrbEnrollment(e, 502, undefined, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL)) as { secret: string };
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ error: "broker_misconfigured" });
+  });
+
   it("serves a still-fresh cached token even with no Orb App credentials at all (mint is never reached)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-25T07:00:00Z"));
@@ -352,5 +459,60 @@ describe("broker endpoints", () => {
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: "{bad" }, e)).status).toBe(400); // unparseable JSON → catch → null
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 402 }) }, e)).status).toBe(409);
     expect((await app.request("/v1/internal/orb/enrollments", { method: "POST", headers: auth, body: JSON.stringify({ installationId: 999 }) }, e)).status).toBe(404);
+  });
+
+  it("#8064: the full stored-secret issue → exchange flow over HTTP, and installationId is irrelevant to it", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-route-stored-secret" });
+    const issueRes = await app.request(
+      "/v1/internal/orb/enrollments",
+      { method: "POST", headers: auth, body: JSON.stringify({ secretType: "tenant_db_credential", secretValue: "postgres://tenant-acme" }) },
+      e,
+    );
+    expect(issueRes.status).toBe(200);
+    const { secret } = (await issueRes.json()) as { secret: string };
+
+    const tokRes = await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e);
+    expect(tokRes.status).toBe(200);
+    expect(await tokRes.json()).toEqual({ secretValue: "postgres://tenant-acme", secretType: "tenant_db_credential" });
+  });
+
+  it("#8064: POST /v1/internal/orb/enrollments 400s a stored-secret request with no secretValue, and 503s with no encryption key", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-route-stored-secret" });
+    const missingValue = await app.request(
+      "/v1/internal/orb/enrollments",
+      { method: "POST", headers: auth, body: JSON.stringify({ secretType: "tenant_db_credential" }) },
+      e,
+    );
+    expect(missingValue.status).toBe(400);
+    expect(await missingValue.json()).toEqual({ error: "secret_value_required" });
+
+    const eNoKey = await brokerEnv();
+    const noKey = await app.request(
+      "/v1/internal/orb/enrollments",
+      { method: "POST", headers: auth, body: JSON.stringify({ secretType: "tenant_db_credential", secretValue: "postgres://tenant-acme" }) },
+      eNoKey,
+    );
+    expect(noKey.status).toBe(503);
+    expect(await noKey.json()).toEqual({ error: "encryption_unavailable" });
+  });
+
+  it("#8064: POST /v1/internal/orb/enrollments/:enrollId/revoke 404s when the broker flag is off, 404s an unknown id, revokes a real one", async () => {
+    const off = createTestEnv({ INTERNAL_JOB_TOKEN: "dev-internal-token" });
+    expect((await app.request("/v1/internal/orb/enrollments/orbenr_x/revoke", { method: "POST", headers: auth }, off)).status).toBe(404);
+
+    const e = await brokerEnv();
+    const unknown = await app.request("/v1/internal/orb/enrollments/orbenr_bogus/revoke", { method: "POST", headers: auth }, e);
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: "enrollment_not_found" });
+
+    await seedInstall(e, 600, { registered: 1 });
+    const { enrollId, secret } = (await issueOrbEnrollment(e, 600)) as { enrollId: string; secret: string };
+    const revokeRes = await app.request(`/v1/internal/orb/enrollments/${enrollId}/revoke`, { method: "POST", headers: auth }, e);
+    expect(revokeRes.status).toBe(200);
+    expect(await revokeRes.json()).toEqual({ revoked: true });
+
+    const afterRevoke = await app.request("/v1/orb/token", { method: "POST", headers: { authorization: `Bearer ${secret}` } }, e);
+    expect(afterRevoke.status).toBe(401);
+    expect(await afterRevoke.json()).toEqual({ error: "invalid_enrollment" });
   });
 });

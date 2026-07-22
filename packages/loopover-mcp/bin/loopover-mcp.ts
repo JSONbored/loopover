@@ -1030,6 +1030,17 @@ const planRepoIssuesShape = {
   limit: z.number().int().min(1).max(10).optional().default(5),
 };
 
+// #7755: mirrors the remote loopover_generate_contributor_issue_drafts input (src/mcp/server.ts's
+// generateContributorIssueDraftsShape) -- dryRun/create carry the route's create-safety (create alone is
+// rejected there); `limit` is capped at 20, matching the route.
+const generateContributorIssueDraftsShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  dryRun: z.boolean().optional().default(true),
+  create: z.boolean().optional().default(false),
+  limit: z.number().int().min(1).max(20).optional().default(5),
+};
+
 // Single source of truth for stdio tool name + one-line description (#2233).
 // Registration and `loopover-mcp tools` both read this list.
 const STDIO_TOOL_DESCRIPTORS = [
@@ -1517,6 +1528,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     category: "maintainer",
     description:
       "AI-plan a small set of concrete GitHub issue drafts for a repo from a maintainer-supplied free-form goal, same as `loopover-mcp maintain plan-issues --goal ...`. Dry-run BY DEFAULT: only previews the drafted title/body/labels unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues. Maintainer access required.",
+  },
+  {
+    name: "loopover_generate_contributor_issue_drafts",
+    category: "maintainer",
+    description:
+      "Generate contributor-facing issue drafts for one repo from its lane/config/queue signals. Dry-run BY DEFAULT: it only PREVIEWS drafts unless the caller passes BOTH create:true and dryRun:false, so it can never silently open issues; the write path additionally requires repo write access and is suppressed while the agent is globally paused/frozen. Maintainer access required.",
   },
   {
     name: "loopover_open_pr",
@@ -3102,6 +3119,24 @@ registerStdioTool(
     );
   },
 );
+
+// #7755: stdio mirror of the remote loopover_generate_contributor_issue_drafts + the `maintain
+// generate-issue-drafts` CLI. Proxies POST {repoBase}/contributor-issue-drafts/generate (the same route the
+// CLI hits). The route re-applies its own explicit_create_requires_dry_run_false guard, so forwarding the
+// schema-defaulted dryRun/create verbatim keeps create-safety exact: `create` alone (dryRun still true) is
+// rejected; only an explicit {create:true, dryRun:false} reaches the write path.
+registerStdioTool(
+  "loopover_generate_contributor_issue_drafts",
+  {
+    description: stdioToolDescription("loopover_generate_contributor_issue_drafts"),
+    inputSchema: generateContributorIssueDraftsShape,
+  },
+  async ({ owner, repo, dryRun, create, limit }: any) => {
+    const payload = await apiPost(`${toolRepoBase(owner, repo)}/contributor-issue-drafts/generate`, { dryRun, create, limit });
+    return toolResult(`Contributor issue drafts for ${owner}/${repo}.`, payload);
+  },
+);
+
 // ── Write-tools (#6149): pure LOCAL-execution spec builders. loopover NEVER performs the write -- each tool
 // returns a spec the caller runs with its OWN gh creds. Brings the local stdio server to parity with the
 // miner-auto-dev profile's recommendedTools, using the same @loopover/engine builders as the remote server.

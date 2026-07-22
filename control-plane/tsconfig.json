@@ -13,5 +13,8 @@
     "sourceMap": true,
     "inlineSources": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // src/worker.ts (#7654) runs in the Cloudflare Workers runtime only -- see tsconfig.worker.json, which
+  // typechecks it separately against @cloudflare/workers-types instead of this package's plain Node types.
+  "exclude": ["src/worker.ts", "src/env.d.ts", "worker-configuration.d.ts"]
 }

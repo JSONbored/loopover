@@ -1,0 +1,39 @@
+{
+  // Cloudflare Worker deployment for control-plane's real HTTP transport (#7654, part of the #7173 ORB+AMS
+  // hosting control-plane). Exposes exactly the routes packages/loopover-miner/lib/tenant-client.ts (already
+  // merged) hardcodes: POST/GET /v1/tenants, DELETE /v1/tenants/:name -- see src/http-app.ts for the route
+  // logic and src/worker.ts for how this binding config wires into it.
+  //
+  // Before first deploy, create the KV namespace and set the real secrets (never commit real values, and
+  // never put them in this file):
+  //   npx wrangler kv namespace create TENANT_REGISTRY   (paste the returned id below)
+  //   npx wrangler secret put ADMIN_TOKEN
+  //   npx wrangler secret put NEON_API_KEY   (only needed to select the real Neon database driver, #7653 --
+  //                                           omit to keep createTenantProvisioningDriver on the fake driver)
+  "name": "loopover-control-plane",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-21",
+  // Required: http-app.ts (via auth.ts/provisioning.ts/pagerduty-notify.ts) uses node:crypto's
+  // timingSafeEqual, Buffer, and process.env -- real APIs this flag provides, not a Node-only assumption.
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // Non-sensitive Neon project identifier -- pairs with the NEON_API_KEY secret above to select the real
+    // database driver; grants no access on its own. See src/driver-factory.ts's own env-selection logic.
+    "NEON_PROJECT_ID": "REPLACE_WITH_REAL_NEON_PROJECT_ID",
+    // Same flag name/shape as the main app's own PagerDuty wiring (#7667) -- off by default.
+    "LOOPOVER_ENABLE_PAGERDUTY": "false"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "TENANT_REGISTRY",
+      "id": "REPLACE_WITH_REAL_KV_NAMESPACE_ID"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

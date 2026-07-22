@@ -7,7 +7,9 @@ export type BurdenForecastFreshness = "fresh" | "stale";
 
 export type BurdenForecastResponse = {
   status: "ready";
-  source: "snapshot" | "computed";
+  // Cache-only: the request-time compute path was removed in #906 (moved to the background
+  // `buildBurdenForecasts` job), so a response is always served from a stored snapshot (#8019).
+  source: "snapshot";
   repoFullName: string;
   generatedAt: string;
   ageSeconds: number;
@@ -15,7 +17,12 @@ export type BurdenForecastResponse = {
   report: BurdenForecast;
 };
 
-export async function loadOrComputeBurdenForecastResponse(env: Env, fullName: string): Promise<BurdenForecastResponse | null> {
+/**
+ * Load the stored burden-forecast snapshot for a repo, or null when none is cached. This is cache-only
+ * (#8019): the inline compute fallback was removed in #906 and now runs as the background
+ * `buildBurdenForecasts` job (`src/queue/processors.ts`), which is what populates the snapshot read here.
+ */
+export async function loadCachedBurdenForecastResponse(env: Env, fullName: string): Promise<BurdenForecastResponse | null> {
   const repo = await getRepository(env, fullName);
   if (!repo) return null;
 

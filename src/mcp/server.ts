@@ -104,7 +104,7 @@ import { buildRemediationPlan } from "../services/remediation-plan";
 import { deriveEligibilityPlan } from "../services/eligibility-plan";
 import { explainScoreBreakdown } from "../services/score-breakdown";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
-import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { loadCachedBurdenForecastResponse } from "../services/burden-forecast";
 import { buildMcpClientTelemetry } from "../services/client-telemetry";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
@@ -3455,7 +3455,7 @@ export class LoopoverMcp {
   private async getBurdenForecast(input: { owner: string; repo: string }): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoAccess(fullName);
-    const response = await loadOrComputeBurdenForecastResponse(this.env, fullName);
+    const response = await loadCachedBurdenForecastResponse(this.env, fullName);
     if (!response) {
       return {
         summary: `LoopOver has no cached burden forecast for ${fullName}.`,

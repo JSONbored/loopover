@@ -241,7 +241,7 @@ import { generateAndSendReviewRecap } from "../services/review-recap";
 import { loadOrComputeIssueQualityResponse } from "../services/issue-quality";
 import { loadMaintainerNoiseReport } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
-import { loadOrComputeBurdenForecastResponse } from "../services/burden-forecast";
+import { loadCachedBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
@@ -5719,7 +5719,7 @@ async function buildRepoIntelligenceResponse(env: Env, fullName: string) {
       ]),
     ),
     loadRepoDataQuality(env, fullName),
-    loadOrComputeBurdenForecastResponse(env, fullName).catch((error) => {
+    loadCachedBurdenForecastResponse(env, fullName).catch((error) => {
       burdenForecastError = error;
       return null;
     }),

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { getBurdenForecast, upsertBurdenForecast, upsertRepositoryFromGitHub } from "../../src/db/repositories";
-import { BURDEN_FORECAST_MAX_AGE_MS, loadOrComputeBurdenForecastResponse } from "../../src/services/burden-forecast";
+import { BURDEN_FORECAST_MAX_AGE_MS, loadCachedBurdenForecastResponse } from "../../src/services/burden-forecast";
 import { buildBurdenForecast, buildCollisionReport } from "../../src/signals/engine";
 import type { IssueRecord, JsonValue, PullRequestRecord, RepositoryRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -57,10 +57,10 @@ describe("burden forecast builder", () => {
   });
 });
 
-describe("loadOrComputeBurdenForecastResponse", () => {
+describe("loadCachedBurdenForecastResponse", () => {
   it("returns null when the repo is unknown", async () => {
     const env = createTestEnv();
-    const response = await loadOrComputeBurdenForecastResponse(env, "ghost/missing");
+    const response = await loadCachedBurdenForecastResponse(env, "ghost/missing");
     expect(response).toBeNull();
   });
 
@@ -76,7 +76,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       generatedAt: new Date(Date.now() - 1000).toISOString(),
     });
 
-    const response = await loadOrComputeBurdenForecastResponse(env, "ghost/private-repo");
+    const response = await loadCachedBurdenForecastResponse(env, "ghost/private-repo");
 
     expect(response).toBeNull();
   });
@@ -89,7 +89,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       payload: { repoFullName: "owner/fresh", level: "low", summary: "fresh fixture" } as unknown as Record<string, JsonValue>,
       generatedAt: new Date(Date.now() - 60_000).toISOString(),
     });
-    const response = await loadOrComputeBurdenForecastResponse(env, "owner/fresh");
+    const response = await loadCachedBurdenForecastResponse(env, "owner/fresh");
     expect(response).toMatchObject({
       status: "ready",
       source: "snapshot",
@@ -110,7 +110,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       payload: { repoFullName: "owner/old", level: "high", summary: "stale fixture" } as unknown as Record<string, JsonValue>,
       generatedAt,
     });
-    const response = await loadOrComputeBurdenForecastResponse(env, "owner/old");
+    const response = await loadCachedBurdenForecastResponse(env, "owner/old");
     expect(response).toMatchObject({
       status: "ready",
       source: "snapshot",
@@ -135,7 +135,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       generatedAt: "not-a-date",
     });
 
-    const response = await loadOrComputeBurdenForecastResponse(env, "owner/malformed-time");
+    const response = await loadCachedBurdenForecastResponse(env, "owner/malformed-time");
 
     expect(response).toMatchObject({
       status: "ready",
@@ -150,7 +150,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
     const env = createTestEnv();
     await upsertRepositoryFromGitHub(env, { name: "uncached", full_name: "owner/uncached", private: false, owner: { login: "owner" }, default_branch: "main" });
 
-    const response = await loadOrComputeBurdenForecastResponse(env, "owner/uncached");
+    const response = await loadCachedBurdenForecastResponse(env, "owner/uncached");
 
     expect(response).toBeNull();
   });
@@ -169,7 +169,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       vi.spyOn(repositoriesModule, "listOpenPullRequests"),
       vi.spyOn(repositoriesModule, "listRecentMergedPullRequests"),
     ];
-    await loadOrComputeBurdenForecastResponse(env, "owner/perf");
+    await loadCachedBurdenForecastResponse(env, "owner/perf");
     for (const spy of spies) {
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
@@ -186,7 +186,7 @@ describe("loadOrComputeBurdenForecastResponse", () => {
       vi.spyOn(repositoriesModule, "listRecentMergedPullRequests"),
     ];
 
-    const response = await loadOrComputeBurdenForecastResponse(env, "owner/computed-perf");
+    const response = await loadCachedBurdenForecastResponse(env, "owner/computed-perf");
 
     expect(response).toBeNull();
     for (const spy of spies) {

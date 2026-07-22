@@ -3,12 +3,15 @@
 // auth branch, every validation branch, the not-idempotent create-conflict rule, delete-of-unknown-tenant, the
 // onError 500 path, and (explicitly) that a tenant's database connection details never appear on the wire.
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { afterEach, test } from "node:test";
 
 import {
   createFakeTenantProvisioningDriver,
   createFakeTenantRegistry,
   createTenantHttpApp,
+  type RouterNamespaceLike,
+  type RouterStubLike,
   type TenantHttpAppDeps,
   type TenantProvisioningDriver,
 } from "../dist/index.js";
@@ -217,6 +220,103 @@ test("POST /v1/tenants without a schedule creates an AMS tenant with no amsSched
   const payload = (await res.json()) as Record<string, unknown>;
   assert.equal("amsSchedule" in payload, false);
   assert.equal((await registry.get("acme", "ams"))?.amsSchedule, undefined);
+});
+
+test("POST /v1/tenants accepts an optional orbInstallationId for an ORB tenant and surfaces it back (#7181)", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "orb", orbInstallationId: 555 }) }),
+  );
+
+  assert.equal(res.status, 201);
+  const payload = (await res.json()) as { orbInstallationId?: number };
+  assert.equal(payload.orbInstallationId, 555);
+  assert.equal((await registry.get("acme", "orb"))?.orbInstallationId, 555);
+});
+
+test("POST /v1/tenants without orbInstallationId creates an ORB tenant with no installation link at all", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "orb" }) }),
+  );
+
+  assert.equal(res.status, 201);
+  const payload = (await res.json()) as Record<string, unknown>;
+  assert.equal("orbInstallationId" in payload, false);
+  assert.equal((await registry.get("acme", "orb"))?.orbInstallationId, undefined);
+});
+
+test("POST /v1/tenants rejects orbInstallationId on a non-ORB product", async () => {
+  const app = createTenantHttpApp(baseDeps());
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "ams", orbInstallationId: 555 }) }),
+  );
+
+  assert.equal(res.status, 400);
+  assert.deepEqual(await res.json(), { error: "invalid_request", message: 'orbInstallationId is only valid for product "orb"' });
+});
+
+test("POST /v1/tenants rejects a malformed orbInstallationId without creating the tenant", async () => {
+  const registry = createFakeTenantRegistry();
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  for (const orbInstallationId of ["555", 0, -1, 1.5, true, {}]) {
+    const res = await app.request(
+      "/v1/tenants",
+      authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "acme", product: "orb", orbInstallationId }) }),
+    );
+    assert.equal(res.status, 400, JSON.stringify(orbInstallationId));
+    assert.deepEqual(await res.json(), { error: "invalid_request", message: "orbInstallationId must be a positive integer" });
+  }
+  assert.equal(await registry.get("acme", "orb"), undefined);
+});
+
+test("POST /v1/tenants rejects an orbInstallationId already claimed by another active tenant (409)", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ tenant: { name: "existing" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0", orbInstallationId: 555 });
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "newcomer", product: "orb", orbInstallationId: 555 }) }),
+  );
+
+  assert.equal(res.status, 409);
+  assert.deepEqual(await res.json(), { error: "installation_already_claimed", message: 'installation 555 is already claimed by tenant "existing"' });
+  assert.equal(await registry.get("newcomer", "orb"), undefined);
+});
+
+test("POST /v1/tenants allows claiming an orbInstallationId that a torn-down tenant previously held", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ tenant: { name: "old" }, product: "orb", state: "torn down", createdAt: "t0", updatedAt: "t0", orbInstallationId: 555 });
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request(
+    "/v1/tenants",
+    authed({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "newcomer", product: "orb", orbInstallationId: 555 }) }),
+  );
+
+  assert.equal(res.status, 201);
+  assert.equal((await registry.get("newcomer", "orb"))?.orbInstallationId, 555);
+});
+
+test("GET /v1/tenants surfaces an ORB tenant's orbInstallationId when set", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ tenant: { name: "acme" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0", orbInstallationId: 555 });
+  const app = createTenantHttpApp(baseDeps({ registry }));
+
+  const res = await app.request("/v1/tenants", authed());
+
+  const payload = (await res.json()) as { tenants: Array<{ orbInstallationId?: number }> };
+  assert.equal(payload.tenants[0]?.orbInstallationId, 555);
 });
 
 test("GET /v1/tenants surfaces an AMS tenant's amsSchedule when set", async () => {
@@ -541,4 +641,43 @@ test("GET /v1/tenants surfaces each tenant's pinnedVersion once one is set (#489
   assert.deepEqual(await res.json(), {
     tenants: [{ tenant: { name: "acme", pinnedVersion: "v1.4.2" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0" }],
   });
+});
+
+// #7181: POST /v1/orb/webhook wiring. routeOrbWebhook's own branches (signature/JSON/lookup/forward/error
+// shapes) are exhaustively covered by orb-webhook-router.test.ts -- these only prove http-app.ts plumbs its
+// deps into that function correctly, and that the route sits OUTSIDE the /v1/tenants/* admin-bearer wall.
+
+function fakeOrbStub(response: Response): RouterStubLike {
+  return { async fetch() { return response; } };
+}
+
+function fakeOrbNamespace(stubs: Record<string, RouterStubLike>): RouterNamespaceLike {
+  return { getByName: (name) => stubs[name] ?? { async fetch() { throw new Error(`no stub for "${name}"`); } } };
+}
+
+test("POST /v1/orb/webhook is unauthenticated by the admin Bearer wall, and 503s when orbWebhookBinding is unset", async () => {
+  const app = createTenantHttpApp(baseDeps());
+
+  const res = await app.request("/v1/orb/webhook", { method: "POST", body: JSON.stringify({ installation: { id: 1 } }) });
+
+  assert.equal(res.status, 503);
+  assert.deepEqual(await res.json(), { error: "service_not_configured" });
+});
+
+test("POST /v1/orb/webhook routes a verified delivery through to deps.orbWebhookBinding via deps.registry", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ tenant: { name: "acme" }, product: "orb", state: "active", createdAt: "t0", updatedAt: "t0", orbInstallationId: 42 });
+  const containerResponse = Response.json({ ok: true }, { status: 202 });
+  const orbWebhookBinding = fakeOrbNamespace({ "orb:acme": fakeOrbStub(containerResponse) });
+  const app = createTenantHttpApp(baseDeps({ registry, orbWebhookBinding, orbWebhookSecret: "whsec" }));
+  const rawBody = JSON.stringify({ installation: { id: 42 } });
+
+  const res = await app.request("/v1/orb/webhook", {
+    method: "POST",
+    headers: { "x-hub-signature-256": `sha256=${createHmac("sha256", "whsec").update(rawBody).digest("hex")}` },
+    body: rawBody,
+  });
+
+  assert.equal(res.status, 202);
+  assert.deepEqual(await res.json(), { ok: true });
 });

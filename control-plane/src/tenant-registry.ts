@@ -33,6 +33,11 @@ export type TenantRegistryRecord = {
   createdAt: string;
   updatedAt: string;
   amsSchedule?: AmsCycleSchedule;
+  /** The GitHub App installation ID this ORB tenant's hosted container answers webhooks for (#7181) -- ORB
+   *  tenants only, mirroring `amsSchedule`'s own AMS-only shape. Set at creation (see http-app.ts's
+   *  `POST /v1/tenants`); `orb-webhook-router.ts`'s request-time routing looks up a tenant by this ID to know
+   *  which container an incoming webhook belongs to. */
+  orbInstallationId?: number;
 };
 
 export interface TenantRegistry {
@@ -46,6 +51,10 @@ export interface TenantRegistry {
    *  terminated instances rather than making them vanish) -- ordered by `tenant.name` then `product` for a
    *  stable listing across products. */
   list(): Promise<TenantRegistryRecord[]>;
+  /** Lookup an ORB tenant by its `orbInstallationId` (#7181) -- the only way an incoming GitHub webhook (which
+   *  carries an installation ID, never a tenant name) can find the right container to route to. `undefined`
+   *  for an installation ID no tenant currently claims. */
+  getByOrbInstallationId(installationId: number): Promise<TenantRegistryRecord | undefined>;
 }
 
 /** Same composite key as container-driver.ts's `instanceNameFor` (#8024) — ORB and AMS tenants that share a
@@ -60,7 +69,10 @@ function sortRecords(records: TenantRegistryRecord[]): TenantRegistryRecord[] {
   );
 }
 
-/** In-memory fake for tests -- mirrors `createFakeTenantProvisioningDriver`'s own minimal-fake convention. */
+/** In-memory fake for tests -- mirrors `createFakeTenantProvisioningDriver`'s own minimal-fake convention.
+ *  `getByOrbInstallationId` is a plain linear scan -- fine for a fake with, at most, a handful of test
+ *  records; the real KV-backed registry below needs an actual secondary index instead, since KV has no query
+ *  capability at all. */
 export function createFakeTenantRegistry(): TenantRegistry {
   const records = new Map<string, TenantRegistryRecord>();
   return {
@@ -73,6 +85,9 @@ export function createFakeTenantRegistry(): TenantRegistry {
     async list() {
       return sortRecords([...records.values()]);
     },
+    async getByOrbInstallationId(installationId) {
+      return [...records.values()].find((record) => record.orbInstallationId === installationId);
+    },
   };
 }
 
@@ -82,13 +97,22 @@ export function createFakeTenantRegistry(): TenantRegistry {
 export type KvNamespaceLike = {
   get(key: string): Promise<string | null>;
   put(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
   list(options?: { prefix?: string; cursor?: string }): Promise<{ keys: Array<{ name: string }>; list_complete: boolean; cursor?: string }>;
 };
 
 const KEY_PREFIX = "tenant:";
+const INSTALLATION_INDEX_PREFIX = "installation:";
 
 function keyFor(name: string, product: Product): string {
   return `${KEY_PREFIX}${instanceKeyFor(name, product)}`;
+}
+
+/** Secondary index key for #7181's webhook routing: an incoming GitHub webhook only carries an installation
+ *  ID, never a tenant name, and KV has no query/scan-by-field capability -- so this points straight at the
+ *  tenant's own primary key, kept in sync by `upsert` below (write-time index maintenance, not a live query). */
+function installationIndexKeyFor(installationId: number): string {
+  return `${INSTALLATION_INDEX_PREFIX}${installationId}`;
 }
 
 /** Real registry backed by Workers KV. `list()` pages through every `tenant:`-prefixed key (KV's own `list()`
@@ -97,7 +121,20 @@ function keyFor(name: string, product: Product): string {
 export function createKvTenantRegistry(kv: KvNamespaceLike): TenantRegistry {
   return {
     async upsert(record) {
-      await kv.put(keyFor(record.tenant.name, record.product), JSON.stringify(record));
+      const primaryKey = keyFor(record.tenant.name, record.product);
+      // Keep the installation-ID secondary index in sync: if this update changes (or clears) which
+      // installation the tenant claims, the stale pointer must go, or a re-linked/unlinked installation ID
+      // would keep resolving to the wrong (or a deleted) tenant. Reading the previous record here is the only
+      // way to know the OLD installationId -- `upsert` itself only ever receives the new one.
+      const previousRaw = await kv.get(primaryKey);
+      const previous = previousRaw ? (JSON.parse(previousRaw) as TenantRegistryRecord) : undefined;
+      if (previous?.orbInstallationId !== undefined && previous.orbInstallationId !== record.orbInstallationId) {
+        await kv.delete(installationIndexKeyFor(previous.orbInstallationId));
+      }
+      await kv.put(primaryKey, JSON.stringify(record));
+      if (record.orbInstallationId !== undefined) {
+        await kv.put(installationIndexKeyFor(record.orbInstallationId), primaryKey);
+      }
     },
     async get(name, product) {
       const raw = await kv.get(keyFor(name, product));
@@ -116,6 +153,12 @@ export function createKvTenantRegistry(kv: KvNamespaceLike): TenantRegistry {
         cursor = page.cursor;
       }
       return sortRecords(records);
+    },
+    async getByOrbInstallationId(installationId) {
+      const primaryKey = await kv.get(installationIndexKeyFor(installationId));
+      if (!primaryKey) return undefined;
+      const raw = await kv.get(primaryKey);
+      return raw ? (JSON.parse(raw) as TenantRegistryRecord) : undefined;
     },
   };
 }

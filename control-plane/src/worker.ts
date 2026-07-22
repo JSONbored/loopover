@@ -34,8 +34,8 @@ class ProvisionedContainer extends Container {
 
 /** ORB's tenant container (#7173's ratified one-container-per-tenant-per-product model): runs the SAME root
  *  Dockerfile self-host image unmodified, on the port that image's own PORT env var / HEALTHCHECK already
- *  use. Webhook routing into this container (#7181) is a separate, not-yet-built piece -- this class only
- *  stands the container up and tears it down; #7181 is what will actually proxy requests through it. */
+ *  use. `defaultPort` is what `Container.fetch()` proxies to -- orb-webhook-router.ts (#7181) is the thing
+ *  that actually calls it, waking this container on demand when a webhook for this tenant arrives. */
 export class OrbTenantContainer extends ProvisionedContainer {
   defaultPort = 8787;
   sleepAfter = "10m";
@@ -65,6 +65,11 @@ export default {
       // a real-Node-only assumption -- explicitly forwarding the Worker's own bindings here is what makes
       // paging actually configurable in this deployment, rather than silently reading an empty process.env.
       pagerDuty: { env: { LOOPOVER_ENABLE_PAGERDUTY: env.LOOPOVER_ENABLE_PAGERDUTY, PAGERDUTY_ROUTING_KEY: env.PAGERDUTY_ROUTING_KEY } },
+      // #7181: routes incoming GitHub webhooks to the right hosted ORB tenant's container. A SEPARATE secret
+      // from the main app's own `ORB_GITHUB_WEBHOOK_SECRET` (a different physical service) -- see
+      // orb-webhook-router.ts's header comment.
+      orbWebhookBinding: env.ORB_TENANT_CONTAINER,
+      orbWebhookSecret: env.ORB_WEBHOOK_SECRET,
     });
     return app.fetch(request, env);
   },

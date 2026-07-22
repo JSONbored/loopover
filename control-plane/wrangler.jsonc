@@ -11,6 +11,10 @@
   //   npx wrangler secret put ADMIN_TOKEN
   //   npx wrangler secret put NEON_API_KEY   (only needed to select the real Neon database driver, #7653 --
   //                                           omit to keep createTenantProvisioningDriver on the fake driver)
+  //   npx wrangler secret put ORB_WEBHOOK_SECRET   (#7181: this hosted fleet's OWN GitHub App webhook secret --
+  //                                                 a separate value from the main app's ORB_GITHUB_WEBHOOK_SECRET,
+  //                                                 even though both verify the same HMAC-SHA256 shape. Omit to
+  //                                                 leave POST /v1/orb/webhook fail-closed on every delivery.)
   //
   // Both container images below build from the REPO ROOT context (image_build_context: ".."), one level up
   // from this file -- same npm-workspaces reasoning as packages/discovery-index/wrangler.jsonc's identical

@@ -80,3 +80,9 @@ export {
   type WakeNamespaceLike,
   type WakeStubLike,
 } from "./ams-wake.js";
+export {
+  routeOrbWebhook,
+  type OrbWebhookRouterConfig,
+  type RouterNamespaceLike,
+  type RouterStubLike,
+} from "./orb-webhook-router.js";

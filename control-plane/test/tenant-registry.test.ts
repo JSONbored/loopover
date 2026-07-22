@@ -60,6 +60,15 @@ test("createFakeTenantRegistry: state is product-scoped (${product}:${name}), no
   assert.equal((await registry.get("acme", "ams"))?.state, "active");
 });
 
+test("createFakeTenantRegistry: getByOrbInstallationId finds a tenant by installation ID, undefined for an unclaimed one", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+  await registry.upsert(recordFor("beta"));
+
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "acme");
+  assert.equal(await registry.getByOrbInstallationId(999), undefined);
+});
+
 function fakeKv(initial: Record<string, string> = {}): KvNamespaceLike & { store: Map<string, string> } {
   const store = new Map(Object.entries(initial));
   return {
@@ -69,6 +78,9 @@ function fakeKv(initial: Record<string, string> = {}): KvNamespaceLike & { store
     },
     async put(key, value) {
       store.set(key, value);
+    },
+    async delete(key) {
+      store.delete(key);
     },
     async list({ prefix = "", cursor } = {}) {
       const keys = [...store.keys()].filter((key) => key.startsWith(prefix)).sort();
@@ -161,4 +173,51 @@ test("a tenant's pinnedVersion (#4898) survives the KV JSON round-trip, and its 
   assert.deepEqual((await registry.get("acme", "orb"))?.tenant, { name: "acme", pinnedVersion: "v1.4.2" });
   // A pre-#4898 record (no pinnedVersion key at all) reads back exactly as stored — unpinned.
   assert.deepEqual((await registry.get("beta", "orb"))?.tenant, { name: "beta" });
+});
+
+test("createKvTenantRegistry: getByOrbInstallationId resolves through the installation:${id} secondary index (#7181)", async () => {
+  const kv = fakeKv();
+  const registry = createKvTenantRegistry(kv);
+
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+
+  assert.equal(kv.store.get("installation:555"), "tenant:orb:acme");
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "acme");
+});
+
+test("createKvTenantRegistry: getByOrbInstallationId returns undefined for an installation ID nothing claims", async () => {
+  const registry = createKvTenantRegistry(fakeKv());
+
+  assert.equal(await registry.getByOrbInstallationId(999), undefined);
+});
+
+test("createKvTenantRegistry: re-linking a tenant to a different installation ID clears the stale index entry", async () => {
+  const kv = fakeKv();
+  const registry = createKvTenantRegistry(kv);
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 777 });
+
+  assert.equal(kv.store.get("installation:555"), undefined);
+  assert.equal(await registry.getByOrbInstallationId(555), undefined);
+  assert.equal((await registry.getByOrbInstallationId(777))?.tenant.name, "acme");
+});
+
+test("createKvTenantRegistry: getByOrbInstallationId tolerates an index entry whose primary key has since disappeared", async () => {
+  const kv = fakeKv({ "installation:555": "tenant:orb:acme" });
+
+  const registry = createKvTenantRegistry(kv);
+
+  assert.equal(await registry.getByOrbInstallationId(555), undefined);
+});
+
+test("createKvTenantRegistry: unlinking a tenant's installation ID (upsert without it) clears the stale index entry", async () => {
+  const kv = fakeKv();
+  const registry = createKvTenantRegistry(kv);
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+
+  await registry.upsert(recordFor("acme"));
+
+  assert.equal(kv.store.get("installation:555"), undefined);
+  assert.equal(await registry.getByOrbInstallationId(555), undefined);
 });

@@ -14,6 +14,10 @@ declare global {
     /** Same routing-key secret name/shape as the main app's own src/env.d.ts (#7667's PagerDuty mirror) --
      *  grants the ability to trigger a real page, so it's a secret here too, not a plain var. */
     PAGERDUTY_ROUTING_KEY?: string;
+    /** This hosted fleet's OWN GitHub App webhook secret (#7181) -- a SEPARATE value from the main app's
+     *  ORB_GITHUB_WEBHOOK_SECRET (a different physical service). Unset ⇒ POST /v1/orb/webhook fails every
+     *  delivery closed (orb-webhook-router.ts). Genuinely sensitive: whoever holds it can forge a webhook. */
+    ORB_WEBHOOK_SECRET?: string;
   }
 }
 

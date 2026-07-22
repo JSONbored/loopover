@@ -16,8 +16,14 @@
 // `POST /v1/tenants` also accepts an optional `schedule` field (#7182), valid only for `product: "ams"`:
 // configures the new tenant's cron-wake cadence at creation time. ams-wake.ts's `scheduled()`-triggered
 // handler is what actually reads and acts on it later -- this route only validates and stores it.
+//
+// `POST /v1/tenants` also accepts an optional `orbInstallationId` field (#7181), valid only for
+// `product: "orb"`: the GitHub App installation this tenant's hosted container answers webhooks for.
+// `POST /v1/orb/webhook` (below) is the actual routing endpoint that reads it back via the registry's
+// installation-ID index -- this route only validates, checks for a conflicting claim, and stores it.
 import { Hono } from "hono";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";
+import { routeOrbWebhook, type RouterNamespaceLike } from "./orb-webhook-router.js";
 import {
   deprovisionTenant,
   provisionTenant,
@@ -34,10 +40,22 @@ export type TenantHttpAppDeps = {
    *  rather than silently accepting an unauthenticated caller. */
   adminToken: string | undefined;
   pagerDuty?: ProvisioningPagerDutyOptions;
+  /** ORB's tenant container binding + the hosted fleet's own GitHub App webhook secret (#7181) -- wired into
+   *  `POST /v1/orb/webhook` below via orb-webhook-router.ts. Optional so existing callers (and every test that
+   *  doesn't exercise webhook routing) don't need to supply a binding they never use; `webhookSecret` being
+   *  unset already fails that route closed on its own (see orb-webhook-router.ts), same as `adminToken`. */
+  orbWebhookBinding?: RouterNamespaceLike;
+  orbWebhookSecret?: string;
 };
 
-function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "state" | "amsSchedule">): Record<string, unknown> {
-  return { tenant: record.tenant, product: record.product, state: record.state, ...(record.amsSchedule ? { amsSchedule: record.amsSchedule } : {}) };
+function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "state" | "amsSchedule" | "orbInstallationId">): Record<string, unknown> {
+  return {
+    tenant: record.tenant,
+    product: record.product,
+    state: record.state,
+    ...(record.amsSchedule ? { amsSchedule: record.amsSchedule } : {}),
+    ...(record.orbInstallationId !== undefined ? { orbInstallationId: record.orbInstallationId } : {}),
+  };
 }
 
 /** The only `command` names #7182's hosted entry point (loopover-miner-hosted) actually dispatches --
@@ -66,6 +84,18 @@ function parseScheduleRequest(value: unknown): AmsCycleSchedule | string | undef
     return "schedule.intervalMs must be a positive number of milliseconds";
   }
   return { command, args: Array.isArray(args) ? args : [], intervalMs, nextDueAt: new Date().toISOString() };
+}
+
+/** Validated body of `POST /v1/tenants`'s optional `orbInstallationId` field (#7181): a GitHub App
+ *  installation ID, always a positive integer (GitHub's own ID space). `undefined` input (the field omitted)
+ *  is valid -- an ORB tenant with no installation linked yet simply never receives a routed webhook, which is
+ *  a legitimate state during onboarding, not an error. */
+function parseOrbInstallationId(value: unknown): number | string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return "orbInstallationId must be a positive integer";
+  }
+  return value;
 }
 
 /** Validated body of `POST /v1/tenants/rollout` (#4898): an explicit tenant-name list (no percentage/canary
@@ -114,12 +144,17 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
   app.post("/v1/tenants", async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
     if (body === null || typeof body !== "object") return c.json({ error: "invalid_json" }, 400);
-    const { name, product, schedule: scheduleInput } = body as Record<string, unknown>;
+    const { name, product, schedule: scheduleInput, orbInstallationId: orbInstallationIdInput } = body as Record<string, unknown>;
     if (typeof name !== "string" || !name.trim()) return c.json({ error: "invalid_request", message: "name is required" }, 400);
     if (typeof product !== "string" || !product.trim()) return c.json({ error: "invalid_request", message: "product is required" }, 400);
     const schedule = parseScheduleRequest(scheduleInput);
     if (typeof schedule === "string") return c.json({ error: "invalid_request", message: schedule }, 400);
     if (schedule && product !== "ams") return c.json({ error: "invalid_request", message: 'schedule is only valid for product "ams"' }, 400);
+    const orbInstallationId = parseOrbInstallationId(orbInstallationIdInput);
+    if (typeof orbInstallationId === "string") return c.json({ error: "invalid_request", message: orbInstallationId }, 400);
+    if (orbInstallationId !== undefined && product !== "orb") {
+      return c.json({ error: "invalid_request", message: 'orbInstallationId is only valid for product "orb"' }, 400);
+    }
 
     // Not idempotent by design (tenant-client.ts's own doc comment: "a create is not idempotent, so it must
     // not be silently re-sent") -- a currently-active tenant of the same name *and product* is a real conflict,
@@ -128,9 +163,30 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
     const existing = await deps.registry.get(name, product);
     if (existing && existing.state !== "torn down") return c.json({ error: "tenant_already_exists" }, 409);
 
+    // A GitHub installation ID must resolve to exactly one hosted container (#7181's routing depends on this
+    // being unambiguous) -- reject before ever provisioning anything, same posture as the name+product conflict
+    // check just above.
+    if (orbInstallationId !== undefined) {
+      const conflicting = await deps.registry.getByOrbInstallationId(orbInstallationId);
+      if (conflicting && conflicting.state !== "torn down") {
+        return c.json(
+          { error: "installation_already_claimed", message: `installation ${orbInstallationId} is already claimed by tenant "${conflicting.tenant.name}"` },
+          409,
+        );
+      }
+    }
+
     const result = await provisionTenant({ name }, product, deps.driver, deps.pagerDuty ?? {});
     const now = new Date().toISOString();
-    const record: TenantRegistryRecord = { tenant: result.tenant, product: result.product, state: result.state, createdAt: now, updatedAt: now, ...(schedule ? { amsSchedule: schedule } : {}) };
+    const record: TenantRegistryRecord = {
+      tenant: result.tenant,
+      product: result.product,
+      state: result.state,
+      createdAt: now,
+      updatedAt: now,
+      ...(schedule ? { amsSchedule: schedule } : {}),
+      ...(orbInstallationId !== undefined ? { orbInstallationId } : {}),
+    };
     await deps.registry.upsert(record);
     return c.json(safeRecord(record), 201);
   });
@@ -190,6 +246,18 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
     const result = await deprovisionTenant(existing.tenant, existing.product, deps.driver, deps.pagerDuty ?? {});
     await deps.registry.upsert({ tenant: result.tenant, product: result.product, state: result.state, createdAt: existing.createdAt, updatedAt: new Date().toISOString() });
     return c.json(safeRecord(result));
+  });
+
+  // #7181: routes an incoming GitHub webhook to the hosted ORB tenant it belongs to. Deliberately OUTSIDE the
+  // `/v1/tenants/*` admin-bearer middleware above -- GitHub authenticates a webhook via its own HMAC signature
+  // (orb-webhook-router.ts verifies it independently), not this service's admin token. An unset
+  // `orbWebhookBinding` (a test harness that never exercises this route, or a real deployment mid-rollout)
+  // fails closed with 503 here, matching `adminToken`'s own "unconfigured ⇒ 503" convention above -- a missing
+  // binding is a deployment-config gap, not something `routeOrbWebhook` (which assumes it always has one) or
+  // its 401/502 error shapes should have to represent.
+  app.post("/v1/orb/webhook", async (c) => {
+    if (!deps.orbWebhookBinding) return c.json({ error: "service_not_configured" }, 503);
+    return routeOrbWebhook({ binding: deps.orbWebhookBinding, registry: deps.registry, webhookSecret: deps.orbWebhookSecret }, c.req.raw);
   });
 
   return app;

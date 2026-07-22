@@ -17,6 +17,7 @@ describe("miner operations runbook (#4875)", () => {
     expect(doc).toContain("PRAGMA busy_timeout");
     expect(doc).toContain("5000");
     expect(doc).toContain("BEGIN IMMEDIATE");
+    expect(doc).toContain("ams-shared-store-concurrency-model.md");
   });
 
   it("links from coding-agent-driver.md related docs (invariant: entry resolves)", () => {

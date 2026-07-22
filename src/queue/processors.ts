@@ -266,6 +266,7 @@ import {
 } from "../selfhost/queue-common";
 import { aiReviewCacheInputFingerprint } from "../review/ai-review-cache-input";
 import { linkedIssueSatisfactionCacheInputFingerprint } from "../review/linked-issue-satisfaction-cache-input";
+import { createSignalStore } from "../review/signal-tracking-wire";
 import {
   AGENT_LABEL_NEEDS_REVIEW,
   downgradeCloseToHold,
@@ -7532,6 +7533,20 @@ export async function runLinkedIssueSatisfactionForAdvisory(
         action: "Confirm this PR actually addresses the linked issue's scope, or link the correct issue.",
         publicText: `AI assessment: this PR does not appear to satisfy its linked issue's scope. ${result.result.rationale}`,
       });
+      // #8101: this AI judgment carries gate authority in block mode, so record the firing in the shared
+      // calibration module (#7982) — the fired/override history is what the self-correction pipeline
+      // (#7983/#7984) and the backtest primitives (#8083-#8086) consume. Recorded ONLY here: advisory mode
+      // never pushes the finding, so it never records either. Best-effort like the cache-write handling
+      // above and SignalStore's own contract — a recording failure must never fail the review pass.
+      await createSignalStore(env)
+        .recordRuleFired({
+          ruleId: "linked_issue_scope_mismatch",
+          targetKey: `${args.repoFullName}#${args.pr.number}`,
+          outcome: result.result.status,
+          occurredAt: nowIso(),
+          metadata: { confidence: result.result.confidence },
+        })
+        .catch(() => undefined);
     }
     return { status: result.result.status, rationale: result.result.rationale };
   } catch (error) {

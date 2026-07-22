@@ -224,6 +224,32 @@ describe("operator dashboard payload", () => {
     expect(JSON.stringify(payload)).not.toContain("flagged-login");
   });
 
+  it("surfaces a rule below the close-precision floor (#7984), replaying the incident shape: an isolated bad rule on an otherwise-healthy project", async () => {
+    const env = createTestEnv();
+    const seedClose = async (id: string, ruleCode: string | null, truth: "closed" | "merged"): Promise<void> => {
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, summary, source, created_at) VALUES (?, 'metagraphed/metagraphed', ?, 'gate_decision', 'close', ?, 'gittensory-native', ?)`,
+      )
+        .bind(`gd-${id}`, `metagraphed/metagraphed#${id}`, ruleCode, new Date().toISOString())
+        .run();
+      await env.DB.prepare(
+        `INSERT INTO review_audit (id, project, target_id, event_type, decision, source, created_at) VALUES (?, 'metagraphed/metagraphed', ?, 'pr_outcome', ?, 'github', ?)`,
+      )
+        .bind(`po-${id}`, `metagraphed/metagraphed#${id}`, truth, new Date().toISOString())
+        .run();
+    };
+    // The buggy rule: 12 closes (clears AUTOTUNE_MIN_DECIDED), every single one later merged -- 0% precision.
+    for (let i = 1; i <= 12; i++) await seedClose(`bad-${i}`, "surface_lane_reject", "merged");
+    // The same project's every OTHER close reason: perfectly healthy, would dilute a project-wide number.
+    for (let i = 1; i <= 20; i++) await seedClose(`good-${i}`, "missing_linked_issue", "closed");
+
+    const payload = await buildOperatorDashboardPayload(env);
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Rules below close-precision floor", value: "1", delta: "surface_lane_reject" })]),
+    );
+    expect(JSON.stringify(payload)).not.toContain("missing_linked_issue"); // the healthy rule never appears
+  });
+
   it("wires computeFindingAcceptance into the dashboard's acceptance card shape (#1967/#5213)", async () => {
     const env = createTestEnv();
     await env.DB.prepare(

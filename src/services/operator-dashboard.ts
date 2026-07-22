@@ -34,6 +34,7 @@ import { computeFleetAnalytics, getFleetHealthSummary, type FleetAnalytics, type
 import { computeAgentHealth, computeCalibration, type AgentHealth, type Calibration } from "../review/ops";
 import { computeGateEval, type GateEvalReport } from "../review/parity";
 import { computeContributorGateEval, contributorFairnessFlags, computeBlendedContributorGateEval, contributorGlobalFairnessFlags } from "../review/contributor-gate-eval";
+import { computeBlendedRuleGateEval, rulesBelowClosePrecisionFloor } from "../review/rule-gate-eval";
 import { computeCycleTimeAggregate, computeFindingAcceptance, type CycleTimeAggregate } from "../review/stats";
 import { loadUpstreamStatus, type UpstreamStatus } from "../upstream/ruleset";
 import { nowIso } from "../utils/json";
@@ -139,6 +140,7 @@ export async function buildOperatorDashboardPayload(
     gateEval,
     contributorGateEval,
     blendedContributorGateEval,
+    blendedRuleGateEval,
     cycleTime,
     calibration,
     agentHealth,
@@ -170,6 +172,10 @@ export async function buildOperatorDashboardPayload(
     computeContributorGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #global-contributor-trust: the SAME data pooled cross-repo into one blended figure per login, same window.
     computeBlendedContributorGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
+    // #7984: the SAME review_audit data re-aggregated by RULE CODE (pooled cross-repo) instead of by project —
+    // isolates a single systematically-wrong deterministic rule even while its host project's own aggregate
+    // still looks healthy. Fails safe to an empty report on any read error.
+    computeBlendedRuleGateEval(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     // #2194: cycle-time percentiles from the stats feed; fails safe to an empty aggregate.
     computeCycleTimeAggregate(env, { days: GATE_ANALYTICS_WINDOW_DAYS, nowMs: Date.now() }),
     computeCalibration(env, operatorAgentConfig(env)),
@@ -205,6 +211,9 @@ export async function buildOperatorDashboardPayload(
   const contributorFairnessFlagCount = contributorFairnessFlags(contributorGateEval.rows).length;
   // #global-contributor-trust: same fold, but over the blended (cross-repo) rows.
   const globalContributorFairnessFlagCount = contributorGlobalFairnessFlags(blendedContributorGateEval.rows).length;
+  // #7984: rules whose sample has cleared enough volume to trust but whose weighted close precision sits
+  // below the SAME floor auto-tune.ts's project-level close-precision breaker uses -- pure fold, no extra I/O.
+  const rulesBelowFloor = rulesBelowClosePrecisionFloor(blendedRuleGateEval.rows);
   const installedRepos = repositories.filter((repo: RepositoryRecord) => repo.isInstalled).length;
   const registeredRepos = repositories.filter((repo: RepositoryRecord) => repo.isRegistered).length;
   // #1967: map FindingAcceptanceAggregate's field names onto the AcceptanceRateCard's expected shape.
@@ -285,6 +294,15 @@ export async function buildOperatorDashboardPayload(
         label: "Global contributor fairness flags",
         value: String(globalContributorFairnessFlagCount),
         delta: globalContributorFairnessFlagCount > 0 ? `${blendedContributorGateEval.rows.length} contributor(s) evaluated` : "no outliers detected",
+      },
+      {
+        // #7984: a rule code (unlike a contributor login) is not personally identifying, so the flagged codes
+        // themselves are surfaced directly here -- same "name the specific thing" posture as the fleet
+        // gaming-pattern-flags tile above, not the privacy-conscious count-only posture the contributor tiles
+        // use for logins.
+        label: "Rules below close-precision floor",
+        value: String(rulesBelowFloor.length),
+        delta: rulesBelowFloor.length > 0 ? rulesBelowFloor.map((r) => r.ruleCode).join(", ") : "no rule below floor",
       },
     ],
     noiseReduction: [

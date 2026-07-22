@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as signalTrackingWire from "../../src/review/signal-tracking-wire";
+import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { processJob } from "../../src/queue/processors";
 import {
   createFlagStore,
@@ -21,8 +23,6 @@ import { recordAuditEvent } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { GitHubPullRequestPayload } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
-import * as signalTrackingWire from "../../src/review/signal-tracking-wire";
-import { createSignalStore } from "../../src/review/signal-tracking-wire";
 
 // ── helpers ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -1405,7 +1405,7 @@ describe("recordReversalSignals — configured gate blocker overrides (#8104)", 
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
   });
 
-  it("never records a linked_issue_scope_mismatch override from the #8104 loop (owned by #8101)", async () => {
+  it("records linked_issue_scope_mismatch via #8101, not the #8104 configured-blocker loop", async () => {
     const env = createTestEnv();
     await seedBotAction(env, "owner/repo#7", "close");
     await seedFired(env, "linked_issue_scope_mismatch", "owner/repo#7");
@@ -1413,7 +1413,7 @@ describe("recordReversalSignals — configured gate blocker overrides (#8104)", 
 
     await recordReversalSignals(env, "pull_request", contributorReopen());
 
-    expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).overrides).toEqual([]);
+    expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).overrides).toHaveLength(1);
     expect((await createSignalStore(env).queryRuleHistory("secret_leak", 0)).overrides).toHaveLength(1);
   });
 
@@ -1430,5 +1430,94 @@ describe("recordReversalSignals — configured gate blocker overrides (#8104)", 
 
     await expect(recordReversalSignals(env, "pull_request", contributorReopen())).resolves.toBeUndefined();
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
+  });
+});
+
+// ── #8101: linked_issue_scope_mismatch reversal-override wiring ─────────────────────────────────────────────
+
+describe("recordReversalSignals — linked_issue_scope_mismatch override (#8101)", () => {
+  const RULE = "linked_issue_scope_mismatch";
+
+  async function seedFiredSignal(env: Env, targetKey: string): Promise<void> {
+    await createSignalStore(env).recordRuleFired({
+      ruleId: RULE,
+      targetKey,
+      outcome: "unaddressed",
+      occurredAt: new Date().toISOString(),
+      metadata: { confidence: 0.9 },
+    });
+  }
+
+  function contributorReopen(number = 7) {
+    return {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number, state: "open" }),
+      sender: { login: "contributor", type: "User" },
+    };
+  }
+
+  it("records a 'reversed' override when a contributor reopens a bot-closed PR that the rule fired against", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close");
+    await seedFiredSignal(env, "owner/repo#7");
+
+    await recordReversalSignals(env, "pull_request", contributorReopen());
+
+    const history = await createSignalStore(env).queryRuleHistory(RULE, 0);
+    expect(history.overrides).toHaveLength(1);
+    expect(history.overrides[0]).toMatchObject({ ruleId: RULE, targetKey: "owner/repo#7", verdict: "reversed" });
+  });
+
+  it("records a 'reversed' override on the owner reopen-then-merge path (#7985) when the rule fired against the target", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close");
+    await seedFiredSignal(env, "owner/repo#7");
+    // Owner reopens (writes the pending marker)...
+    await recordReversalSignals(env, "pull_request", {
+      action: "reopened",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "open" }),
+      sender: { login: "owner", type: "User" },
+    });
+    expect((await createSignalStore(env).queryRuleHistory(RULE, 0)).overrides).toEqual([]); // marker alone is not a reversal
+    // ...then merges within the window, promoting the marker to a real reversal.
+    await recordReversalSignals(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 7, state: "closed", merged_at: new Date().toISOString() }),
+      sender: { login: "owner", type: "User" },
+    });
+
+    const history = await createSignalStore(env).queryRuleHistory(RULE, 0);
+    expect(history.overrides).toHaveLength(1);
+    expect(history.overrides[0]).toMatchObject({ ruleId: RULE, targetKey: "owner/repo#7", verdict: "reversed" });
+  });
+
+  it("records NO override when the reversal target has no prior fired event for this rule", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close");
+    await seedFiredSignal(env, "owner/repo#99"); // fired against a DIFFERENT target only
+
+    await recordReversalSignals(env, "pull_request", contributorReopen());
+
+    expect((await createSignalStore(env).queryRuleHistory(RULE, 0)).overrides).toEqual([]);
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1); // the reversal itself still records
+  });
+
+  it("degrades silently when the SignalStore read rejects: the reversal itself still records and nothing throws", async () => {
+    const env = createTestEnv();
+    await seedBotAction(env, "owner/repo#7", "close");
+    vi.spyOn(signalTrackingWire, "createSignalStore").mockReturnValue({
+      recordRuleFired: async () => undefined,
+      recordHumanOverride: async () => undefined,
+      queryRuleHistory: async () => {
+        throw new Error("signal store down");
+      },
+    });
+
+    await expect(recordReversalSignals(env, "pull_request", contributorReopen())).resolves.toBeUndefined();
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MINER_PR_OUTCOME_DECISIONS,
   MINER_PR_OUTCOME_EVENT,
@@ -78,6 +78,46 @@ describe("recordPrOutcomeSnapshot (#4274)", () => {
     expect(entry.repoFullName).toBe("acme/widgets");
     expect(entry.payload).toEqual({ prNumber: 12, decision: "closed", closedAt: "t", reason: "superseded_by_duplicate" });
     expect(MINER_PR_OUTCOME_DECISIONS).toEqual(["merged", "closed"]);
+  });
+
+  it("schedules an AMS pr-outcome notification when recipientLogin is provided (#7657)", () => {
+    const schedule = vi.fn();
+    const ledger = mockLedger();
+    recordPrOutcomeSnapshot(
+      { repoFullName: "acme/widgets", prNumber: 4, decision: "merged", closedAt: "2026-07-21T00:00:00.000Z" },
+      { eventLedger: ledger, recipientLogin: "miner", scheduleAmsNotifications: schedule },
+    );
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(schedule.mock.calls[0]![0][0]).toMatchObject({
+      eventType: "ams_pr_outcome",
+      recipientLogin: "miner",
+      pullNumber: 4,
+    });
+  });
+
+  it("skips the AMS notify when recipientLogin is absent or blank (branch coverage, #7657)", () => {
+    const schedule = vi.fn();
+    const ledger = mockLedger();
+    recordPrOutcomeSnapshot(
+      { repoFullName: "acme/widgets", prNumber: 5, decision: "closed", closedAt: "t" },
+      { eventLedger: ledger, scheduleAmsNotifications: schedule },
+    );
+    recordPrOutcomeSnapshot(
+      { repoFullName: "acme/widgets", prNumber: 6, decision: "closed", closedAt: "t" },
+      { eventLedger: ledger, recipientLogin: "   ", scheduleAmsNotifications: schedule },
+    );
+    expect(schedule).not.toHaveBeenCalled();
+  });
+
+  it("defaults to scheduleAmsNotificationEvents and process.env when not overridden (branch coverage, #7657)", () => {
+    const ledger = mockLedger();
+    const entry = recordPrOutcomeSnapshot(
+      { repoFullName: "acme/widgets", prNumber: 7, decision: "merged", closedAt: "t" },
+      { eventLedger: ledger, recipientLogin: "miner" },
+    ) as Record<string, unknown>;
+    // No session on disk in this test environment, so the real scheduleAmsNotificationEvents fire-and-forgets
+    // and fails soft -- this only asserts the ledger write itself still succeeds when no override is given.
+    expect(entry.type).toBe(MINER_PR_OUTCOME_EVENT);
   });
 });
 

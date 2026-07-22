@@ -2429,7 +2429,16 @@ export type DigestSubscriptionRecord = {
 // unless a row is `paused`).
 export type NotificationChannel = "badge" | "email";
 export type NotificationDeliveryStatus = "pending" | "delivered" | "read" | "suppressed";
-export type NotificationEventType = "pull_request_changes_requested" | "pull_request_merged" | "issue_watch_match";
+export type NotificationEventType =
+  | "pull_request_changes_requested"
+  | "pull_request_merged"
+  | "issue_watch_match"
+  // AMS-relevant kinds (#7657): attempt lifecycle, governor pause, and the miner's own PR-outcome change.
+  // Delivered through the same evaluateNotificationEvent → notify-deliver path as the webhook kinds above.
+  | "ams_attempt_started"
+  | "ams_attempt_failed"
+  | "ams_governor_paused"
+  | "ams_pr_outcome";
 
 /** #699 path B: a miner's standing watch on a repo for new grabbable issues. `labels` ([]=any) filters
  *  which issues notify. The `pullNumber` field of the resulting notification event carries the ISSUE number. */

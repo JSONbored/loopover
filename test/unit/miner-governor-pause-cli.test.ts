@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -10,6 +10,14 @@ import {
   runGovernorResume,
   runGovernorStatus,
 } from "../../packages/loopover-miner/lib/governor-pause-cli.js";
+
+function writeSessionConfig(dir: string, loginToken = "session-token"): void {
+  writeFileSync(
+    join(dir, "config.json"),
+    JSON.stringify({ activeProfile: "default", profiles: { default: { apiUrl: "https://api.example.test", session: { token: loginToken } } } }),
+    { mode: 0o600 },
+  );
+}
 
 const roots: string[] = [];
 const states: Array<{ close(): void }> = [];
@@ -90,6 +98,180 @@ describe("loopover-miner governor pause/resume/status CLI (#4851)", () => {
     expect(await runGovernorResume([], { openGovernorState: () => governorState })).toBe(0);
     expect(String(log.mock.calls[0]?.[0])).toBe("governor is not paused");
     expect(governorState.loadPauseState()).toEqual({ paused: false, reason: null, pausedAt: null });
+  });
+
+  it("publishes an AMS governor-paused notification when a session login is available (#7657)", async () => {
+    const governorState = tempGovernorState();
+    const published: Array<{ eventType: string; recipientLogin: string }> = [];
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(
+      await runGovernorPause(["--reason", "ops", "--json"], {
+        openGovernorState: () => governorState,
+        publishAmsNotifications: async (events) => {
+          published.push(...(events as Array<{ eventType: string; recipientLogin: string }>));
+          return { sent: events.length };
+        },
+        fetchSessionLogin: async () => "miner",
+      }),
+    ).toBe(0);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({
+      eventType: "ams_governor_paused",
+      recipientLogin: "miner",
+    });
+  });
+
+  it("skips the AMS notify entirely when fetchSessionLogin resolves no login", async () => {
+    const governorState = tempGovernorState();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const publishAmsNotifications = vi.fn(async () => ({ sent: 0 }));
+
+    expect(
+      await runGovernorPause(["--json"], {
+        openGovernorState: () => governorState,
+        publishAmsNotifications,
+        fetchSessionLogin: async () => null,
+      }),
+    ).toBe(0);
+    expect(publishAmsNotifications).not.toHaveBeenCalled();
+  });
+
+  it("never fails the pause itself when the AMS notify throws (#7657)", async () => {
+    const governorState = tempGovernorState();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(
+      await runGovernorPause(["--json"], {
+        openGovernorState: () => governorState,
+        fetchSessionLogin: async () => {
+          throw new Error("notify boom");
+        },
+      }),
+    ).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ paused: true });
+  });
+
+  it("resolves the session login via the real GET /v1/auth/session round-trip when fetchSessionLogin is not injected (#7657)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-session-"));
+    try {
+      writeSessionConfig(dir);
+      const governorState = tempGovernorState();
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const fetchSpy = vi.fn(async (url: string) => {
+        expect(url).toBe("https://api.example.test/v1/auth/session");
+        return new Response(JSON.stringify({ login: "session-miner" }), { status: 200 });
+      });
+      vi.stubGlobal("fetch", fetchSpy);
+      const publishAmsNotifications = vi.fn(async () => ({ sent: 1 }));
+
+      expect(
+        await runGovernorPause(["--json"], {
+          openGovernorState: () => governorState,
+          env: { LOOPOVER_CONFIG_DIR: dir },
+          publishAmsNotifications,
+        }),
+      ).toBe(0);
+      expect(fetchSpy).toHaveBeenCalled();
+      expect(publishAmsNotifications).toHaveBeenCalledWith(
+        [expect.objectContaining({ recipientLogin: "session-miner" })],
+        { env: { LOOPOVER_CONFIG_DIR: dir } },
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves no login (skips notify) when there is no session on disk, the session GET fails, or the payload is malformed", async () => {
+    // No session at all.
+    {
+      const governorState = tempGovernorState();
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const publishAmsNotifications = vi.fn(async () => ({ sent: 0 }));
+      expect(
+        await runGovernorPause(["--json"], {
+          openGovernorState: () => governorState,
+          env: { LOOPOVER_CONFIG_DIR: mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-nosession-")) },
+          publishAmsNotifications,
+        }),
+      ).toBe(0);
+      expect(publishAmsNotifications).not.toHaveBeenCalled();
+    }
+
+    // Session present, but the GET /v1/auth/session responds non-OK.
+    {
+      const dir = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-badresponse-"));
+      try {
+        writeSessionConfig(dir);
+        const governorState = tempGovernorState();
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
+        const publishAmsNotifications = vi.fn(async () => ({ sent: 0 }));
+        expect(
+          await runGovernorPause(["--json"], {
+            openGovernorState: () => governorState,
+            env: { LOOPOVER_CONFIG_DIR: dir },
+            publishAmsNotifications,
+          }),
+        ).toBe(0);
+        expect(publishAmsNotifications).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    // Session present, fetch throws.
+    {
+      const dir = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-fetchthrow-"));
+      try {
+        writeSessionConfig(dir);
+        const governorState = tempGovernorState();
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => {
+            throw new Error("network down");
+          }),
+        );
+        const publishAmsNotifications = vi.fn(async () => ({ sent: 0 }));
+        expect(
+          await runGovernorPause(["--json"], {
+            openGovernorState: () => governorState,
+            env: { LOOPOVER_CONFIG_DIR: dir },
+            publishAmsNotifications,
+          }),
+        ).toBe(0);
+        expect(publishAmsNotifications).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    // Session present, GET succeeds but the payload has no usable login field.
+    {
+      const dir = mkdtempSync(join(tmpdir(), "loopover-miner-governor-pause-badpayload-"));
+      try {
+        writeSessionConfig(dir);
+        const governorState = tempGovernorState();
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ login: "  " }), { status: 200 })));
+        const publishAmsNotifications = vi.fn(async () => ({ sent: 0 }));
+        expect(
+          await runGovernorPause(["--json"], {
+            openGovernorState: () => governorState,
+            env: { LOOPOVER_CONFIG_DIR: dir },
+            publishAmsNotifications,
+          }),
+        ).toBe(0);
+        expect(publishAmsNotifications).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("pauses with no reason and renders the plain-text form", async () => {

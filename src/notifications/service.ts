@@ -10,7 +10,13 @@ import {
 } from "../db/repositories";
 import { isGrabbableHighMultiplierIssue } from "../signals/engine";
 import { canLoginAccessRepo } from "../services/control-panel-roles";
-import type { DetectedNotificationEvent, IssueRecord, NotificationChannel, NotificationDeliveryRecord, NotificationSubscriptionRecord } from "../types";
+import type {
+  DetectedNotificationEvent,
+  IssueRecord,
+  NotificationChannel,
+  NotificationDeliveryRecord,
+  NotificationSubscriptionRecord,
+} from "../types";
 import { nowIso } from "../utils/json";
 
 // Per-recipient, per-channel safety cap. The killer event (changes_requested) delivers immediately, but a
@@ -54,6 +60,52 @@ export function buildIssueWatchNotification(event: DetectedNotificationEvent): {
   };
 }
 
+// AMS (#7657): attempt lifecycle — `pullNumber` carries the ISSUE number. Public-safe; no reward/trust figures.
+export function buildAmsAttemptStartedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+  const ref = `${event.repoFullName}#${event.pullNumber}`;
+  return {
+    title: sanitizePublicComment(`Attempt started on ${ref}`),
+    body: sanitizePublicComment(`Your AMS miner started an attempt on ${ref}. Watch the attempt log for progress and the next decision.`),
+  };
+}
+
+export function buildAmsAttemptFailedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+  const ref = `${event.repoFullName}#${event.pullNumber}`;
+  return {
+    title: sanitizePublicComment(`Attempt failed on ${ref}`),
+    body: sanitizePublicComment(`Your AMS miner attempt on ${ref} did not complete successfully. Check the attempt log, then reclaim or pick the next high-fit issue.`),
+  };
+}
+
+export function buildAmsGovernorPausedNotification(_event: DetectedNotificationEvent): { title: string; body: string } {
+  return {
+    title: sanitizePublicComment("AMS governor paused"),
+    body: sanitizePublicComment(
+      "Your AMS governor is paused. New attempt cycles will wait until you resume with `loopover-miner governor resume`.",
+    ),
+  };
+}
+
+export function buildAmsPrOutcomeNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+  const ref = `${event.repoFullName}#${event.pullNumber}`;
+  // buildAmsPrOutcomeEvent embeds `:merged:` or `:closed:` in the dedupKey after the PR number.
+  const merged = event.dedupKey.includes(":merged:");
+  if (merged) {
+    return {
+      title: sanitizePublicComment(`AMS recorded merge: ${ref}`),
+      body: sanitizePublicComment(
+        `Your AMS miner recorded that ${ref} merged. Merged work strengthens your standing on ${event.repoFullName} — check your decision pack for the next high-fit issue.`,
+      ),
+    };
+  }
+  return {
+    title: sanitizePublicComment(`AMS recorded close: ${ref}`),
+    body: sanitizePublicComment(
+      `Your AMS miner recorded that ${ref} closed without merge. Review the feedback, then pick the next high-fit issue on ${event.repoFullName}.`,
+    ),
+  };
+}
+
 // Maps a detected event to its public-safe notification content.
 export function buildNotificationContent(event: DetectedNotificationEvent): { title: string; body: string } {
   switch (event.eventType) {
@@ -61,7 +113,15 @@ export function buildNotificationContent(event: DetectedNotificationEvent): { ti
       return buildMergedOutcomeNotification(event);
     case "issue_watch_match":
       return buildIssueWatchNotification(event);
-    default:
+    case "ams_attempt_started":
+      return buildAmsAttemptStartedNotification(event);
+    case "ams_attempt_failed":
+      return buildAmsAttemptFailedNotification(event);
+    case "ams_governor_paused":
+      return buildAmsGovernorPausedNotification(event);
+    case "ams_pr_outcome":
+      return buildAmsPrOutcomeNotification(event);
+    case "pull_request_changes_requested":
       return buildChangesRequestedNotification(event);
   }
 }
@@ -143,6 +203,31 @@ export async function evaluateNotificationEvent(env: Env, event: DetectedNotific
     });
     if (created && delivery.status === "pending") pending.push(delivery);
   }
+  return pending;
+}
+
+/**
+ * Mirrors `job-dispatch.ts`'s notify-evaluate → notify-deliver handoff: evaluate each event, then enqueue one
+ * `notify-deliver` job per freshly-created pending delivery. Used by the AMS ingest route (#7657) and kept
+ * identical in shape to the queue processor so AMS kinds never take a parallel path.
+ */
+export async function evaluateAndEnqueueNotificationDeliveries(
+  env: Env,
+  events: DetectedNotificationEvent[],
+): Promise<NotificationDeliveryRecord[]> {
+  const pending: NotificationDeliveryRecord[] = [];
+  for (const event of events) {
+    pending.push(...(await evaluateNotificationEvent(env, event)));
+  }
+  await Promise.all(
+    pending.map((delivery) =>
+      env.JOBS.send({
+        type: "notify-deliver",
+        requestedBy: "notify-evaluate",
+        deliveryId: delivery.id,
+      }),
+    ),
+  );
   return pending;
 }
 

@@ -1133,6 +1133,9 @@ export const notificationSubscriptions = sqliteTable(
   }),
 );
 
+// event_type is free-text: webhook kinds (pull_request_changes_requested / pull_request_merged /
+// issue_watch_match) plus AMS kinds (#7657: ams_attempt_started / ams_attempt_failed /
+// ams_governor_paused / ams_pr_outcome). Subscriptions stay channel-scoped; kind filtering is at evaluate time.
 export const notificationDeliveries = sqliteTable(
   "notification_deliveries",
   {

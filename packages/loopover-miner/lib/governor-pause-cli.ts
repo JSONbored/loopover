@@ -9,6 +9,12 @@
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { openGovernorState } from "./governor-state.js";
 import type { GovernorPauseState, GovernorState } from "./governor-state.js";
+import {
+  buildAmsGovernorPausedPayload,
+  publishAmsNotificationEvents,
+  type PublishAmsNotificationEventsOptions,
+} from "./ams-notifications.js";
+import { resolveLoopoverBackendSession } from "./github-token-resolution.js";
 
 const GOVERNOR_PAUSE_USAGE = "Usage: loopover-miner governor pause [--reason <text>] [--dry-run] [--json]";
 const GOVERNOR_RESUME_USAGE = "Usage: loopover-miner governor resume [--dry-run] [--json]";
@@ -24,6 +30,10 @@ export type ParsedGovernorNoArgsSubcommand = { json: boolean } | { error: string
 
 export type GovernorPauseCliOptions = {
   openGovernorState?: () => GovernorState;
+  env?: Record<string, string | undefined>;
+  /** Override AMS badge notify (#7657). Defaults to publishAmsNotificationEvents. */
+  publishAmsNotifications?: typeof publishAmsNotificationEvents;
+  fetchSessionLogin?: (session: { apiUrl: string; sessionToken: string }) => Promise<string | null>;
 };
 
 export function parseGovernorPauseArgs(args: string[]): ParsedGovernorPauseArgs {
@@ -101,6 +111,50 @@ function renderPauseState(pauseState: GovernorPauseState): string {
   return `governor is PAUSED since ${pauseState.pausedAt}${reason}`;
 }
 
+async function resolveSessionLogin(env: NodeJS.ProcessEnv): Promise<string | null> {
+  const session = resolveLoopoverBackendSession(env);
+  if (!session) return null;
+  try {
+    const response = await fetch(`${session.apiUrl}/v1/auth/session`, {
+      headers: { authorization: `Bearer ${session.sessionToken}`, accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json().catch(() => null)) as { login?: unknown } | null;
+    return typeof payload?.login === "string" && payload.login.trim() ? payload.login.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function notifyGovernorPaused(
+  pauseState: GovernorPauseState,
+  options: GovernorPauseCliOptions,
+): Promise<void> {
+  const env = options.env ?? process.env;
+  // Injected fetchSessionLogin (tests) may resolve a login without a disk session; only require a real
+  // session when falling back to GET /v1/auth/session.
+  const processEnv = env as NodeJS.ProcessEnv;
+  const login = options.fetchSessionLogin
+    ? await options.fetchSessionLogin(
+        resolveLoopoverBackendSession(processEnv) ?? { apiUrl: "https://api.loopover.ai", sessionToken: "" },
+      )
+    : await resolveSessionLogin(processEnv);
+  if (!login) return;
+  const publish = options.publishAmsNotifications ?? publishAmsNotificationEvents;
+  const publishOptions: PublishAmsNotificationEventsOptions = { env };
+  await publish(
+    [
+      buildAmsGovernorPausedPayload({
+        recipientLogin: login,
+        reason: pauseState.reason,
+        ...(pauseState.pausedAt ? { pausedAt: pauseState.pausedAt } : {}),
+      }),
+    ],
+    publishOptions,
+  );
+}
+
 export async function runGovernorPause(args: string[], options: GovernorPauseCliOptions = {}): Promise<number> {
   const parsed = parseGovernorPauseArgs(args);
   if ("error" in parsed) {
@@ -119,15 +173,17 @@ export async function runGovernorPause(args: string[], options: GovernorPauseCli
   }
 
   try {
-    return await withGovernorState(options, (governorState) => {
-      const pauseState = governorState.savePauseState({ paused: true, reason: parsed.reason });
-      if (parsed.json) {
-        console.log(JSON.stringify(pauseState));
-      } else {
-        console.log(renderPauseState(pauseState));
-      }
-      return 0;
-    });
+    const pauseState = await withGovernorState(options, (governorState) =>
+      governorState.savePauseState({ paused: true, reason: parsed.reason }),
+    );
+    // AMS badge notify (#7657): best-effort; a notify miss must not fail the pause itself.
+    await notifyGovernorPaused(pauseState, options).catch(() => undefined);
+    if (parsed.json) {
+      console.log(JSON.stringify(pauseState));
+    } else {
+      console.log(renderPauseState(pauseState));
+    }
+    return 0;
   } catch (error) {
     return reportCliFailure(parsed.json, describeCliError(error));
   }

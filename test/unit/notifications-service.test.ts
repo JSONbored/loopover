@@ -4,6 +4,7 @@ import {
   buildNotificationContent,
   buildNotificationFeed,
   deliverNotification,
+  evaluateAndEnqueueNotificationDeliveries,
   evaluateNotificationEvent,
   NOTIFICATION_RATE_LIMIT,
   resolveNotificationChannels,
@@ -120,6 +121,80 @@ describe("merged-PR outcome attribution (#702)", () => {
     const outcomes = await listNotificationDeliveriesForRecipient(env, "miner", { eventType: "pull_request_merged" });
     expect(outcomes).toHaveLength(1);
     expect(outcomes[0]).toMatchObject({ eventType: "pull_request_merged", repoFullName: "owner/repo", pullNumber: 7 });
+  });
+});
+
+describe("AMS notification event kinds (#7657)", () => {
+  it("builds public-safe copy for every AMS event kind (both pr-outcome branches)", () => {
+    const started = buildNotificationContent(event({ eventType: "ams_attempt_started", pullNumber: 12 }));
+    expect(started.title.toLowerCase()).toContain("attempt started");
+    expect(started.body).toContain("owner/repo#12");
+
+    const failed = buildNotificationContent(event({ eventType: "ams_attempt_failed", pullNumber: 12 }));
+    expect(failed.title.toLowerCase()).toContain("attempt failed");
+
+    const paused = buildNotificationContent(
+      event({ eventType: "ams_governor_paused", repoFullName: "ams/governor", pullNumber: 0, dedupKey: "ams_governor_paused:miner:t" }),
+    );
+    expect(paused.title.toLowerCase()).toContain("governor paused");
+    expect(paused.body.toLowerCase()).toContain("resume");
+
+    const merged = buildNotificationContent(
+      event({
+        eventType: "ams_pr_outcome",
+        dedupKey: "ams_pr_outcome:owner/repo#7:merged:2026-05-28T12:00:00.000Z",
+      }),
+    );
+    expect(merged.title.toLowerCase()).toContain("merge");
+    expect(JSON.stringify(merged)).not.toMatch(/reward|payout|trust score|wallet|\$/i);
+
+    const closed = buildNotificationContent(
+      event({
+        eventType: "ams_pr_outcome",
+        dedupKey: "ams_pr_outcome:owner/repo#7:closed:2026-05-28T12:00:00.000Z",
+      }),
+    );
+    expect(closed.title.toLowerCase()).toContain("close");
+    expect(closed.body.toLowerCase()).toContain("without merge");
+  });
+
+  it("evaluates AMS events and enqueues notify-deliver jobs (job-dispatch handoff shape)", async () => {
+    const sent: Array<{ type: string; deliveryId?: string; requestedBy?: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: { type: string; deliveryId?: string; requestedBy?: string }) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    const deliveries = await evaluateAndEnqueueNotificationDeliveries(env, [
+      event({
+        eventType: "ams_attempt_started",
+        dedupKey: "ams_attempt_started:owner/repo#7:a1",
+        pullNumber: 7,
+      }),
+      event({
+        eventType: "ams_governor_paused",
+        repoFullName: "ams/governor",
+        pullNumber: 0,
+        dedupKey: "ams_governor_paused:miner:t1",
+      }),
+    ]);
+    expect(deliveries).toHaveLength(2);
+    expect(sent).toEqual([
+      { type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: deliveries[0]!.id },
+      { type: "notify-deliver", requestedBy: "notify-evaluate", deliveryId: deliveries[1]!.id },
+    ]);
+  });
+
+  it("returns no deliveries when the badge channel is paused", async () => {
+    const env = createTestEnv();
+    await upsertNotificationSubscription(env, { login: "miner", channel: "badge", status: "paused", source: "test" });
+    expect(
+      await evaluateAndEnqueueNotificationDeliveries(env, [
+        event({ eventType: "ams_attempt_failed", dedupKey: "ams_attempt_failed:owner/repo#7:a1" }),
+      ]),
+    ).toEqual([]);
   });
 });
 

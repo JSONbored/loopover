@@ -529,6 +529,99 @@ describe("runAttempt (#5132)", () => {
     });
   });
 
+  it("schedules an AMS attempt-started notification before the attempt runs, and no failure notification on submit (#7657)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const worktreeResult = fakeWorktreeResult();
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "submitted",
+      spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
+      execResult: { code: 0 },
+      loopResult: fakeLoopResult(),
+    });
+    const scheduleAmsNotifications = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      scheduleAmsNotifications,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(scheduleAmsNotifications).toHaveBeenCalledOnce();
+    const [events, notifyOptions] = scheduleAmsNotifications.mock.calls[0]!;
+    expect(events).toEqual([
+      expect.objectContaining({
+        eventType: "ams_attempt_started",
+        recipientLogin: "alice",
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        dedupKey: "ams_attempt_started:acme/widgets#7:fixed-attempt-id",
+      }),
+    ]);
+    expect(notifyOptions).toMatchObject({ env: { MINER_CODING_AGENT_PROVIDER: "noop" } });
+  });
+
+  it("schedules an AMS attempt-failed notification when the attempt does not submit (#7657)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({ outcome: "abandon", loopResult: fakeLoopResult({ outcome: "abandon" }) });
+    const scheduleAmsNotifications = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      scheduleAmsNotifications,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(7); // "abandon" outcome
+    // Once for attempt-started, once for attempt-failed (reason: the real outcome, "abandon").
+    expect(scheduleAmsNotifications).toHaveBeenCalledTimes(2);
+    expect(scheduleAmsNotifications.mock.calls[1]![0][0]).toMatchObject({
+      eventType: "ams_attempt_failed",
+      recipientLogin: "alice",
+    });
+    expect(scheduleAmsNotifications.mock.calls[1]![0][0].dedupKey).toContain(":abandon");
+  });
+
+  it("schedules an AMS attempt-failed(attempt_crashed) notification when runMinerAttempt throws (#7657)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const captureSpy = vi.spyOn(minerSentryModule, "captureMinerError").mockImplementation(() => undefined);
+    const runMinerAttemptSpy = vi.fn().mockRejectedValue(new Error("driver exploded"));
+    const scheduleAmsNotifications = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      scheduleAmsNotifications,
+      ...readyPipelineOptions({ runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    expect(exitCode).toBe(2); // caught by runAttempt's own outer catch -> reportCliFailure's default exit code
+    expect(scheduleAmsNotifications).toHaveBeenCalledTimes(2);
+    expect(scheduleAmsNotifications.mock.calls[1]![0][0]).toMatchObject({ eventType: "ams_attempt_failed" });
+    expect(scheduleAmsNotifications.mock.calls[1]![0][0].dedupKey).toContain(":attempt_crashed");
+    captureSpy.mockRestore();
+  });
+
   it("REGRESSION (#6011): an attempt_outcome_summary ledger-append failure never fails an otherwise-successful attempt, but is captured instead of silently swallowed", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

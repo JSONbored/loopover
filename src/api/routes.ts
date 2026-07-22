@@ -284,7 +284,8 @@ import { attachDataQuality, buildCoreSignalFidelity, buildFreshnessSloReport, bu
 import { buildContributorOpenPrMonitor } from "../signals/contributor-open-pr-monitor";
 import { buildContributorPrOutcomes } from "../signals/contributor-pr-outcomes";
 import { buildReviewRiskExplanation } from "../signals/review-risk";
-import { buildNotificationFeed } from "../notifications/service";
+import { buildNotificationFeed, evaluateAndEnqueueNotificationDeliveries } from "../notifications/service";
+import { normalizeAmsNotificationEventInput } from "../notifications/ams-events";
 import { buildPullRequestReviewability, type PullRequestReviewability } from "../signals/reward-risk";
 import { buildLocalBranchAnalysis, findCurrentBranchPullRequest } from "../signals/local-branch";
 import { buildIssueSlopAssessment } from "../signals/issue-slop";
@@ -467,6 +468,24 @@ const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
 // (src/mcp/server.ts) minus `login` (which is the path param): `ids` is optional (absent = mark all delivered).
 const markNotificationsReadBodySchema = z.object({
   ids: z.array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH)).max(MAX_NOTIFICATION_MARK_READ_IDS).optional(),
+});
+
+// #7657: AMS miner posts DetectedNotificationEvent-shaped AMS kinds; recipient is forced to the path login.
+const amsNotificationsBodySchema = z.object({
+  events: z
+    .array(
+      z.object({
+        eventType: z.enum(["ams_attempt_started", "ams_attempt_failed", "ams_governor_paused", "ams_pr_outcome"]),
+        repoFullName: z.string().min(1).max(200),
+        pullNumber: z.number().int().min(0),
+        dedupKey: z.string().min(1).max(500),
+        deeplink: z.string().min(1).max(2000),
+        actorLogin: z.string().min(1).max(100),
+        detectedAt: z.string().min(1).max(64),
+      }),
+    )
+    .min(1)
+    .max(20),
 });
 
 // #6746: body of POST/DELETE /v1/contributors/:login/watches. Mirrors watchIssuesShape (src/mcp/server.ts) minus
@@ -3592,6 +3611,27 @@ export function createApp() {
     if (!parsed.success) return c.json({ error: "invalid_mark_read", issues: parsed.error.issues }, 400);
     const marked = await markNotificationDeliveriesRead(c.env, login, parsed.data.ids);
     return c.json({ login: login.toLowerCase(), marked });
+  });
+
+  // #7657: AMS miner (or any self-scoped session) posts AMS-relevant notification events. Events are forced onto
+  // the path login and evaluated through evaluateAndEnqueueNotificationDeliveries — the same
+  // evaluateNotificationEvent → notify-deliver handoff job-dispatch.ts uses for webhook kinds.
+  app.post("/v1/contributors/:login/ams-notifications", async (c) => {
+    const login = c.req.param("login");
+    const unauthorized = await requireContributorAccess(c, login);
+    if (unauthorized) return unauthorized;
+    const parsed = amsNotificationsBodySchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_ams_notifications", issues: parsed.error.issues }, 400);
+    const events = parsed.data.events
+      .map((raw) => normalizeAmsNotificationEventInput(raw, login))
+      .filter((event): event is NonNullable<typeof event> => event !== null);
+    if (events.length === 0) return c.json({ error: "invalid_ams_notifications", detail: "no_valid_events" }, 400);
+    const deliveries = await evaluateAndEnqueueNotificationDeliveries(c.env, events);
+    return c.json({
+      login: login.toLowerCase(),
+      accepted: events.length,
+      enqueued: deliveries.length,
+    });
   });
 
   // #6746: REST mirror of the `loopover_watch_issues` MCP tool (LoopoverMcp.watchIssues) — manage a contributor's

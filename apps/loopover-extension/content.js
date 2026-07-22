@@ -13,12 +13,6 @@ function matchGitHubPageTarget(pathname) {
   return { kind: "pull_request", owner, repo, pullNumber: Number(number) };
 }
 
-function matchPullRequestTarget(pathname) {
-  const target = matchGitHubPageTarget(pathname);
-  if (!target) return null;
-  return { owner: target.owner, repo: target.repo, pullNumber: target.pullNumber };
-}
-
 function mountOverlay(target) {
   if (document.querySelector("[data-loopover-pr-context]")) return;
   const container = document.createElement("aside");
@@ -192,7 +186,6 @@ function renderActions(body, actions) {
 if (globalThis.__LOOPOVER_EXTENSION_TEST__) {
   globalThis.__loopoverContentInternals = {
     matchGitHubPageTarget,
-    matchPullRequestTarget,
     createOverlayLoader,
     renderPullContext,
     renderSection,

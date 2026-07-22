@@ -11,7 +11,8 @@ const UNGUARDED_FILE = { path: "README.md" } as PullRequestFileRecord;
 const NO_GUARDRAIL_OVERRIDES = {
   hardGuardrailGlobs: [],
   hardGuardrailGlobsOverridesInvariants: false,
-} as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants">;
+  manualReviewLabel: undefined,
+} as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
 
 function facts(overrides: Partial<Parameters<typeof derivePublicCommentMergeFacts>[0]> = {}) {
   return derivePublicCommentMergeFacts({
@@ -22,6 +23,7 @@ function facts(overrides: Partial<Parameters<typeof derivePublicCommentMergeFact
     settings: NO_GUARDRAIL_OVERRIDES,
     unifiedFiles: [UNGUARDED_FILE],
     repoFullName: "acme/widgets",
+    prLabels: [],
     ...overrides,
   });
 }
@@ -112,12 +114,52 @@ describe("derivePublicCommentMergeFacts() — heldForReview (#guarded-hold-comme
     expect(
       facts({
         unifiedFiles: [GUARDED_FILE],
-        settings: { hardGuardrailGlobs: [], hardGuardrailGlobsOverridesInvariants: true } as Pick<
-          RepositorySettings,
-          "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants"
-        >,
+        settings: {
+          hardGuardrailGlobs: [],
+          hardGuardrailGlobsOverridesInvariants: true,
+          manualReviewLabel: undefined,
+        } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">,
       }).heldForReview,
     ).toBe(false);
+  });
+});
+
+// #7994-follow-up: a manual-review hold is deliberately sticky (only a maintainer removing the label lifts it —
+// see agent-action-executor.ts's live-label guard), but nothing previously reflected that live block back into
+// this comment. A PR could clear every OTHER hold reason (guardrail, missing_linked_issue, ...) on a later pass
+// and the comment would headline "approve/merge recommended" while the executor kept silently denying merge/
+// approve, with no visible explanation anywhere on the PR — confirmed live on PR #7994, stuck ~3+ hours.
+describe("derivePublicCommentMergeFacts() — manual-review label hold (#7994-follow-up)", () => {
+  it("holds a PR that carries the live manual-review label, even with no guardrail hit", () => {
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], prLabels: ["manual-review"] }).heldForReview).toBe(true);
+  });
+
+  it("matches the label case-insensitively", () => {
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], prLabels: ["Manual-Review"] }).heldForReview).toBe(true);
+  });
+
+  it("does not hold when the label is absent", () => {
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], prLabels: ["gittensor:bug"] }).heldForReview).toBe(false);
+  });
+
+  it("honours a repo-configured custom manual-review label name instead of the default", () => {
+    const settings = {
+      hardGuardrailGlobs: [],
+      hardGuardrailGlobsOverridesInvariants: false,
+      manualReviewLabel: "needs-maintainer",
+    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+    // The default "manual-review" label no longer matters once a custom name is configured.
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["needs-maintainer"] }).heldForReview).toBe(true);
+  });
+
+  it("disables the label check entirely when manualReviewLabel is explicitly null", () => {
+    const settings = {
+      hardGuardrailGlobs: [],
+      hardGuardrailGlobsOverridesInvariants: false,
+      manualReviewLabel: null,
+    } as Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
+    expect(facts({ unifiedFiles: [UNGUARDED_FILE], settings, prLabels: ["manual-review"] }).heldForReview).toBe(false);
   });
 });
 

@@ -2008,9 +2008,17 @@ function publicCheckFailureDetails(details: LiveCiAggregate["failingDetails"]): 
  * metrics — the caller keeps the `incr()` emit, which reads the gate conclusion this function never sees.
  *
  * The two flags exist so the COMMENT agrees with the ACTION the disposition planner will take:
- * - `heldForReview` — a clean, green PR whose diff touches a hard-guardrail path is held for owner review by
- *   `planAgentMaintenanceActions`, never auto-merged, so the comment must not headline "safe to merge"
- *   (#guarded-hold-comment). Uses the same shared `isGuardrailHit` the planner uses, not a second copy.
+ * - `heldForReview` — true when EITHER a clean, green PR's diff touches a hard-guardrail path (uses the same
+ *   shared `isGuardrailHit` the planner uses, not a second copy), OR the live PR already carries the configured
+ *   manual-review label. Both cases mean `planAgentMaintenanceActions`/the action executor will never
+ *   merge/approve this pass, so the comment must not headline "safe to merge" (#guarded-hold-comment). The
+ *   label check exists because a manual-review hold, once applied (a guardrail hit, a since-resolved gate
+ *   blocker on a protected author, a migration collision, ...), is DELIBERATELY sticky — only a maintainer
+ *   removing it lifts the hold (agent-action-executor.ts's live-label guard) — but nothing previously reflected
+ *   that live block back into this comment: a PR could clear every OTHER hold reason on a later pass and the
+ *   comment would headline "approve/merge recommended" while the executor kept silently denying the merge/
+ *   approve action every single time, with no visible explanation anywhere on the PR (confirmed live on PR
+ *   #7994, stuck ~3+ hours with a stale manual-review label from an earlier missing_linked_issue blocker).
  * - `neverClosed` — the disposition never auto-closes a repo-owner or protected-automation PR, so a gate
  *   "close" verdict on one must headline "held", not "Closed" (#8/#9).
  */
@@ -2019,9 +2027,10 @@ export function derivePublicCommentMergeFacts(args: {
   mergeableState: string | null | undefined;
   authorLogin: string | null | undefined;
   liveCi: Pick<LiveCiAggregate, "ciState" | "failingDetails" | "nonRequiredFailingDetails">;
-  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants">;
+  settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel">;
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
+  prLabels: readonly string[];
 }): PublicCommentMergeFacts {
   const mergeStateLabel = args.liveMergeState ?? args.mergeableState ?? undefined; // fail-safe to the stored value
   const ciState: MergeReadiness["ciState"] =
@@ -2038,7 +2047,11 @@ export function derivePublicCommentMergeFacts(args: {
     ...(failingDetails.length > 0 ? { failingDetails } : {}),
     ...(nonRequiredFailingDetails.length > 0 ? { nonRequiredFailingDetails } : {}),
   };
-  const heldForReview = isGuardrailHit(changedPathsForGuardrail(args.unifiedFiles), resolveHardGuardrailGlobs(args.settings));
+  const manualReviewLabel = args.settings.manualReviewLabel === null ? null : (args.settings.manualReviewLabel ?? AGENT_LABEL_NEEDS_REVIEW);
+  const manualReviewLabelPresent =
+    manualReviewLabel !== null && args.prLabels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase());
+  const heldForReview =
+    isGuardrailHit(changedPathsForGuardrail(args.unifiedFiles), resolveHardGuardrailGlobs(args.settings)) || manualReviewLabelPresent;
   const repoOwner = args.repoFullName.includes("/") ? args.repoFullName.slice(0, args.repoFullName.indexOf("/")) : "";
   const authorLogin = args.authorLogin ?? "";
   const neverClosed =
@@ -10876,6 +10889,7 @@ async function maybePublishPrPublicSurface(
         settings,
         unifiedFiles,
         repoFullName,
+        prLabels: pr.labels,
       });
       // The public comment must match the authoritative Gate check-run conclusion.
       const commentGate = commentGateEvaluation;

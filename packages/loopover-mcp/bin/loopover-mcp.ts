@@ -367,6 +367,15 @@ const skippedPrAuditShape = {
   limit: z.number().int().positive().optional(),
 };
 
+// #7757: stdio mirror of the remote loopover_get_agent_audit_feed shape (src/mcp/server.ts) -- owner/repo plus
+// the same optional since / limit (1..200) query filters the maintain audit-feed CLI and the route accept.
+const auditFeedShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  since: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+};
+
 const ownerRepoPullShape = {
   owner: z.string().min(1),
   repo: z.string().min(1),
@@ -1042,6 +1051,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     description: "Return the maintainer queue-noise triage report for a repo: a noise score/level, the specific noise sources to clear first, and recommended maintainer actions. Maintainer-authenticated; advisory only.",
   },
   {
+    name: "loopover_get_agent_audit_feed",
+    category: "agent",
+    description:
+      "Return a repo's agent audit feed: executed actions (agent.action.*) and approval-queue decisions (accepted/rejected), newest first. Read-only and public-safe (action posture only). Maintainer access required.",
+  },
+  {
     name: "loopover_get_ams_miner_cohort",
     category: "maintainer",
     description:
@@ -1668,6 +1683,24 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
+  },
+);
+
+// #7757: stdio mirror of the remote loopover_get_agent_audit_feed + the `maintain audit-feed` CLI. Thin GET
+// proxy of the same {repoBase}/agent/audit-feed route (optional since/limit forwarded verbatim; the route
+// validates and applies defaults). Same ownerRepoShape+apiGet pattern as maintainer_noise.
+registerStdioTool(
+  "loopover_get_agent_audit_feed",
+  {
+    description: stdioToolDescription("loopover_get_agent_audit_feed"),
+    inputSchema: auditFeedShape,
+  },
+  async ({ owner, repo, since, limit }: any) => {
+    const query = new URLSearchParams();
+    if (since !== undefined) query.set("since", String(since));
+    if (limit !== undefined) query.set("limit", String(limit));
+    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    return toolResult(`LoopOver agent audit feed for ${owner}/${repo}.`, await apiGet(`${prefix}/agent/audit-feed${query.size > 0 ? `?${query}` : ""}`));
   },
 );
 

@@ -17,6 +17,7 @@
 // Endpoint paths/response shapes below follow Neon's public v2 API (https://api-docs.neon.tech/reference) as
 // documented at the time this was written -- verify against a live account before the first real deploy (the
 // test suite mocks every call; no live Neon credentials are used anywhere in this repo).
+import { createHash } from "node:crypto";
 import type { DatabaseConnectionDetails, TenantProvisioningRequest } from "./tenant-provisioning-driver.js";
 
 const DEFAULT_API_BASE_URL = "https://console.neon.tech/api/v2";
@@ -49,12 +50,27 @@ type NeonEndpoint = { host: string };
 
 type NeonRole = { name: string; password?: string };
 
+// #8026: the unconditional .slice(0, 63) below used to have no collision guard -- two distinct tenant names
+// sharing the same first ~54 characters (after the "tenant-<product>-" prefix and sanitization) would
+// truncate to the IDENTICAL Neon branch name. findBranchByName would then find the OTHER tenant's already-
+// existing branch and hand back its connection/role/password to the new tenant -- a cross-tenant data-
+// isolation bug. Only names that actually need truncating get the suffix, so a short tenant name's branch
+// name is completely unchanged (this repo has never deployed against a live Neon project yet -- see this
+// file's own header comment -- so there is no pre-existing long-name branch a suffix could orphan).
+const NEON_BRANCH_NAME_MAX_LENGTH = 63;
+const NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH = 8;
+
 /** Neon branch names are case-sensitive but this keeps them predictable and collision-free across products
- *  sharing a tenant name, and safely truncated well under Neon's own length limit. */
+ *  sharing a tenant name, and safely truncated well under Neon's own length limit. A name that would
+ *  otherwise be truncated gets a short hash-of-the-untruncated-name suffix instead, so two long,
+ *  prefix-similar tenant names can never collide on the same truncated branch name (#8026). */
 function branchNameFor(request: TenantProvisioningRequest): string {
   const raw = `tenant-${request.product}-${request.tenant.name}`.toLowerCase();
   const sanitized = raw.replaceAll(/[^a-z0-9_-]+/g, "-").replaceAll(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
-  return sanitized.slice(0, 63);
+  if (sanitized.length <= NEON_BRANCH_NAME_MAX_LENGTH) return sanitized;
+  const suffix = createHash("sha256").update(sanitized).digest("hex").slice(0, NEON_BRANCH_NAME_COLLISION_SUFFIX_LENGTH);
+  const prefixLength = NEON_BRANCH_NAME_MAX_LENGTH - 1 - suffix.length;
+  return `${sanitized.slice(0, prefixLength)}-${suffix}`;
 }
 
 /** A tenant-scoped role gets the SAME derived name as its branch -- one branch, one role, one database, no

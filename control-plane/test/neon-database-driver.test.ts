@@ -236,3 +236,51 @@ test("createNeonDatabaseDriver: bundles provision/drop closed over one config", 
   // somewhere else -- the request above only succeeds against the real Neon endpoint shape if `dropDatabase`
   // routed through the same config-scoped fetch helper `dropNeonDatabase` itself uses.
 });
+
+// #8026: two tenant names sharing a long common prefix (both past Neon's 63-char branch-name limit once the
+// "tenant-<product>-" prefix is added) used to sanitize+truncate to the IDENTICAL branch name -- provisioning
+// the second tenant would find the FIRST tenant's already-existing branch and hand back its connection/role/
+// password. Regression-guards branchNameFor's collision-resistant suffix by reading the actual branch name
+// each provision call sends in its create-branch POST body.
+test("provisionNeonDatabase: two long, prefix-similar tenant names produce DIFFERENT branch names (#8026)", async () => {
+  const longPrefix = "a".repeat(60);
+  const requestA: TenantProvisioningRequest = { tenant: { name: `${longPrefix}-org-alpha` }, product: "orb" };
+  const requestB: TenantProvisioningRequest = { tenant: { name: `${longPrefix}-org-beta` }, product: "orb" };
+
+  const { calls: callsA } = mockFetchSequence([
+    { body: { branches: [] } },
+    { body: { branch: { id: "br-a", name: "placeholder" }, endpoints: [{ host: "ep-a.neon.tech" }], operations: [] } },
+    { body: { role: { name: "placeholder", password: "pw-a" }, operations: [] } },
+    { body: { operations: [] } },
+  ]);
+  await provisionNeonDatabase(CONFIG, requestA);
+  const branchNameA = (bodyOf(callsA[1]!.init) as { branch: { name: string } }).branch.name;
+
+  const { calls: callsB } = mockFetchSequence([
+    { body: { branches: [] } },
+    { body: { branch: { id: "br-b", name: "placeholder" }, endpoints: [{ host: "ep-b.neon.tech" }], operations: [] } },
+    { body: { role: { name: "placeholder", password: "pw-b" }, operations: [] } },
+    { body: { operations: [] } },
+  ]);
+  await provisionNeonDatabase(CONFIG, requestB);
+  const branchNameB = (bodyOf(callsB[1]!.init) as { branch: { name: string } }).branch.name;
+
+  // Both names are long enough that a naive unconditional .slice(0, 63) collapses them to the same 63
+  // characters of "a"s well before either "-org-alpha"/"-org-beta" suffix is ever reached.
+  assert.notEqual(branchNameA, branchNameB);
+  assert.ok(branchNameA.length <= 63);
+  assert.ok(branchNameB.length <= 63);
+});
+
+test("provisionNeonDatabase: a short tenant name's branch name is completely unaffected by the collision-suffix logic", async () => {
+  const { calls } = mockFetchSequence([
+    { body: { branches: [] } },
+    { body: { branch: { id: "br-1", name: BRANCH_NAME }, endpoints: [{ host: "ep-1.neon.tech" }], operations: [] } },
+    { body: { role: { name: BRANCH_NAME, password: "pw" }, operations: [] } },
+    { body: { operations: [] } },
+  ]);
+
+  await provisionNeonDatabase(CONFIG, REQUEST);
+
+  assert.equal((bodyOf(calls[1]!.init) as { branch: { name: string } }).branch.name, BRANCH_NAME);
+});

@@ -249,6 +249,102 @@ describe("check-engine-parity script", () => {
         },
       }).failures).toEqual([]);
     });
+
+    // Regression guard for a real gap found while landing #7981: runEngineParityChecks previously aliased an
+    // un-overridden baseEngineVersion straight to headEngineVersion, so a genuine version bump could never be
+    // detected unless the caller passed baseEngineVersion explicitly (only runEngineParityMain did). That made
+    // a single-sided gate-decision edit + version bump fail this check on any branch that had actually diverged
+    // from origin/main, even though the bump was correct.
+    it("resolves an un-overridden baseEngineVersion via git, mirroring the changedFiles default (#7981 side-discovery)", () => {
+      const gateBody = [
+        "export function evaluateGateCheck() {}",
+        "function evaluateGateCheckCore() {}",
+        "function isConfiguredGateBlocker() {}",
+        "export function buildPullRequestAdvisory() {}",
+      ].join("\n");
+      const readFile = (_root: string, relativePath: string) => {
+        if (relativePath === "packages/loopover-engine/package.json") return JSON.stringify({ version: "0.3.0" });
+        if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return gateBody;
+        if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return gateBody;
+        if (relativePath === "packages/loopover-miner/expected-engine.version") return "0.3.0\n";
+        throw new Error(`unexpected read: ${relativePath}`);
+      };
+      const execGit = vi.fn((args: string[]) => {
+        if (args[0] === "show" && args[1] === "origin/main:packages/loopover-engine/package.json") {
+          return JSON.stringify({ version: "0.2.0" });
+        }
+        throw new Error(`unexpected git invocation: ${args.join(" ")}`);
+      });
+
+      const result = runEngineParityChecks({
+        root: "/fake",
+        readFile,
+        listDir: () => [],
+        resolveInstalled: () => "0.3.0",
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative, "packages/loopover-engine/package.json"],
+        headEngineVersion: "0.3.0",
+        execGit,
+        // baseEngineVersion intentionally omitted -- this is what previously aliased to headEngineVersion.
+      });
+
+      expect(result.failures.some((failure) => failure.includes("Gate-decision logic change"))).toBe(false);
+      expect(execGit).toHaveBeenCalledWith(["show", "origin/main:packages/loopover-engine/package.json"], "/fake");
+    });
+
+    it("still fails a single-sided edit when git-resolved baseEngineVersion is unavailable (falls back to headEngineVersion, so no increase is observed)", () => {
+      const gateBody = [
+        "export function evaluateGateCheck() {}",
+        "function evaluateGateCheckCore() {}",
+        "function isConfiguredGateBlocker() {}",
+        "export function buildPullRequestAdvisory() {}",
+      ].join("\n");
+      const readFile = (_root: string, relativePath: string) => {
+        if (relativePath === "packages/loopover-engine/package.json") return JSON.stringify({ version: "0.3.0" });
+        if (relativePath === GATE_DECISION_TWIN_PAIR.hostRelative) return gateBody;
+        if (relativePath === GATE_DECISION_TWIN_PAIR.engineRelative) return gateBody;
+        if (relativePath === "packages/loopover-miner/expected-engine.version") return "0.3.0\n";
+        throw new Error(`unexpected read: ${relativePath}`);
+      };
+      const execGit = vi.fn(() => {
+        throw new Error("git show failed");
+      });
+
+      const result = runEngineParityChecks({
+        root: "/fake",
+        readFile,
+        listDir: () => [],
+        resolveInstalled: () => "0.3.0",
+        changedFiles: [GATE_DECISION_TWIN_PAIR.hostRelative, "packages/loopover-engine/package.json"],
+        headEngineVersion: "0.3.0",
+        execGit,
+      });
+
+      expect(result.failures.some((failure) => failure.includes("Gate-decision logic change"))).toBe(true);
+    });
+
+    it("skips git resolution and uses headEngineVersion when changedFiles is explicitly empty", () => {
+      const execGit = vi.fn(() => {
+        throw new Error("execGit should not be called when changedFiles is empty");
+      });
+      const result = runEngineParityChecks({
+        root: "/fake",
+        readFile: (_root, relativePath) => {
+          if (relativePath === "packages/loopover-engine/package.json") return JSON.stringify({ version: "0.3.0" });
+          if (relativePath === "packages/loopover-miner/expected-engine.version") return "0.3.0\n";
+          throw new Error(`unexpected read: ${relativePath}`);
+        },
+        listDir: () => [],
+        resolveInstalled: () => "0.3.0",
+        changedFiles: [],
+        headEngineVersion: "0.3.0",
+        execGit,
+      });
+      // With no changedFiles, checkGateDecisionVersionBump never runs at all -- so no version-bump-shaped
+      // failure appears regardless of the (unrelated) "could not load twin pair" noise from the other four
+      // named twin pairs this readFile stub doesn't answer for.
+      expect(result.failures.some((failure) => failure.includes("Gate-decision logic change"))).toBe(false);
+      expect(execGit).not.toHaveBeenCalled();
+    });
   });
 
   describe("named twin-pair coverage (#4605)", () => {

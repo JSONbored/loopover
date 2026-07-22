@@ -616,6 +616,7 @@ export function runEngineParityChecks(options: {
   changedFiles?: readonly string[];
   baseEngineVersion?: string | null;
   headEngineVersion?: string | null;
+  execGit?: EngineParityExecGit;
 }): {
   failures: string[];
   pairsChecked: EngineParityPair[];
@@ -641,8 +642,24 @@ export function runEngineParityChecks(options: {
       headEngineVersion = null;
     }
   }
-  const baseEngineVersion = options.baseEngineVersion ?? headEngineVersion;
-  const changedFiles = options.changedFiles ?? listChangedEngineParityFiles({ root: options.root });
+  const changedFiles =
+    options.changedFiles ??
+    listChangedEngineParityFiles({ root: options.root, ...(options.execGit ? { execGit: options.execGit } : {}) });
+  // Mirror listChangedEngineParityFiles' real git-diff default above: without this, an un-overridden
+  // baseEngineVersion silently aliased to headEngineVersion, so checkGateDecisionVersionBump could never
+  // observe a real version bump on any branch that diverges from origin/main (#7981 side-discovery).
+  let baseEngineVersion = options.baseEngineVersion;
+  if (baseEngineVersion === undefined) {
+    baseEngineVersion =
+      changedFiles.length > 0
+        ? (readEnginePackageVersionAtRef({
+            root: options.root,
+            ref: process.env.LOOPOVER_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "origin/main",
+            readFile,
+            ...(options.execGit ? { execGit: options.execGit } : {}),
+          }) ?? headEngineVersion)
+        : headEngineVersion;
+  }
   const versionBump =
     changedFiles.length > 0 && headEngineVersion
       ? checkGateDecisionVersionBump({
@@ -666,21 +683,7 @@ export function runEngineParityChecks(options: {
 
 /** @internal Exported for subprocess-free unit tests of the CLI success/failure paths. */
 export function runEngineParityMain(root: string = process.cwd()): number {
-  const changedFiles = listChangedEngineParityFiles({ root });
-  const headEngineVersion = readEnginePackageVersionAtRef({ root, ref: "HEAD" });
-  const baseEngineVersion =
-    changedFiles.length > 0
-      ? readEnginePackageVersionAtRef({
-          root,
-          ref: process.env.LOOPOVER_ENGINE_PARITY_BASE_REF ?? process.env.GITHUB_BASE_SHA ?? "origin/main",
-        }) ?? headEngineVersion
-      : headEngineVersion;
-  const { failures, pairsChecked, versionSkew } = runEngineParityChecks({
-    root,
-    changedFiles,
-    baseEngineVersion,
-    headEngineVersion,
-  });
+  const { failures, pairsChecked, versionSkew } = runEngineParityChecks({ root });
 
   if (failures.length > 0) {
     console.error(`Engine-parity check found ${failures.length} issue(s):`);

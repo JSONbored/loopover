@@ -419,12 +419,43 @@ async function wasMergeRecorded(env: Env, targetId: string): Promise<boolean> {
   }
 }
 
+// #7985: a bare owner reopen of a bot-closed PR is still ambiguous on its own (could be a genuine
+// administrative re-queue rather than "the bot was wrong"), but an owner reopen followed by an approve/merge
+// within a short window is unambiguous — the owner looked at it again and decided it was right after all.
+// This is exactly the pattern that left the 2026-07-21/22 metagraphed incidents (#7469/#7589/#7591/#7594)
+// invisible to reversalRate/the public accuracy metric: every one of that day's maintainer-driven rescues was
+// a bot-close reopened and merged by the repo owner within minutes, and the old unconditional owner-reopen
+// exclusion recorded nothing for any of them.
+const OWNER_REOPEN_PENDING_EVENT_TYPE = "owner_reopen_pending_reversal";
+const OWNER_REOPEN_MERGE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/** True when this target has an `owner_reopen_pending_reversal` marker (written by the "reopened" branch
+ *  below) within the last `windowMs` — i.e. the repo owner reopened a bot-closed PR recently enough that a
+ *  merge happening NOW plausibly completes that same correction, not an unrelated later action. Fail-safe: a
+ *  read error → false (record nothing rather than a false reversal). */
+async function hasRecentOwnerReopenPendingReversal(env: Env, targetKey: string, windowMs: number): Promise<boolean> {
+  try {
+    const sinceIso = new Date(Date.now() - windowMs).toISOString();
+    const row = await env.DB.prepare(
+      `SELECT 1 AS hit FROM audit_events WHERE target_key = ? AND event_type = ? AND created_at >= ? LIMIT 1`,
+    )
+      .bind(targetKey, OWNER_REOPEN_PENDING_EVENT_TYPE, sinceIso)
+      .first<{ hit: number }>();
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Record a REVERSAL — a human overriding a loopover auto-action — into the eval/audit stores (the
  * ground-truth accuracy signal). Mirrors reviewbot recordReversalSignals (runtime.ts ~157/274):
- *   • REOPEN of a bot-CLOSED PR by a CONTRIBUTOR → `reversal_reopened` (the high-value case). Reopens by the
- *     repo OWNER (administrative re-queue) or by a BOT are NOT contributor disputes and are skipped, so the
- *     reversal signal isn't inflated.
+ *   • REOPEN of a bot-CLOSED PR by a CONTRIBUTOR → `reversal_reopened` (the high-value case).
+ *   • REOPEN of a bot-CLOSED PR by the repo OWNER, followed by an approve/merge within
+ *     OWNER_REOPEN_MERGE_WINDOW_MS → also `reversal_reopened` (#7985): unlike a bare owner reopen (still
+ *     ambiguous — could be a genuine administrative re-queue), an owner reopen the owner then actually merges
+ *     is an unambiguous "the bot was wrong" signal. A bot reopening itself is never a human disagreement
+ *     signal and stays excluded unconditionally.
  *   • a merged "Reverts #N" PR (a bot-MERGED PR a human reverted) → `reversal_reverted` against PR #N.
  *
  * Writes to BOTH review_audit (what ops.ts joins for reversalRate/calibration) and audit_events (the general
@@ -441,16 +472,30 @@ export async function recordReversalSignals(
   if (!pr?.number || !repoFullName) return;
   const project = repoFullName.slice(0, 200);
 
-  // A bot-CLOSED PR REOPENED by a contributor — the genuine "human disagreed with this close" signal.
+  // A bot-CLOSED PR REOPENED by a human — the genuine "disagreed with this close" signal.
   if (payload.action === "reopened") {
     const ownerLogin = (repoFullName.split("/")[0] || "").toLowerCase();
     const senderLogin = (payload.sender?.login || "").toLowerCase();
     const senderIsOwner =
       !!ownerLogin && !!senderLogin && ownerLogin === senderLogin;
     const senderIsBot = payload.sender?.type === "Bot";
-    if (senderIsBot || senderIsOwner) return; // administrative / bot reopen — not a contributor dispute
+    if (senderIsBot) return; // a bot reopening itself is never a human disagreement signal
     const targetId = reviewAuditTargetId(repoFullName, pr.number);
     if (!(await lastBotActionWasClose(env, targetId))) return; // only a bot-CLOSED PR reopening is a reversal
+    if (senderIsOwner) {
+      // #7985: record a time-bounded marker rather than an immediate reversal — the "closed"+merged branch
+      // below promotes it to a real reversal_reopened only if a merge follows within the window, the same
+      // "genuine correction, not noise" bar a bare reopen doesn't clear on its own.
+      await recordAuditEvent(env, {
+        eventType: OWNER_REOPEN_PENDING_EVENT_TYPE,
+        actor: payload.sender?.login ?? null,
+        targetKey: targetId,
+        outcome: "completed",
+        detail: `Bot-closed PR #${pr.number} reopened by the repo owner.`,
+        metadata: { repoFullName, pullNumber: pr.number },
+      }).catch(() => undefined);
+      return;
+    }
     await appendReviewAudit(env, {
       project,
       targetId,
@@ -468,8 +513,27 @@ export async function recordReversalSignals(
     return;
   }
 
-  // A merged "Reverts #N" PR — a bot-MERGED PR that a human reverted.
+  // A merge — either it completes an owner's earlier rescue of a bot-closed PR (#7985), or it's a "Reverts
+  // #N" PR undoing a DIFFERENT bot-merged PR. Both can apply to the SAME merge (a rescue is never also a
+  // revert of itself — they key off different target PRs — so there is no double-counting risk).
   if (payload.action === "closed" && Boolean(pr.merged_at)) {
+    const targetId = reviewAuditTargetId(repoFullName, pr.number);
+    if (await hasRecentOwnerReopenPendingReversal(env, targetId, OWNER_REOPEN_MERGE_WINDOW_MS)) {
+      await appendReviewAudit(env, {
+        project,
+        targetId,
+        eventType: "reversal_reopened",
+        summary: `Bot-closed PR #${pr.number} reopened and merged by the repo owner.`,
+      });
+      await recordAuditEvent(env, {
+        eventType: "reversal_reopened",
+        actor: payload.sender?.login ?? null,
+        targetKey: targetId,
+        outcome: "completed",
+        detail: `Bot-closed PR #${pr.number} reopened and merged by the repo owner.`,
+        metadata: { repoFullName, pullNumber: pr.number },
+      }).catch(() => undefined);
+    }
     const reverted = parseRevertedPrNumber(pr.body);
     if (!reverted) return;
     const revertedTargetKey = reviewAuditTargetId(repoFullName, reverted);

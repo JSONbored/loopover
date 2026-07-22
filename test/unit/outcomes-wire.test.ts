@@ -275,10 +275,11 @@ describe("recordReversalSignals — reversal_reopened", () => {
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
   });
 
-  it("does NOT record an OWNER reopen or a BOT reopen (administrative / not a contributor dispute)", async () => {
+  it("does NOT immediately record an OWNER reopen (still ambiguous on its own — #7985), and never records a BOT reopen at all", async () => {
     const env = createTestEnv();
     await seedBotAction(env, "owner/repo#7", "close");
-    // Owner reopen — administrative re-queue, not a dispute.
+    // Owner reopen — a bare reopen alone stays ambiguous (could be an administrative re-queue); it only
+    // becomes a reversal if a merge follows within the window (see the describe block below).
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
       repository: {
@@ -289,7 +290,11 @@ describe("recordReversalSignals — reversal_reopened", () => {
       pull_request: pullRequestPayload({ number: 7, state: "open" }),
       sender: { login: "owner", type: "User" },
     });
-    // Bot reopen — not a human dispute.
+    expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    // ...but it DOES record the time-bounded pending marker the merge branch will look for.
+    expect(await auditEventRows(env, "owner_reopen_pending_reversal")).toHaveLength(1);
+
+    // Bot reopen — not a human dispute, no marker at all.
     await recordReversalSignals(env, "pull_request", {
       action: "reopened",
       repository: {
@@ -301,6 +306,76 @@ describe("recordReversalSignals — reversal_reopened", () => {
       sender: { login: "some-bot[bot]", type: "Bot" },
     });
     expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    expect(await auditEventRows(env, "owner_reopen_pending_reversal")).toHaveLength(1); // unchanged
+  });
+
+  describe("owner reopen + merge within the window (#7985)", () => {
+    it("promotes an owner's reopen-then-merge of a bot-closed PR to a real reversal_reopened", async () => {
+      const env = createTestEnv();
+      await seedBotAction(env, "owner/repo#7", "close");
+      await recordReversalSignals(env, "pull_request", {
+        action: "reopened",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 7, state: "open" }),
+        sender: { login: "owner", type: "User" },
+      });
+      expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0); // not yet — no merge seen
+      await recordReversalSignals(env, "pull_request", {
+        action: "closed",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 7, merged_at: "2026-06-20T00:00:00.000Z" }),
+        sender: { login: "owner", type: "User" },
+      });
+      const eval_ = await reviewAuditRows(env, "reversal_reopened");
+      expect(eval_).toHaveLength(1);
+      expect(eval_[0]).toMatchObject({ project: "owner/repo", target_id: "owner/repo#7" });
+      expect(await auditEventRows(env, "reversal_reopened")).toHaveLength(1);
+    });
+
+    it("does NOT record a reversal for a plain merge with no preceding owner-reopen marker", async () => {
+      const env = createTestEnv();
+      await recordReversalSignals(env, "pull_request", {
+        action: "closed",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 7, merged_at: "2026-06-20T00:00:00.000Z" }),
+        sender: { login: "owner", type: "User" },
+      });
+      expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    });
+
+    it("does NOT record a reversal when the owner-reopen marker is older than the merge window (stale rescue signal)", async () => {
+      const env = createTestEnv();
+      await seedBotAction(env, "owner/repo#7", "close");
+      // Seed a marker far enough in the past that it's outside OWNER_REOPEN_MERGE_WINDOW_MS by construction,
+      // bypassing recordReversalSignals' own (real-clock) write path so the test isn't time-flaky.
+      await recordAuditEvent(env, {
+        eventType: "owner_reopen_pending_reversal",
+        actor: "owner",
+        targetKey: "owner/repo#7",
+        outcome: "completed",
+        detail: "Bot-closed PR #7 reopened by the repo owner.",
+        createdAt: "2020-01-01T00:00:00.000Z",
+      });
+      await recordReversalSignals(env, "pull_request", {
+        action: "closed",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 7, merged_at: "2026-06-20T00:00:00.000Z" }),
+        sender: { login: "owner", type: "User" },
+      });
+      expect(await reviewAuditRows(env, "reversal_reopened")).toHaveLength(0);
+    });
+
+    it("does NOT record a reversal when the owner reopens a PR whose last bot action was NOT a close", async () => {
+      const env = createTestEnv();
+      await seedBotAction(env, "owner/repo#7", "approve");
+      await recordReversalSignals(env, "pull_request", {
+        action: "reopened",
+        repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+        pull_request: pullRequestPayload({ number: 7, state: "open" }),
+        sender: { login: "owner", type: "User" },
+      });
+      expect(await auditEventRows(env, "owner_reopen_pending_reversal")).toHaveLength(0);
+    });
   });
 
   it("still records reversal_reopened when the bot close was logged with the legacy 'success' outcome", async () => {

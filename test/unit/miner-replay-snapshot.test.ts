@@ -362,6 +362,17 @@ describe("exportReplaySnapshot (#3010)", () => {
     await expect(exportReplaySnapshot({ repoPath: "/repo", repoFullName: "a/b/c", commitSha: "a" }, deps)).rejects.toThrow("invalid_repo_full_name");
   });
 
+  // #7795: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and used as a snapshot key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const store = tempStore();
+    expect(() => store.getSnapshot("../etc", "abc123")).toThrow("invalid_repo_full_name"); // owner ".." invalid
+    expect(() => store.getSnapshot("o/..", "abc123")).toThrow("invalid_repo_full_name"); // repo ".." invalid
+    expect(() => store.getSnapshot("o baz/a", "abc123")).toThrow("invalid_repo_full_name");
+    expect(() => store.getSnapshot("o/a baz", "abc123")).toThrow("invalid_repo_full_name");
+  });
+
   it("assertExecResult falls back to a generic exit-code message when stderr is entirely absent", async () => {
     const { exec } = scriptedExec(happyPathScripts([{ match: isWorktreeAdd, result: { code: 1 } }]));
     const store = tempStore();

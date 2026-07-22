@@ -75,6 +75,20 @@ describe("miner prediction ledger (#4263)", () => {
     expect(() => ledger.appendPrediction({ ...VALID, readinessScore: Number.NaN })).toThrow(/invalid_readiness_score/);
   });
 
+  // #7795: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and persisted as a ledger key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const ledger = tempLedger();
+    // Both appendPrediction (write) and readPredictions (read) funnel through normalizeRepoFullName.
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "../etc" })).toThrow("invalid_repo_full_name"); // owner ".." invalid
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "o/.." })).toThrow("invalid_repo_full_name"); // repo ".." invalid
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "o baz/a" })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.appendPrediction({ ...VALID, repoFullName: "o/a baz" })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.readPredictions({ repoFullName: "../etc" })).toThrow("invalid_repo_full_name");
+    expect(() => ledger.readPredictions({ repoFullName: "o/.." })).toThrow("invalid_repo_full_name");
+  });
+
   it("scopes readPredictions by repo, preserving insertion order", () => {
     const ledger = tempLedger();
     ledger.appendPrediction({ ...VALID, repoFullName: "owner/repo-a", targetId: 1 });

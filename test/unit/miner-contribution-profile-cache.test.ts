@@ -160,6 +160,20 @@ describe("contribution-profile cache store (#6797)", () => {
     );
   });
 
+  // #7795: an unsafe path-traversal/invalid-character segment must be rejected here too, matching
+  // repo-clone.js's own validation, instead of being silently accepted and persisted as a cache key --
+  // for both the owner and repo segment independently.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment", () => {
+    const store = tempStore();
+    // Reads (get) and writes (put) both funnel through normalizeRepoFullName.
+    expect(() => store.get("../etc")).toThrow("invalid_repo_full_name"); // owner ".." invalid
+    expect(() => store.get("o/..")).toThrow("invalid_repo_full_name"); // repo ".." invalid
+    expect(() => store.get("o baz/a")).toThrow("invalid_repo_full_name");
+    expect(() => store.get("o/a baz")).toThrow("invalid_repo_full_name");
+    expect(() => store.put(profile("../etc"), AT_MS)).toThrow("invalid_repo_full_name");
+    expect(() => store.put(profile("o/.."), AT_MS)).toThrow("invalid_repo_full_name");
+  });
+
   it("exposes module-level get/put helpers backed by the default DB path", () => {
     vi.stubEnv(
       "LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB",

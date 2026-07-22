@@ -488,10 +488,14 @@ export async function buildReviewEnrichment(
     if (!response.ok) {
       const bodyPreview = await response.text().catch(() => "");
       // A non-2xx from REES (auth/5xx/bad-gateway) silently degraded the review to no-enrichment with no signal.
-      // Surface it at ERROR level (same event as the catch below) so the Sentry forwarder catches a broken REES.
-      console.error(
+      // Surface it at ERROR level (same event as the catch below) so the Sentry forwarder catches a broken REES --
+      // EXCEPT 413 (LOOPOVER-2J): a large diff/context exceeding REES's own request-size cap is an expected,
+      // already-gracefully-handled degradation (the review proceeds with no enrichment brief, same as any other
+      // http_error outcome below), not a broken REES instance -- WARN keeps it visible without paging on it.
+      const level = response.status === 413 ? "warn" : "error";
+      console[level](
         JSON.stringify({
-          level: "error",
+          level,
           event: "review_context_fetch_failed",
           contextType: "enrichment",
           ev: "enrichment_http_error",

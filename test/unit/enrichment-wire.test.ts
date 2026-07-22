@@ -709,6 +709,23 @@ describe("buildReviewEnrichment metrics recording (#5367)", () => {
     errSpy.mockRestore();
   });
 
+  it("REGRESSION (LOOPOVER-2J): a 413 (payload too large) logs at warn, not error -- an expected, already-gracefully-degraded outcome, not a broken REES instance", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: false, status: 413, statusText: "Payload Too Large", text: async () => '{"error":"request_too_large"}' }) as Response,
+    ) as unknown as typeof fetch;
+    await buildReviewEnrichment(env({ REES_URL: "https://r" }), input);
+    expect(errSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse(warnSpy.mock.calls[0]![0] as string);
+    expect(logged).toMatchObject({ level: "warn", event: "review_context_fetch_failed", ev: "enrichment_http_error", status: 413 });
+    const metrics = await renderMetrics();
+    expect(metrics).toContain('loopover_rees_enrich_requests_total{status="http_error"} 1'); // outcome recording is unaffected by the log-level change
+    errSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it('records status="timeout" when the fetch rejects with a TimeoutError (AbortSignal.timeout)', async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     globalThis.fetch = vi.fn(async () => {

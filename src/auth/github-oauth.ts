@@ -103,10 +103,16 @@ export async function pollGitHubDeviceFlow(env: Env, deviceCode: string) {
   );
 }
 
+/**
+ * Starts the GitHub web OAuth flow. `scope` defaults to `"read:user"` (the standard login flow) — pass
+ * `"read:user repo"` only for the explicit APR idea-submission variant (#7637) that needs to create a repo
+ * under the customer's own account later; every other caller keeps requesting `read:user` unchanged.
+ */
 export async function startGitHubWebOAuth(
   env: Env,
   requestUrl: string,
   returnTo: string | undefined,
+  scope: string = "read:user",
 ): Promise<{ state: string; authorizationUrl: string; returnTo: string }> {
   if (!env.GITHUB_OAUTH_CLIENT_ID || !env.GITHUB_OAUTH_CLIENT_SECRET) throw new Error("github_oauth_not_configured");
   const safeReturnTo = normalizeReturnTo(env, returnTo);
@@ -118,7 +124,7 @@ export async function startGitHubWebOAuth(
   const authorizationUrl = new URL("https://github.com/login/oauth/authorize");
   authorizationUrl.searchParams.set("client_id", env.GITHUB_OAUTH_CLIENT_ID);
   authorizationUrl.searchParams.set("redirect_uri", githubOAuthCallbackUrl(env, requestUrl));
-  authorizationUrl.searchParams.set("scope", "read:user");
+  authorizationUrl.searchParams.set("scope", scope);
   authorizationUrl.searchParams.set("state", state);
   return { state, authorizationUrl: authorizationUrl.toString(), returnTo: safeReturnTo };
 }

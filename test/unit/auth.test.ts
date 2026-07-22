@@ -854,6 +854,9 @@ describe("private-beta auth and rate limiting", () => {
     expect(started.authorizationUrl).toContain("https://github.com/login/oauth/authorize");
     expect(started.authorizationUrl).toContain("client_id=client-id");
     expect(started.authorizationUrl).toContain("redirect_uri=https%3A%2F%2Fapi.loopover.ai%2Fv1%2Fauth%2Fgithub%2Fcallback");
+    // Default login flow requests only read:user -- unaffected by the #7637 scope parameter.
+    expect(started.authorizationUrl).toContain("scope=read%3Auser");
+    expect(started.authorizationUrl).not.toContain("repo");
 
     await expect(
       startGitHubWebOAuth(createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" }), "https://loopover-api.aethereal.dev/v1/auth/github/start", undefined),
@@ -893,6 +896,20 @@ describe("private-beta auth and rate limiting", () => {
         cookieState: started.state,
       }),
     ).rejects.toThrow(/bad code/);
+  });
+
+  it("requests the repo scope only for the explicit APR idea-submission variant (#7637)", async () => {
+    const env = createTestEnv({
+      GITHUB_OAUTH_CLIENT_ID: "client-id",
+      GITHUB_OAUTH_CLIENT_SECRET: "client-secret",
+    });
+    const started = await startGitHubWebOAuth(
+      env,
+      "https://loopover-api.aethereal.dev/v1/auth/github/start",
+      "https://loopover.ai/app/workbench",
+      "read:user repo",
+    );
+    expect(started.authorizationUrl).toContain("scope=read%3Auser+repo");
   });
 
   it("normalizes GitHub web OAuth fallbacks and rejects malformed callback state", async () => {

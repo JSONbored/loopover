@@ -150,6 +150,7 @@ import {
   type LoopOverMentionCommandName,
 } from "../github/commands";
 import { handleGitHubWebhook, handleOrbRelay } from "../github/webhook";
+import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
@@ -530,6 +531,16 @@ const evaluateEscalationSchema = z.object({
   healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
   customerFlagged: z.boolean().optional(),
   killRequested: z.boolean().optional(),
+});
+
+// #7742: customer-facing APR transfer request. `ideaComplete` is the #7591 completion signal (caller-supplied
+// until that signal has a persisted lookup); plan/payment fields are deliberately absent — the gate is
+// completion-only. Repo identity bounds match other /v1/loop POST bodies (non-empty strings, positive install id).
+const requestAprTransferSchema = z.object({
+  installationId: z.number().int().positive(),
+  repoFullName: z.string().min(1).max(200),
+  newOwner: z.string().min(1).max(100),
+  ideaComplete: z.boolean(),
 });
 
 // #6744: mirrors proposeActionShape in src/mcp/server.ts VERBATIM, minus owner/repo (they are path params), so
@@ -3725,6 +3736,20 @@ export function createApp() {
     const parsed = evaluateEscalationSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_evaluate_escalation_request", issues: parsed.error.issues }, 400);
     return c.json(evaluateEscalation(parsed.data));
+  });
+
+  // #7742: customer-facing "request transfer" for an APR repo. Request-only (nothing auto-offers); gated on
+  // the idea-completion signal (#7591) via requestAprRepoTransfer, which calls initiateAprRepoTransfer only
+  // when ideaComplete is true. A rejected gate returns 409 without touching GitHub; a successful initiation
+  // is still pending-acceptance (202), never "transfer done".
+  app.post("/v1/loop/request-apr-transfer", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = requestAprTransferSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_request_apr_transfer_request", issues: parsed.error.issues }, 400);
+    const result = await requestAprRepoTransfer(c.env, parsed.data);
+    if (result.status === "rejected") return c.json(result, 409);
+    if (result.status === "failed") return c.json(result, 502);
+    return c.json(result, 202);
   });
 
   // #6752: REST mirror of the loopover_build_results_payload MCP tool, bringing it to the same REST/CLI parity

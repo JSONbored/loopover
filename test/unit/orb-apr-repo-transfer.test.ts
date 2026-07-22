@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createInstallationToken } from "../../src/github/app";
-import { initiateAprRepoTransfer } from "../../src/orb/apr-repo-transfer";
+import {
+  evaluateAprRepoTransferRequestEligibility,
+  initiateAprRepoTransfer,
+  requestAprRepoTransfer,
+} from "../../src/orb/apr-repo-transfer";
 import { createTestEnv } from "../helpers/d1";
 
 // The transfer initiation mints an App installation token. Mock that mint to return a plain opaque token string
@@ -72,5 +76,93 @@ describe("initiateAprRepoTransfer (#7638)", () => {
     stubFetch(() => new Response("", { status: 403 }));
     const result = await initiateAprRepoTransfer(createTestEnv(), 1, "loopover-repos/widgets", "customer-acct");
     expect(result).toEqual({ initiated: false, status: 403, error: "transfer request failed (403)" });
+  });
+
+  it("falls back to a status message when response.text() rejects on a non-OK reply", async () => {
+    stubFetch(
+      () =>
+        ({
+          ok: false,
+          status: 500,
+          text: async () => {
+            throw new Error("body unread");
+          },
+        }) as unknown as Response,
+    );
+    const result = await initiateAprRepoTransfer(createTestEnv(), 1, "loopover-repos/widgets", "customer-acct");
+    expect(result).toEqual({ initiated: false, status: 500, error: "transfer request failed (500)" });
+  });
+});
+
+describe("evaluateAprRepoTransferRequestEligibility (#7742)", () => {
+  it("allows a request only when the idea-completion signal is true", () => {
+    expect(evaluateAprRepoTransferRequestEligibility({ ideaComplete: true })).toEqual({ allowed: true });
+  });
+
+  it("rejects when the idea is not complete — including an explicit false", () => {
+    expect(evaluateAprRepoTransferRequestEligibility({ ideaComplete: false })).toEqual({
+      allowed: false,
+      reason: "idea_not_complete",
+    });
+  });
+});
+
+describe("requestAprRepoTransfer (#7742)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects without calling initiate when the idea is incomplete", async () => {
+    const initiate = vi.fn();
+    const result = await requestAprRepoTransfer(
+      createTestEnv(),
+      { installationId: 1, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct", ideaComplete: false },
+      { initiate },
+    );
+    expect(result).toEqual({ status: "rejected", reason: "idea_not_complete" });
+    expect(initiate).not.toHaveBeenCalled();
+  });
+
+  it("initiates when the idea is complete and the GitHub call succeeds", async () => {
+    const initiate = vi.fn().mockResolvedValue({ initiated: true, status: 202, newFullName: "customer-acct/widgets" });
+    const env = createTestEnv();
+    const result = await requestAprRepoTransfer(
+      env,
+      { installationId: 7, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct", ideaComplete: true },
+      { initiate },
+    );
+    expect(initiate).toHaveBeenCalledWith(env, 7, "loopover-repos/widgets", "customer-acct");
+    expect(result).toEqual({
+      status: "initiated",
+      transfer: { initiated: true, status: 202, newFullName: "customer-acct/widgets" },
+    });
+  });
+
+  it("surfaces a structured failure when initiate returns initiated:false", async () => {
+    const initiate = vi.fn().mockResolvedValue({ initiated: false, status: 403, error: "no admin" });
+    const result = await requestAprRepoTransfer(
+      createTestEnv(),
+      { installationId: 1, repoFullName: "loopover-repos/widgets", newOwner: "customer-acct", ideaComplete: true },
+      { initiate },
+    );
+    expect(result).toEqual({
+      status: "failed",
+      transfer: { initiated: false, status: 403, error: "no admin" },
+    });
+  });
+
+  it("defaults to initiateAprRepoTransfer when no initiate hook is supplied", async () => {
+    mockedToken.mockResolvedValue("ghs_installation_token");
+    stubFetch(() => new Response(JSON.stringify({ full_name: "customer-acct/widgets" }), { status: 202 }));
+    const result = await requestAprRepoTransfer(createTestEnv(), {
+      installationId: 1,
+      repoFullName: "loopover-repos/widgets",
+      newOwner: "customer-acct",
+      ideaComplete: true,
+    });
+    expect(result).toEqual({
+      status: "initiated",
+      transfer: { initiated: true, status: 202, newFullName: "customer-acct/widgets" },
+    });
   });
 });

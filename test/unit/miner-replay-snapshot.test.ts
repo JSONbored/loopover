@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
+// Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. The committed lib is .ts-only,
+// but once `build:miner` has produced the artifact, a plain `.js`/extensionless import loads that .js, leaving
+// coverage.include's `.ts` entry at 0% -- that .js-vs-.ts mismatch is why this file's new guard kept reporting
+// 0% patch coverage. A variable specifier loads (and instruments) the .ts while dodging TS5097 (#7796).
+const REPLAY_SNAPSHOT_MODULE = "../../packages/loopover-miner/lib/replay-snapshot.ts";
+const {
   closeDefaultReplaySnapshotStore,
   exportReplaySnapshot,
   openReplaySnapshotStore,
@@ -11,7 +16,7 @@ import {
   removeReplaySnapshotWorktree,
   REPLAY_SNAPSHOT_SUBDIR,
   validateSnapshotFreshness,
-} from "../../packages/loopover-miner/lib/replay-snapshot.js";
+} = (await import(REPLAY_SNAPSHOT_MODULE)) as typeof import("../../packages/loopover-miner/lib/replay-snapshot.js");
 
 const FIELD_SEP = "\x1f";
 
@@ -76,6 +81,20 @@ describe("planReplaySnapshotPath (#3010) — pure, deterministic", () => {
     expect(a.replaceAll("\\", "/")).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/abc123`);
     expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc123" })).toBe(a);
     expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "def456" })).not.toBe(a);
+  });
+
+  it("rejects a commit SHA that would escape the snapshot subdir via path traversal or a separator (#7796)", () => {
+    // Without the guard, join()ing these into REPLAY_SNAPSHOT_SUBDIR escapes the repo entirely (e.g.
+    // ".../../../../../tmp/evil"). Each must be rejected up front rather than producing an out-of-sandbox path.
+    for (const commitSha of ["../../../../tmp/evil", "..", ".", "a/b", "a\\b", "../abc123", "foo/../..", " ../x "]) {
+      expect(() => planReplaySnapshotPath({ repoPath: "/repo", commitSha })).toThrow("invalid_commit_sha");
+    }
+  });
+
+  it("still confines a genuine hex commit SHA to the snapshot subdir (#7796)", () => {
+    const sha = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+    const p = planReplaySnapshotPath({ repoPath: "/repo", commitSha: `  ${sha}  ` }).replaceAll("\\", "/");
+    expect(p).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/${sha}`);
   });
 });
 

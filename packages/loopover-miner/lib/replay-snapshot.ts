@@ -75,9 +75,18 @@ function normalizeRepoFullName(repoFullName: string): string {
   return `${owner}/${repo}`;
 }
 
+// A commit SHA is joined straight into REPLAY_SNAPSHOT_SUBDIR (and later passed to git as a bare revision),
+// so a value like "../../../tmp/evil" (or one containing a path separator) would escape the intended snapshot
+// directory via path.join (#7796). Constrain it to a single safe path segment -- the same restricted charset
+// repo-clone.ts's isValidRepoSegment guard uses for owner/repo (#5831), plus an explicit "."/".." rejection.
+// A genuine commit SHA is hex and always satisfies this, so no legitimate caller regresses.
+const COMMIT_SHA_PATTERN = /^[A-Za-z0-9._-]+$/;
+
 function normalizeCommitSha(commitSha: string): string {
   if (typeof commitSha !== "string" || !commitSha.trim()) throw new Error("invalid_commit_sha");
-  return commitSha.trim();
+  const trimmed = commitSha.trim();
+  if (trimmed === "." || trimmed === ".." || !COMMIT_SHA_PATTERN.test(trimmed)) throw new Error("invalid_commit_sha");
+  return trimmed;
 }
 
 /** Worktree exports live under this dir inside the repo, mirroring worktree-allocator.ts's WORKTREE_SUBDIR. */

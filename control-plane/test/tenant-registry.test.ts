@@ -158,7 +158,7 @@ test("a tenant's pinnedVersion (#4898) survives the KV JSON round-trip, and its 
   await registry.upsert({ ...recordFor("acme"), tenant: { name: "acme", pinnedVersion: "v1.4.2" } });
   await registry.upsert(recordFor("beta"));
 
-  assert.deepEqual((await registry.get("acme"))?.tenant, { name: "acme", pinnedVersion: "v1.4.2" });
+  assert.deepEqual((await registry.get("acme", "orb"))?.tenant, { name: "acme", pinnedVersion: "v1.4.2" });
   // A pre-#4898 record (no pinnedVersion key at all) reads back exactly as stored — unpinned.
-  assert.deepEqual((await registry.get("beta"))?.tenant, { name: "beta" });
+  assert.deepEqual((await registry.get("beta", "orb"))?.tenant, { name: "beta" });
 });

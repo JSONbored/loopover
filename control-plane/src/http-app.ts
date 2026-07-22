@@ -18,7 +18,7 @@ import {
   provisionTenant,
   type ProvisioningPagerDutyOptions,
 } from "./provisioning.js";
-import type { TenantProvisioningDriver } from "./tenant-provisioning-driver.js";
+import type { Product, TenantProvisioningDriver } from "./tenant-provisioning-driver.js";
 import type { TenantRegistry, TenantRegistryRecord } from "./tenant-registry.js";
 
 export type TenantHttpAppDeps = {
@@ -37,21 +37,25 @@ function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "s
 
 /** Validated body of `POST /v1/tenants/rollout` (#4898): an explicit tenant-name list (no percentage/canary
  *  selector — no such primitive exists elsewhere in this codebase to build on) plus the version to pin.
- *  `pinnedVersion: null` is an explicit unpin (revert to the release channel's default). */
-type RolloutRequest = { names: string[]; pinnedVersion: string | null };
+ *  `pinnedVersion: null` is an explicit unpin (revert to the release channel's default). Scoped to a single
+ *  `product` for the whole batch (#8024: a name is no longer globally unique across products, and a version
+ *  rollout is naturally a per-product-fleet operation anyway -- ORB and AMS ship independently versioned
+ *  images, so mixing them in one rollout call was never a meaningful use case even before #8024). */
+type RolloutRequest = { names: string[]; product: Product; pinnedVersion: string | null };
 
 function parseRolloutRequest(body: unknown): RolloutRequest | string {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return "body must be a JSON object";
-  const { names, pinnedVersion } = body as Record<string, unknown>;
+  const { names, product, pinnedVersion } = body as Record<string, unknown>;
   if (!Array.isArray(names) || names.length === 0) return "names must be a non-empty array of tenant names";
   if (!names.every((name): name is string => typeof name === "string" && name.trim() !== "")) {
     return "names must be a non-empty array of tenant names";
   }
   if (new Set(names).size !== names.length) return "names must not repeat a tenant";
+  if (typeof product !== "string" || !product.trim()) return "product is required";
   if (pinnedVersion !== null && (typeof pinnedVersion !== "string" || !pinnedVersion.trim())) {
     return "pinnedVersion must be a non-blank string, or null to unpin";
   }
-  return { names, pinnedVersion: pinnedVersion === null ? null : pinnedVersion.trim() };
+  return { names, product: product.trim(), pinnedVersion: pinnedVersion === null ? null : pinnedVersion.trim() };
 }
 
 export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
@@ -112,7 +116,7 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
 
     const existing = new Map<string, TenantRegistryRecord>();
     for (const name of parsed.names) {
-      const record = await deps.registry.get(name);
+      const record = await deps.registry.get(name, parsed.product);
       if (!record) return c.json({ error: "tenant_not_found", message: `unknown tenant "${name}"` }, 404);
       // A torn-down tenant has no container to ever read the pin — surfacing the mistake beats silently
       // stamping a version onto a terminated record (same conflict posture as the create route's 409).

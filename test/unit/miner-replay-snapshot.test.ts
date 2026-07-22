@@ -77,6 +77,23 @@ describe("planReplaySnapshotPath (#3010) — pure, deterministic", () => {
     expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "abc123" })).toBe(a);
     expect(planReplaySnapshotPath({ repoPath: "/repo", commitSha: "def456" })).not.toBe(a);
   });
+
+  it("rejects a commit SHA that would escape the snapshot subdir via path traversal (#7796)", () => {
+    for (const commitSha of ["../../etc", "..", ".", "a/b", "a\\b", "../abc123", "foo/../..", ""]) {
+      expect(() => planReplaySnapshotPath({ repoPath: "/repo", commitSha })).toThrow("invalid_commit_sha");
+    }
+  });
+
+  it("accepts a real hex commit SHA and confines it to the snapshot subdir", () => {
+    const sha = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+    const p = planReplaySnapshotPath({ repoPath: "/repo", commitSha: sha }).replaceAll("\\", "/");
+    expect(p).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/${sha}`);
+  });
+
+  it("trims surrounding whitespace before validating the commit SHA", () => {
+    const p = planReplaySnapshotPath({ repoPath: "/repo", commitSha: "  abc123  " }).replaceAll("\\", "/");
+    expect(p).toBe(`/repo/${REPLAY_SNAPSHOT_SUBDIR}/abc123`);
+  });
 });
 
 describe("validateSnapshotFreshness (#3010) — pure fail-fast check", () => {

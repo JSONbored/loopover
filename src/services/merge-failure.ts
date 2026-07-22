@@ -22,8 +22,11 @@ import { errorMessage } from "../utils/json";
 // MERGE_RETRY_CAP before escalating to the same terminal hold.
 export const MERGE_RETRY_CAP = 5;
 
-/** True when the merge error TEXT describes a real content conflict (vs a behind-but-clean branch). */
-function isMergeConflictMessage(message: string): boolean {
+/** True when the merge error TEXT describes a real content conflict (vs a behind-but-clean branch). Exported
+ *  for reuse by the update_branch action class (LOOPOVER-24): update-branch performs a real merge internally,
+ *  so it fails with this SAME message shape, and the classification is identical -- the branch owner, not the
+ *  bot, must resolve it. */
+export function isMergeConflictMessage(message: string): boolean {
   return /merge conflict|not mergeable|cannot be merged|has conflicts|conflicts? with the base/i.test(message);
 }
 

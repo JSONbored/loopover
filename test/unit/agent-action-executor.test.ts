@@ -1456,6 +1456,33 @@ describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
     expect(refreshInstallationHealthForInstallation).not.toHaveBeenCalled();
   });
 
+  it("REGRESSION (LOOPOVER-24): a merge-conflict update_branch failure does not page Sentry", async () => {
+    const env = createTestEnv({});
+    vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(new Error("merge conflict between base and head"));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
+
+    expect(outcomes[0]).toMatchObject({ actionClass: "update_branch", outcome: "error" });
+    expect((await auditFor(env, "update_branch"))?.outcome).toBe("error");
+    // The caller (prReadyForReview/forceUpdateBranch) already falls through to reviewing the PR on its
+    // current head when update_branch fails -- this is not a stuck state the way a merge's terminal hold
+    // is, so it must stay out of Sentry entirely rather than paging on every naturally-diverged PR.
+    expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
+  });
+
+  it("a non-conflict update_branch failure still pages Sentry (#agent_action_execution_failed unchanged)", async () => {
+    const env = createTestEnv({});
+    vi.mocked(updatePullRequestBranch).mockRejectedValueOnce(new Error("network timeout"));
+    const captureSpy = vi.spyOn(sentryModule, "captureError");
+
+    await executeAgentMaintenanceActions(env, ctx(), [updateBranch]);
+
+    expect(captureSpy).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({ kind: "agent_action_execution_failed", actionClass: "update_branch" }), "agent_action_execution_failed");
+    captureSpy.mockRestore();
+  });
+
   it("debounces permission-looking installation health refreshes per installation (#2265)", async () => {
     const env = createTestEnv({});
     vi.useFakeTimers();

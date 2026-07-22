@@ -15,7 +15,7 @@ import {
   upsertGlobalContributorBlacklist,
 } from "../db/repositories";
 import { isAuthorBlacklisted } from "../settings/contributor-blacklist";
-import { classifyMergeFailure, MERGE_RETRY_CAP } from "./merge-failure";
+import { classifyMergeFailure, isMergeConflictMessage, MERGE_RETRY_CAP } from "./merge-failure";
 import { notifyActionToDiscord, notifyActionToSlack, type NotifyOutcome } from "./notify-discord";
 import { resolveDispositionReason } from "../review/outcomes-wire";
 import { cancelInFlightWorkflowRunsForHeadSha, createInstallationToken, githubErrorStatus, isGitHubRateLimitedError } from "../github/app";
@@ -618,6 +618,14 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       // after the gate publishes. A possibly-transient failure is retried up to MERGE_RETRY_CAP, then held.
       if (action.actionClass === "merge" && ctx.headSha) {
         await handleMergeFailure(env, ctx, error);
+      } else if (action.actionClass === "update_branch" && isMergeConflictMessage(errorMessage(error))) {
+        // LOOPOVER-24: update_branch performs a real merge internally, so it fails with the same "merge
+        // conflict" shape a MERGE action does -- but unlike a merge's terminal hold (a PR permanently blocked
+        // until a human intervenes), this is NOT a stuck state: forceUpdateBranch's caller (prReadyForReview)
+        // already falls through to reviewing the PR on its current, non-rebased head when this returns false
+        // (see forceUpdateBranch's own doc comment), exactly like every other "couldn't rebase, review anyway"
+        // path. The branch owner, not the bot, needs to resolve the conflict -- paging on every naturally-
+        // diverged PR this happens to hit isn't warranted. Still recorded by the audit() call above.
       } else {
         // Non-merge action classes have no retry loop -- a single failure here is already this pass's terminal
         // outcome (the planner may re-attempt on the next sweep if the underlying condition clears itself), so

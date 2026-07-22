@@ -28,6 +28,8 @@ import { resolveWorktreeAllocatorDbPath } from "./worktree-allocator.js";
 import { resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
 import { resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
 import { resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
+import { resolveRankedCandidatesDbPath } from "./ranked-candidates.js";
+import { resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
@@ -376,6 +378,8 @@ function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCh
     ["contribution-profile", resolveContributionProfileCacheDbPath(env)],
     ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath(env)],
     ["policy-doc-cache", resolvePolicyDocCacheDbPath(env)],
+    ["ranked-candidates", resolveRankedCandidatesDbPath(env)],
+    ["deny-hook-synthesis", resolveDenyHookSynthesisDbPath(env)],
   ];
   return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
 }

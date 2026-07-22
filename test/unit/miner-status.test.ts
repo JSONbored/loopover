@@ -142,6 +142,8 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "store-integrity:contribution-profile",
       "store-integrity:policy-verdict-cache",
       "store-integrity:policy-doc-cache",
+      "store-integrity:ranked-candidates",
+      "store-integrity:deny-hook-synthesis",
     ]);
     // REGRESSION (#6768): doctor previously omitted these four durable local stores from the integrity sweep.
     expect(checks.map((check) => check.name)).toEqual(
@@ -151,6 +153,10 @@ describe("loopover-miner status/doctor (#2288)", () => {
         "store-integrity:replay-snapshot",
         "store-integrity:worktree-allocator",
       ]),
+    );
+    // REGRESSION (#8008): ranked-candidates and deny-hook-synthesis were likewise omitted from the sweep.
+    expect(checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining(["store-integrity:ranked-candidates", "store-integrity:deny-hook-synthesis"]),
     );
     expect(runDoctor([], env, cwd)).toBe(0);
     expect(log).toHaveBeenCalled();

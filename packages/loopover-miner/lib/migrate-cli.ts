@@ -25,6 +25,8 @@ import { openWorktreeAllocator, resolveWorktreeAllocatorDbPath } from "./worktre
 import { initContributionProfileCache, resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
 import { initPolicyVerdictCacheStore, resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
 import { initPolicyDocCacheStore, resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
+import { initRankedCandidatesStore, resolveRankedCandidatesDbPath } from "./ranked-candidates.js";
+import { initDenyHookSynthesisStore, resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
 
 const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
@@ -76,6 +78,8 @@ const STORES: MigrateStoreDescriptor[] = [
   },
   { name: "policy-verdict-cache", resolveDbPath: resolvePolicyVerdictCacheDbPath, open: initPolicyVerdictCacheStore },
   { name: "policy-doc-cache", resolveDbPath: resolvePolicyDocCacheDbPath, open: initPolicyDocCacheStore },
+  { name: "ranked-candidates", resolveDbPath: resolveRankedCandidatesDbPath, open: initRankedCandidatesStore },
+  { name: "deny-hook-synthesis", resolveDbPath: resolveDenyHookSynthesisDbPath, open: initDenyHookSynthesisStore },
 ];
 
 /** Read a store file's stamped schema version without ever creating it -- matches checkStoreIntegrity's

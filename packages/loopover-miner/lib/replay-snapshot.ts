@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { removeWorktree } from "@loopover/engine";
 import type { WorktreeExecFn, WorktreeRemoveResult } from "@loopover/engine";
 import { openLocalStoreAdapter, resolveLocalStoreDbPath, normalizeLocalStoreDbPath } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 // Freeze/snapshot mechanism for historical replay targets (#3010). Given a repo and a commit SHA T, exports:
 //  (a) the full working tree checked out AT T via a DETACHED git worktree -- the same isolation primitive
@@ -72,6 +73,7 @@ function normalizeRepoFullName(repoFullName: string): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

@@ -160,6 +160,13 @@ describe("exportReplaySnapshot (#3010)", () => {
     expect(snapshot.readme).toEqual({ filename: "README.md", content: "# hello\n" });
   });
 
+  it("rejects a `.`/`..`/control-char repo segment before touching the store (#7795)", () => {
+    const store = tempStore();
+    expect(() => store.getSnapshot("../etc", "abc123")).toThrow("invalid_repo_full_name");
+    expect(() => store.getSnapshot("owner/..", "abc123")).toThrow("invalid_repo_full_name");
+    expect(() => store.getSnapshot("ow\tner/repo", "abc123")).toThrow("invalid_repo_full_name");
+  });
+
   it("returns the cached snapshot on a repeat export of the same (repo, commit) pair, without calling git again", async () => {
     const store = tempStore();
     const first = scriptedExec(happyPathScripts());

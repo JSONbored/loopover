@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   CONFIG_AS_CODE_GUARDRAIL_GLOBS,
   DEFAULT_HARD_GUARDRAIL_GLOBS,
+  ENGINE_DECISION_GUARDRAIL_GLOBS,
   resolveHardGuardrailGlobs,
 } from "../../src/review/guardrail-config";
+import { isGuardrailHit } from "../../src/signals/change-guardrail";
 
 describe("CONFIG_AS_CODE_GUARDRAIL_GLOBS", () => {
   it("guards the .loopover.* config files", () => {
@@ -11,6 +13,27 @@ describe("CONFIG_AS_CODE_GUARDRAIL_GLOBS", () => {
       expect(CONFIG_AS_CODE_GUARDRAIL_GLOBS).toContain(`.loopover.${ext}`);
       expect(CONFIG_AS_CODE_GUARDRAIL_GLOBS).toContain(`.github/loopover.${ext}`);
     }
+  });
+});
+
+// #8012: src/settings/autonomy.ts and src/review/guardrail-config.ts (the #6203-era migration's pre-migration
+// paths, still listed above for their own sake) are now 5-line re-export shims -- the real, substantive logic
+// a contributor PR could edit lives at the packages/loopover-engine paths below. A PR touching only the real
+// path, never the shim, must still trip the guardrail.
+describe("ENGINE_DECISION_GUARDRAIL_GLOBS — post-#6203-migration real paths (#8012)", () => {
+  it("lists both the real autonomy.ts and guardrail-config.ts engine-package paths, alongside their src/ shims", () => {
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("packages/loopover-engine/src/settings/autonomy.ts");
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("src/settings/autonomy.ts");
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("packages/loopover-engine/src/review/guardrail-config.ts");
+    expect(ENGINE_DECISION_GUARDRAIL_GLOBS).toContain("src/review/guardrail-config.ts");
+  });
+
+  it("a PR touching only the real autonomy.ts path (never its shim) still trips the hard guardrail", () => {
+    expect(isGuardrailHit(["packages/loopover-engine/src/settings/autonomy.ts"], DEFAULT_HARD_GUARDRAIL_GLOBS)).toBe(true);
+  });
+
+  it("a PR touching only the real guardrail-config.ts path (never its shim) still trips the hard guardrail", () => {
+    expect(isGuardrailHit(["packages/loopover-engine/src/review/guardrail-config.ts"], DEFAULT_HARD_GUARDRAIL_GLOBS)).toBe(true);
   });
 });
 

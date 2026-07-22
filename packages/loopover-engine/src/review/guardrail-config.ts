@@ -27,7 +27,12 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/settings/agent-actions.ts",
   "src/settings/agent-execution.ts",
   "src/settings/agent-sweep.ts",
+  // #8012: src/settings/autonomy.ts is now a 5-line re-export shim (#4879's #6203-era migration) -- the real,
+  // substantive autonomy deny-by-default logic lives at the packages/loopover-engine path below. Both are kept:
+  // the shim is still a real (if thin) file, and listing the real path is what actually protects the logic a
+  // PR edit could otherwise change without ever touching the shim.
   "src/settings/autonomy.ts",
+  "packages/loopover-engine/src/settings/autonomy.ts",
   "src/queue/**",
   "src/github/pr-actions.ts",
   "src/github/app.ts",
@@ -38,7 +43,11 @@ export const ENGINE_DECISION_GUARDRAIL_GLOBS = [
   "src/scoring/**",
   "src/auth/**",
   "src/review/safety.ts",
+  // #8012: same shim/real split as autonomy.ts above -- src/review/guardrail-config.ts (this file's own
+  // pre-migration twin) is a re-export shim; the real list edited here lives at the packages/loopover-engine
+  // path below, so a PR silently narrowing DEFAULT_HARD_GUARDRAIL_GLOBS itself must trip this same guardrail.
   "src/review/guardrail-config.ts",
+  "packages/loopover-engine/src/review/guardrail-config.ts",
   "src/review/cutover-gate.ts",
   "src/review/linked-issue-hard-rules.ts",
   "src/review/outcomes-wire.ts",

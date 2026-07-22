@@ -370,6 +370,21 @@ const repoOnboardingPackShape = {
   refresh: z.boolean().optional(),
 };
 
+// #7753: mirrors the remote loopover_propose_action input (src/mcp/server.ts's proposeActionShape) so the local
+// stdio tool validates identically. actionClass reuses PROPOSE_ACTION_CLASSES (same enum the route +
+// `maintain propose` accept); the optional fields carry per-action-class detail and are stripped when absent.
+const proposeActionShape = {
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+  pullNumber: z.number().int().positive(),
+  actionClass: z.enum(PROPOSE_ACTION_CLASSES),
+  reason: z.string().max(500).optional(),
+  label: z.string().min(1).max(100).optional(),
+  reviewBody: z.string().max(60000).optional(),
+  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+  closeComment: z.string().max(60000).optional(),
+};
+
 const skippedPrAuditShape = {
   repoFullName: z.string().trim().min(1).max(200).optional(),
   reason: z.string().trim().min(1).max(64).optional(),
@@ -1491,6 +1506,12 @@ const STDIO_TOOL_DESCRIPTORS = [
     name: "loopover_list_pending_actions",
     category: "agent",
     description: "List the agent actions currently staged and awaiting a decision in a repo's approval queue, so a maintainer can review what is pending. Returns the pending queue only — the same list as `loopover-mcp maintain queue`. Maintainer access required.",
+  },
+  {
+    name: "loopover_propose_action",
+    category: "agent",
+    description:
+      "Stage a PR action (label / request_changes / approve / merge / close) into the repo's approval queue for a maintainer to accept or reject. Maintainer access required; the action is NOT executed until approved.",
   },
   {
     name: "loopover_decide_pending_action",
@@ -3011,6 +3032,24 @@ registerStdioTool(
   async ({ owner, repo }: any) => {
     const payload = await apiGet(`${toolRepoBase(owner, repo)}/agent/pending-actions`);
     return toolResult(`Agent approval queue for ${owner}/${repo}: ${(payload.pendingActions ?? []).length} pending.`, payload);
+  },
+);
+
+// #7753: stdio mirror of the remote loopover_propose_action + the `maintain propose` CLI. POSTs to the same
+// {repoBase}/agent/pending-actions route the CLI hits, with the identical stripUndefined body so absent optional
+// fields are omitted. Stages the action into the approval queue -- the route never executes it until approved.
+registerStdioTool(
+  "loopover_propose_action",
+  {
+    description: stdioToolDescription("loopover_propose_action"),
+    inputSchema: proposeActionShape,
+  },
+  async ({ owner, repo, pullNumber, actionClass, reason, label, reviewBody, mergeMethod, closeComment }: any) => {
+    const payload = await apiPost(
+      `${toolRepoBase(owner, repo)}/agent/pending-actions`,
+      stripUndefined({ pullNumber, actionClass, reason, label, reviewBody, mergeMethod, closeComment }),
+    );
+    return toolResult(`Staged ${actionClass} on ${owner}/${repo}#${pullNumber} into the approval queue.`, payload);
   },
 );
 

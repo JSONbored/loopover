@@ -99,12 +99,12 @@ function githubHeaders(githubToken: string | undefined): Record<string, string> 
  *  falling back to its fail-open contract: returns null on a non-retryable/exhausted HTTP, transport, or parse
  *  failure. `timeoutMs` gives each attempt its own fresh `AbortSignal.timeout` (preserving the per-request bound),
  *  and `sleepFn` is the injectable no-real-timers seam every other `fetchWithRetry` call site exposes. */
-async function getJson(
+async function getJsonResponse(
   url: string,
   headers: Record<string, string>,
   fetchImpl: typeof fetch,
   sleepFn: ((ms: number) => Promise<unknown>) | undefined,
-): Promise<unknown> {
+): Promise<{ payload: unknown; response: Response } | null> {
   let response: Response;
   try {
     // Cast: the JS always passes `sleepFn` (possibly undefined); EOPT rejects an explicit undefined optional.
@@ -118,7 +118,57 @@ async function getJson(
     return null;
   }
   if (!response.ok) return null;
-  return response.json().catch(() => null);
+  const payload = await response.json().catch(() => null);
+  return { payload, response };
+}
+
+async function getJson(
+  url: string,
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<unknown> {
+  const result = await getJsonResponse(url, headers, fetchImpl, sleepFn);
+  return result?.payload ?? null;
+}
+
+/** Same Link-header check as `ci-poller.ts`'s check-run pagination (#8010). */
+function hasNextLink(response: Response): boolean {
+  const link =
+    typeof response.headers?.get === "function" ? response.headers.get("link") : null;
+  return /<[^>]+>;\s*rel="next"/.test(link ?? "");
+}
+
+/** Cap runaway pagination the way opportunity-fanout caps `maxPages` — 50×100 covers pathological repos
+ *  without inventing a different paging scheme than ci-poller's `page=` loop. */
+const MAX_LABEL_PAGES = 50;
+
+/** Fetch every label on the repo, following GitHub `Link: rel="next"` the same way `ci-poller.ts` pages
+ *  check-runs (#8010). Fail-open: a failed/malformed page returns whatever was collected so far. */
+async function fetchRepoLabels(
+  base: string,
+  target: { owner: string; repo: string },
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<GithubLabel[]> {
+  const labels: GithubLabel[] = [];
+  for (let page = 1; page <= MAX_LABEL_PAGES; page += 1) {
+    const result = await getJsonResponse(
+      `${base}/repos/${target.owner}/${target.repo}/labels?per_page=100&page=${page}`,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    if (result === null) return labels;
+    if (!Array.isArray(result.payload)) return labels;
+    const pageLabels = result.payload as GithubLabel[];
+    labels.push(...pageLabels);
+    if (!hasNextLink(result.response)) return labels;
+    if (pageLabels.length === 0) return labels;
+  }
+  /* v8 ignore next -- defensive page cap; a real repo never has 5000+ labels. */
+  return labels;
 }
 
 /**
@@ -256,13 +306,7 @@ export async function extractContributionProfile(
   );
 
   const sleepFn = options.sleepFn;
-  const labelsPayload = await getJson(
-    `${base}/repos/${target.owner}/${target.repo}/labels?per_page=100`,
-    headers,
-    fetchImpl,
-    sleepFn,
-  );
-  const labels = Array.isArray(labelsPayload) ? (labelsPayload as GithubLabel[]) : [];
+  const labels = await fetchRepoLabels(base, target, headers, fetchImpl, sleepFn);
   const contributing = await fetchContributing(
     base,
     target,

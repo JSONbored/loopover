@@ -18,6 +18,7 @@ function stubFetch(
     contributingGithubDir?: string | null;
   } = {},
 ) {
+  const emptyHeaders = { get: (_name: string) => null };
   return asFetch(
     vi.fn(async (url: string) => {
       const u = String(url);
@@ -26,11 +27,13 @@ function stubFetch(
           return {
             ok: false,
             status: opts.labels,
+            headers: emptyHeaders,
             json: async () => ({}),
           } as unknown as Response;
         return {
           ok: true,
           status: 200,
+          headers: emptyHeaders,
           json: async () => opts.labels ?? [],
         } as unknown as Response;
       }
@@ -39,11 +42,13 @@ function stubFetch(
           return {
             ok: false,
             status: 404,
+            headers: emptyHeaders,
             json: async () => ({}),
           } as unknown as Response;
         return {
           ok: true,
           status: 200,
+          headers: emptyHeaders,
           json: async () => ({
             encoding: "base64",
             content: Buffer.from(String(opts.contributing)).toString("base64"),
@@ -55,11 +60,13 @@ function stubFetch(
           return {
             ok: false,
             status: 404,
+            headers: emptyHeaders,
             json: async () => ({}),
           } as unknown as Response;
         return {
           ok: true,
           status: 200,
+          headers: emptyHeaders,
           json: async () => ({
             encoding: "base64",
             content: Buffer.from(String(opts.contributingGithubDir)).toString(
@@ -71,6 +78,7 @@ function stubFetch(
       return {
         ok: false,
         status: 404,
+        headers: emptyHeaders,
         json: async () => ({}),
       } as unknown as Response;
     }),
@@ -246,9 +254,215 @@ describe("extractContributionProfile (#6796)", () => {
     expect(profile.completeness).toBe("absent");
   });
 
+  it("pages through Link rel=next and collects labels past the first 100 (#8010)", async () => {
+    const emptyHeaders = { get: (_name: string) => null };
+    let labelsCalls = 0;
+    const page1 = Array.from({ length: 100 }, (_, i) => ({
+      name: `bulk-${i}`,
+      description: null as string | null,
+    }));
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels")) {
+        labelsCalls += 1;
+        if (labelsCalls === 1) {
+          expect(u).toContain("page=1");
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (name: string) =>
+                name.toLowerCase() === "link"
+                  ? '<https://api.github.com/repos/acme/widgets/labels?page=2>; rel="next"'
+                  : null,
+            },
+            json: async () => page1,
+          } as unknown as Response;
+        }
+        expect(u).toContain("page=2");
+        return {
+          ok: true,
+          status: 200,
+          headers: emptyHeaders,
+          json: async () => [
+            { name: "good first issue", description: "Starter work" },
+            { name: "bulk-extra", description: null },
+          ],
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        headers: emptyHeaders,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+
+    expect(labelsCalls).toBe(2);
+    expect(profile.eligibilityLabels.confidence).toBe("explicit");
+    expect(profile.eligibilityLabels.value).toEqual([
+      { field: "name", contains: "good first issue" },
+    ]);
+    expect(profile.eligibilityLabels.provenance).toEqual([
+      { source: "labels", detail: "good first issue" },
+    ]);
+  });
+
+  it("keeps page-1 labels when a later page fails (fail-open pagination, #8010)", async () => {
+    const emptyHeaders = { get: (_name: string) => null };
+    let labelsCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels")) {
+        labelsCalls += 1;
+        if (labelsCalls === 1) {
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (name: string) =>
+                name.toLowerCase() === "link"
+                  ? '<https://api.github.com/repos/acme/widgets/labels?page=2>; rel="next"'
+                  : null,
+            },
+            json: async () => [{ name: "help wanted", description: null }],
+          } as unknown as Response;
+        }
+        return {
+          ok: false,
+          status: 500,
+          headers: emptyHeaders,
+          json: async () => ({}),
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        headers: emptyHeaders,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+      sleepFn: async () => {},
+    });
+
+    expect(labelsCalls).toBeGreaterThanOrEqual(2);
+    expect(profile.eligibilityLabels.confidence).toBe("explicit");
+    expect(profile.eligibilityLabels.value).toEqual([
+      { field: "name", contains: "help wanted" },
+    ]);
+  });
+
+  it("stops pagination when a next page returns an empty array (#8010)", async () => {
+    const emptyHeaders = { get: (_name: string) => null };
+    let labelsCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels")) {
+        labelsCalls += 1;
+        if (labelsCalls === 1) {
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (name: string) =>
+                name.toLowerCase() === "link"
+                  ? '<https://api.github.com/repos/acme/widgets/labels?page=2>; rel="next"'
+                  : null,
+            },
+            json: async () => [{ name: "help wanted", description: null }],
+          } as unknown as Response;
+        }
+        // Empty page still advertises a next link — the empty-page guard must stop the loop.
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            get: (name: string) =>
+              name.toLowerCase() === "link"
+                ? '<https://api.github.com/repos/acme/widgets/labels?page=3>; rel="next"'
+                : null,
+          },
+          json: async () => [],
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        headers: emptyHeaders,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+
+    expect(labelsCalls).toBe(2);
+    expect(profile.eligibilityLabels.value).toEqual([
+      { field: "name", contains: "help wanted" },
+    ]);
+  });
+
+  it("stops pagination when a later page returns a non-array payload (#8010)", async () => {
+    const emptyHeaders = { get: (_name: string) => null };
+    let labelsCalls = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes("/labels")) {
+        labelsCalls += 1;
+        if (labelsCalls === 1) {
+          return {
+            ok: true,
+            status: 200,
+            headers: {
+              get: (name: string) =>
+                name.toLowerCase() === "link"
+                  ? '<https://api.github.com/repos/acme/widgets/labels?page=2>; rel="next"'
+                  : null,
+            },
+            json: async () => [{ name: "help wanted", description: null }],
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: emptyHeaders,
+          json: async () => ({ message: "weird" }),
+        } as unknown as Response;
+      }
+      return {
+        ok: false,
+        status: 404,
+        headers: emptyHeaders,
+        json: async () => ({}),
+      } as unknown as Response;
+    });
+
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+
+    expect(labelsCalls).toBe(2);
+    expect(profile.eligibilityLabels.value).toEqual([
+      { field: "name", contains: "help wanted" },
+    ]);
+  });
+
   it("retries a transient 5xx on the labels fetch and yields the same profile as an immediate success (#7090)", async () => {
     // A single 5xx blip on the first attempt must NOT degrade the label signal — the retry rides it out and the
     // resulting profile is identical to one where the labels fetch succeeded immediately.
+    const emptyHeaders = { get: (_name: string) => null };
     const sleeps: number[] = [];
     let labelsCalls = 0;
     const fetchImpl = vi.fn(async (url: string) => {
@@ -259,11 +473,13 @@ describe("extractContributionProfile (#6796)", () => {
           return {
             ok: false,
             status: 500,
+            headers: emptyHeaders,
             json: async () => ({}),
           } as unknown as Response;
         return {
           ok: true,
           status: 200,
+          headers: emptyHeaders,
           json: async () => [
             { name: "help wanted", description: "Extra attention is needed" },
           ],
@@ -272,6 +488,7 @@ describe("extractContributionProfile (#6796)", () => {
       return {
         ok: false,
         status: 404,
+        headers: emptyHeaders,
         json: async () => ({}),
       } as unknown as Response;
     });

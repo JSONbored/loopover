@@ -99,12 +99,12 @@ function githubHeaders(githubToken: string | undefined): Record<string, string> 
  *  falling back to its fail-open contract: returns null on a non-retryable/exhausted HTTP, transport, or parse
  *  failure. `timeoutMs` gives each attempt its own fresh `AbortSignal.timeout` (preserving the per-request bound),
  *  and `sleepFn` is the injectable no-real-timers seam every other `fetchWithRetry` call site exposes. */
-async function getJson(
+async function getJsonResponse(
   url: string,
   headers: Record<string, string>,
   fetchImpl: typeof fetch,
   sleepFn: ((ms: number) => Promise<unknown>) | undefined,
-): Promise<unknown> {
+): Promise<{ payload: unknown; response: Response } | null> {
   let response: Response;
   try {
     // Cast: the JS always passes `sleepFn` (possibly undefined); EOPT rejects an explicit undefined optional.
@@ -118,7 +118,51 @@ async function getJson(
     return null;
   }
   if (!response.ok) return null;
-  return response.json().catch(() => null);
+  const payload = await response.json().catch(() => null);
+  return { payload, response };
+}
+
+async function getJson(
+  url: string,
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<unknown> {
+  const result = await getJsonResponse(url, headers, fetchImpl, sleepFn);
+  return result === null ? null : result.payload;
+}
+
+/** GitHub signals another page of a list endpoint with a `Link` header carrying a `rel="next"` entry. Mirrors
+ *  ci-poller.ts's `hasNextLink` exactly; the optional chain tolerates a header-less mock Response. */
+function hasNextLink(response: Response): boolean {
+  return /<[^>]+>;\s*rel="next"/.test(response.headers?.get("link") ?? "");
+}
+
+/** Read the repo's full label set, following `Link: rel="next"` pagination the way ci-poller.ts's check-run
+ *  polling does, so a repo with more than 100 labels is not silently truncated at page 1. Never throws: a
+ *  failed or non-array page degrades to the labels gathered so far, honoring this file's fail-open contract. */
+async function getAllLabels(
+  base: string,
+  target: { owner: string; repo: string },
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<GithubLabel[]> {
+  const labels: GithubLabel[] = [];
+  let page = 1;
+  while (true) {
+    const result = await getJsonResponse(
+      `${base}/repos/${target.owner}/${target.repo}/labels?per_page=100&page=${page}`,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    if (result === null || !Array.isArray(result.payload)) break;
+    labels.push(...(result.payload as GithubLabel[]));
+    if (!hasNextLink(result.response)) break;
+    page += 1;
+  }
+  return labels;
 }
 
 /**
@@ -256,13 +300,7 @@ export async function extractContributionProfile(
   );
 
   const sleepFn = options.sleepFn;
-  const labelsPayload = await getJson(
-    `${base}/repos/${target.owner}/${target.repo}/labels?per_page=100`,
-    headers,
-    fetchImpl,
-    sleepFn,
-  );
-  const labels = Array.isArray(labelsPayload) ? (labelsPayload as GithubLabel[]) : [];
+  const labels = await getAllLabels(base, target, headers, fetchImpl, sleepFn);
   const contributing = await fetchContributing(
     base,
     target,

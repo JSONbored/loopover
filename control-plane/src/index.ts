@@ -48,8 +48,19 @@ export {
 } from "./neon-database-driver.js";
 export {
   createTenantProvisioningDriver,
+  withRealContainerDriver,
   withRealDatabaseDriver,
 } from "./driver-factory.js";
+export {
+  createContainerDriver,
+  createTenantContainer,
+  destroyTenantContainer,
+  tenantContainerExists,
+  type ContainerDriver,
+  type ContainerDriverConfig,
+  type ContainerNamespaceLike,
+  type ContainerStubLike,
+} from "./container-driver.js";
 export {
   createFakeTenantRegistry,
   createKvTenantRegistry,

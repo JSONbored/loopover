@@ -6,10 +6,36 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   createFakeTenantProvisioningDriver,
   createTenantProvisioningDriver,
+  withRealContainerDriver,
   withRealDatabaseDriver,
+  type ContainerDriver,
+  type ContainerNamespaceLike,
+  type ContainerStubLike,
   type DatabaseDriver,
   type TenantProvisioningRequest,
 } from "../dist/index.js";
+
+function fakeContainerNamespace(provisioned = false): ContainerNamespaceLike {
+  let flag = provisioned;
+  const stub: ContainerStubLike = {
+    async start() {
+      flag = true;
+    },
+    async stop() {
+      flag = false;
+    },
+    async isProvisioned() {
+      return flag;
+    },
+    async markProvisioned() {
+      flag = true;
+    },
+    async markDeprovisioned() {
+      flag = false;
+    },
+  };
+  return { getByName: () => stub };
+}
 
 const REQUEST: TenantProvisioningRequest = { tenant: { name: "acme" }, product: "orb" };
 
@@ -58,6 +84,73 @@ test("withRealDatabaseDriver: overrides provisionDatabase/dropDatabase, forwards
   assert.equal(base.containers.has("acme"), false);
   await composed.revokeSecrets(REQUEST);
   assert.equal(base.injectedSecrets.has("acme"), false);
+});
+
+test("withRealContainerDriver: overrides createContainer/destroyContainer/containerExists, forwards every other step to base", async () => {
+  const base = createFakeTenantProvisioningDriver();
+  const calls: string[] = [];
+  const containerDriver: ContainerDriver = {
+    createContainer: async () => {
+      calls.push("real-create");
+    },
+    destroyContainer: async () => {
+      calls.push("real-destroy");
+    },
+    containerExists: async () => {
+      calls.push("real-exists");
+      return true;
+    },
+  };
+
+  const composed = withRealContainerDriver(base, containerDriver);
+
+  await composed.createContainer(REQUEST);
+  assert.equal(await composed.containerExists(REQUEST), true);
+  await composed.destroyContainer(REQUEST);
+  assert.deepEqual(calls, ["real-create", "real-exists", "real-destroy"]);
+  // The fake's own createContainer never ran -- its `containers` set stays empty even though the composed
+  // driver's own lifecycle calls all resolved successfully.
+  assert.equal(base.containers.has("acme"), false);
+
+  // Every non-container step still runs against `base` exactly as before composition.
+  const details = await composed.provisionDatabase(REQUEST);
+  assert.equal(details.host, "fake-acme.control-plane.invalid");
+  await composed.injectSecrets(REQUEST);
+  assert.ok(base.injectedSecrets.has("acme"));
+});
+
+test("createTenantProvisioningDriver: falls back to the fake container behavior when containerBindings is omitted or empty", async () => {
+  const noBindings = createTenantProvisioningDriver({}, undefined);
+  const emptyBindings = createTenantProvisioningDriver({}, {});
+
+  await noBindings.createContainer(REQUEST);
+  await emptyBindings.createContainer(REQUEST);
+
+  // No real container driver was selected in either case -- calling into an unconfigured product on the
+  // fake never throws (unlike the real container-driver.ts, which throws for an unconfigured product).
+  assert.equal(await noBindings.containerExists(REQUEST), true);
+  assert.equal(await emptyBindings.containerExists(REQUEST), true);
+});
+
+test("createTenantProvisioningDriver: selects the real container driver when containerBindings is given", async () => {
+  const driver = createTenantProvisioningDriver({}, { orb: fakeContainerNamespace() });
+
+  assert.equal(await driver.containerExists(REQUEST), false);
+  await driver.createContainer(REQUEST);
+  assert.equal(await driver.containerExists(REQUEST), true);
+});
+
+test("createTenantProvisioningDriver: composes both the real database driver AND the real container driver together", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ branches: [] }), { status: 200 })) as unknown as typeof fetch;
+
+  const driver = createTenantProvisioningDriver({ NEON_API_KEY: "real-key", NEON_PROJECT_ID: "real-project" }, { orb: fakeContainerNamespace() });
+
+  // Real container path selected...
+  await driver.createContainer(REQUEST);
+  assert.equal(await driver.containerExists(REQUEST), true);
+  // ...and the real database path too (rejects against the mocked, wrong-shaped Neon response, proving it's
+  // not the fake's own always-succeeds provisionDatabase).
+  await assert.rejects(driver.provisionDatabase(REQUEST));
 });
 
 test("createTenantProvisioningDriver: falls back to the plain fake when NEON_API_KEY is unset", async () => {

@@ -1,8 +1,9 @@
 {
-  // Cloudflare Worker deployment for control-plane's real HTTP transport (#7654, part of the #7173 ORB+AMS
-  // hosting control-plane). Exposes exactly the routes packages/loopover-miner/lib/tenant-client.ts (already
-  // merged) hardcodes: POST/GET /v1/tenants, DELETE /v1/tenants/:name -- see src/http-app.ts for the route
-  // logic and src/worker.ts for how this binding config wires into it.
+  // Cloudflare Worker deployment for control-plane's real HTTP transport (#7654) and real tenant container
+  // lifecycle (#7851), part of the #7173 ORB+AMS hosting control-plane. Exposes exactly the routes
+  // packages/loopover-miner/lib/tenant-client.ts (already merged) hardcodes: POST/GET /v1/tenants,
+  // DELETE /v1/tenants/:name -- see src/http-app.ts for the route logic and src/worker.ts for how this
+  // binding config wires into it.
   //
   // Before first deploy, create the KV namespace and set the real secrets (never commit real values, and
   // never put them in this file):
@@ -10,6 +11,11 @@
   //   npx wrangler secret put ADMIN_TOKEN
   //   npx wrangler secret put NEON_API_KEY   (only needed to select the real Neon database driver, #7653 --
   //                                           omit to keep createTenantProvisioningDriver on the fake driver)
+  //
+  // Both container images below build from the REPO ROOT context (image_build_context: ".."), one level up
+  // from this file -- same npm-workspaces reasoning as packages/discovery-index/wrangler.jsonc's identical
+  // choice: each Dockerfile's own COPY . . needs every workspace package.json present for `npm ci` to
+  // symlink internal dependencies correctly.
   "name": "loopover-control-plane",
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-21",
@@ -29,11 +35,48 @@
       "id": "REPLACE_WITH_REAL_KV_NAMESPACE_ID"
     }
   ],
+  "containers": [
+    {
+      "name": "loopover-control-plane-orb-container",
+      "class_name": "OrbTenantContainer",
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic"
+      // No max_instances cap: unlike packages/discovery-index's own single fixed-name instance (a
+      // correctness requirement for its shared in-memory cache), this is genuinely a fleet -- one real,
+      // independent container per ORB tenant, with no shared state between instances to protect.
+    },
+    {
+      "name": "loopover-control-plane-ams-container",
+      "class_name": "AmsTenantContainer",
+      "image": "../packages/loopover-miner/Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ORB_TENANT_CONTAINER",
+        "class_name": "OrbTenantContainer"
+      },
+      {
+        "name": "AMS_TENANT_CONTAINER",
+        "class_name": "AmsTenantContainer"
+      }
+    ]
+  },
   "observability": {
     "enabled": true,
     "logs": {
       "enabled": true,
       "head_sampling_rate": 1
     }
-  }
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["OrbTenantContainer", "AmsTenantContainer"]
+    }
+  ]
 }

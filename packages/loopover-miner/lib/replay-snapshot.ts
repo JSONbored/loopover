@@ -75,9 +75,18 @@ function normalizeRepoFullName(repoFullName: string): string {
   return `${owner}/${repo}`;
 }
 
+// planReplaySnapshotPath join()s the commit SHA straight into REPLAY_SNAPSHOT_SUBDIR, and it is also
+// passed to git as a bare revision argument. A crafted value like "../../etc" escapes the intended
+// snapshot directory via path.join (#7796). Reuse the same hex format guard replay-task-generation.ts
+// already applies to commit SHAs (/^[0-9a-f]{7,40}$/i) so path-traversal / non-hex values never reach
+// path.join. A genuine abbreviated or full SHA always satisfies this.
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
+
 function normalizeCommitSha(commitSha: string): string {
   if (typeof commitSha !== "string" || !commitSha.trim()) throw new Error("invalid_commit_sha");
-  return commitSha.trim();
+  const trimmed = commitSha.trim();
+  if (!COMMIT_SHA_PATTERN.test(trimmed)) throw new Error("invalid_commit_sha");
+  return trimmed;
 }
 
 /** Worktree exports live under this dir inside the repo, mirroring worktree-allocator.ts's WORKTREE_SUBDIR. */

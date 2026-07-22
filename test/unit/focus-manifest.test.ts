@@ -48,6 +48,7 @@ import {
   sweepWatchdogConfigToJson,
   prReconciliationConfigToJson,
   activeReviewReconciliationConfigToJson,
+  loopEscalationConfigToJson,
   federatedIntelligenceConfigToJson,
   settingsOverrideToJson,
   type FocusManifest,
@@ -62,6 +63,7 @@ import {
   type FocusManifestPublicStatsConfig,
   type FocusManifestSweepWatchdogConfig,
   type FocusManifestPrReconciliationConfig,
+  type FocusManifestLoopEscalationConfig,
   type FocusManifestSettings,
   type SelfHostAiModelConfig,
 } from "../../src/signals/focus-manifest";
@@ -526,6 +528,15 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
   it.each(Object.entries(PR_RECONCILIATION_FIELD_TOKENS))("documents prReconciliation.%s", (_field, token) => {
     expect(exampleContent).toContain(token);
   });
+
+  const LOOP_ESCALATION_FIELD_TOKENS = {
+    enabled: "enabled:",
+  } satisfies Record<Exclude<keyof FocusManifestLoopEscalationConfig, "present">, string>;
+
+  it.each(Object.entries(LOOP_ESCALATION_FIELD_TOKENS))("documents loopEscalation.%s", (_field, token) => {
+    expect(exampleContent).toContain("loopEscalation:");
+    expect(exampleContent).toContain(token);
+  });
 });
 
 describe("matchesManifestPath", () => {
@@ -959,6 +970,7 @@ describe("compileFocusManifestPolicy", () => {
       sweepWatchdog: { present: false, enabled: false, staleAfterMinutes: null },
       prReconciliation: { present: false, enabled: false },
       activeReviewReconciliation: { present: false, enabled: false },
+      loopEscalation: { present: false, enabled: false },
       federatedIntelligence: { present: false, enabled: false, collectorUrl: null, collectorMode: null, peerKeys: [] },
       warnings: [],
     });
@@ -2317,6 +2329,54 @@ describe("parseFocusManifest gate config", () => {
 
     it("activeReviewReconciliationConfigToJson returns null for an absent config", () => {
       expect(activeReviewReconciliationConfigToJson(parseFocusManifest(null).activeReviewReconciliation)).toBeNull();
+    });
+  });
+
+  describe("loopEscalation: (#8018, Rent-a-Loop fleet-escalation sweep config-as-code override)", () => {
+    it("defaults to fully disabled/absent when the key is omitted, and does not make the manifest present on its own", () => {
+      const m = parseFocusManifest({});
+      expect(m.loopEscalation).toEqual({ present: false, enabled: false });
+      expect(m.present).toBe(false);
+    });
+
+    it("treats an explicit null the same as an omitted key", () => {
+      expect(parseFocusManifest({ loopEscalation: null }).loopEscalation).toEqual({ present: false, enabled: false });
+    });
+
+    it("warns and falls back to the default when the value is a non-mapping type (string or array)", () => {
+      const asString = parseFocusManifest({ loopEscalation: "nope" as never });
+      expect(asString.loopEscalation.present).toBe(false);
+      expect(asString.warnings.some((w) => /"loopEscalation" must be a mapping/.test(w))).toBe(true);
+      const asArray = parseFocusManifest({ loopEscalation: ["nope"] as never });
+      expect(asArray.loopEscalation.present).toBe(false);
+      expect(asArray.warnings.some((w) => /"loopEscalation" must be a mapping/.test(w))).toBe(true);
+    });
+
+    it("parses enabled: true, making the manifest present", () => {
+      const m = parseFocusManifest({ loopEscalation: { enabled: true } });
+      expect(m.loopEscalation).toEqual({ present: true, enabled: true });
+      expect(m.present).toBe(true);
+    });
+
+    it("parses enabled: false explicitly, still marking the manifest present (present is a real override, off)", () => {
+      const m = parseFocusManifest({ loopEscalation: { enabled: false } });
+      expect(m.loopEscalation).toEqual({ present: true, enabled: false });
+      expect(m.present).toBe(true);
+    });
+
+    it("warns and defaults to false when enabled is a non-boolean value", () => {
+      const m = parseFocusManifest({ loopEscalation: { enabled: "yes" as unknown as boolean } });
+      expect(m.loopEscalation.enabled).toBe(false);
+      expect(m.warnings.some((w) => /loopEscalation\.enabled/.test(w))).toBe(true);
+    });
+
+    it("round-trips through loopEscalationConfigToJson → parseFocusManifest unchanged", () => {
+      const m = parseFocusManifest({ loopEscalation: { enabled: true } });
+      expect(parseFocusManifest({ loopEscalation: loopEscalationConfigToJson(m.loopEscalation) }).loopEscalation).toEqual(m.loopEscalation);
+    });
+
+    it("loopEscalationConfigToJson returns null for an absent config", () => {
+      expect(loopEscalationConfigToJson(parseFocusManifest(null).loopEscalation)).toBeNull();
     });
   });
 

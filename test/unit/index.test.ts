@@ -4,11 +4,13 @@ import { recordGitHubRateLimitObservation } from "../../src/db/repositories";
 import { scheduledEnqueueDelaySeconds } from "../../src/selfhost/queue-common";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { clearOpsManifestOverrideCacheForTest } from "../../src/review/ops-wire";
+import { clearLoopEscalationManifestOverrideCacheForTest } from "../../src/review/loop-escalation-wire";
 import { createTestEnv } from "../helpers/d1";
 
 describe("worker entrypoint", () => {
   beforeEach(() => {
     clearOpsManifestOverrideCacheForTest();
+    clearLoopEscalationManifestOverrideCacheForTest();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -884,6 +886,41 @@ describe("worker entrypoint", () => {
     expect((await sentFor("false")).some((m) => m.type === "loop-escalation-sweep")).toBe(false);
     const on = await sentFor("true");
     expect(on.filter((m) => m.type === "loop-escalation-sweep")).toEqual([{ type: "loop-escalation-sweep", requestedBy: "schedule" }]);
+  });
+
+  it("a present loopEscalation manifest override enqueues loop-escalation-sweep hourly even when LOOPOVER_LOOP_ESCALATION is OFF (#8018)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+      LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", { loopEscalation: { enabled: true } });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    expect(sent.filter((m) => m.type === "loop-escalation-sweep")).toEqual([{ type: "loop-escalation-sweep", requestedBy: "schedule" }]);
+  });
+
+  it("a present loopEscalation manifest override suppresses loop-escalation-sweep hourly even when LOOPOVER_LOOP_ESCALATION is ON (#8018)", async () => {
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      LOOPOVER_LOOP_ESCALATION: "true",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+      LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", { loopEscalation: { enabled: false } });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "loop-escalation-sweep")).toBe(false);
   });
 
   it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when LOOPOVER_SWEEP_WATCHDOG is ON", async () => {

@@ -1443,6 +1443,13 @@ settings:
 # activeReviewReconciliation:
 #   enabled: true   # Bool. Default: false (the env var decides instead).
 
+# Fleet-wide Rent-a-Loop escalation sweep (#6349 / #8018): config-as-code override for the
+# LOOPOVER_LOOP_ESCALATION flag that gates the hourly fleet-escalation notification. Same shape and
+# precedence as `ops:` / `activeReviewReconciliation:` above — operator-level, only meaningful on the
+# loopover self-repo's own manifest.
+# loopEscalation:
+#   enabled: true   # Bool. Default: false (the env var decides instead).
+
 # Opt-in federated fleet intelligence export (#1970): packages this instance's OWN calibration signals into a
 # signed, anonymized bundle an operator can choose to hand to a peer (or to a collector they run). Exports
 # AGGREGATE figures only -- gate precision, reversal/slop/copycat rates over a window -- never source code,

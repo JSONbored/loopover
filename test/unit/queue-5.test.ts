@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memory-wire";
 import { clearOpsManifestOverrideCacheForTest } from "../../src/review/ops-wire";
+import { clearLoopEscalationManifestOverrideCacheForTest } from "../../src/review/loop-escalation-wire";
 import { PR_PANEL_COMMENT_MARKER } from "../../src/github/comments";
 import * as backfillModule from "../../src/github/backfill";
 import * as rateLimitModule from "../../src/github/rate-limit";
@@ -224,6 +225,7 @@ describe("queue processors", () => {
     clearInstallationTokenCacheForTest();
     clearReviewSuppressionCacheForTest();
     clearOpsManifestOverrideCacheForTest();
+    clearLoopEscalationManifestOverrideCacheForTest();
     vi.mocked(fetchPullRequestFreshness).mockReset();
     vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
       status: "current",
@@ -5855,6 +5857,31 @@ describe("queue processors", () => {
       LOOPOVER_LOOP_ESCALATION: "true",
       LOOPOVER_ACTIVE_LOOPS_JSON: JSON.stringify([{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }]),
     });
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_needs_attention"))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("loop-escalation-sweep job no-ops when a present loopEscalation manifest override turns it OFF even though LOOPOVER_LOOP_ESCALATION is ON (#8018)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const env = createTestEnv({
+      LOOPOVER_LOOP_ESCALATION: "true",
+      LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
+      LOOPOVER_ACTIVE_LOOPS_JSON: JSON.stringify([{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }]),
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { loopEscalation: { enabled: false } });
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_needs_attention"))).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("loop-escalation-sweep job runs when a present loopEscalation manifest override turns it ON even though LOOPOVER_LOOP_ESCALATION is OFF (#8018)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const env = createTestEnv({
+      LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/gittensory",
+      LOOPOVER_ACTIVE_LOOPS_JSON: JSON.stringify([{ loopId: "broken", tenantId: "acme", runStatus: "abandoned" }]),
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { loopEscalation: { enabled: true } });
     await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
     expect(errorSpy.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_needs_attention"))).toBe(true);
     errorSpy.mockRestore();

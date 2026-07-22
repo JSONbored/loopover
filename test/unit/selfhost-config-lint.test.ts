@@ -158,6 +158,14 @@ reviewRecap:
     expect(result.recognizedFields).toEqual(["activeReviewReconciliation"]);
   });
 
+  it("recognizes a standalone top-level loopEscalation: block instead of flagging it as unknown (#8018)", () => {
+    const result = lintManifestText("loopEscalation:\n  enabled: true\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["loopEscalation"]);
+  });
+
   it("recognizes a standalone top-level federatedIntelligence: block instead of flagging it as unknown (#6998)", () => {
     const result = lintManifestText("federatedIntelligence:\n  enabled: true\n");
 

@@ -116,6 +116,8 @@ prReconciliation:
   enabled: false
 activeReviewReconciliation:
   enabled: true
+loopEscalation:
+  enabled: false
 `,
     });
     expect(result.status).toBe("ok");
@@ -137,10 +139,11 @@ activeReviewReconciliation:
       sweepWatchdog: { enabled: true },
       prReconciliation: { enabled: false },
       activeReviewReconciliation: { enabled: true },
+      loopEscalation: { enabled: false },
     });
   });
 
-  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues/sweepWatchdog/prReconciliation/activeReviewReconciliation/federatedIntelligence from the normalized output when none are configured", () => {
+  it("omits maintainerRecap/ops/publicStats/draftFlow/upstreamDriftIssues/sweepWatchdog/prReconciliation/activeReviewReconciliation/loopEscalation/federatedIntelligence from the normalized output when none are configured", () => {
     const result = buildFocusManifestValidation({ content: "wantedPaths: [src/]\n" });
     expect(result.normalized).not.toHaveProperty("maintainerRecap");
     expect(result.normalized).not.toHaveProperty("ops");
@@ -150,6 +153,7 @@ activeReviewReconciliation:
     expect(result.normalized).not.toHaveProperty("sweepWatchdog");
     expect(result.normalized).not.toHaveProperty("prReconciliation");
     expect(result.normalized).not.toHaveProperty("activeReviewReconciliation");
+    expect(result.normalized).not.toHaveProperty("loopEscalation");
     expect(result.normalized).not.toHaveProperty("federatedIntelligence");
   });
 
@@ -157,6 +161,12 @@ activeReviewReconciliation:
     const result = buildFocusManifestValidation({ content: "activeReviewReconciliation:\n  enabled: true\n" });
     expect(result.warnings).toEqual([]);
     expect(result.normalized).toMatchObject({ activeReviewReconciliation: { enabled: true } });
+  });
+
+  it("includes a configured loopEscalation block in the normalized settings-preview output (#8018)", () => {
+    const result = buildFocusManifestValidation({ content: "loopEscalation:\n  enabled: true\n" });
+    expect(result.warnings).toEqual([]);
+    expect(result.normalized).toMatchObject({ loopEscalation: { enabled: true } });
   });
 
   it("includes a configured federatedIntelligence block in the normalized settings-preview output (#6998)", () => {

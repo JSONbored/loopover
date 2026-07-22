@@ -8,7 +8,9 @@
 // open condition does not re-page every tick.
 //
 // Default OFF (LOOPOVER_LOOP_ESCALATION) — flag-OFF the cron enqueues no job and this module is never invoked,
-// byte-identical to today. There is no rented-loop D1 store yet; the loader reads LOOPOVER_ACTIVE_LOOPS_JSON
+// byte-identical to today. Enable can ALSO be set as code via the loopover self-repo's `.loopover.yml
+// loopEscalation:` block (config-as-code parity, #8018) — a present manifest block wins over the env var.
+// There is no rented-loop D1 store yet; the loader reads LOOPOVER_ACTIVE_LOOPS_JSON
 // (a JSON array of ActiveLoopFacts) so a simulated escalation-worthy loop can reach a human without waiting on
 // the separate observability-store work (#4793). Callers may inject `loadActiveLoops` in tests.
 /* v8 ignore file -- thoroughly unit-tested in test/unit/loop-escalation-wire.test.ts; codecov patch still
@@ -21,6 +23,8 @@ import {
   type FleetLoopRow,
 } from "../../packages/loopover-engine/src/loop-fleet-summary";
 import { countRecentAuditEventsForActorAndTarget, recordAuditEvent } from "../db/repositories";
+import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
 
 const ALLOWED_DISCORD_HOSTS = new Set(["discord.com", "discordapp.com"]);
@@ -28,9 +32,55 @@ const DEFAULT_COOLDOWN_MINUTES = 60;
 const AUDIT_EVENT_TYPE = "loop_escalation_notification.discord";
 const AUDIT_TARGET_KEY = "fleet:loop-escalation";
 
-/** True when the scheduled fleet-escalation sweep is enabled. Default OFF. */
-export function isLoopEscalationSweepEnabled(env: { LOOPOVER_LOOP_ESCALATION?: string | undefined }): boolean {
+/** A manifest-sourced enable override (#8018) -- the top-level `loopEscalation` block of the loopover
+ *  self-repo's `.loopover.yml` (see FocusManifestLoopEscalationConfig). `present: false` (no block, or the
+ *  repo has no manifest at all) means "no override configured", not "disabled" -- the caller falls through
+ *  to the env var in that case, exactly as if this parameter were omitted. Mirrors OpsManifestOverride. */
+export type LoopEscalationManifestOverride = { present: boolean; enabled: boolean };
+
+/** True when the scheduled fleet-escalation sweep is enabled. Config-as-code (#8018): a present top-level
+ *  `loopEscalation` manifest block on the loopover self-repo wins outright; otherwise falls back to the
+ *  LOOPOVER_LOOP_ESCALATION env flag (default OFF). */
+export function isLoopEscalationSweepEnabled(
+  env: { LOOPOVER_LOOP_ESCALATION?: string | undefined },
+  manifestOverride?: LoopEscalationManifestOverride | undefined,
+): boolean {
+  if (manifestOverride?.present) return manifestOverride.enabled;
   return /^(1|true|yes|on)$/i.test((env.LOOPOVER_LOOP_ESCALATION ?? "").trim());
+}
+
+// Short in-isolate TTL cache for resolveLoopEscalationManifestOverride, mirroring ops-wire.ts: the override
+// always resolves to the SAME repo (resolveLoopOverSelfRepoFullName is fleet-wide), so a single slot
+// suffices. Called from the scheduled cron tick AND the queue's loop-escalation-sweep job.
+const LOOP_ESCALATION_MANIFEST_OVERRIDE_CACHE_TTL_MS = 60_000;
+let loopEscalationManifestOverrideCache: { override: LoopEscalationManifestOverride; at: number } | null = null;
+
+/**
+ * Config-as-code override lookup (#8018): read the top-level `loopEscalation` block off the loopover
+ * self-repo's `.loopover.yml`. A manifest load failure degrades to `{ present: false }` so a hiccup can
+ * never accidentally enable or disable the sweep. `nowMs` defaults to `Date.now()` so callers need no
+ * change, while tests can pass a deterministic value to exercise the TTL precisely.
+ */
+export async function resolveLoopEscalationManifestOverride(env: Env, nowMs: number = Date.now()): Promise<LoopEscalationManifestOverride> {
+  const hit = loopEscalationManifestOverrideCache;
+  if (hit && nowMs - hit.at < LOOP_ESCALATION_MANIFEST_OVERRIDE_CACHE_TTL_MS) return hit.override;
+  try {
+    const manifest = await loadRepoFocusManifest(env, resolveLoopOverSelfRepoFullName(env));
+    const config = manifest.loopEscalation;
+    const override = { present: config.present, enabled: config.enabled };
+    loopEscalationManifestOverrideCache = { override, at: nowMs };
+    return override;
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "loop_escalation_manifest_override_error", message: errorMessage(error).slice(0, 200) }));
+    const override = { present: false, enabled: false };
+    loopEscalationManifestOverrideCache = { override, at: nowMs };
+    return override;
+  }
+}
+
+/** Test-only: clears the cached override, mirroring clearOpsManifestOverrideCacheForTest. */
+export function clearLoopEscalationManifestOverrideCacheForTest(): void {
+  loopEscalationManifestOverrideCache = null;
 }
 
 function envString(env: Env, name: string): string | undefined {

@@ -26,6 +26,7 @@ const TOP_LEVEL_FIELDS = [
   "sweepWatchdog",
   "prReconciliation",
   "activeReviewReconciliation",
+  "loopEscalation",
   "federatedIntelligence",
 ] as const;
 

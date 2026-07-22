@@ -2,7 +2,7 @@ import { listSignalSnapshots, persistSignalSnapshot } from "../db/repositories";
 import { mapWithConcurrency } from "../queue/map-with-concurrency";
 import type { JsonValue } from "../types";
 import { nowIso } from "../utils/json";
-import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, opsConfigToJson, publicStatsConfigToJson, fairnessAnalyticsConfigToJson, draftFlowConfigToJson, upstreamDriftIssuesConfigToJson, sweepWatchdogConfigToJson, prReconciliationConfigToJson, activeReviewReconciliationConfigToJson, federatedIntelligenceConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
+import { contentLaneConfigToJson, experimentalConfigToJson, featuresConfigToJson, gateConfigToJson, MAX_FOCUS_MANIFEST_BYTES, parseFocusManifest, parseFocusManifestContent, repoDocGenerationConfigToJson, reviewConfigToJson, reviewRecapConfigToJson, maintainerRecapConfigToJson, opsConfigToJson, publicStatsConfigToJson, fairnessAnalyticsConfigToJson, draftFlowConfigToJson, upstreamDriftIssuesConfigToJson, sweepWatchdogConfigToJson, prReconciliationConfigToJson, activeReviewReconciliationConfigToJson, loopEscalationConfigToJson, federatedIntelligenceConfigToJson, settingsOverrideToJson, type FocusManifest, type FocusManifestSource, type RepoReviewContext } from "./focus-manifest";
 import { LOOPOVER_REPO_FOCUS_MANIFEST_YAML, resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import type { LocalManifestLoadResult } from "../selfhost/private-config";
 
@@ -335,6 +335,7 @@ function manifestToJson(manifest: FocusManifest): Record<string, JsonValue> {
     sweepWatchdog: sweepWatchdogConfigToJson(manifest.sweepWatchdog),
     prReconciliation: prReconciliationConfigToJson(manifest.prReconciliation),
     activeReviewReconciliation: activeReviewReconciliationConfigToJson(manifest.activeReviewReconciliation),
+    loopEscalation: loopEscalationConfigToJson(manifest.loopEscalation),
     federatedIntelligence: federatedIntelligenceConfigToJson(manifest.federatedIntelligence),
   };
 }

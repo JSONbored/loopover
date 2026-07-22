@@ -116,6 +116,8 @@ prReconciliation:
   enabled: false
 activeReviewReconciliation:
   enabled: true
+loopEscalation:
+  enabled: true
 `,
     });
     expect(result.status).toBe("ok");
@@ -137,6 +139,7 @@ activeReviewReconciliation:
       sweepWatchdog: { enabled: true },
       prReconciliation: { enabled: false },
       activeReviewReconciliation: { enabled: true },
+      loopEscalation: { enabled: true },
     });
   });
 
@@ -150,6 +153,7 @@ activeReviewReconciliation:
     expect(result.normalized).not.toHaveProperty("sweepWatchdog");
     expect(result.normalized).not.toHaveProperty("prReconciliation");
     expect(result.normalized).not.toHaveProperty("activeReviewReconciliation");
+    expect(result.normalized).not.toHaveProperty("loopEscalation");
     expect(result.normalized).not.toHaveProperty("federatedIntelligence");
   });
 

@@ -26,7 +26,7 @@ import { executeAgentRun } from "../services/agent-orchestrator";
 import { deliverNotification, evaluateNotificationEvent } from "../notifications/service";
 import { isOpsEnabled, resolveOpsManifestOverride, runOpsAlerts } from "../review/ops-wire";
 import { isSweepWatchdogEnabled, resolveSweepWatchdogManifestOverride, runSweepLivenessWatchdog } from "../review/sweep-watchdog";
-import { isLoopEscalationSweepEnabled, runLoopEscalationSweep } from "../review/loop-escalation-wire";
+import { isLoopEscalationSweepEnabled, resolveLoopEscalationManifestOverride, runLoopEscalationSweep } from "../review/loop-escalation-wire";
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, runOpenPrReconciliation } from "../review/pr-reconciliation";
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride, runActiveReviewReconciliation } from "../review/active-review-reconciliation";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
@@ -315,10 +315,14 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       }
       return;
     case "loop-escalation-sweep":
-      // Rent-a-Loop escalation (#6349, flag LOOPOVER_LOOP_ESCALATION). Defense-in-depth: the cron only
-      // ENQUEUES this when the flag is ON, but a stale in-flight job that lands after a flag-flip must still
-      // no-op. Fails safe internally — never throws into the queue.
-      if (isLoopEscalationSweepEnabled(env)) await runLoopEscalationSweep(env);
+      // Rent-a-Loop escalation (#6349, flag LOOPOVER_LOOP_ESCALATION, config-as-code override #8018).
+      // Defense-in-depth: the cron only ENQUEUES this when enabled, but a stale in-flight job that lands
+      // after a flag-flip (env OR manifest) must still no-op, so disabled does zero work here too. Fails
+      // safe internally — never throws into the queue.
+      {
+        const loopEscalationManifestOverride = await resolveLoopEscalationManifestOverride(env);
+        if (isLoopEscalationSweepEnabled(env, loopEscalationManifestOverride)) await runLoopEscalationSweep(env);
+      }
       return;
     case "reconcile-open-prs":
       // Self-heal (flag LOOPOVER_PR_RECONCILIATION). Defense-in-depth: the cron only ENQUEUES this when

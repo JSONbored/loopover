@@ -1,12 +1,17 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as repositories from "../../src/db/repositories";
 import {
+  clearLoopEscalationManifestOverrideCacheForTest,
   isLoopEscalationSweepEnabled,
   loadActiveLoopsFromEnv,
   parseActiveLoopFacts,
+  resolveLoopEscalationManifestOverride,
   runLoopEscalationSweep,
 } from "../../src/review/loop-escalation-wire";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
+
+const SELF_REPO = "JSONbored/loopover";
 
 describe("isLoopEscalationSweepEnabled (#6349)", () => {
   it("defaults OFF and accepts the standard truthy env forms", () => {
@@ -16,6 +21,77 @@ describe("isLoopEscalationSweepEnabled (#6349)", () => {
     for (const on of ["1", "true", "yes", "on", "TRUE", "On"]) {
       expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: on })).toBe(true);
     }
+  });
+
+  it("a present manifest override wins outright over the env flag, in both directions (#8018)", () => {
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "false" }, { present: true, enabled: true })).toBe(true);
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "true" }, { present: true, enabled: false })).toBe(false);
+  });
+
+  it("falls back to the env flag when the manifest override is not present", () => {
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "true" }, { present: false, enabled: false })).toBe(true);
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "false" }, undefined)).toBe(false);
+  });
+});
+
+describe("resolveLoopEscalationManifestOverride — config-as-code lookup (#8018)", () => {
+  beforeEach(() => {
+    clearLoopEscalationManifestOverrideCacheForTest();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the self-repo's configured loopEscalation block when present", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: true } });
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: true, enabled: true });
+  });
+
+  it("returns present: false when the self-repo has no loopEscalation block configured", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { wantedPaths: ["src/"] });
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: false, enabled: false });
+  });
+
+  it("degrades to present: false (never throws) when the manifest load itself fails", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/"signal_snapshots"|signal_snapshots/i.test(sql)) throw new Error("poisoned query");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: false, enabled: false });
+    expect(warnings.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_manifest_override_error"))).toBe(true);
+  });
+
+  it("within the 60s TTL, reuses the cached override instead of re-reading the manifest", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: true } });
+    const t0 = Date.parse("2026-07-22T00:00:00Z");
+    expect(await resolveLoopEscalationManifestOverride(env, t0)).toEqual({ present: true, enabled: true });
+
+    env.DB.prepare = (() => {
+      throw new Error("should not be queried on a cache hit");
+    }) as typeof env.DB.prepare;
+    expect(await resolveLoopEscalationManifestOverride(env, t0 + 30_000)).toEqual({ present: true, enabled: true });
+  });
+
+  it("re-reads the manifest once the 60s TTL has elapsed", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: true } });
+    const t0 = Date.parse("2026-07-22T00:00:00Z");
+    expect(await resolveLoopEscalationManifestOverride(env, t0)).toEqual({ present: true, enabled: true });
+
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: false } });
+    expect(await resolveLoopEscalationManifestOverride(env, t0 + 60_001)).toEqual({ present: true, enabled: false });
   });
 });
 

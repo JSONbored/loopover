@@ -135,47 +135,24 @@ describe("reward-risk freshness parity with loopover-engine", () => {
     expect(result.rewardUpside.opportunityFactors.freshnessFactor).toBeGreaterThan(0.7);
   });
 
-  it("pickIssueTimestamp and issueAgeDays cover defensive timestamp branches", () => {
-    const { pickIssueTimestamp, issueAgeDays } = rewardRiskFreshnessInternals;
-    expect(
-      pickIssueTimestamp({
-        repoFullName: collab.fullName,
-        number: 1,
-        title: "t",
-        state: "open",
-        labels: [],
-        linkedPrs: [],
-        updatedAt: "2026-07-03T00:00:00.000Z",
-        createdAt: "2020-01-01T00:00:00.000Z",
-      }),
-    ).toBe("2026-07-03T00:00:00.000Z");
-    expect(
-      pickIssueTimestamp({
-        repoFullName: collab.fullName,
-        number: 2,
-        title: "t",
-        state: "open",
-        labels: [],
-        linkedPrs: [],
-        updatedAt: "   ",
-        createdAt: "2026-07-03T00:00:00.000Z",
-      }),
-    ).toBe("2026-07-03T00:00:00.000Z");
-    expect(
-      pickIssueTimestamp({
-        repoFullName: collab.fullName,
-        number: 3,
-        title: "t",
-        state: "open",
-        labels: [],
-        linkedPrs: [],
-        updatedAt: null,
-        createdAt: null,
-      }),
-    ).toBeNull();
-    expect(issueAgeDays(null)).toBe(Number.POSITIVE_INFINITY);
-    expect(issueAgeDays("not-a-date")).toBe(Number.POSITIVE_INFINITY);
-    expect(issueAgeDays("2026-07-03T00:00:00.000Z")).toBeGreaterThanOrEqual(0);
+  it("opportunityFreshnessFactor delegates to computeOpportunityFreshness for identical output (#8011)", () => {
+    const nowMs = Date.now();
+    const issuesForRisk = [
+      issue(collab.fullName, 1, "Fresh", { updatedAt: new Date(nowMs - 2 * 86_400_000).toISOString() }),
+      issue(collab.fullName, 2, "Undated", { updatedAt: null, createdAt: null }),
+    ];
+    expect(rewardRiskFreshnessInternals.opportunityFreshnessFactor(issuesForRisk, nowMs)).toBe(
+      computeOpportunityFreshness(toFreshnessIssues(issuesForRisk), nowMs),
+    );
+  });
+
+  it("opportunityFreshnessFactor is deterministic under an injected clock, with no dependence on real time (#8011)", () => {
+    const fixedNowMs = Date.parse("2026-07-10T00:00:00.000Z");
+    const issuesForRisk = [issue(collab.fullName, 1, "Fixed", { updatedAt: "2026-07-03T00:00:00.000Z" })];
+    const first = rewardRiskFreshnessInternals.opportunityFreshnessFactor(issuesForRisk, fixedNowMs);
+    const second = rewardRiskFreshnessInternals.opportunityFreshnessFactor(issuesForRisk, fixedNowMs);
+    expect(first).toBe(second);
+    expect(first).toBe(computeOpportunityFreshness(toFreshnessIssues(issuesForRisk), fixedNowMs));
   });
 });
 

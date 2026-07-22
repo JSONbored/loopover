@@ -9,6 +9,8 @@
 import type { ScorePreviewResult } from "./scoring/preview.js";
 import { buildScorePreview } from "./scoring/preview.js";
 import { computeOpportunityCompetition } from "./opportunity-competition.js";
+import { computeOpportunityFreshness } from "./opportunity-freshness.js";
+import type { FreshnessIssue } from "./opportunity-freshness.js";
 import { isSuspiciousConfiguredLabel } from "./scoring/label-match.js";
 import { isFailingCheckSummary } from "./signals/check-summary.js";
 import { nowIso } from "./utils/json.js";
@@ -908,38 +910,12 @@ function opportunityCompetitionFactor(highRiskDuplicateClusters: number, openPul
   return computeOpportunityCompetition(highRiskDuplicateClusters, openPullRequests);
 }
 
-function opportunityFreshnessFactor(issues: IssueRecord[]): number {
-  const openIssues = issues.filter((issue) => issue.state === "open");
-  if (openIssues.length === 0) return 0;
-  let mostRecentAgeDays = Number.POSITIVE_INFINITY;
-  for (const issue of openIssues) {
-    const ageDays = issueAgeDays(pickIssueTimestamp(issue));
-    if (ageDays < mostRecentAgeDays) mostRecentAgeDays = ageDays;
-  }
-  // Freshness decays exponentially: ~1.0 at 0 days, ~0.6 at 7 days, ~0.2 at 30 days, ~0.05 at 90 days.
-  return round(clamp(Math.exp(-mostRecentAgeDays / 20), 0.05, 1));
-}
-
-function isParseableIssueTimestamp(value: string): boolean {
-  return Number.isFinite(Date.parse(value));
-}
-
-function pickIssueTimestamp(issue: IssueRecord): string | null {
-  const updated = typeof issue.updatedAt === "string" ? issue.updatedAt.trim() : "";
-  if (updated && isParseableIssueTimestamp(updated)) return updated;
-
-  const created = typeof issue.createdAt === "string" ? issue.createdAt.trim() : "";
-  if (created && isParseableIssueTimestamp(created)) return created;
-
-  return null;
-}
-
-/** Unknown/unparseable timestamps floor freshness (parity with loopover-engine opportunity-freshness.ts). */
-function issueAgeDays(value: string | null): number {
-  if (!value) return Number.POSITIVE_INFINITY;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return Number.POSITIVE_INFINITY;
-  return Math.floor((Date.now() - parsed) / 86_400_000);
+// Delegates to the pure mirror rather than repeating its arithmetic (#8011), mirroring
+// opportunityCompetitionFactor's own post-#7529 delegation shape immediately above. `computeOpportunityFreshness`
+// takes an injected `nowMs` clock (this module's "no bare Date.now() in the pure calculator" discipline) so the
+// engine stays deterministic and testable; the real clock is read only here, at the call boundary.
+function opportunityFreshnessFactor(issues: IssueRecord[], nowMs: number = Date.now()): number {
+  return computeOpportunityFreshness(issues as unknown as FreshnessIssue[], nowMs);
 }
 
 function sameRepo(left: string, right: string): boolean {
@@ -990,8 +966,7 @@ function clamp(value: number, min: number, max: number): number {
 
 /* v8 ignore start -- Test-only export surface for branch coverage. */
 export const rewardRiskFreshnessInternals = {
-  pickIssueTimestamp,
-  issueAgeDays,
+  opportunityFreshnessFactor,
   bestFitLabels,
 };
 

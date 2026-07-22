@@ -112,12 +112,18 @@ describe("findStuckItems (#4827)", () => {
     expect(findStuckItems([atBound], now, max)).toEqual([]);
   });
 
-  it("ignores fresh, non-in_progress, and unparseable-lease items", () => {
+  it("ignores fresh and non-in_progress items", () => {
     const fresh = leaseItem({ identifier: "fresh", leasedAt: new Date(now - 1).toISOString() });
     const queued = leaseItem({ identifier: "queued", status: "queued", leasedAt: new Date(now - max - 5).toISOString() });
+    expect(findStuckItems([fresh, queued], now, max)).toEqual([]);
+  });
+
+  it("fails closed: sweeps an in_progress item whose leasedAt is missing or unparseable (#8007)", () => {
+    // A corrupted/hand-edited lease whose age can't be computed must be reclaimable, not stranded
+    // 'in_progress' forever -- matching claim-ledger-expiry's post-#7732 posture.
     const noLease = leaseItem({ identifier: "nolease", leasedAt: null });
     const bogus = leaseItem({ identifier: "bogus", leasedAt: "not-a-date" });
-    expect(findStuckItems([fresh, queued, noLease, bogus], now, max)).toEqual([]);
+    expect(findStuckItems([noLease, bogus], now, max)).toEqual([noLease, bogus]);
   });
 
   it("validates its arguments", () => {

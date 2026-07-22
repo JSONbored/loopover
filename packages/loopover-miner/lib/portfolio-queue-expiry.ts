@@ -21,8 +21,9 @@ function leaseAgeMs(item: QueueLeaseEntry, nowMs: number): number | null {
 
 /**
  * Return in-flight items whose lease age is strictly greater than `maxLeaseMs`. An item whose age equals
- * `maxLeaseMs` exactly is still within the window (not stuck). Items that are not 'in_progress', or whose
- * `leasedAt` is missing/unparseable, are never returned.
+ * `maxLeaseMs` exactly is still within the window (not stuck). Items that are not 'in_progress' are never
+ * returned; an item whose `leasedAt` is missing/unparseable fails closed and IS returned (swept), so a
+ * corrupted lease can't strand an item 'in_progress' forever (#8007, matching claim-ledger-expiry post-#7732).
  */
 export function findStuckItems(items: QueueLeaseEntry[], nowMs: number, maxLeaseMs: number): QueueLeaseEntry[] {
   if (!Number.isFinite(nowMs) || nowMs < 0) throw new Error("invalid_now_ms");
@@ -33,8 +34,9 @@ export function findStuckItems(items: QueueLeaseEntry[], nowMs: number, maxLease
   for (const item of items) {
     if (item?.status !== "in_progress") continue;
     const ageMs = leaseAgeMs(item, nowMs);
-    if (ageMs === null) continue;
-    if (ageMs > maxLeaseMs) stuck.push(item);
+    // Fail closed on an unparseable leasedAt (#8007): a corrupted/hand-edited row whose age can't be computed
+    // must still be reclaimable, not left 'in_progress' forever -- mirroring findExpiredClaims post-#7732.
+    if (ageMs === null || ageMs > maxLeaseMs) stuck.push(item);
   }
   return stuck;
 }

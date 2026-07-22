@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as repositories from "../../src/db/repositories";
 import {
+  clearLoopEscalationManifestOverrideCacheForTest,
   isLoopEscalationSweepEnabled,
   loadActiveLoopsFromEnv,
   parseActiveLoopFacts,
+  resolveLoopEscalationManifestOverride,
   runLoopEscalationSweep,
 } from "../../src/review/loop-escalation-wire";
+import * as loopEscalationWire from "../../src/review/loop-escalation-wire";
+import { processJob } from "../../src/queue/processors";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
 
 describe("isLoopEscalationSweepEnabled (#6349)", () => {
@@ -254,5 +259,106 @@ describe("runLoopEscalationSweep (#6349)", () => {
     expect(result.notified).toBe(false);
     expect(result.reason).toContain("discord_webhook_http_502");
     expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("loop_escalation_audit_failed"))).toBe(true);
+  });
+});
+
+
+const SELF_REPO = "JSONbored/loopover";
+
+describe("isLoopEscalationSweepEnabled — manifest override honored (#8018)", () => {
+  it("a present manifest override wins outright over the env flag, in both directions", () => {
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "false" }, { present: true, enabled: true })).toBe(true);
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "true" }, { present: true, enabled: false })).toBe(false);
+  });
+
+  it("falls back to the env flag when the manifest override is not present or omitted", () => {
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "true" }, { present: false, enabled: false })).toBe(true);
+    expect(isLoopEscalationSweepEnabled({ LOOPOVER_LOOP_ESCALATION: "false" }, undefined)).toBe(false);
+  });
+});
+
+describe("resolveLoopEscalationManifestOverride — config-as-code lookup (#8018)", () => {
+  beforeEach(() => {
+    clearLoopEscalationManifestOverrideCacheForTest();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the self-repo's configured loopEscalation block when present", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: true } });
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: true, enabled: true });
+  });
+
+  it("returns present: false when the self-repo has no loopEscalation block configured", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { wantedPaths: ["src/"] });
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: false, enabled: false });
+  });
+
+  it("degrades to present: false (never throws) when the manifest load itself fails", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (/"signal_snapshots"|signal_snapshots/i.test(sql)) throw new Error("poisoned query");
+      return realPrepare(sql);
+    }) as typeof env.DB.prepare;
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await resolveLoopEscalationManifestOverride(env)).toEqual({ present: false, enabled: false });
+    expect(warnings.mock.calls.map((c) => String(c[0])).some((line) => line.includes("loop_escalation_manifest_override_error"))).toBe(true);
+  });
+
+  it("within the 60s TTL reuses the cached override, then re-reads once it elapses", async () => {
+    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: true } });
+    const t0 = Date.parse("2026-07-16T00:00:00Z");
+    expect(await resolveLoopEscalationManifestOverride(env, t0)).toEqual({ present: true, enabled: true });
+
+    const poisoned = (() => {
+      throw new Error("should not be queried on a cache hit");
+    }) as typeof env.DB.prepare;
+    const realPrepare = env.DB.prepare;
+    env.DB.prepare = poisoned;
+    expect(await resolveLoopEscalationManifestOverride(env, t0 + 30_000)).toEqual({ present: true, enabled: true });
+
+    env.DB.prepare = realPrepare;
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: false } });
+    expect(await resolveLoopEscalationManifestOverride(env, t0 + 60_001)).toEqual({ present: true, enabled: false });
+  });
+});
+
+describe("processJob loop-escalation-sweep — re-checks the manifest override (#8018)", () => {
+  beforeEach(() => {
+    clearLoopEscalationManifestOverrideCacheForTest();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("runs the sweep when the env flag is on and no manifest override disables it", async () => {
+    const env = createTestEnv({ LOOPOVER_LOOP_ESCALATION: "true", LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { wantedPaths: ["src/"] });
+    const runSpy = vi.spyOn(loopEscalationWire, "runLoopEscalationSweep").mockResolvedValue(undefined as never);
+
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+
+    expect(runSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops an already-enqueued sweep when .loopover.yml disables it even though the env flag is still on", async () => {
+    const env = createTestEnv({ LOOPOVER_LOOP_ESCALATION: "true", LOOPOVER_DRIFT_ISSUE_REPO: SELF_REPO });
+    await upsertRepoFocusManifest(env, SELF_REPO, { loopEscalation: { enabled: false } });
+    const runSpy = vi.spyOn(loopEscalationWire, "runLoopEscalationSweep").mockResolvedValue(undefined as never);
+
+    await processJob(env, { type: "loop-escalation-sweep", requestedBy: "test" });
+
+    expect(runSpy).not.toHaveBeenCalled();
   });
 });

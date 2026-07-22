@@ -495,6 +495,17 @@ export type FocusManifestPrReconciliationConfig = {
 };
 
 /**
+ * Config-as-code override for the fleet-wide Rent-a-Loop escalation sweep cron (LOOPOVER_LOOP_ESCALATION),
+ * declared under top-level `loopEscalation:` (#6349 / #6275). Same shape and precedence as
+ * `prReconciliation:` above. Distinct from the env-var-only gate (#6349) it layers over.
+ * Not present ⇒ the caller falls back to the LOOPOVER_LOOP_ESCALATION env var.
+ */
+export type FocusManifestLoopEscalationConfig = {
+  present: boolean;
+  enabled: boolean;
+};
+
+/**
  * Config-as-code override for the active_review_tracking reconciliation sweep
  * (LOOPOVER_ACTIVE_REVIEW_RECONCILIATION), declared under top-level `activeReviewReconciliation:`
  * (#webhook-reorder-clobber). Same shape and precedence as `prReconciliation:` above -- the sweep re-checks
@@ -1216,6 +1227,7 @@ export type FocusManifest = {
   upstreamDriftIssues: FocusManifestUpstreamDriftIssuesConfig;
   sweepWatchdog: FocusManifestSweepWatchdogConfig;
   prReconciliation: FocusManifestPrReconciliationConfig;
+  loopEscalation: FocusManifestLoopEscalationConfig;
   activeReviewReconciliation: FocusManifestActiveReviewReconciliationConfig;
   federatedIntelligence: FocusManifestFederatedIntelligenceConfig;
   warnings: string[];
@@ -1397,6 +1409,11 @@ const EMPTY_PR_RECONCILIATION_CONFIG: FocusManifestPrReconciliationConfig = {
   enabled: false,
 };
 
+const EMPTY_LOOP_ESCALATION_CONFIG: FocusManifestLoopEscalationConfig = {
+  present: false,
+  enabled: false,
+};
+
 const EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG: FocusManifestActiveReviewReconciliationConfig = {
   present: false,
   enabled: false,
@@ -1436,6 +1453,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
   sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
   prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+  loopEscalation: { ...EMPTY_LOOP_ESCALATION_CONFIG },
   activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
   federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   warnings: [],
@@ -1477,6 +1495,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
     sweepWatchdog: { ...EMPTY_SWEEP_WATCHDOG_CONFIG },
     prReconciliation: { ...EMPTY_PR_RECONCILIATION_CONFIG },
+    loopEscalation: { ...EMPTY_LOOP_ESCALATION_CONFIG },
     activeReviewReconciliation: { ...EMPTY_ACTIVE_REVIEW_RECONCILIATION_CONFIG },
     federatedIntelligence: { ...EMPTY_FEDERATED_INTELLIGENCE_CONFIG },
   };
@@ -2354,6 +2373,30 @@ function parsePrReconciliationConfig(value: JsonValue | undefined, warnings: str
  *  round-trips through {@link parsePrReconciliationConfig} unchanged. Returns null when nothing is
  *  configured. */
 export function prReconciliationConfigToJson(config: FocusManifestPrReconciliationConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled };
+}
+
+/**
+ * Parse the optional top-level `loopEscalation:` mapping (#6349 / #6275). Mirrors
+ * {@link parsePrReconciliationConfig} exactly — `enabled` is the only field. Distinct from the
+ * env-var-only gate (LOOPOVER_LOOP_ESCALATION) it layers over.
+ */
+function parseLoopEscalationConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestLoopEscalationConfig {
+  if (value === undefined || value === null) return { ...EMPTY_LOOP_ESCALATION_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "loopEscalation" must be a mapping; ignoring it.');
+    return { ...EMPTY_LOOP_ESCALATION_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "loopEscalation.enabled", warnings) ?? false;
+  return { present: true, enabled };
+}
+
+/** Serialize a loopEscalation config back into the parse-compatible shape so a cached snapshot
+ *  round-trips through {@link parseLoopEscalationConfig} unchanged. Returns null when nothing is
+ *  configured. */
+export function loopEscalationConfigToJson(config: FocusManifestLoopEscalationConfig): JsonValue {
   if (!config.present) return null;
   return { enabled: config.enabled };
 }
@@ -3943,6 +3986,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     upstreamDriftIssues: parseUpstreamDriftIssuesConfig(record.upstreamDriftIssues, warnings),
     sweepWatchdog: parseSweepWatchdogConfig(record.sweepWatchdog, warnings),
     prReconciliation: parsePrReconciliationConfig(record.prReconciliation, warnings),
+    loopEscalation: parseLoopEscalationConfig(record.loopEscalation, warnings),
     activeReviewReconciliation: parseActiveReviewReconciliationConfig(record.activeReviewReconciliation, warnings),
     federatedIntelligence: parseFederatedIntelligenceConfig(record.federatedIntelligence, warnings),
     warnings,
@@ -3970,6 +4014,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.upstreamDriftIssues.present &&
     !manifest.sweepWatchdog.present &&
     !manifest.prReconciliation.present &&
+    !manifest.loopEscalation.present &&
     !manifest.activeReviewReconciliation.present &&
     !manifest.federatedIntelligence.present
   ) {

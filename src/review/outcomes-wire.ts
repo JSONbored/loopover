@@ -24,6 +24,7 @@
 // once a repo's merge precision actually drops below the floor over a real sample.
 
 import { recordAuditEvent } from "../db/repositories";
+import { createSignalStore } from "./signal-tracking-wire";
 import { tryEnqueueDecisionPackRebuild } from "../services/decision-pack";
 import { incr } from "../selfhost/metrics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
@@ -447,6 +448,32 @@ async function hasRecentOwnerReopenPendingReversal(env: Env, targetKey: string, 
   }
 }
 
+// #8101: when a reversal is recorded for a target that a `linked_issue_scope_mismatch` finding fired
+// against (fixed 30-day lookback), the human undoing of the bot action IS the human judgment on that
+// finding — record a "reversed" HumanOverrideEvent in the shared calibration module (#7982) so the
+// self-correction pipeline and the backtest primitives see it. Only this one rule and only the reversal
+// direction are wired (no "confirmed" signal exists anywhere in this codebase to mirror — see the issue's
+// Boundaries). Callers attach `.catch(() => undefined)`: like every write in this file, a SignalStore
+// failure (including a queryRuleHistory read error, which deliberately propagates) must never affect
+// whether the underlying reversal itself is recorded.
+const LINKED_ISSUE_SCOPE_MISMATCH_RULE_ID = "linked_issue_scope_mismatch";
+const LINKED_ISSUE_SCOPE_MISMATCH_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function recordLinkedIssueScopeMismatchOverride(env: Env, targetId: string): Promise<void> {
+  const store = createSignalStore(env);
+  const history = await store.queryRuleHistory(
+    LINKED_ISSUE_SCOPE_MISMATCH_RULE_ID,
+    Date.now() - LINKED_ISSUE_SCOPE_MISMATCH_LOOKBACK_MS,
+  );
+  if (!history.fired.some((event) => event.targetKey === targetId)) return;
+  await store.recordHumanOverride({
+    ruleId: LINKED_ISSUE_SCOPE_MISMATCH_RULE_ID,
+    targetKey: targetId,
+    verdict: "reversed",
+    occurredAt: nowIso(),
+  });
+}
+
 /**
  * Record a REVERSAL — a human overriding a loopover auto-action — into the eval/audit stores (the
  * ground-truth accuracy signal). Mirrors reviewbot recordReversalSignals (runtime.ts ~157/274):
@@ -510,6 +537,7 @@ export async function recordReversalSignals(
       detail: `Bot-closed PR #${pr.number} reopened by a contributor.`,
       metadata: { repoFullName, pullNumber: pr.number },
     }).catch(() => undefined);
+    await recordLinkedIssueScopeMismatchOverride(env, targetId).catch(() => undefined); // #8101
     return;
   }
 
@@ -533,6 +561,7 @@ export async function recordReversalSignals(
         detail: `Bot-closed PR #${pr.number} reopened and merged by the repo owner.`,
         metadata: { repoFullName, pullNumber: pr.number },
       }).catch(() => undefined);
+      await recordLinkedIssueScopeMismatchOverride(env, targetId).catch(() => undefined); // #8101
     }
     const reverted = parseRevertedPrNumber(pr.body);
     if (!reverted) return;

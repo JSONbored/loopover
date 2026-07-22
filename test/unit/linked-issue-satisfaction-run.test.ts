@@ -12,6 +12,8 @@ import {
   upsertRepositorySettings,
 } from "../../src/db/repositories";
 import { linkedIssueSatisfactionCacheInputFingerprint } from "../../src/review/linked-issue-satisfaction-cache-input";
+import * as signalTrackingWire from "../../src/review/signal-tracking-wire";
+import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
@@ -460,6 +462,57 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       const gate = evaluateGateCheck(adv, { linkedIssueSatisfactionGateMode: "advisory" });
       expect(gate.conclusion).not.toBe("failure");
       expect(gate.blockers).toHaveLength(0);
+    });
+
+    it("BLOCK mode + 'unaddressed' records a linked_issue_scope_mismatch fired signal in the shared calibration store (#8101)", async () => {
+      stubIssueFetch();
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const env = enabledEnv(run);
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+
+      const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
+      expect(history.fired).toHaveLength(1);
+      expect(history.fired[0]).toMatchObject({
+        ruleId: "linked_issue_scope_mismatch",
+        targetKey: "acme/widgets#7",
+        outcome: "unaddressed",
+        metadata: { confidence: 0.9 },
+      });
+      expect(history.overrides).toEqual([]); // firing alone is never an override
+    });
+
+    it("ADVISORY mode records NO fired signal for the same 'unaddressed' verdict (#8101 — no finding, no signal)", async () => {
+      stubIssueFetch();
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const env = enabledEnv(run);
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: advisoryMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).fired).toEqual([]);
+    });
+
+    it("BLOCK mode records NO fired signal for 'addressed' or 'partial' verdicts (#8101)", async () => {
+      for (const status of ["addressed", "partial"] as const) {
+        stubIssueFetch();
+        const run = vi.fn(async () => ({ response: satisfactionJson({ status }) }));
+        const env = enabledEnv(run);
+        await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+        expect((await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0)).fired).toEqual([]);
+      }
+    });
+
+    it("degrades silently when the SignalStore write rejects: the finding still pushes and nothing throws (#8101)", async () => {
+      stubIssueFetch();
+      vi.spyOn(signalTrackingWire, "createSignalStore").mockReturnValue({
+        recordRuleFired: async () => {
+          throw new Error("signal store down");
+        },
+        recordHumanOverride: async () => undefined,
+        queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+      });
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const adv = advisory();
+      const result = await runLinkedIssueSatisfactionForAdvisory(enabledEnv(run), { mode: "live", settings: blockMode, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+      expect(result).toMatchObject({ status: "unaddressed" }); // normal return value unaffected
+      expect(adv.findings).toHaveLength(1); // the blocker still lands
     });
 
     it("BLOCK mode: an 'addressed'/'partial' verdict never pushes a finding (nothing to block)", async () => {

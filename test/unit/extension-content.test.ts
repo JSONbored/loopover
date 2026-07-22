@@ -25,18 +25,6 @@ describe("extension content script", () => {
     // Issue pages are out of scope — no kind:"issue" classification, and no match.
     expect(internals.matchGitHubPageTarget("/JSONbored/loopover/issues/145")).toBeNull();
     expect(internals.matchGitHubPageTarget("/JSONbored/loopover/pulls")).toBeNull();
-    expect(internals.matchPullRequestTarget("/JSONbored/loopover/pull/146")).toEqual({
-      owner: "JSONbored",
-      repo: "loopover",
-      pullNumber: 146,
-    });
-    expect(internals.matchPullRequestTarget("/JSONbored/loopover/pull/146/files")).toEqual({
-      owner: "JSONbored",
-      repo: "loopover",
-      pullNumber: 146,
-    });
-    expect(internals.matchPullRequestTarget("/JSONbored/loopover/issues/146")).toBeNull();
-    expect(internals.matchPullRequestTarget("/JSONbored/loopover")).toBeNull();
   });
 
   it("renders private pull-context sections and escapes API text", () => {
@@ -134,7 +122,6 @@ function loadContentInternals(overrides: Record<string, unknown> = {}) {
     matchGitHubPageTarget: (
       pathname: string,
     ) => { kind: "pull_request"; owner: string; repo: string; pullNumber: number } | null;
-    matchPullRequestTarget: (pathname: string) => { owner: string; repo: string; pullNumber: number } | null;
     createOverlayLoader: (container: { querySelector: (selector: string) => unknown }, target: unknown) => () => Promise<void>;
     renderPullContext: (payload: unknown) => string;
   };

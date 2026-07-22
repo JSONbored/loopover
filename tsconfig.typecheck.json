@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // test/unit/miner-replay-snapshot.test.ts imports packages/loopover-miner/lib/replay-snapshot.ts
+    // directly (not .js) so Codecov patch grades the .ts diff after build:miner writes a sibling
+    // gitignored .js (#7796 / #7992). Scoped here — not the root tsconfig — so packages that extend
+    // the root and emit compiled output (loopover-engine, loopover-miner, loopover-mcp, …) are
+    // unaffected (TS5096: allowImportingTsExtensions requires noEmit or emitDeclarationOnly).
+    "allowImportingTsExtensions": true
+  }
+}

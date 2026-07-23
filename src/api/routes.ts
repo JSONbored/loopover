@@ -319,6 +319,7 @@ import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } 
 import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
+import { loadPublicRulePrecision } from "../review/public-rule-precision";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
 import { isSatisfactionFloorAutotuneEnabled, loadSatisfactionFloorStatus, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { loadLiveKnobStatuses } from "../services/knob-loosening-run";
@@ -1262,14 +1263,17 @@ export function createApp() {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
     try {
-      const [stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend] = await Promise.all([
+      const [stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision] = await Promise.all([
         getPublicStats(c.env),
         loadPublicAccuracyTrend(c.env),
         loadPublicReuseRateTrend(c.env),
         loadPublicReviewVolumeTrend(c.env),
+        // #8230: measured per-rule precision + the reproducibility freeze point. Same flag, same cache,
+        // same one-surface posture as the sibling trends.
+        loadPublicRulePrecision(c.env),
       ]);
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json({ ...stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend });
+      return c.json({ ...stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision });
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }

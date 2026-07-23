@@ -111,6 +111,15 @@ export const PublicStatsSchema = z
       minutesSaved: z.number(),
     }),
     weekly: z.object({ reviewed: z.number(), merged: z.number() }),
+    /** Measured per-rule precision over the trailing window (#8230): decided human verdicts per rule with
+     *  confirmed/decided precision, null below the public sample floor — plus all three reversal-shape
+     *  counts and the latest backtest run's corpus checksum (the independently-verifiable freeze point). */
+    rulePrecision: z.object({
+      windowDays: z.number(),
+      rules: z.array(z.object({ ruleId: z.string(), decided: z.number(), precision: z.number().nullable() })),
+      reversals: z.object({ reopened: z.number(), reverted: z.number(), superseded: z.number() }),
+      latestBacktestRun: z.object({ corpusChecksum: z.string(), at: z.string() }).nullable(),
+    }),
     byProject: z.array(
       z.object({
         project: z.string(),

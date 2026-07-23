@@ -576,6 +576,78 @@
               "windowDays",
               "gamingFlagsCaught"
             ]
+          },
+          "rulePrecision": {
+            "type": "object",
+            "properties": {
+              "windowDays": {
+                "type": "number"
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ruleId": {
+                      "type": "string"
+                    },
+                    "decided": {
+                      "type": "number"
+                    },
+                    "precision": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "ruleId",
+                    "decided",
+                    "precision"
+                  ]
+                }
+              },
+              "reversals": {
+                "type": "object",
+                "properties": {
+                  "reopened": {
+                    "type": "number"
+                  },
+                  "reverted": {
+                    "type": "number"
+                  },
+                  "superseded": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "reopened",
+                  "reverted",
+                  "superseded"
+                ]
+              },
+              "latestBacktestRun": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "corpusChecksum": {
+                    "type": "string"
+                  },
+                  "at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "corpusChecksum",
+                  "at"
+                ]
+              }
+            },
+            "required": [
+              "windowDays",
+              "rules",
+              "reversals",
+              "latestBacktestRun"
+            ]
           }
         },
         "required": [
@@ -583,6 +655,7 @@
           "updatedAt",
           "totals",
           "weekly",
+          "rulePrecision",
           "byProject",
           "fleetAccuracy",
           "accuracyTrend",

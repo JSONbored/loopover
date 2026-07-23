@@ -83,6 +83,15 @@ describe("GET /v1/public/stats (#1059)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("max-age=60");
 
+    // #8230: the measured-accuracy block rides the same surface, same flag, same cache.
+    const withPrecision = (await res.clone().json()) as {
+      rulePrecision: { windowDays: number; rules: unknown[]; reversals: Record<string, number>; latestBacktestRun: unknown };
+    };
+    expect(withPrecision.rulePrecision.windowDays).toBe(90);
+    // seed() records one reversal_reopened — the block reads the same ledger the totals do.
+    expect(withPrecision.rulePrecision.reversals).toEqual({ reopened: 1, reverted: 0, superseded: 0 });
+    expect(withPrecision.rulePrecision.latestBacktestRun).toBeNull();
+
     const body = (await res.json()) as {
       totals: Record<string, number | null>;
       weekly: { reviewed: number; merged: number };

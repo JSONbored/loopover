@@ -7,12 +7,11 @@ Operator-facing guide for the **optional** hosted discovery-index plane. This is
 half of that roadmap item: how a `loopover-miner` instance opts in, what it may send, and what
 never leaves the operator's machine.
 
-<Callout variant="warn" title="Provisional: opt-in wiring env vars are still TBD">
-  The request/response **contract shape**, the telemetry event schema, and the client soft-claim
-  request builder have now **shipped** as real, tested modules (see below). What remains
-  **provisional** is only the operator-facing **opt-in wiring** — the env var names further below
-  are still TBD pending the hosted server and the miner-side opt-in. Do not treat those env var
-  names as stable API yet.
+<Callout variant="info" title="Shipped and live">
+  The request/response contract, the client
+  (`packages/loopover-miner/lib/discovery-index-client.ts`), and the hosted server
+  (`packages/discovery-index`, deployed at `discovery.loopover.ai`) are all real and running. The
+  walkthrough below reflects the actual opt-in mechanism, not a plan.
 </Callout>
 
 <FeatureRow
@@ -25,7 +24,7 @@ never leaves the operator's machine.
     {
       title: "Telemetry event schema",
       description:
-        "Anonymized telemetry event schema for the optional hosted plane. Shipped (packages/loopover-engine/src/miner-telemetry.ts).",
+        "Event schema shipped (packages/loopover-engine/src/miner-telemetry.ts). See the Telemetry section below for what's actually wired up today vs. planned.",
     },
     {
       title: "Soft-claim request builder",
@@ -35,7 +34,7 @@ never leaves the operator's machine.
     {
       title: "Hosted server + opt-in wiring",
       description:
-        "Still open -- the actual blocker for the opt-in mechanism below; the env var names remain TBD until it lands.",
+        "Shipped and deployed at discovery.loopover.ai (packages/discovery-index, Cloudflare Container + Worker). Miner-side opt-in wiring shipped in discovery-index-client.ts.",
     },
   ]}
 />
@@ -64,9 +63,9 @@ defaults**:
 />
 
 <Callout variant="warn">
-  Do **not** copy Orb's wording for this plane. Orb's header comment is explicit: "Export is
-  ALWAYS ON… there is no opt-out flag" aside from `ORB_AIR_GAP`. The discovery plane is the
-  opposite: **no hosted traffic unless the operator turns it on.**
+  Do **not** copy Orb's wording for this plane. Orb's header comment is explicit: "Export is ALWAYS
+  ON… there is no opt-out flag" aside from `ORB_AIR_GAP`. The discovery plane is the opposite: **no
+  hosted traffic unless the operator turns it on.**
 </Callout>
 
 ## What the plane is for
@@ -79,57 +78,67 @@ The plane:
 
 - Serves **public GitHub metadata only** (issue titles, labels, counts, timestamps, URLs — the
   same class of fields Phase 1 already uses locally).
-- May coordinate **soft claims** across the fleet (server-side dedup is still open; the client
-  request shape has shipped).
+- May coordinate **soft claims** across the fleet, server-side dedup included.
 - Never receives source trees, diffs, tokens, or write credentials.
 
 Local discovery (`opportunity-fanout` + `opportunity-ranker`) continues to work with **zero**
 hosted configuration.
 
-## Opt-in mechanism (env var names still TBD)
+## Opt-in mechanism
 
-The request/response contract has now shipped (see the scope table above), but the
-operator-facing opt-in env vars below are **not implemented yet** — treat them as
-**documentation placeholders** for the shape operators should expect once the opt-in wiring
-lands:
+Real, shipped env vars, read in `discovery-index-client.ts`:
 
 <FeatureRow
   items={[
     {
-      title: "LOOPOVER_MINER_DISCOVERY_PLANE (provisional)",
+      title: "LOOPOVER_MINER_DISCOVERY_PLANE",
       description:
-        "Default unset / false. Master opt-in. When not truthy (1, true, yes, on), the miner must not call the hosted index or emit discovery-plane telemetry.",
+        "Default unset / false. Master opt-in. When not truthy (1, true, yes, on), the miner never calls the hosted index and never emits discovery-plane telemetry.",
     },
     {
-      title: "LOOPOVER_MINER_DISCOVERY_INDEX_URL (provisional)",
+      title: "LOOPOVER_MINER_DISCOVERY_INDEX_URL",
       description:
-        "Default unset. Hosted index base URL. Required when the plane is enabled; ignored when opt-in is off.",
+        "Default unset. Hosted index base URL -- set to https://discovery.loopover.ai for the maintainer-run instance, or point at your own deployment of packages/discovery-index. Required when the plane is enabled.",
     },
     {
-      title: "LOOPOVER_MINER_DISCOVERY_TELEMETRY (provisional)",
+      title: "LOOPOVER_MINER_DISCOVERY_SHARED_SECRET",
       description:
-        "Default unset / false. Separate opt-in for anonymized operational telemetry. Plane queries can stay on while telemetry stays off.",
+        "Default unset. Bearer token sent as Authorization: Bearer <value> on every hosted-index request. The maintainer-run instance at discovery.loopover.ai requires one -- ask the operator running it for a value.",
+    },
+    {
+      title: "LOOPOVER_MINER_DISCOVERY_TELEMETRY",
+      description:
+        "Default unset / false. Separate opt-in for operational telemetry. Plane queries can stay on while telemetry stays off. Currently local-only -- see Telemetry below.",
     },
   ]}
 />
 
-**Truthy-string convention** (when implemented): `/^(1|true|yes|on)$/i`, matching other
-`LOOPOVER_*` flags in this repo.
+**Truthy-string convention:** `/^(1|true|yes|on)$/i`, matching other `LOOPOVER_*` flags in this
+repo.
 
 **Operator checklist (enabled plane):**
 
-**1.** Set `LOOPOVER_MINER_DISCOVERY_PLANE=true` (exact name may change).
+**1.** Set `LOOPOVER_MINER_DISCOVERY_PLANE=true`.
 
-**2.** Set `LOOPOVER_MINER_DISCOVERY_INDEX_URL` to the operator-trusted index endpoint.
+**2.** Set `LOOPOVER_MINER_DISCOVERY_INDEX_URL=https://discovery.loopover.ai` (or your own
+deployment's URL).
 
-**3.** Optionally set `LOOPOVER_MINER_DISCOVERY_TELEMETRY=true` if you want anonymized
-operational events for the hosted service — not required for index queries.
+**3.** Set `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` if the index you're pointing at requires one.
 
-**4.** Keep `GITHUB_TOKEN` (or equivalent) on the instance only; never configure tokens intended
+**4.** Optionally set `LOOPOVER_MINER_DISCOVERY_TELEMETRY=true` for local operational log lines
+about plane usage — not required for index queries.
+
+**5.** Keep `GITHUB_TOKEN` (or equivalent) on the instance only; never configure tokens intended
 for the hosted plane to receive.
 
-With opt-in off (default), behavior is byte-identical to today: local SQLite ledgers, local
-fan-out, no hosted calls.
+**6.** Run `loopover-miner discover <owner/repo> --dry-run --json` and check the response for
+hosted-index candidates alongside your local fan-out to confirm the plane is actually being
+queried.
+
+Every call in the client is fail-open: a network error, timeout, or non-2xx response degrades
+silently to "no supplement" rather than failing the miner's own discover/attempt work. With
+opt-in off (default), behavior is byte-identical to today: local SQLite ledgers, local fan-out,
+no hosted calls.
 
 ## Contrast with local soft-claims today
 
@@ -158,16 +167,20 @@ operators:
   telemetry payloads.
 - **No compensation signals in the plane** — raw reward values, wallet addresses, hotkeys, trust
   scores, or private rankings never cross this boundary.
-- **Telemetry is a second opt-in** — even with the plane enabled, anonymized telemetry remains
-  separately gated.
-- **Anonymized identifiers only** — when telemetry ships, repo/issue correlation uses HMAC-hashed
-  identifiers keyed by a **per-instance dedicated secret** the collector never holds (same
-  posture as `getOrCreateAnonSecret` / `hmacField` in `src/selfhost/orb-collector.ts` — key
-  separation from GitHub App / webhook secrets).
-- **Low-cardinality reason buckets** — any free-text-adjacent telemetry fields use bucketed
-  categories (Orb's `bucketReasonCode` pattern), not raw maintainer or model prose.
+- **Telemetry is a second opt-in** — even with the plane enabled, telemetry remains separately
+  gated behind `LOOPOVER_MINER_DISCOVERY_TELEMETRY`.
 - **Core miner still works offline** — claims, plans, queues, and local ledgers do not require
   the hosted plane; `loopover-miner doctor` / `status` remain no-network commands.
+
+### Telemetry: local today, not yet sent to the hosted service
+
+`recordDiscoveryTelemetry` (`discovery-index-client.ts`) currently emits a structured **local log
+line** (`event`, `outcome` — both fixed, low-cardinality strings; no repo/issue identifiers, no
+free text) via the miner's own logger. No hosted telemetry-collector endpoint exists yet, so
+nothing about telemetry events leaves the operator's machine today regardless of this flag. The
+originally planned design called for HMAC-hashed repo/issue correlation identifiers once a real
+collector ships — that collector doesn't exist yet, so there is nothing to hash today; this
+section will be updated again once it does.
 
 ### Never included (client → hosted plane)
 
@@ -184,8 +197,9 @@ discovery-plane domain:
 
 ### Never retained by the hosted service (server-side)
 
-The server operating doc (maintainer-only) will restate the same boundary: **never holds source
-or actor-capable credentials.** This client guide does not define server retention policy.
+The server (`packages/discovery-index`) never holds source or actor-capable credentials — see
+that package's own README and operations docs for its full boundary and incident-response
+documentation. This client guide does not define server retention policy in detail.
 
 ## Related docs
 

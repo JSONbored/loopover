@@ -7,6 +7,8 @@ import {
   genericLiveKnobs,
   getAiReviewCloseConfidenceOverride,
   getKnobOverride,
+  getKnobOverrideForRepo,
+  repoKnobOverrideFlagKey,
   isKnobAutotuneEnabled,
   loadKnobStatus,
   loadLiveKnobStatuses,
@@ -127,6 +129,26 @@ describe("isKnobAutotuneEnabled / getKnobOverride (#8176 double gating)", () => 
       await setOverrideRow(env, AI_KNOB.overrideFlagKey, bad);
       expect(await getKnobOverride(env, AI_KNOB)).toBeNull();
     }
+  });
+
+  it("per-repo overrides (#8216): the repo's earned row outranks global, invalid repo rows fall through, flag-off zeroes every scope", async () => {
+    const env = enabledEnv();
+    await setOverrideRow(env, AI_KNOB.overrideFlagKey, "0.9"); // global
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "acme/widgets"), "0.85"); // repo-earned
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "acme/broken"), "0.99"); // invalid: above shipped
+
+    // Repo row wins for its repo; other repos inherit global; invalid repo row falls through to global.
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/widgets")).toBe(0.85);
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/other")).toBe(0.9);
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/broken")).toBe(0.9);
+    // Null repo = the plain global read; convenience wrapper threads the repo.
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, null)).toBe(0.9);
+    expect(await getAiReviewCloseConfidenceOverride(env, "acme/widgets")).toBe(0.85);
+    expect(await getAiReviewCloseConfidenceOverride(env)).toBe(0.9);
+
+    // The knob's flag gates EVERY scope.
+    const off = { ...env, AI_REVIEW_CLOSE_CONFIDENCE_AUTOTUNE_ENABLED: "false" as never } as Env;
+    expect(await getKnobOverrideForRepo(off, AI_KNOB, "acme/widgets")).toBeNull();
   });
 
   it("fails safe (null) when the flag-store read throws", async () => {
@@ -261,6 +283,7 @@ describe("loadKnobStatus / loadLiveKnobStatuses (#8161 generalized)", () => {
     await setOverrideRow(env, AI_KNOB.overrideFlagKey, "0.9");
     const off = await loadKnobStatus(env, AI_KNOB);
     expect(off).toMatchObject({ knobId: "ai_review_close_confidence", flagEnabled: false, storedOverride: 0.9, liveValue: AI_KNOB.shippedValue });
+    expect(off.repoOverrides).toEqual([]);
 
     const on = await loadKnobStatus({ ...env, AI_REVIEW_CLOSE_CONFIDENCE_AUTOTUNE_ENABLED: "true" as never } as Env, AI_KNOB);
     expect(on).toMatchObject({ flagEnabled: true, liveValue: 0.9 });
@@ -268,6 +291,15 @@ describe("loadKnobStatus / loadLiveKnobStatuses (#8161 generalized)", () => {
     // An out-of-bounds row is reported as no override at all (same validation as the consumption read).
     await setOverrideRow(env, AI_KNOB.overrideFlagKey, "0.99");
     expect((await loadKnobStatus(env, AI_KNOB)).storedOverride).toBeNull();
+
+    // Per-repo listing (#8216): validated rows only, sorted by repo, invalid rows silently excluded.
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "zeta/repo"), "0.9");
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "acme/widgets"), "0.85");
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "bad/row"), "not-a-number");
+    expect((await loadKnobStatus(env, AI_KNOB)).repoOverrides).toEqual([
+      { repoFullName: "acme/widgets", value: 0.85 },
+      { repoFullName: "zeta/repo", value: 0.9 },
+    ]);
   });
 
   it("projects applied history from the knob's events — reading BOTH proposal spellings — and keeps corrupt rows visible as nulls", async () => {

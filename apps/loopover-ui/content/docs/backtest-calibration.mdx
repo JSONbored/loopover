@@ -80,6 +80,23 @@ npx tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output corpus.jso
 
 Both CLIs are strictly read-only against the database.
 
+## Override precedence (per-repo autonomy)
+
+Earned knob overrides resolve through one seam with one precedence order — most specific wins, and an
+explicit configuration choice always beats anything the system earned on its own:
+
+| Priority | Source | Where it lives |
+| --- | --- | --- |
+| 1 | Explicit per-repo `.loopover.yml` setting (e.g. `gate.aiReview.closeConfidence`) | config-as-code, resolved into settings |
+| 2 | Per-repo **earned** override | `system_flags` key `<knob>:repo:<owner/repo>` |
+| 3 | Global **earned** override | `system_flags` key `<knob>` |
+| 4 | Shipped default | the constant beside the rule |
+
+Every earned scope applies the identical loosening-only validation (strictly below shipped, at or above
+the hard minimum), and the knob's autotune flag gates *all* earned scopes at once — turning the flag off
+restores shipped behavior everywhere instantly, no cleanup. The knobs status endpoint lists each knob's
+per-repo overrides so a lingering row is always visible.
+
 ## Counterfactual replay (design)
 
 Deterministic rule changes replay against history before they land; the same discipline is being

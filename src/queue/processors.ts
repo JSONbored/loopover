@@ -1542,7 +1542,7 @@ export async function sweepRepoRegate(
   // unchanged.
   // #8176: the global close-confidence default-override, resolved once for the sweep (same value the main
   // webhook path threads; an explicit per-repo setting still wins inside gateCheckPolicy).
-  const sweepCloseConfidenceOverride = await getAiReviewCloseConfidenceOverride(env);
+  const sweepCloseConfidenceOverride = await getAiReviewCloseConfidenceOverride(env, repoFullName);
   for (const [index, pr] of candidates.entries()) {
     const others = openPullRequests.filter(
       (other) => other.number !== pr.number,
@@ -10387,7 +10387,8 @@ async function maybePublishPrPublicSurface(
       authorHistory,
       gateSizeContext,
       // #8176: backtest-gated global default for the close-confidence floor (explicit per-repo wins inside).
-      await getAiReviewCloseConfidenceOverride(env),
+      // #8216: the repo's own earned override outranks the global one; explicit settings still win inside.
+      await getAiReviewCloseConfidenceOverride(env, repoFullName),
     );
     gateEvaluation = await withReviewPipelineSpan(
       "selfhost.review.gate",
@@ -11880,7 +11881,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env)));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env, req.repoFullName)));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
@@ -12111,7 +12112,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env)));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env, req.repoFullName)));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") {
     const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", loopoverFooter(env)].join("\n"));

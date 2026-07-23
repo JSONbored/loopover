@@ -42,8 +42,38 @@ export function isKnobAutotuneEnabled(env: Env, knob: LoosenableKnob): boolean {
  */
 export async function getKnobOverride(env: Env, knob: LoosenableKnob): Promise<number | null> {
   if (!isKnobAutotuneEnabled(env, knob)) return null;
+  return readValidatedOverrideRow(env, knob, knob.overrideFlagKey);
+}
+
+/** Per-repo override storage (#8216): one system_flags key per (knob, repo) beside the global key. The
+ *  repo rides inside the key — migration-free on the schemaless flag table, and trivially enumerable
+ *  with one LIKE for the status surface. */
+export function repoKnobOverrideFlagKey(knob: LoosenableKnob, repoFullName: string): string {
+  return `${knob.overrideFlagKey}:repo:${repoFullName}`;
+}
+
+/**
+ * The EARNED-override resolution seam (#8216) — one function, one precedence order:
+ *   explicit per-repo `.loopover.yml` setting  (resolved upstream into settings; callers apply it FIRST
+ *   via the `settings.x ?? override` chain in gateCheckPolicy — it never reaches this function)
+ *   > per-repo earned override   (this function, when `repoFullName` is given and its row validates)
+ *   > global earned override     (this function's fallback)
+ *   > shipped default            (the caller's final ?? in the pure twins).
+ * Validation is identical per scope (strictly below shipped, at/above the hard minimum), and the knob's
+ * autotune flag gates EVERY scope — flipping it off restores shipped behavior everywhere instantly.
+ */
+export async function getKnobOverrideForRepo(env: Env, knob: LoosenableKnob, repoFullName: string | null): Promise<number | null> {
+  if (!isKnobAutotuneEnabled(env, knob)) return null;
+  if (repoFullName !== null) {
+    const repoValue = await readValidatedOverrideRow(env, knob, repoKnobOverrideFlagKey(knob, repoFullName));
+    if (repoValue !== null) return repoValue;
+  }
+  return readValidatedOverrideRow(env, knob, knob.overrideFlagKey);
+}
+
+async function readValidatedOverrideRow(env: Env, knob: LoosenableKnob, key: string): Promise<number | null> {
   try {
-    const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(knob.overrideFlagKey).first<{ value: string }>();
+    const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(key).first<{ value: string }>();
     if (!row) return null;
     const parsed = Number(row.value);
     if (!Number.isFinite(parsed) || parsed >= knob.shippedValue || parsed < knob.hardMinimum) return null;
@@ -53,10 +83,11 @@ export async function getKnobOverride(env: Env, knob: LoosenableKnob): Promise<n
   }
 }
 
-/** The #8176 consumption read: the validated global default-override for the AI close-confidence floor.
- *  Threaded into gateCheckPolicy as its LAST-resort default — an explicit per-repo setting always wins. */
-export async function getAiReviewCloseConfidenceOverride(env: Env): Promise<number | null> {
-  return getKnobOverride(env, LOOSENABLE_KNOBS.ai_review_close_confidence!);
+/** The #8176 consumption read: the validated default-override for the AI close-confidence floor.
+ *  Threaded into gateCheckPolicy as its LAST-resort default — an explicit per-repo setting always wins.
+ *  With a `repoFullName` (#8216) the repo's own earned override outranks the global one. */
+export async function getAiReviewCloseConfidenceOverride(env: Env, repoFullName: string | null = null): Promise<number | null> {
+  return getKnobOverrideForRepo(env, LOOSENABLE_KNOBS.ai_review_close_confidence!, repoFullName);
 }
 
 export type KnobLooseningRunResult =
@@ -142,6 +173,8 @@ export type KnobAppliedEntry = {
   heldOutVerdict: string | null;
 };
 
+export type KnobRepoOverride = { repoFullName: string; value: number };
+
 export type KnobStatus = {
   knobId: string;
   flagEnabled: boolean;
@@ -152,6 +185,9 @@ export type KnobStatus = {
   /** The RAW stored override row (validated), reported even when the flag is off — an operator needs to
    *  see a lingering row that would take effect the moment the flag flips. */
   storedOverride: number | null;
+  /** Per-repo earned overrides (#8216), validated rows only, sorted by repo — an operator must see every
+   *  scope that would take effect the moment the flag is on. */
+  repoOverrides: KnobRepoOverride[];
   applied: KnobAppliedEntry[];
 };
 
@@ -185,6 +221,23 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     }
   } catch {
     storedOverride = null;
+  }
+
+  const repoOverrides: KnobRepoOverride[] = [];
+  try {
+    const prefix = `${knob.overrideFlagKey}:repo:`;
+    const rows = await env.DB.prepare("SELECT key, value FROM system_flags WHERE key LIKE ?")
+      .bind(`${prefix}%`)
+      .all<{ key: string; value: string }>();
+    /* v8 ignore next -- same defined-results note as the applied-history read below. */
+    for (const row of rows.results ?? []) {
+      const parsed = Number(row.value);
+      if (!Number.isFinite(parsed) || parsed >= knob.shippedValue || parsed < knob.hardMinimum) continue;
+      repoOverrides.push({ repoFullName: row.key.slice(prefix.length), value: parsed });
+    }
+    repoOverrides.sort((a, b) => a.repoFullName.localeCompare(b.repoFullName));
+  } catch {
+    /* degrade to an empty listing -- the endpoint must not throw on a read blip */
   }
 
   const applied: KnobAppliedEntry[] = [];
@@ -222,6 +275,7 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     shippedValue: knob.shippedValue,
     liveValue: flagEnabled && storedOverride !== null ? storedOverride : knob.shippedValue,
     storedOverride,
+    repoOverrides,
     applied,
   };
 }

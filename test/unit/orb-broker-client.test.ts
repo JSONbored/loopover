@@ -4,6 +4,7 @@ import {
   createOrbRelayRegistrationState,
   drainOrbRelay,
   fetchBrokeredInstallationToken,
+  fetchBrokeredStoredSecret,
   isOrbBrokerMode,
   ORB_RELAY_REGISTER_RETRY_BACKOFF_MS,
   ORB_RELAY_REGISTER_UNHEALTHY_FAILURE_STREAK,
@@ -111,6 +112,52 @@ describe("fetchBrokeredInstallationToken", () => {
   it("throws when the broker response has no token", async () => {
     const fetchImpl = (async () => Response.json({ installationId: 1 })) as typeof fetch;
     await expect(fetchBrokeredInstallationToken({ ORB_ENROLLMENT_SECRET: "s" }, fetchImpl)).rejects.toThrow(/did not include a token/);
+  });
+});
+
+describe("fetchBrokeredStoredSecret (#8202)", () => {
+  it("exchanges the tenant secret token for a stored secret (default broker URL + Bearer token)", async () => {
+    const { fetchImpl, calls } = captureFetch(Response.json({ secretValue: "postgres://tenant-acme:hunter2@neon/acme", secretType: "tenant_db_credential" }));
+    const out = await fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "orbsec_x" }, fetchImpl);
+    expect(out).toEqual({ secretValue: "postgres://tenant-acme:hunter2@neon/acme", secretType: "tenant_db_credential" });
+    expect(calls[0]?.url).toBe("https://api.loopover.ai/v1/orb/token");
+    expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer orbsec_x");
+    expect(calls[0]?.init?.method).toBe("POST");
+  });
+
+  it("respects a custom ORB_BROKER_URL, same as fetchBrokeredInstallationToken", async () => {
+    const { fetchImpl, calls } = captureFetch(Response.json({ secretValue: "v", secretType: "tenant_db_credential" }));
+    await fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "s", ORB_BROKER_URL: "https://broker.example/" }, fetchImpl);
+    expect(calls[0]?.url).toBe("https://broker.example/v1/orb/token");
+  });
+
+  it("rejects unsafe broker URLs via the same shared validation fetchBrokeredInstallationToken uses", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("fetch should not be called for an unsafe broker URL");
+    }) as typeof fetch;
+    await expect(fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "s", ORB_BROKER_URL: "http://broker.example" }, fetchImpl)).rejects.toThrow(/must use https/);
+  });
+
+  it("sends an empty Bearer when no token is set (defensive ?? branch)", async () => {
+    const { fetchImpl, calls } = captureFetch(Response.json({ secretValue: "v", secretType: "t" }));
+    await fetchBrokeredStoredSecret({}, fetchImpl);
+    expect((calls[0]?.init?.headers as Record<string, string>).authorization).toBe("Bearer ");
+  });
+
+  it("defaults secretType to an empty string when the broker response omits it (defensive ?? branch)", async () => {
+    const { fetchImpl } = captureFetch(Response.json({ secretValue: "v" }));
+    const out = await fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "s" }, fetchImpl);
+    expect(out).toEqual({ secretValue: "v", secretType: "" });
+  });
+
+  it("throws on a non-OK broker response (e.g. 401 invalid_enrollment)", async () => {
+    const fetchImpl = (async () => new Response("nope", { status: 401 })) as typeof fetch;
+    await expect(fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "s" }, fetchImpl)).rejects.toThrow(/401/);
+  });
+
+  it("throws when the broker response has no secretValue", async () => {
+    const fetchImpl = (async () => Response.json({ secretType: "tenant_db_credential" })) as typeof fetch;
+    await expect(fetchBrokeredStoredSecret({ LOOPOVER_TENANT_SECRET_TOKEN: "s" }, fetchImpl)).rejects.toThrow(/did not include a secretValue/);
   });
 });
 

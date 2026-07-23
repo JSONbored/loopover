@@ -31,12 +31,12 @@ function config(fetchImpl: typeof fetch): SecretDriverConfig {
   return { baseUrl: "https://api.loopover.test", internalJobToken: "internal-test-token", fetchImpl };
 }
 
-test("injectTenantSecrets: stores the WHOLE database connection details JSON-encoded, returns enrollId as secretRef", async () => {
+test("injectTenantSecrets: stores the WHOLE database connection details JSON-encoded, returns enrollId as secretRef and the one-time secret as bootstrapSecret", async () => {
   const { fetchImpl, calls } = fakeFetch(() => Response.json({ enrollId: "orbenr_abc", secret: "orbsec_xyz" }, { status: 200 }));
 
   const result = await injectTenantSecrets(config(fetchImpl), REQUEST);
 
-  assert.deepEqual(result, { secretRef: "orbenr_abc" });
+  assert.deepEqual(result, { secretRef: "orbenr_abc", bootstrapSecret: "orbsec_xyz" });
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.url, "https://api.loopover.test/v1/internal/orb/enrollments");
   assert.equal(calls[0]!.init.method, "POST");
@@ -101,7 +101,7 @@ test("createSecretDriver: bundles injectTenantSecrets/revokeTenantSecrets closed
   const driver = createSecretDriver(config(fetchImpl));
 
   const injected = await driver.injectSecrets(REQUEST);
-  assert.deepEqual(injected, { secretRef: "orbenr_abc" });
+  assert.deepEqual(injected, { secretRef: "orbenr_abc", bootstrapSecret: "orbsec_xyz" });
 
   await driver.revokeSecrets({ ...REQUEST, secretRef: injected.secretRef });
   assert.equal(calls.length, 2);

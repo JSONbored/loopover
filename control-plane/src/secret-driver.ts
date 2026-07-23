@@ -9,10 +9,12 @@
 // calls the SAME two routes, just to STORE a tenant's DB credential rather than mint a GitHub token (#8064's
 // `tenant_db_credential` secret type), plus a third route (#8064) to revoke it on teardown.
 //
-// Scope, deliberately narrow: this ONLY stores/revokes custody of the credential in the broker. It does NOT
-// deliver the secret into a running container's environment -- that's separate, not-yet-built infrastructure
-// (a container's own bootstrap would need to independently exchange its own enrollment secret, the same way a
-// self-hosted container already does against `/v1/orb/token` today). #8066's own boundary excludes it.
+// Scope, deliberately narrow: this ONLY stores custody of the credential in the broker and hands back the
+// one-time exchange secret as `bootstrapSecret` -- it does NOT itself deliver anything into a running
+// container's environment. That delivery is provisioning.ts's + container-driver.ts's job (#8202): provisioning
+// threads `bootstrapSecret` from this driver's `injectSecrets` result into the SAME tenant's `createContainer`
+// call, which is where it actually reaches `stub.start({envVars})`. #8066's own boundary excluded delivery
+// entirely; #8202 is precisely the "separate, not-yet-built infrastructure" that comment pointed at.
 //
 // Deliberately does NOT implement the full `TenantProvisioningDriver` interface -- only injectSecrets/
 // revokeSecrets (see `SecretDriver` below). `withRealSecretDriver` (driver-factory.ts) composes this onto an
@@ -42,7 +44,7 @@ export type SecretDriverConfig = {
 /** The secret-only slice of `TenantProvisioningDriver` this module actually implements. Composed onto a full
  *  driver by `withRealSecretDriver` (driver-factory.ts), never used standalone against `provisionTenant`. */
 export type SecretDriver = {
-  injectSecrets(request: TenantProvisioningRequest): Promise<{ secretRef?: string }>;
+  injectSecrets(request: TenantProvisioningRequest): Promise<{ secretRef?: string; bootstrapSecret?: string }>;
   revokeSecrets(request: TenantProvisioningRequest): Promise<void>;
 };
 
@@ -71,9 +73,11 @@ async function mainAppFetch<T>(config: SecretDriverConfig, method: string, path:
  *  object is stored (JSON-encoded), not just the bare `connectionString` -- a later reader gets every field
  *  back, not just what it can re-parse out of a URI, mirroring that type's own "kept alongside the parts"
  *  rationale. Returns the enrollment's `enrollId` as this driver's `secretRef` -- the caller (`provisionTenant`,
- *  via its own result) must persist this to revoke it later; the one-time exchange `secret` is intentionally
- *  discarded here, since this driver's job ends at custody, not consumption (see this file's header comment). */
-export async function injectTenantSecrets(config: SecretDriverConfig, request: TenantProvisioningRequest): Promise<{ secretRef?: string }> {
+ *  via its own result) must persist this to revoke it later -- AND the one-time exchange `secret` as
+ *  `bootstrapSecret` (#8202): the caller threads this into the tenant's container at its next `createContainer`
+ *  call, so the container can itself present it to `/v1/orb/token` and get this exact value back. Previously
+ *  discarded here (see this file's former header comment); #8202 is what actually consumes it now. */
+export async function injectTenantSecrets(config: SecretDriverConfig, request: TenantProvisioningRequest): Promise<{ secretRef?: string; bootstrapSecret?: string }> {
   if (!request.database) {
     throw new Error(`injectTenantSecrets: no database connection details on the request for tenant "${request.tenant.name}"`);
   }
@@ -86,7 +90,7 @@ export async function injectTenantSecrets(config: SecretDriverConfig, request: T
     "/v1/internal/orb/enrollments",
     { secretType: SECRET_TYPE_TENANT_DB_CREDENTIAL, secretValue: JSON.stringify(request.database) },
   );
-  return { secretRef: result.enrollId };
+  return { secretRef: result.enrollId, bootstrapSecret: result.secret };
 }
 
 /** Idempotent teardown: a request with no `secretRef` (never provisioned with a real secret driver, or already

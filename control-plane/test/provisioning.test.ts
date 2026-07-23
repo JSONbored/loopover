@@ -32,10 +32,11 @@ test("provisionTenant runs the three #7180 steps in order and reports the tenant
       connectionString: "postgres://acme:fake-password-acme@fake-acme.control-plane.invalid:5432/acme",
     },
   });
-  // create-container → provision-DB → inject-secrets, in that order.
+  // provision-DB → inject-secrets → create-container, in that order (#8202: reordered from the original
+  // create-container-first sequence so a tenant's bootstrap secret exists before its one real start() call).
   assert.deepEqual(
     driver.calls.map((call) => call.step),
-    ["createContainer", "provisionDatabase", "injectSecrets"],
+    ["provisionDatabase", "injectSecrets", "createContainer"],
   );
   // Container "exists"/reachable via the fake after provision.
   assert.equal(await driver.containerExists({ tenant, product: "orb" }), true);
@@ -104,6 +105,47 @@ test("#8066: provisionTenant attaches the freshly provisioned database to the in
 
   assert.deepEqual(seenRequest?.database, result.database);
   assert.equal(result.secretRef, "orbenr_abc");
+});
+
+test("#8202: provisionTenant threads injectSecrets' bootstrapSecret into the createContainer request", async () => {
+  const fake = createFakeTenantProvisioningDriver();
+  let seenRequest: TenantProvisioningRequest | undefined;
+  const driver: TenantProvisioningDriver = {
+    ...fake,
+    injectSecrets: async () => ({ secretRef: "orbenr_abc", bootstrapSecret: "orbsec_xyz" }),
+    createContainer: async (request) => {
+      seenRequest = request;
+    },
+  };
+  const tenant: Tenant = { name: "acme" };
+
+  await provisionTenant(tenant, "orb", driver);
+
+  assert.equal(seenRequest?.bootstrapSecret, "orbsec_xyz");
+  assert.deepEqual(seenRequest?.database, {
+    host: "fake-acme.control-plane.invalid",
+    port: 5432,
+    database: "acme",
+    user: "acme",
+    password: "fake-password-acme",
+    connectionString: "postgres://acme:fake-password-acme@fake-acme.control-plane.invalid:5432/acme",
+  });
+});
+
+test("#8202: provisionTenant's createContainer request omits bootstrapSecret entirely when injectSecrets returns none (the fake's own behavior)", async () => {
+  const fake = createFakeTenantProvisioningDriver();
+  let seenRequest: TenantProvisioningRequest | undefined;
+  const driver: TenantProvisioningDriver = {
+    ...fake,
+    createContainer: async (request) => {
+      seenRequest = request;
+    },
+  };
+  const tenant: Tenant = { name: "acme" };
+
+  await provisionTenant(tenant, "orb", driver);
+
+  assert.equal("bootstrapSecret" in (seenRequest ?? {}), false);
 });
 
 test("#8066: provisionTenant's result omits secretRef entirely when the driver returns none (the fake's own behavior)", async () => {

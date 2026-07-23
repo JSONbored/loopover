@@ -41,15 +41,21 @@ export type TenantLifecycleState =
 export type TenantProvisioningRequest = {
   tenant: Tenant;
   product: Product;
-  /** The tenant's already-provisioned database connection details (#7653) -- populated ONLY for the
-   *  `injectSecrets` call, by `provisionTenant`'s own orchestration right after `provisionDatabase` resolves
-   *  (#8066). Every other step (createContainer, destroyContainer, etc.) never sees this field. */
+  /** The tenant's already-provisioned database connection details (#7653) -- populated for the `injectSecrets`
+   *  call (and, from there on, every step after it -- see `createContainer` below) by `provisionTenant`'s own
+   *  orchestration right after `provisionDatabase` resolves (#8066). */
   database?: DatabaseConnectionDetails;
   /** An opaque, driver-specific reference to a previously injected secret (#8066) -- whatever `injectSecrets`
    *  returned as `secretRef`, threaded back in by `deprovisionTenant` so `revokeSecrets` knows what to revoke.
    *  Absent when a tenant was never provisioned with a real secret driver configured (idempotent revoke of an
    *  unconfigured tenant, matching every other driver's teardown contract). */
   secretRef?: string;
+  /** A one-time credential the tenant's OWN container can later exchange for a real custodied secret (#8202) --
+   *  whatever `injectSecrets` returned as `bootstrapSecret`, threaded by `provisionTenant` into the SAME
+   *  `createContainer` call that follows it (#8202 reordered provisioning so this is possible -- see
+   *  provisioning.ts). Populated ONLY for that one `createContainer` call; no other step ever sees it, and it is
+   *  never itself the delivered secret -- just the key the container uses to fetch one. */
+  bootstrapSecret?: string;
 };
 
 /** What `provisionDatabase` hands back (#7653): everything a caller needs to actually reach the tenant's
@@ -69,7 +75,12 @@ export type DatabaseConnectionDetails = {
 };
 
 export interface TenantProvisioningDriver {
-  /** Step 1 (#7180): stand up the tenant's isolated container. Real driver → Cloudflare Containers API. */
+  /** Step 1 in call order (#7180), but the LAST of the three to run within `provisionTenant` as of #8202: stand
+   *  up the tenant's isolated container. Real driver → Cloudflare Containers API. May see `request.bootstrapSecret`
+   *  (#8202, set when `injectSecrets` returned one) to deliver into the container's own process environment at
+   *  this, its actual cold-boot `start()` call -- the only point in a container's lifecycle Cloudflare Containers
+   *  actually applies `envVars` (confirmed against the real `@cloudflare/containers` SDK: a repeat `start()` on
+   *  an already-running/starting instance is a no-op or throws, never re-applies `envVars`). */
   createContainer(request: TenantProvisioningRequest): Promise<void>;
   /** Step 2 (#7180): provision the tenant's database, returning its connection details (#7653) -- a freshly
    *  created role's password is typically retrievable from the provider only at creation time, so the caller
@@ -78,10 +89,14 @@ export interface TenantProvisioningDriver {
   provisionDatabase(request: TenantProvisioningRequest): Promise<DatabaseConnectionDetails>;
   /** Step 3 (#7180): inject the tenant's secrets, given its database connection details (`request.database`,
    *  #8066). Returns an opaque `secretRef` the caller must persist and thread back into a later `revokeSecrets`
-   *  call via `request.secretRef` -- `undefined` when the driver has nothing to track (e.g. the fake). A real
-   *  driver delegates to #7174's generalized broker (src/orb/broker.ts, via #8064's stored-secret type); the
-   *  fake only records the call. */
-  injectSecrets(request: TenantProvisioningRequest): Promise<{ secretRef?: string }>;
+   *  call via `request.secretRef` -- `undefined` when the driver has nothing to track (e.g. the fake). Also
+   *  returns `bootstrapSecret` (#8202): a one-time credential the caller threads into the SAME tenant's next
+   *  `createContainer` call (provisioning.ts runs this step BEFORE createContainer specifically so this is
+   *  possible), so the running container can itself exchange it later for the real secret this step just
+   *  custodied -- `undefined` when the driver has nothing for a container to bootstrap with. A real driver
+   *  delegates to #7174's generalized broker (src/orb/broker.ts, via #8064's stored-secret type); the fake only
+   *  records the call. */
+  injectSecrets(request: TenantProvisioningRequest): Promise<{ secretRef?: string; bootstrapSecret?: string }>;
   /** Teardown inverse of createContainer. MUST be idempotent — safe to call when the container was never
    *  created — so deprovisioning a nonexistent tenant is a no-op, never a throw. */
   destroyContainer(request: TenantProvisioningRequest): Promise<void>;

@@ -1,8 +1,13 @@
 // provisionTenant / deprovisionTenant orchestration (#7524) over the injectable `TenantProvisioningDriver`.
 // Product-agnostic: an ORB tenant and an AMS tenant take the identical call shape — `product` is forwarded to
-// every driver step but never branched on. Provision runs #7180's three steps in order (create-container,
-// provision-DB, inject-secrets); deprovision tears them down in REVERSE (revoke-secrets, drop-DB,
-// destroy-container) so a secret is never left addressable after the DB/container it belonged to is gone.
+// every driver step but never branched on. Provision runs #7180's three steps as provision-DB, inject-secrets,
+// create-container (#8202 reordered this from the original create-container-first sequence: a tenant's
+// bootstrap secret, produced by inject-secrets, must exist BEFORE create-container's one real `stub.start()`
+// call, since Cloudflare Containers only ever apply `envVars` at a container's actual cold (re)start -- never
+// as a live update to one already running or starting, confirmed against the real `@cloudflare/containers` SDK).
+// Deprovision tears down in the order revoke-secrets, drop-DB, destroy-container -- REVERSE of the ORIGINAL
+// #7180 order, kept deliberately unchanged by #8202's reorder: revoking a secret before the DB/container it
+// belonged to is gone is the security property that matters here, not exact step-order symmetry with provision.
 //
 // #7667: a driver-step failure in EITHER direction also pages, via the same PagerDuty Events API v2 contract
 // ORB uses in `src/services/notify-pagerduty.ts` (see ./pagerduty-notify.ts for the mirrored contract and why
@@ -81,13 +86,16 @@ function pageAndRethrow(
   throw error;
 }
 
-/** Provision a tenant by running #7180's three steps in order against the injected driver. Product-agnostic:
- *  `product` is forwarded to every step, never branched on, so ORB and AMS share one call shape. `injectSecrets`
- *  is called with `database` already attached to the request (#8066) -- a real secret driver needs the
- *  connection details to actually store, not just the tenant identity every other step operates on. A step
- *  failure pages (#7667) and always rethrows — provisioning never fails silently. `onFailure` (#7677,
- *  optional) runs first in that failure path — the caller's seam for persisting the `"failed"` lifecycle
- *  state — and is best-effort: its own rejection is swallowed so it can never mask the step error. */
+/** Provision a tenant by running #7180's three steps against the injected driver, in the order database, secrets,
+ *  container (#8202 -- see this module's header for why). Product-agnostic: `product` is forwarded to every step,
+ *  never branched on, so ORB and AMS share one call shape. `injectSecrets` is called with `database` already
+ *  attached to the request (#8066) -- a real secret driver needs the connection details to actually store, not
+ *  just the tenant identity every other step operates on. `createContainer` is in turn called with `database`
+ *  still attached AND `bootstrapSecret` newly attached (#8202) whenever `injectSecrets` returned one -- a real
+ *  container driver delivers it into the container's own cold-boot environment. A step failure pages (#7667) and
+ *  always rethrows — provisioning never fails silently. `onFailure` (#7677, optional) runs first in that failure
+ *  path — the caller's seam for persisting the `"failed"` lifecycle state — and is best-effort: its own
+ *  rejection is swallowed so it can never mask the step error. */
 export async function provisionTenant(
   tenant: Tenant,
   product: Product,
@@ -99,9 +107,10 @@ export async function provisionTenant(
   let database: DatabaseConnectionDetails;
   let secretRef: string | undefined;
   try {
-    await driver.createContainer(request);
     database = await driver.provisionDatabase(request);
-    ({ secretRef } = await driver.injectSecrets({ ...request, database }));
+    const injected = await driver.injectSecrets({ ...request, database });
+    secretRef = injected.secretRef;
+    await driver.createContainer({ ...request, database, ...(injected.bootstrapSecret !== undefined ? { bootstrapSecret: injected.bootstrapSecret } : {}) });
   } catch (error) {
     // #7677 (ratified 2026-07-21): give the caller its chance to transition the tenant's registry record to
     // "failed" BEFORE the rethrow, so a customer polling the read path sees a terminal "Setup failed" instead

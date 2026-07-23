@@ -67,16 +67,31 @@ function bindingFor(config: ContainerDriverConfig, product: Product): ContainerN
  *  `pinnedVersion` rides into the container, whose entrypoint resolves the versioned artifact itself. */
 export const PINNED_VERSION_ENV_VAR = "LOOPOVER_PINNED_VERSION";
 
+/** The env var a tenant's container reads its one-time secret-bootstrap credential from at cold boot (#8202).
+ *  Deliberately product-agnostic (no `ORB_`/`AMS_` prefix), same reasoning as {@link PINNED_VERSION_ENV_VAR}:
+ *  both `OrbTenantContainer` and `AmsTenantContainer` (#8246) read the identical name. The value itself is a
+ *  one-time secret from `injectSecrets` (`TenantProvisioningRequest.bootstrapSecret`) the container exchanges
+ *  via `POST /v1/orb/token` (`src/orb/broker-client.ts`'s `fetchBrokeredStoredSecret`) for whatever the broker
+ *  actually has custodied -- this driver never sees or needs to know what that is. */
+export const TENANT_SECRET_ENV_VAR = "LOOPOVER_TENANT_SECRET_TOKEN";
+
 /** Idempotent: an already-provisioned tenant's container is left running as-is, never restarted -- a repeat
- *  create must not interrupt a container mid-work. A tenant with a `pinnedVersion` (#4898) starts with that
- *  version in {@link PINNED_VERSION_ENV_VAR}; an unpinned tenant gets the exact pre-#4898 `start()` call, so
- *  every existing tenant's behavior is byte-identical until a rollout pins it. */
+ *  create must not interrupt a container mid-work. This is also the ONLY point in a tenant's lifecycle where
+ *  `envVars` actually reach the container (confirmed against the real `@cloudflare/containers` SDK: a `start()`
+ *  call against an already-running/starting instance is a no-op or throws, never re-applies `envVars`) -- so
+ *  both of the values below must already be known by the time this runs, not supplied later. A tenant with a
+ *  `pinnedVersion` (#4898) starts with that version in {@link PINNED_VERSION_ENV_VAR}; one with a
+ *  `bootstrapSecret` (#8202, set on `request` by `provisionTenant` from `injectSecrets`' result) starts with it
+ *  in {@link TENANT_SECRET_ENV_VAR}; a tenant with neither gets the exact pre-#4898 `start()` call, so every
+ *  existing tenant's behavior is byte-identical until either rollout applies. */
 export async function createTenantContainer(config: ContainerDriverConfig, request: TenantProvisioningRequest): Promise<void> {
   const stub = bindingFor(config, request.product).getByName(instanceNameFor(request));
   if (await stub.isProvisioned()) return;
-  const pinnedVersion = request.tenant.pinnedVersion;
-  if (pinnedVersion) {
-    await stub.start({ envVars: { [PINNED_VERSION_ENV_VAR]: pinnedVersion } });
+  const envVars: Record<string, string> = {};
+  if (request.tenant.pinnedVersion) envVars[PINNED_VERSION_ENV_VAR] = request.tenant.pinnedVersion;
+  if (request.bootstrapSecret) envVars[TENANT_SECRET_ENV_VAR] = request.bootstrapSecret;
+  if (Object.keys(envVars).length > 0) {
+    await stub.start({ envVars });
   } else {
     await stub.start();
   }

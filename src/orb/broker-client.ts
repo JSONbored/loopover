@@ -85,6 +85,40 @@ export async function fetchBrokeredInstallationToken(
   return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs, permissions: payload.permissions ?? {} };
 }
 
+export type BrokeredStoredSecret = { secretValue: string; secretType: string };
+
+/** Exchange a tenant's one-time bootstrap credential (#8202, `LOOPOVER_TENANT_SECRET_TOKEN` -- delivered into a
+ *  hosted tenant container's own process env at its cold boot, via `control-plane/src/container-driver.ts`'s
+ *  `createTenantContainer`) for whatever secret the broker actually has custodied under it, e.g. a Neon database
+ *  connection string (`ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL`, `src/orb/broker.ts`). Same endpoint as
+ *  {@link fetchBrokeredInstallationToken} (`POST /v1/orb/token`) -- the server disambiguates by the enrollment
+ *  row's own `secret_type`, not by anything the caller specifies, so a distinct client function exists only to
+ *  parse the OTHER half of `BrokerResult`'s union (`{secretValue, secretType}` instead of `{token, ...}`), not
+ *  because the wire call itself differs. No cache/TTL concept here (unlike the installation-token path) -- a
+ *  stored secret's value is fixed at issue time, so every call is a fresh exchange; a caller wanting to avoid
+ *  repeat network calls should cache the RESULT itself, not rely on this function to. Throws on a non-OK
+ *  response or a body missing `secretValue` -- a container with no other way to reach its own secret has
+ *  nothing safe to fall back to, exactly like the installation-token path's own fatal-on-failure posture. */
+export async function fetchBrokeredStoredSecret(
+  env: { LOOPOVER_TENANT_SECRET_TOKEN?: string | undefined; ORB_BROKER_URL?: string | undefined },
+  fetchImpl: typeof fetch = fetch,
+): Promise<BrokeredStoredSecret> {
+  const base = orbBrokerBaseUrl(env);
+  const response = await fetchImpl(`${base}/v1/orb/token`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.LOOPOVER_TENANT_SECRET_TOKEN ?? ""}` },
+    signal: AbortSignal.timeout(BROKER_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Orb broker stored-secret exchange failed (${response.status}).`);
+  }
+  const payload = (await response.json()) as { secretValue?: string; secretType?: string };
+  if (!payload.secretValue) {
+    throw new Error("Orb broker stored-secret response did not include a secretValue.");
+  }
+  return { secretValue: payload.secretValue, secretType: payload.secretType ?? "" };
+}
+
 // Diagnosing a broker register failure (#selfhost-runtime-drift) needs more than a bare status code, but the
 // response body is attacker/operator-adjacent (the broker, or anything on-path to it) and must never be logged
 // verbatim. Only a short, structured hint is ever surfaced: a JSON body's own `error`/`message` string field,

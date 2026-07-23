@@ -9,6 +9,7 @@ import {
   createTenantContainer,
   destroyTenantContainer,
   PINNED_VERSION_ENV_VAR,
+  TENANT_SECRET_ENV_VAR,
   tenantContainerExists,
   type ContainerDriverConfig,
   type ContainerNamespaceLike,
@@ -185,6 +186,41 @@ test("a repeat create of an already-provisioned pinned tenant never restarts it 
   await stub.markProvisioned();
 
   await createTenantContainer(configFor(stub), { tenant: { name: "acme", pinnedVersion: "v2.0.0" }, product: "orb" });
+
+  assert.deepEqual(stub.startOptions, []);
+});
+
+// #8202: a tenant's one-time secret-bootstrap credential rides into its container at cold boot the same way
+// pinnedVersion does above -- the only point in a container's lifecycle envVars are actually applied.
+test("a tenant with a bootstrap secret starts with TENANT_SECRET_ENV_VAR carrying it", async () => {
+  const stub = optionCapturingStub();
+
+  await createTenantContainer(configFor(stub), { tenant: { name: "acme" }, product: "orb", bootstrapSecret: "orbsec_xyz" });
+
+  assert.deepEqual(stub.startOptions, [{ envVars: { [TENANT_SECRET_ENV_VAR]: "orbsec_xyz" } }]);
+});
+
+test("a tenant with both a pinned version and a bootstrap secret starts with both env vars merged into one call", async () => {
+  const stub = optionCapturingStub();
+
+  await createTenantContainer(configFor(stub), { tenant: { name: "acme", pinnedVersion: "v1.4.2" }, product: "orb", bootstrapSecret: "orbsec_xyz" });
+
+  assert.deepEqual(stub.startOptions, [{ envVars: { [PINNED_VERSION_ENV_VAR]: "v1.4.2", [TENANT_SECRET_ENV_VAR]: "orbsec_xyz" } }]);
+});
+
+test("a tenant with neither a pinned version nor a bootstrap secret still gets the exact pre-#4898 call (no options at all)", async () => {
+  const stub = optionCapturingStub();
+
+  await createTenantContainer(configFor(stub), { tenant: { name: "acme" }, product: "orb", bootstrapSecret: undefined });
+
+  assert.deepEqual(stub.startOptions, [undefined]);
+});
+
+test("a repeat create of an already-provisioned tenant with a bootstrap secret never restarts it (idempotence contract holds here too)", async () => {
+  const stub = optionCapturingStub();
+  await stub.markProvisioned();
+
+  await createTenantContainer(configFor(stub), { tenant: { name: "acme" }, product: "orb", bootstrapSecret: "orbsec_xyz" });
 
   assert.deepEqual(stub.startOptions, []);
 });

@@ -251,7 +251,7 @@ test("createTenantProvisioningDriver: selects the real secret driver when both M
   const driver = createTenantProvisioningDriver({ MAIN_APP_BASE_URL: "https://api.loopover.test", INTERNAL_JOB_TOKEN: "internal-test-token" });
 
   const result = await driver.injectSecrets({ ...REQUEST, database: { host: "h", port: 5432, database: "d", user: "u", password: "p", connectionString: "postgres://u:p@h:5432/d" } });
-  assert.deepEqual(result, { secretRef: "orbenr_abc" });
+  assert.deepEqual(result, { secretRef: "orbenr_abc", bootstrapSecret: "orbsec_xyz" });
   assert.ok(calls.some((url) => url.includes("api.loopover.test")));
 });
 
@@ -270,7 +270,7 @@ test("createTenantProvisioningDriver: composes the real database, container, AND
   assert.equal(await driver.containerExists(REQUEST), true);
   await assert.rejects(driver.provisionDatabase(REQUEST));
   const injected = await driver.injectSecrets({ ...REQUEST, database: { host: "h", port: 5432, database: "d", user: "u", password: "p", connectionString: "postgres://u:p@h:5432/d" } });
-  assert.deepEqual(injected, { secretRef: "orbenr_abc" });
+  assert.deepEqual(injected, { secretRef: "orbenr_abc", bootstrapSecret: "orbsec_xyz" });
 });
 
 test("createTenantProvisioningDriver: defaults env to process.env when no override is passed", async () => {

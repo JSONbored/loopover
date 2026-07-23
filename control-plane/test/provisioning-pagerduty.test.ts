@@ -20,13 +20,17 @@ function driverThatThrowsOn(
   error: Error,
 ): TenantProvisioningDriver {
   const noop = async (): Promise<void> => {};
-  const failing = async (): Promise<void> => {
+  const failing = async (): Promise<never> => {
     throw error;
   };
+  // #8202: injectSecrets' real return type is destructured by provisionTenant (secretRef, bootstrapSecret), so
+  // its own "successfully did nothing" stand-in must return a real (empty) object, not void -- unlike every
+  // other step here, which provisionTenant/deprovisionTenant only ever await, never read a value from.
+  const noopInjectSecrets = async (): Promise<{ secretRef?: string; bootstrapSecret?: string }> => ({});
   return {
     createContainer: step === "createContainer" ? failing : noop,
     provisionDatabase: step === "provisionDatabase" ? failing : noop,
-    injectSecrets: step === "injectSecrets" ? failing : noop,
+    injectSecrets: step === "injectSecrets" ? failing : noopInjectSecrets,
     destroyContainer: step === "destroyContainer" ? failing : noop,
     dropDatabase: step === "dropDatabase" ? failing : noop,
     revokeSecrets: step === "revokeSecrets" ? failing : noop,

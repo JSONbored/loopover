@@ -365,6 +365,16 @@ describe("brokerOrbToken", () => {
     expect((await db(e).prepare("SELECT last_token_at FROM orb_enrollments WHERE secret_hash = ?").bind(await hashToken(secret)).first<{ last_token_at: string | null }>())?.last_token_at).not.toBeNull();
   });
 
+  it("#8202: a revoked tenant-db-credential enrollment can no longer be exchanged -- revocation actually removes access, not just broker custody", async () => {
+    const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
+    const { enrollId, secret } = (await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme:hunter2@neon/acme")) as { enrollId: string; secret: string };
+    expect(await brokerOrbToken(e, secret)).toEqual({ secretValue: "postgres://tenant-acme:hunter2@neon/acme", secretType: ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL });
+
+    expect(await revokeOrbEnrollment(e, enrollId)).toEqual({ revoked: true });
+
+    expect(await brokerOrbToken(e, secret)).toEqual({ error: "invalid_enrollment" });
+  });
+
   it("#8064: refuses to serve a stored secret with no TOKEN_ENCRYPTION_SECRET configured at exchange time", async () => {
     const e = await brokerEnv({ TOKEN_ENCRYPTION_SECRET: "orb-stored-secret-test" });
     const { secret } = (await issueOrbStoredSecret(e, ORB_SECRET_TYPE_TENANT_DB_CREDENTIAL, "postgres://tenant-acme")) as { secret: string };

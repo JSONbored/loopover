@@ -112,9 +112,15 @@ export async function runActiveReviewReconciliation(env: Env, nowMs: number = Da
         if (!changed) continue; // a concurrent pass already terminalized (or restarted) this row first
         reconciled.push({ repoFullName: row.repoFullName, pullNumber: row.pullNumber });
         incr("loopover_active_review_reconciliation_terminalized_total", { repo: row.repoFullName });
-        console.error(
+        // warn, not error (LOOPOVER-2K): a successful terminalization is this feature WORKING, not an anomaly --
+        // logging it at error level turned a backlog drain into 547 Sentry error events in a day (one per healed
+        // row, message-fingerprint-collapsed into a single escalating issue). warn stays visible in stdout/
+        // Workers Logs but sits below the default SENTRY_MIN_SEVERITY of "error" (selfhost/sentry.ts's
+        // resolveSentryMinSeverity), so Sentry only sees it when an operator has explicitly lowered the
+        // threshold. The row_error/scan-error paths below stay at error: a FAILED heal is still an anomaly.
+        console.warn(
           JSON.stringify({
-            level: "error",
+            level: "warn",
             event: "active_review_reconciliation_orphan_terminalized",
             repository: row.repoFullName,
             pullNumber: row.pullNumber,

@@ -119,15 +119,19 @@ describe("runActiveReviewReconciliation (#webhook-reorder-clobber)", () => {
     await seedStaleActiveRow(env, "owner/repo", 1, 9500, STALE_ACTIVE_REVIEW_MIN_AGE_MS + 60_000);
     vi.spyOn(backfillModule, "fetchLivePullRequestState").mockResolvedValueOnce("closed");
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const reconciled = await runActiveReviewReconciliation(env);
 
     expect(reconciled).toEqual([{ repoFullName: "owner/repo", pullNumber: 1 }]);
     expect(await hasActiveReviewForHeadSha(env, "owner/repo", 1, "sha1")).toBe(false);
     expect(counterValue("loopover_active_review_reconciliation_terminalized_total", { repo: "owner/repo" })).toBe(1);
-    const logged = errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("active_review_reconciliation_orphan_terminalized"));
+    // REGRESSION (LOOPOVER-2K): the per-row success log is warn-level -- a successful self-heal must never
+    // reach Sentry's error-level forwarder (547 error events in a day during the backlog drain).
+    const logged = warns.mock.calls.map((c) => String(c[0])).find((line) => line.includes("active_review_reconciliation_orphan_terminalized"));
     expect(logged).toBeDefined();
-    expect(JSON.parse(logged!)).toMatchObject({ level: "error", event: "active_review_reconciliation_orphan_terminalized", repository: "owner/repo", pullNumber: 1 });
+    expect(JSON.parse(logged!)).toMatchObject({ level: "warn", event: "active_review_reconciliation_orphan_terminalized", repository: "owner/repo", pullNumber: 1 });
+    expect(errors.mock.calls.map((c) => String(c[0])).find((line) => line.includes("active_review_reconciliation_orphan_terminalized"))).toBeUndefined();
   });
 
   it("leaves a stale row alone when the LIVE check says the PR is still open", async () => {

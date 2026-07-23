@@ -1,6 +1,6 @@
 {
   "name": "@loopover/ui-kit",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Shared design-system tokens and component primitives for loopover-ui and loopover-miner-ui.",

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.0...ui-kit-v1.1.1) (2026-07-23)
+
+
+### Fixes
+
+* **miner-ui:** keep mobile chat sheet mounted so conversation state survives ([#7792](https://github.com/JSONbored/loopover/issues/7792)) ([#7885](https://github.com/JSONbored/loopover/issues/7885)) ([e7e10e7](https://github.com/JSONbored/loopover/commit/e7e10e7f79f094e988034c9fa3e82e0ebab0203b))
+* **miner-ui:** stick-to-bottom auto-scroll for chat rail ([#7229](https://github.com/JSONbored/loopover/issues/7229)) ([#7298](https://github.com/JSONbored/loopover/issues/7298)) ([8cbcb53](https://github.com/JSONbored/loopover/commit/8cbcb53799b7a943a9ce2a668263c5c427c530e6))
+* **test:** close the Node-version guard's remaining coverage gap ([#7627](https://github.com/JSONbored/loopover/issues/7627)) ([#7629](https://github.com/JSONbored/loopover/issues/7629)) ([9f356fe](https://github.com/JSONbored/loopover/commit/9f356fea0cb0cd499f9339d09cca0c044ce292c1))
+* **test:** pin loopover-ui + ui-kit jsdom localStorage over Node 26's broken global ([#7616](https://github.com/JSONbored/loopover/issues/7616)) ([d6477bf](https://github.com/JSONbored/loopover/commit/d6477bfa91ca51f130c7ebae7aa5da8ae6310d72))
+* **ui-kit:** edge-trigger StateBoundary failure notifications ([#7505](https://github.com/JSONbored/loopover/issues/7505)) ([fa67da4](https://github.com/JSONbored/loopover/commit/fa67da462511e298c06323a2842869f1a5ddd2d9))
+
 ## [1.1.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.0.0...ui-kit-v1.1.0) (2026-07-17)
 
 

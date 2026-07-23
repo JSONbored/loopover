@@ -1,3 +1,5 @@
 node_modules
 dist
 CHANGELOG.md
+# Locally generated coverage reports (vitest --coverage) -- never formatter input.
+coverage

@@ -12,3 +12,5 @@ public/openapi.json
 # <CodeBlock code={`...`}> attributes, destroying embedded YAML/compose indentation (#8182 fallout,
 # repaired once already). Docs mdx is deliberately formatter-free.
 content/docs
+# Locally generated coverage reports (vitest --coverage) -- never formatter input.
+coverage

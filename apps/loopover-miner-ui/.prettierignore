@@ -4,3 +4,5 @@ dist
 .vinxi
 package-lock.json
 routeTree.gen.ts
+# Locally generated coverage reports (vitest --coverage) -- never formatter input.
+coverage

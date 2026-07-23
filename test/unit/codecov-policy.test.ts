@@ -56,11 +56,17 @@ describe("Codecov policy", () => {
     const testResultsUpload = steps[testResultsUploadIndex]!;
 
     // Verify must run whenever coverage was generated at all -- the job's own top-level `if:` (push or
-    // backend==true) already gates the whole matrix, so the step itself only needs `success()`. It
-    // deliberately does NOT exclude forks, since both the trusted and the tokenless fork upload path
-    // below it need the report to exist first.
-    expect(String(verifyStep.if)).toBe("${{ success() }}");
-    expect(String(coverageUpload.if)).toContain(String(verifyStep.if).replace(/^\$\{\{\s*|\s*\}\}$/g, ""));
+    // backend==true) already gates the whole matrix. #8167 added the ONE legitimate escape: a scoped
+    // selection that matched zero test files writes no report at all (no_tests_matched), so verify — and
+    // every upload below it — must skip on that output rather than fail closed on a missing lcov. The
+    // policy stays: absent that explicit escape hatch, a missing report still fails the build, and the
+    // uploads can never run without the verify guard's own condition.
+    expect(String(verifyStep.if)).toBe("${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}");
+    // EVERY upload below the verify step must carry the same escape: with zero matched tests there is no
+    // lcov/junit at all, and the coverage uploads' fail_ci_if_error would turn that non-event red.
+    expect(String(coverageUpload.if)).toContain("success()");
+    expect(String(coverageUpload.if)).toContain("no_tests_matched != 'true'");
+    expect(String(testResultsUpload.if)).toContain("no_tests_matched != 'true'");
     expect(String(verifyStep.run)).toContain("coverage/lcov.info is missing or empty");
     expect(String(verifyStep.run)).toContain("exit 1");
 

@@ -1088,7 +1088,7 @@ jobs:
       # Consumed by validate-tests-merge to re-check the global coverage threshold against all shards
       # combined -- see this job's own header comment.
       - name: Upload coverage blob report
-        if: ${{ success() }}
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-blob-shard-${{ matrix.shard }}
@@ -1097,7 +1097,9 @@ jobs:
       # Direct upload for trusted contexts (push + same-repo PRs). Multiple shards' uploads for the same
       # commit/PR are additive in Codecov -- see this job's own header comment.
       - name: Upload coverage to Codecov
-        if: ${{ success() && github.event.pull_request.head.repo.fork != true }}
+        # Same no_tests_matched skip as the verify step above (#8167 follow-up): with zero matched tests
+        # there is no lcov to upload, and fail_ci_if_error would otherwise turn that non-event red.
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork != true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -1115,7 +1117,7 @@ jobs:
       # override, etc). Condition dropped the push-or-backend check since this job's own `if:` already
       # covers it.
       - name: Upload coverage to Codecov (fork PR tokenless)
-        if: ${{ success() && github.event.pull_request.head.repo.fork == true }}
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork == true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage/lcov.info
@@ -1129,7 +1131,7 @@ jobs:
       # their upload non-blocking so a JUnit ingestion hiccup does not fail CI
       # after the tests and hard coverage upload have already passed.
       - name: Upload Vitest results to Codecov
-        if: ${{ !cancelled() && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork != true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -1142,7 +1144,7 @@ jobs:
           override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
       - name: Upload Vitest results to Codecov (fork PR tokenless)
-        if: ${{ !cancelled() && github.event.pull_request.head.repo.fork == true }}
+        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork == true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./reports/junit/vitest.xml

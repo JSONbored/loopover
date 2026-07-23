@@ -199,6 +199,7 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 | `LOOPOVER_MINER_CHAT_ACTIONS` | `lib/chat-action-dispatch.js` | Truthy string enables the chat-action-dispatch flag (off by default). |
 | `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` | `lib/store-maintenance.js` | Opt-in ledger retention window / row cap. |
 | `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.js` | Log verbosity override. |
+| `LOOPOVER_MINER_NEON_API_KEY`, `LOOPOVER_MINER_NEON_PROJECT_ID`, `LOOPOVER_MINER_NEON_PARENT_BRANCH_ID` | `lib/attempt-db-fork-config.js` | Neon branch-per-attempt disposable DB fork ([#7858](https://github.com/JSONbored/loopover/issues/7858)). All three required together — any one missing disables the feature entirely (no branch is ever created). |
 | `LOOPOVER_MINER_NO_UPDATE_CHECK` | `lib/update-check.js` | Truthy string disables the background update check. |
 | `LOOPOVER_MINER_REPO_CLONE_DIR` | `lib/repo-clone.js` | Base directory for cloned target repos. |
 | `LOOPOVER_MINER_WORKTREE_DIR` | `lib/worktree-allocator.js` | Base directory for per-attempt git worktrees. |

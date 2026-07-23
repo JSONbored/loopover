@@ -1,6 +1,6 @@
 {
   "name": "@loopover/engine",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Shared deterministic engine logic for the LoopOver review stack and loopover-miner.",

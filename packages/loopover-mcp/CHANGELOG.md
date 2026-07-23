@@ -5,6 +5,20 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.8.0](https://github.com/JSONbored/loopover/compare/mcp-v3.7.0...mcp-v3.8.0) (2026-07-23)
+
+
+### Chores
+
+* **mcp:** Synchronize engine-and-dependents versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.7.0 to ^3.8.0
+
 ## [3.7.0](https://github.com/JSONbored/loopover/compare/mcp-v3.6.0...mcp-v3.7.0) (2026-07-23)
 
 

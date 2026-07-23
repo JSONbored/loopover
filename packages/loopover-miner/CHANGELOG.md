@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.8.0](https://github.com/JSONbored/loopover/compare/miner-v3.7.0...miner-v3.8.0) (2026-07-23)
+
+
+### Features
+
+* **miner:** wire the Neon branch-per-attempt DB fork into runAttempt ([#8206](https://github.com/JSONbored/loopover/issues/8206)) ([c26fe94](https://github.com/JSONbored/loopover/commit/c26fe94adfa50454157b7290958b81005ef02326))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.7.0 to ^3.8.0
+
 ## [3.7.0](https://github.com/JSONbored/loopover/compare/miner-v3.6.0...miner-v3.7.0) (2026-07-23)
 
 

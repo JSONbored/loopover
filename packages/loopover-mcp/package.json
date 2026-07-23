@@ -1,6 +1,6 @@
 {
   "name": "@loopover/mcp",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Local stdio MCP wrapper for the LoopOver Gittensor base-agent.",
@@ -44,7 +44,7 @@
     "build:verify": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
-    "@loopover/engine": "^3.7.0",
+    "@loopover/engine": "^3.8.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "posthog-node": "^5.44.0",
     "zod": "^4.4.3"

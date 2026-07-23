@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.8.0](https://github.com/JSONbored/loopover/compare/engine-v3.7.0...engine-v3.8.0) (2026-07-23)
+
+
+### Features
+
+* **engine:** add operator-declared network-egress allowlist to AmsPolicySpec ([#8204](https://github.com/JSONbored/loopover/issues/8204)) ([e3f215d](https://github.com/JSONbored/loopover/commit/e3f215dacabce449aee59878ff8da99af21e9dec))
+* **engine:** Neon branch-per-attempt disposable DB fork for AMS attempts ([#8205](https://github.com/JSONbored/loopover/issues/8205)) ([19273b3](https://github.com/JSONbored/loopover/commit/19273b39f2a893ed41740f4c0697af0bc55e1372))
+
 ## [3.7.0](https://github.com/JSONbored/loopover/compare/engine-v3.6.0...engine-v3.7.0) (2026-07-23)
 
 

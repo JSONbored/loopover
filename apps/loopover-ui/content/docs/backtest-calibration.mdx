@@ -80,6 +80,26 @@ npx tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output corpus.jso
 
 Both CLIs are strictly read-only against the database.
 
+## Counterfactual replay (design)
+
+Deterministic rule changes replay against history before they land; the same discipline is being
+extended to the judgment layer — reviewer prompts and model choices — under the counterfactual-replay
+contract (`@loopover/engine`'s `counterfactual-contract` module). Three decisions define it:
+
+- **Fixtures.** A historical case is replayable only when it carries the bounded raw context the live
+  capture recorded (the PR diff) and a human verdict. Fixtures keep their capture-era provenance
+  (live-captured vs backfilled), so a variant that only improves on one era is visible as such. When a
+  run cannot afford every eligible fixture, the subset is chosen by a seeded deterministic sample —
+  recorded in the run artifact so any re-run reproduces it exactly — never "the first N".
+- **Spend.** Replay budgets use the same neuron-estimate units as live AI budgeting, with a hard per-run
+  cap defaulting well under one day's live-review spend. A run that exhausts its budget persists partial
+  scores and a resume cursor. Local models are the smoke path; paid providers sit behind explicit flags.
+  The harness is offline-only: it never posts to GitHub and never touches live reviews.
+- **Scoring.** A replayed variant is just another classifier over the same labeled cases, so the standard
+  scorer and Pareto-floored comparator apply unchanged. Unparseable variant output is an *abstention* —
+  excluded from the confusion matrix and counted separately, never coerced to a verdict, so a degenerate
+  prompt cannot farm precision by failing to answer on hard cases.
+
 ## Self-hosting
 
 On a self-host deployment the same calibration system runs against your Postgres instead of D1 —

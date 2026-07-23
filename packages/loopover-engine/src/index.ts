@@ -166,6 +166,7 @@ export * from "./calibration/signal-tracking.js";
 export * from "./calibration/backtest-corpus.js";
 export * from "./calibration/repo-corpus-slice.js";
 export * from "./calibration/ams-prediction-corpus.js";
+export * from "./calibration/counterfactual-contract.js";
 export * from "./calibration/backtest-score.js";
 export * from "./calibration/backtest-compare.js";
 export * from "./calibration/backtest-report.js";

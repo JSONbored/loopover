@@ -700,8 +700,21 @@ jobs:
       # dist -- so it does not exist on a fresh checkout until something builds it. Same class of gap
       # as "Build engine package" above; runs before UI lint/typecheck/tests/build all in this same
       # job, so building it here once covers all four.
+      #
+      # `!cancelled()` on this step and every UI step below it (through "UI tests (ui)"): this job runs
+      # a long, unrelated chain of drift checks before reaching here (migrations, schema, env-reference,
+      # docs, manifest, engine-parity, branding, .nvmrc, release-manifest, observability, the MCP
+      # version audit just above, ...) -- any ONE of those failing without continue-on-error otherwise
+      # skips every step after it by GitHub Actions' own default, INCLUDING this build. "UI tests
+      # (ui-miner)"/"UI tests (miner-extension)" already had this guard (see their own comment below);
+      # this build step and everything through "UI tests (ui)" didn't, so a same-day MCP release
+      # tripping the version-audit step above skipped ui-kit's build entirely, and ui-miner's tests
+      # (which DID still run, guarded) then failed with a confusing "Failed to resolve import
+      # '@loopover/ui-kit/components/...'" that looked like a real code bug instead of a skipped
+      # upstream build -- confirmed live, PR #8182. The job as a whole still fails if any step fails;
+      # this only stops one unrelated failure from hiding/masking every UI result behind it.
       - name: Build UI-kit package
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run build --filter=@loopover/ui-kit
       # apps/loopover-ui's fumadocs-mdx virtual modules (collections/browser, collections/server, imported by
       # docs-client-loader.tsx/docs-source.ts) are gitignored generated output, normally produced by npm ci's
@@ -711,7 +724,7 @@ jobs:
       # gap as "Build UI-kit package" above (a required, gitignored artifact absent on a fresh/cached
       # checkout); runs unconditionally here so cache hit or miss makes no difference.
       - name: Generate docs content collections
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm run postinstall --workspace @loopover/ui
       # Routed through Turborepo -- "Build UI-kit package" above already built ui-kit's dist once for all of
       # lint/typecheck/tests/build in this same job (GitHub Actions steps run strictly sequentially), so
@@ -723,10 +736,10 @@ jobs:
       # package.json ui:lint/ui:typecheck scripts themselves, since ui-deploy.yml and CONTRIBUTING.md's
       # documented local gate sequence both call those directly and rely on their own ui:kit:build prefix.
       - name: UI lint
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run lint --filter=@loopover/ui --filter=@loopover/ui-miner
       - name: UI typecheck
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run typecheck --filter=@loopover/ui --filter=@loopover/ui-miner
       # Split into 3 independent steps (was one `&&`-chained step) -- turbo.json deliberately has no `test`
       # task for any package (per the plan doc: test orchestration stays out of Turborepo entirely, so
@@ -734,12 +747,12 @@ jobs:
       # union-`--filter` fix already applied to "UI lint"/"UI typecheck" two steps above. Plain `&&` meant a
       # failing @loopover/ui test silently prevented @loopover/ui-miner's and @loopover/miner-extension's
       # tests from ever running in that invocation -- same class of failure-masking bug those two steps'
-      # own comment already describes, just still present here. `!cancelled()` on steps 2/3 (not `always()`)
+      # own comment already describes, just still present here. `!cancelled()` on all 3 (not `always()`)
       # matches the pattern already used by "Save Turborepo cache"/"Save TypeScript incremental build
       # cache" elsewhere in this file: still run after an earlier step's failure, just not after the job
       # was cancelled outright. The job as a whole still fails if any of the three fails.
       - name: UI tests (ui)
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm --workspace @loopover/ui run test
       - name: UI tests (ui-miner)
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
@@ -747,12 +760,15 @@ jobs:
       - name: UI tests (miner-extension)
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm --workspace @loopover/miner-extension run test
-      # Same rationale and --filter union semantics as "UI lint"/"UI typecheck" above.
+      # Same rationale and --filter union semantics as "UI lint"/"UI typecheck" above -- and the same
+      # `!cancelled()` need as "Build UI-kit package" through "UI tests (ui)" above: an earlier
+      # unrelated step failing (a drift check, the MCP version audit) would otherwise skip these too,
+      # silently hiding real Extension lint/typecheck results behind it.
       - name: Extension lint
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run lint --filter=@loopover/extension --filter=@loopover/miner-extension
       - name: Extension typecheck
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run typecheck --filter=@loopover/extension --filter=@loopover/miner-extension
       # `npm run ui:build` also regenerates apps/loopover-ui/public/openapi.json (needed for a
       # standalone build), but this step's trigger condition is a strict subset of "OpenAPI drift
@@ -768,7 +784,7 @@ jobs:
       # and running this exact invocation regenerates it correctly (the cross-package outputs edge is
       # honored, not just replayed from cache).
       - name: UI build
-        if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' }}
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run build --filter=@loopover/ui
       # Paired with "Restore Turborepo cache" above (same key, same gate condition) -- deliberately
       # positioned here, after every turbo-routed step in this job (Build engine package, Build MCP, Build

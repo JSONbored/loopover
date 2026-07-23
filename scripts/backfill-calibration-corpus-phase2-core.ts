@@ -117,6 +117,11 @@ export type Phase2Report = {
   patched: number;
   alreadyPatched: number;
   noMatch: number;
+  /** Pass-A heuristic breakdown (#8170's apply decision hinges on it): a SAME-AUTHOR rework merging is
+   *  strong bot-was-wrong evidence; a shared-issue match by a DIFFERENT author is routine duplicate
+   *  competition in this culture — the winner merging does not make closing the loser wrong. */
+  matchedSameAuthor: number;
+  matchedSharedIssueOnly: number;
   requestsUsed: number;
   exhaustedBudget: boolean;
   resumeFrom: string | null;
@@ -129,6 +134,9 @@ export function renderPhase2Report(report: Phase2Report, mode: "dry-run" | "appl
       report.pass === "successors" ? RETRO_SUCCESSOR_PROVENANCE : RAW_CONTEXT_REFETCH_PROVENANCE
     }`,
     `  scanned: ${report.scanned}  patched: ${report.patched}  already-patched: ${report.alreadyPatched}  no-match/skipped: ${report.noMatch}`,
+    ...(report.pass === "successors"
+      ? [`  match heuristics: same-author rework ${report.matchedSameAuthor}, shared-issue-only (different author) ${report.matchedSharedIssueOnly}`]
+      : []),
     `  GitHub requests used: ${report.requestsUsed}${report.exhaustedBudget ? " (budget exhausted — resumable)" : ""}`,
   ];
   if (report.resumeFrom) lines.push(`  resume from: ${report.resumeFrom} (state file updated)`);

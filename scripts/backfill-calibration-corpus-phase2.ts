@@ -191,7 +191,7 @@ function splitTargetKey(targetKey: string): { repo: string; number: number } | n
 }
 
 async function runSuccessorsPass(args: Args, budget: RequestBudget, state: CursorState): Promise<Phase2Report> {
-  const report: Phase2Report = { pass: "successors", scanned: 0, patched: 0, alreadyPatched: 0, noMatch: 0, requestsUsed: 0, exhaustedBudget: false, resumeFrom: null };
+  const report: Phase2Report = { pass: "successors", scanned: 0, patched: 0, alreadyPatched: 0, noMatch: 0, matchedSameAuthor: 0, matchedSharedIssueOnly: 0, requestsUsed: 0, exhaustedBudget: false, resumeFrom: null };
   const rows = loadBackfillRows(args, "override").filter((row) => !state.successorsResumeFrom || row.target_key > state.successorsResumeFrom);
 
   const byRepo = new Map<string, BackfillRow[]>();
@@ -252,6 +252,8 @@ async function runSuccessorsPass(args: Args, budget: RequestBudget, state: Curso
         state.successorsResumeFrom = row.target_key;
         continue;
       }
+      if (match.heuristics.sameAuthorFileOverlap) report.matchedSameAuthor += 1;
+      else report.matchedSharedIssueOnly += 1;
       const patched = patchOverrideMetadataToReversed(row.metadata_json, match);
       if (patched === null) {
         report.alreadyPatched += 1;
@@ -269,7 +271,7 @@ async function runSuccessorsPass(args: Args, budget: RequestBudget, state: Curso
 }
 
 async function runRawContextPass(args: Args, budget: RequestBudget, state: CursorState): Promise<Phase2Report> {
-  const report: Phase2Report = { pass: "raw-context", scanned: 0, patched: 0, alreadyPatched: 0, noMatch: 0, requestsUsed: 0, exhaustedBudget: false, resumeFrom: null };
+  const report: Phase2Report = { pass: "raw-context", scanned: 0, patched: 0, alreadyPatched: 0, noMatch: 0, matchedSameAuthor: 0, matchedSharedIssueOnly: 0, requestsUsed: 0, exhaustedBudget: false, resumeFrom: null };
   const rows = loadBackfillRows(args, "fired").filter((row) => !state.rawContextResumeFrom || row.target_key > state.rawContextResumeFrom);
   const repoPrivacy = new Map<string, boolean>();
 

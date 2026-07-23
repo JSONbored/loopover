@@ -126,10 +126,12 @@ describe("ids + report rendering (#8170)", () => {
   });
 
   it("renders both passes' reports, including the budget-exhausted resumable form", () => {
-    const base: Phase2Report = { pass: "successors", scanned: 5, patched: 2, alreadyPatched: 1, noMatch: 2, requestsUsed: 42, exhaustedBudget: false, resumeFrom: null };
+    const base: Phase2Report = { pass: "successors", scanned: 5, patched: 2, alreadyPatched: 1, noMatch: 2, matchedSameAuthor: 1, matchedSharedIssueOnly: 1, requestsUsed: 42, exhaustedBudget: false, resumeFrom: null };
     const report = renderPhase2Report(base, "dry-run");
     expect(report).toContain(RETRO_SUCCESSOR_PROVENANCE);
     expect(report).toContain("scanned: 5");
+    // The apply decision hinges on this split (same-author = strong; shared-issue-only = routine duplicate competition).
+    expect(report).toContain("same-author rework 1, shared-issue-only (different author) 1");
     const exhausted = renderPhase2Report(
       { ...base, pass: "raw-context", exhaustedBudget: true, resumeFrom: "acme/widgets#7" },
       "apply",

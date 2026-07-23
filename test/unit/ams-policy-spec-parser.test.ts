@@ -43,6 +43,7 @@ describe("AmsPolicySpec parser (#5132)", () => {
       maxIterations: 5,
       maxTurnsPerIteration: 10,
       selfLoopAutonomy: "observe",
+      networkAllowlist: { ecosystems: ["npm", "pypi"], extraHosts: ["api.example.com"] },
     });
     expect(parsed.present).toBe(true);
     expect(parsed.spec).toEqual({
@@ -53,6 +54,7 @@ describe("AmsPolicySpec parser (#5132)", () => {
       maxIterations: 5,
       maxTurnsPerIteration: 10,
       selfLoopAutonomy: "observe",
+      networkAllowlist: { ecosystems: ["npm", "pypi"], extraHosts: ["api.example.com"] },
     });
     expect(parsed.warnings).toEqual([]);
   });
@@ -118,6 +120,137 @@ describe("AmsPolicySpec parser (#5132)", () => {
       const parsed = parseAmsPolicySpec({ selfLoopAutonomy: null, maxIterations: 5 });
       expect(parsed.spec.selfLoopAutonomy).toBe("auto");
       expect(parsed.warnings).toEqual([]);
+    });
+  });
+
+  describe("networkAllowlist (#7857)", () => {
+    it("defaults to no additions when omitted", () => {
+      expect(DEFAULT_AMS_POLICY_SPEC.networkAllowlist).toEqual({ ecosystems: [], extraHosts: [] });
+      expect(parseAmsPolicySpec({}).spec.networkAllowlist).toEqual({ ecosystems: [], extraHosts: [] });
+    });
+
+    it("accepts every known ecosystem and a valid extra host, marking the spec present", () => {
+      const parsed = parseAmsPolicySpec({
+        networkAllowlist: {
+          ecosystems: ["npm", "pypi", "crates", "go", "rubygems", "packagist", "maven", "nuget"],
+          extraHosts: ["api.example.com", "sub.deep.example.co.uk"],
+        },
+      });
+      expect(parsed.present).toBe(true);
+      expect(parsed.spec.networkAllowlist).toEqual({
+        ecosystems: ["npm", "pypi", "crates", "go", "rubygems", "packagist", "maven", "nuget"],
+        extraHosts: ["api.example.com", "sub.deep.example.co.uk"],
+      });
+      expect(parsed.warnings).toEqual([]);
+    });
+
+    it("drops unknown ecosystem entries with a warning but keeps the valid ones", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm", "yolo-registry", "pypi"] } });
+      expect(parsed.spec.networkAllowlist.ecosystems).toEqual(["npm", "pypi"]);
+      expect(parsed.warnings.join(" ")).toMatch(/networkAllowlist\.ecosystems.*yolo-registry.*npm, pypi, crates/i);
+    });
+
+    it("drops duplicate ecosystem entries with a warning, keeping the first occurrence", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm", "npm"] } });
+      expect(parsed.spec.networkAllowlist.ecosystems).toEqual(["npm"]);
+      expect(parsed.warnings.join(" ")).toMatch(/networkAllowlist\.ecosystems/i);
+    });
+
+    it("drops non-string ecosystem entries with a warning", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm", 42, null] } });
+      expect(parsed.spec.networkAllowlist.ecosystems).toEqual(["npm"]);
+      expect(parsed.warnings.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("caps the raw ecosystems array at the known-ecosystem count instead of processing an unbounded list", () => {
+      const raw = Array.from({ length: 100 }, () => "yolo-registry");
+      // maxIterations rides along so hasConfiguredPolicyFields is true for a reason unrelated to this list --
+      // otherwise every entry dropping leaves the spec fully default, adding an extra "no recognized fields"
+      // warning that would confound the exact per-entry-drop count this test is isolating.
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: raw }, maxIterations: 5 });
+      expect(parsed.spec.networkAllowlist.ecosystems).toEqual([]);
+      // 8 warnings (one per processed, capped entry), not 100 -- proves the slice happened before the loop.
+      expect(parsed.warnings.length).toBe(8);
+    });
+
+    it("ecosystems: rejects a non-array value with a warning, falling back to defaults", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: "npm" } });
+      expect(parsed.spec.networkAllowlist.ecosystems).toEqual([]);
+      expect(parsed.warnings.join(" ")).toMatch(/networkAllowlist\.ecosystems.*must be an array/i);
+    });
+
+    it("drops malformed extraHosts entries (invalid hostname shape, non-string, duplicate) with a warning each", () => {
+      const parsed = parseAmsPolicySpec({
+        networkAllowlist: { extraHosts: ["good.example.com", "not a hostname", "-leading-hyphen.com", 7, "good.example.com"] },
+      });
+      expect(parsed.spec.networkAllowlist.extraHosts).toEqual(["good.example.com"]);
+      expect(parsed.warnings.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("caps extraHosts at 50 raw entries instead of processing an unbounded list", () => {
+      const raw = Array.from({ length: 200 }, (_, i) => `not valid host ${i}`);
+      // Same reasoning as the ecosystems cap test above -- isolates the per-entry-drop count.
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { extraHosts: raw }, maxIterations: 5 });
+      expect(parsed.spec.networkAllowlist.extraHosts).toEqual([]);
+      expect(parsed.warnings.length).toBe(50);
+    });
+
+    it("extraHosts: rejects a non-array value with a warning, falling back to defaults", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { extraHosts: { host: "example.com" } } });
+      expect(parsed.spec.networkAllowlist.extraHosts).toEqual([]);
+      expect(parsed.warnings.join(" ")).toMatch(/networkAllowlist\.extraHosts.*must be an array/i);
+    });
+
+    it("resolves each field independently when only one is present", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm"] } });
+      expect(parsed.spec.networkAllowlist).toEqual({ ecosystems: ["npm"], extraHosts: [] });
+    });
+
+    it("rejects a non-mapping networkAllowlist value and falls back to defaults", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: ["npm"] });
+      expect(parsed.spec.networkAllowlist).toEqual(DEFAULT_AMS_POLICY_SPEC.networkAllowlist);
+      expect(parsed.warnings.join(" ")).toMatch(/networkAllowlist.*must be a mapping/i);
+    });
+
+    it("null/undefined fall back silently, with no warning of their own", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: null, maxIterations: 5 });
+      expect(parsed.spec.networkAllowlist).toEqual({ ecosystems: [], extraHosts: [] });
+      expect(parsed.warnings).toEqual([]);
+    });
+
+    it("marks a non-default allowlist as configured even with no other field set", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm"] } });
+      expect(parsed.present).toBe(true);
+    });
+
+    it("REGRESSION: an explicitly-empty allowlist does NOT count as configured", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: [], extraHosts: [] } });
+      expect(parsed.present).toBe(false);
+      expect(parsed.spec).toEqual(DEFAULT_AMS_POLICY_SPEC);
+    });
+
+    it("mutating the returned spec's arrays never affects the shared DEFAULT_AMS_POLICY_SPEC singleton (empty input)", () => {
+      const parsed = parseAmsPolicySpec({});
+      parsed.spec.networkAllowlist.ecosystems.push("npm");
+      parsed.spec.networkAllowlist.extraHosts.push("evil.example.com");
+      expect(DEFAULT_AMS_POLICY_SPEC.networkAllowlist).toEqual({ ecosystems: [], extraHosts: [] });
+    });
+
+    it("REGRESSION: mutating the resolved arrays never affects the shared singleton even when networkAllowlist itself is untouched but a sibling field IS configured", () => {
+      // Distinct from the empty-input case above: hasConfiguredPolicyFields is true here (maxIterations
+      // differs from default), so this spec is built via the `present: true` return path, NOT
+      // cloneDefaultAmsPolicySpec() -- networkAllowlist's own normalizer has to defensively copy on its own,
+      // since nothing upstream of it does so on this path.
+      const parsed = parseAmsPolicySpec({ maxIterations: 5 });
+      parsed.spec.networkAllowlist.ecosystems.push("npm");
+      parsed.spec.networkAllowlist.extraHosts.push("evil.example.com");
+      expect(DEFAULT_AMS_POLICY_SPEC.networkAllowlist).toEqual({ ecosystems: [], extraHosts: [] });
+    });
+
+    it("REGRESSION: same protection when networkAllowlist is a partial object (one field specified, the other's default array must still be copied, not shared)", () => {
+      const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm"] } });
+      parsed.spec.networkAllowlist.extraHosts.push("evil.example.com");
+      expect(DEFAULT_AMS_POLICY_SPEC.networkAllowlist.extraHosts).toEqual([]);
     });
   });
 

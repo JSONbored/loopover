@@ -41,6 +41,7 @@ test("parseAmsPolicySpec: valid raw config normalizes every field and keeps non-
     maxIterations: 5,
     maxTurnsPerIteration: 10,
     selfLoopAutonomy: "observe",
+    networkAllowlist: { ecosystems: ["npm"], extraHosts: ["api.example.com"] },
   });
 
   assert.equal(parsed.present, true);
@@ -52,7 +53,16 @@ test("parseAmsPolicySpec: valid raw config normalizes every field and keeps non-
     maxIterations: 5,
     maxTurnsPerIteration: 10,
     selfLoopAutonomy: "observe",
+    networkAllowlist: { ecosystems: ["npm"], extraHosts: ["api.example.com"] },
   });
+  assert.deepEqual(parsed.warnings, []);
+});
+
+test("parseAmsPolicySpec: networkAllowlist (#7857) defaults to no additions and normalizes a valid declaration", () => {
+  assert.deepEqual(DEFAULT_AMS_POLICY_SPEC.networkAllowlist, { ecosystems: [], extraHosts: [] });
+  const parsed = parseAmsPolicySpec({ networkAllowlist: { ecosystems: ["npm", "pypi"], extraHosts: ["api.example.com"] } });
+  assert.equal(parsed.present, true);
+  assert.deepEqual(parsed.spec.networkAllowlist, { ecosystems: ["npm", "pypi"], extraHosts: ["api.example.com"] });
   assert.deepEqual(parsed.warnings, []);
 });
 

@@ -42,6 +42,42 @@ export type AmsCapLimits = {
   elapsedMs: number;
 };
 
+/** Curated ecosystem identifiers an operator may declare in {@link AmsNetworkAllowlist.ecosystems} -- the
+ *  language/package-manager registries #7648 ratified as a safe default category. A closed set (not free
+ *  text) so a typo degrades to a warning + drop, not a silently-ignored no-op. */
+export const AMS_NETWORK_ALLOWLIST_ECOSYSTEMS = ["npm", "pypi", "crates", "go", "rubygems", "packagist", "maven", "nuget"] as const;
+export type AmsNetworkAllowlistEcosystem = (typeof AMS_NETWORK_ALLOWLIST_ECOSYSTEMS)[number];
+
+const MAX_NETWORK_ALLOWLIST_ECOSYSTEMS = AMS_NETWORK_ALLOWLIST_ECOSYSTEMS.length;
+const MAX_NETWORK_ALLOWLIST_EXTRA_HOSTS = 50;
+// RFC 1123 hostname shape (labels of letters/digits/hyphens, dot-separated, no leading/trailing hyphen per
+// label) -- deliberately conservative since a future enforcement implementation (#7857's still-open mechanism
+// half) will feed this straight into firewall/proxy rules; garbage here would be that implementation's problem
+// to sanitize a second time.
+const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/;
+
+/** Operator-declared network-egress allowlist additions (#7857, config-surface half of #7648's ratified
+ *  design) for AMS sandboxed execution. Deliberately operator-local ONLY, mirroring this whole file's own
+ *  scope (see the module header) -- never fetched from a target repo. #7648 ratified "the repo's declared
+ *  language-ecosystem registries" as a default-allowlist category, but deriving that from a TARGET repo's own
+ *  manifest is unsafe: a malicious repo could fabricate a manifest entry to smuggle an attacker-controlled
+ *  host into its own attempt's allowlist -- exactly the kind of repo-loosens-its-own-constraints hole this
+ *  file's whole design already guards against. The operator declares which ecosystems and any extra hosts
+ *  their own repos legitimately need instead.
+ *
+ *  INERT today: no OS-level network-egress enforcement exists yet for AMS sandboxed execution (#7857's
+ *  mechanism half is still open, deliberately deferred separately from this config surface). This type is
+ *  what a future enforcement implementation will read; landing it now settles the trust-boundary question
+ *  ahead of that work instead of leaving it to be reopened once enforcement is being built. */
+export type AmsNetworkAllowlist = {
+  /** Ecosystem registries to allow, beyond the two categories #7648 ratified as always-on (OS package
+   *  registries, the repo's own git remote) -- those aren't declared here since they apply unconditionally. */
+  ecosystems: AmsNetworkAllowlistEcosystem[];
+  /** Additional specific hostnames to allow beyond the curated ecosystem categories, e.g. a project's own
+   *  third-party API (#7648's "requesting broader access" case). */
+  extraHosts: string[];
+};
+
 /** Per-operator AMS execution policy parsed from `.loopover-ams.yml`. See {@link DEFAULT_AMS_POLICY_SPEC}. */
 export type AmsPolicySpec = {
   /** Whether a real attempt may actually submit. Default: "observe" (deny-by-default). */
@@ -65,6 +101,10 @@ export type AmsPolicySpec = {
    *  hands off), so defaulting to "observe" would silently change behavior for every operator who leaves the
    *  field unset. Inert until the consultation issue reads it. */
   selfLoopAutonomy: AutonomyLevel;
+  /** Operator-declared network-egress allowlist additions (#7857). Default: `{ ecosystems: [], extraHosts: [] }`
+   *  -- no additions beyond the always-on OS-registry/git-remote defaults. INERT until #7857's OS-level
+   *  enforcement mechanism is built; see {@link AmsNetworkAllowlist}'s own doc comment. */
+  networkAllowlist: AmsNetworkAllowlist;
 };
 
 /** The tolerant parser result for `.loopover-ams.yml`. Mirrors `ParsedMinerGoalSpec`'s present/warnings shape. */
@@ -86,6 +126,7 @@ export const DEFAULT_AMS_POLICY_SPEC: Readonly<AmsPolicySpec> = Object.freeze({
   maxIterations: 3,
   maxTurnsPerIteration: 6,
   selfLoopAutonomy: "auto",
+  networkAllowlist: Object.freeze({ ecosystems: [], extraHosts: [] }),
 });
 
 const MAX_AMS_POLICY_SPEC_BYTES = 8_192;
@@ -99,6 +140,10 @@ function cloneDefaultAmsPolicySpec(): AmsPolicySpec {
     maxIterations: DEFAULT_AMS_POLICY_SPEC.maxIterations,
     maxTurnsPerIteration: DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration,
     selfLoopAutonomy: DEFAULT_AMS_POLICY_SPEC.selfLoopAutonomy,
+    networkAllowlist: {
+      ecosystems: [...DEFAULT_AMS_POLICY_SPEC.networkAllowlist.ecosystems],
+      extraHosts: [...DEFAULT_AMS_POLICY_SPEC.networkAllowlist.extraHosts],
+    },
   };
 }
 
@@ -185,6 +230,67 @@ function normalizeConvergenceThresholds(
   };
 }
 
+/** Validates each entry independently and DROPS invalid ones rather than falling back to the whole list --
+ *  unlike this file's single-value fields (one bad value = the whole field reverts to default), a list field
+ *  reverting entirely on one typo would silently discard every other correctly-typed entry alongside it. */
+function normalizeEcosystemList(value: unknown, fallback: AmsNetworkAllowlistEcosystem[], warnings: string[]): AmsNetworkAllowlistEcosystem[] {
+  // A fresh copy, not `fallback` by reference: unlike this file's number-valued fields, an array is mutable,
+  // so passing through the DEFAULT_AMS_POLICY_SPEC singleton's own array here would let a caller who mutates
+  // their OWN resolved spec's list (e.g. `.push`) silently corrupt every other caller's shared defaults too.
+  if (value === undefined || value === null) return [...fallback];
+  if (!Array.isArray(value)) {
+    warnings.push('AmsPolicySpec field "networkAllowlist.ecosystems" must be an array; falling back to defaults.');
+    return [...fallback];
+  }
+  const known = new Set<string>(AMS_NETWORK_ALLOWLIST_ECOSYSTEMS);
+  const result: AmsNetworkAllowlistEcosystem[] = [];
+  for (const entry of value.slice(0, MAX_NETWORK_ALLOWLIST_ECOSYSTEMS)) {
+    if (typeof entry === "string" && known.has(entry) && !result.includes(entry as AmsNetworkAllowlistEcosystem)) {
+      result.push(entry as AmsNetworkAllowlistEcosystem);
+      continue;
+    }
+    warnings.push(
+      `AmsPolicySpec field "networkAllowlist.ecosystems" entry ${JSON.stringify(entry)} must be one of ${AMS_NETWORK_ALLOWLIST_ECOSYSTEMS.join(", ")}; dropping it.`,
+    );
+  }
+  return result;
+}
+
+/** Same drop-invalid-entries approach as {@link normalizeEcosystemList}. Hostname shape is validated (not just
+ *  "is this a string") because this feeds a future firewall/proxy enforcement implementation directly -- see
+ *  {@link AmsNetworkAllowlist}'s own doc comment. */
+function normalizeExtraHosts(value: unknown, fallback: string[], warnings: string[]): string[] {
+  // Fresh copies throughout, same reasoning as normalizeEcosystemList's own comment above.
+  if (value === undefined || value === null) return [...fallback];
+  if (!Array.isArray(value)) {
+    warnings.push('AmsPolicySpec field "networkAllowlist.extraHosts" must be an array; falling back to defaults.');
+    return [...fallback];
+  }
+  const result: string[] = [];
+  for (const entry of value.slice(0, MAX_NETWORK_ALLOWLIST_EXTRA_HOSTS)) {
+    if (typeof entry === "string" && HOSTNAME_RE.test(entry) && !result.includes(entry)) {
+      result.push(entry);
+      continue;
+    }
+    warnings.push(`AmsPolicySpec field "networkAllowlist.extraHosts" entry ${JSON.stringify(entry)} is not a valid hostname; dropping it.`);
+  }
+  return result;
+}
+
+function normalizeNetworkAllowlist(value: unknown, fallback: AmsNetworkAllowlist, warnings: string[]): AmsNetworkAllowlist {
+  // Fresh array copies in the fallback object too, same reasoning as normalizeEcosystemList's own comment.
+  if (value === undefined || value === null) return { ecosystems: [...fallback.ecosystems], extraHosts: [...fallback.extraHosts] };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('AmsPolicySpec field "networkAllowlist" must be a mapping; falling back to defaults.');
+    return { ecosystems: [...fallback.ecosystems], extraHosts: [...fallback.extraHosts] };
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    ecosystems: normalizeEcosystemList(record.ecosystems, fallback.ecosystems, warnings),
+    extraHosts: normalizeExtraHosts(record.extraHosts, fallback.extraHosts, warnings),
+  };
+}
+
 function hasConfiguredPolicyFields(spec: AmsPolicySpec): boolean {
   return (
     spec.submissionMode !== DEFAULT_AMS_POLICY_SPEC.submissionMode ||
@@ -196,7 +302,12 @@ function hasConfiguredPolicyFields(spec: AmsPolicySpec): boolean {
     spec.convergenceThresholds.maxReenqueues !== DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxReenqueues ||
     spec.maxIterations !== DEFAULT_AMS_POLICY_SPEC.maxIterations ||
     spec.maxTurnsPerIteration !== DEFAULT_AMS_POLICY_SPEC.maxTurnsPerIteration ||
-    spec.selfLoopAutonomy !== DEFAULT_AMS_POLICY_SPEC.selfLoopAutonomy
+    spec.selfLoopAutonomy !== DEFAULT_AMS_POLICY_SPEC.selfLoopAutonomy ||
+    // Default is always { ecosystems: [], extraHosts: [] } (see DEFAULT_AMS_POLICY_SPEC) -- any entry at all
+    // means the operator configured something, so length alone is the right "differs from default" check;
+    // no need to compare contents.
+    spec.networkAllowlist.ecosystems.length > 0 ||
+    spec.networkAllowlist.extraHosts.length > 0
   );
 }
 
@@ -244,6 +355,7 @@ export function parseAmsPolicySpec(raw: unknown): ParsedAmsPolicySpec {
       DEFAULT_AMS_POLICY_SPEC.selfLoopAutonomy,
       warnings,
     ),
+    networkAllowlist: normalizeNetworkAllowlist(record.networkAllowlist, DEFAULT_AMS_POLICY_SPEC.networkAllowlist, warnings),
   };
   if (!hasConfiguredPolicyFields(spec)) {
     warnings.push("AmsPolicySpec contained no recognized non-default policy fields; falling back to safe defaults.");

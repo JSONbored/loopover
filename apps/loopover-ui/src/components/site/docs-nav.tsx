@@ -1,4 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -116,6 +117,34 @@ function groupItems(group: DocsGroup): DocsItem[] {
   return "items" in group ? group.items : group.subgroups.flatMap((sub) => sub.items);
 }
 
+// Every DocsItem#to is either the bare docs index ("/docs") or "/docs/<slug>" resolved through the
+// single dynamic docs.$slug.tsx route (#8151) -- items stay full paths (not bare slugs) so pathname
+// comparisons/key/prev-next lookups below don't need a second derived field, and this one helper
+// splits into whichever <Link> shape each case needs (the index route takes no params; the dynamic
+// route requires them).
+function DocsNavLink({
+  to,
+  className,
+  children,
+}: {
+  to: string;
+  className: string;
+  children: ReactNode;
+}) {
+  if (to === "/docs") {
+    return (
+      <Link to="/docs" className={className}>
+        {children}
+      </Link>
+    );
+  }
+  return (
+    <Link to="/docs/$slug" params={{ slug: to.slice("/docs/".length) }} className={className}>
+      {children}
+    </Link>
+  );
+}
+
 function DocsItemList({ items, pathname }: { items: DocsItem[]; pathname: string }) {
   return (
     <ul className="space-y-0.5">
@@ -123,8 +152,8 @@ function DocsItemList({ items, pathname }: { items: DocsItem[]; pathname: string
         const active = pathname === it.to;
         return (
           <li key={it.to}>
-            <Link
-              to={it.to as "/docs"}
+            <DocsNavLink
+              to={it.to}
               className={cn(
                 "relative block rounded-token px-3 py-1.5 text-token-sm transition-colors",
                 active
@@ -136,7 +165,7 @@ function DocsItemList({ items, pathname }: { items: DocsItem[]; pathname: string
                 <span className="absolute left-0 top-1/2 h-4 w-px -translate-y-1/2 bg-mint" />
               )}
               {it.label}
-            </Link>
+            </DocsNavLink>
           </li>
         );
       })}
@@ -183,8 +212,8 @@ export function DocsPrevNext() {
   return (
     <div className="mt-16 grid gap-3 border-t border-border pt-8 sm:grid-cols-2">
       {prev ? (
-        <Link
-          to={prev.to as "/docs"}
+        <DocsNavLink
+          to={prev.to}
           className="group flex flex-col rounded-token border border-border bg-transparent p-4 transition-colors hover:border-foreground/30"
         >
           <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
@@ -193,13 +222,13 @@ export function DocsPrevNext() {
           <span className="mt-1 font-medium text-foreground group-hover:text-mint">
             {prev.label}
           </span>
-        </Link>
+        </DocsNavLink>
       ) : (
         <span />
       )}
       {next && (
-        <Link
-          to={next.to as "/docs"}
+        <DocsNavLink
+          to={next.to}
           className="group flex flex-col items-end rounded-token border border-border bg-transparent p-4 text-right transition-colors hover:border-foreground/30"
         >
           <span className="font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
@@ -208,7 +237,7 @@ export function DocsPrevNext() {
           <span className="mt-1 font-medium text-foreground group-hover:text-mint">
             {next.label}
           </span>
-        </Link>
+        </DocsNavLink>
       )}
     </div>
   );

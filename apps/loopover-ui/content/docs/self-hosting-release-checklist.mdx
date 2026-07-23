@@ -1,6 +1,7 @@
 ---
 title: First release checklist
 description: Everything to confirm before cutting orb-v0.1.0 — the first stable (non-prerelease) self-host image — after two beta cuts already validated the pipeline end to end. Run the smoke matrix against a candidate image before tagging any orb-vX.Y.Z or -rc/-beta prerelease; CI only exercises the plain SQLite + Redis + direct-App default.
+eyebrow: Self-hosting
 ---
 
 ## Versioning and release trigger
@@ -281,7 +282,9 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_orb_relay_register_failed" \\
 ./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Pull mode -- no PUBLIC_API_ORIGIN needed; the container polls the broker outbound instead of
+
 # exposing an inbound endpoint. The right fit for NAT/tailnet operators with no public ingress.
+
 SELFHOST_SMOKE_EXTRA_ENV="ORB_ENROLLMENT_SECRET=\${TEST_ENROLLMENT_SECRET}
 ORB_RELAY_MODE=pull" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_orb_relay_register" \\
@@ -314,6 +317,7 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 ./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Codex only (requires the fail-closed opt-in)
+
 SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex
 LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER=1" \\
 SELFHOST_SMOKE_EXPECT_EVENTS="selfhost_ai_provider" \\
@@ -321,6 +325,7 @@ SELFHOST_SMOKE_FORBID_EVENTS="selfhost_ai_cli_missing" \\
 ./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # Codex primary, Claude Code fallback
+
 SELFHOST_SMOKE_EXTRA_ENV="AI_PROVIDER=codex,claude-code
 CODEX_AI_EFFORT=medium
 CLAUDE_AI_EFFORT=medium
@@ -367,6 +372,7 @@ Redis is always-on in every scenario above (the base script already boots it) �
 ./scripts/smoke-selfhost.sh loopover:rc-candidate
 
 # With Qdrant RAG:
+
 docker network create gt-rag-smoke
 docker run -d --name gt-qdrant --network gt-rag-smoke qdrant/qdrant:v1.18.2
 SELFHOST_SMOKE_NETWORK=gt-rag-smoke \\

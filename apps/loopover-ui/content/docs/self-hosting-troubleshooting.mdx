@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Start with readiness and logs, then isolate webhook, queue, AI, REES, RAG, or write-suppression problems.
+eyebrow: Self-hosting
 ---
 
 ## First checks
@@ -87,9 +88,11 @@ A short burst of deferrals is expected and self-resolving: the queue is delibera
 sum by (key_scope, job_type) (rate(loopover_jobs_rate_limit_admission_deferred_total[10m]))
 
 # Is one key_scope (e.g. a single installation token) the bottleneck?
+
 topk(5, sum by (key_scope) (rate(loopover_jobs_rate_limit_budget_deferred_total[10m])))
 
 # Real rate-limit responses from GitHub itself (not just internal deferrals)
+
 sum(rate(loopover_github_rest_rate_limit_responses_total[10m]))`}
 />
 
@@ -107,6 +110,7 @@ sum by (class) (rate(loopover_github_response_cache_total{result="hit"}[15m]))
 sum by (class) (rate(loopover_github_response_cache_total[15m]))
 
 # GraphQL hit rate — same shape, separate metric
+
 sum by (class) (rate(loopover_github_graphql_cache_total{result="hit"}[15m]))
 /
 sum by (class) (rate(loopover_github_graphql_cache_total[15m]))`}
@@ -126,6 +130,7 @@ sum by (class) (rate(loopover_github_graphql_cache_total[15m]))`}
 docker compose --profile qdrant ps qdrant
 
 # Only after confirming a dimension mismatch is the actual cause:
+
 curl -X DELETE "$QDRANT_URL/collections/loopover"`}
 />
 
@@ -160,7 +165,9 @@ The metrics path is the app's own `/metrics` (scraped directly by Prometheus) pl
 docker compose logs --tail=80 prometheus otel-collector grafana
 
 # Send one synthetic OTLP metric through the collector, read it back from its Prometheus exporter,
+
 # and sanity-check the app's own /metrics HELP/TYPE shape.
+
 npm run test:smoke:observability:metrics`}
 />
 
@@ -179,6 +186,7 @@ The trace path is app or smoke process → OTEL collector → Tempo → Grafana.
 docker compose logs --tail=80 tempo otel-collector grafana
 
 # Send one synthetic span through the collector and read it back from Tempo.
+
 npm run test:smoke:observability`}
 />
 

@@ -1,6 +1,7 @@
 ---
 title: Configuration
 description: "The self-host configuration model: deployment env, private per-repo policy, feature flags, and review modes."
+eyebrow: Self-hosting
 ---
 
 import { SELFHOST_ENV_REFERENCE_MARKDOWN } from "@/lib/selfhost-env-reference";
@@ -81,6 +82,7 @@ Start from a template instead of reverse-engineering env flags, private-config p
 cp config/examples/loopover.minimal.yml .loopover.yml
 
 # Self-host private mount (operator-only policy)
+
 mkdir -p loopover-config
 cp config/examples/global.loopover.yml loopover-config/.loopover.yml`}
 />
@@ -366,7 +368,7 @@ A cluster of contributor-abuse guardrails, all config-as-code only, all off/unse
 - **Exemptions and account age** — `autoCloseExemptLogins` is a shared, repo-scoped list of logins never throttled or closed by these deterministic mechanisms, on top of the standing owner/admin/bot exemption. `accountAgeThresholdDays` (default `null`, off) applies `newAccountLabel` (default `new-account`) to a PR from a below-threshold-age account — friction/visibility only, never an automatic close on account age alone, and never for the owner, admins, or bots.
 - **Command rate limit** — `commandRateLimitPolicy` (`off`/`hold`, default `off`) generalizes the review-nag pattern to every `@loopover` command, not just review-request pings. `commandRateLimitMaxPerWindow` (default `20`) bounds cheap, cache-only commands; `commandRateLimitAiMaxPerWindow` (default `5`) is the tighter limit for AI-cost-bearing commands (ask/blockers/preflight/etc.); `commandRateLimitWindowHours` (default `24`) is the rolling window both limits count against.
 
-### settings.issuePlan*
+### settings.issuePlan\*
 
 Config for `loopover_plan_repo_issues`, the AI issue-planning MCP tool: given a maintainer-supplied free-form goal, it proposes a small set of GitHub issue drafts (dry-run by default) and, on explicit request, creates them via the same installation-token/Orb-broker path every other GitHub write in this repo uses — never a flat PAT, so it only works on a repo the App/Orb is actually installed on.
 

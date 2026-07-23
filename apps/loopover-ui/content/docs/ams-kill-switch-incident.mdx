@@ -1,6 +1,7 @@
 ---
 title: Kill-switch incident runbook
 description: Detect, activate, and audit a misbehaving Rent-a-Loop miner after the kill-switch stops it — grounded in the shipped #5670 mechanism.
+eyebrow: Maintainers
 ---
 
 Operator runbook for a **misbehaving autonomous miner loop** once the emergency kill-switch has
@@ -17,9 +18,9 @@ been (or must be) engaged. Grounded in the shipped mechanism from #5670 (`packag
 
 Two independent triggers compose into one scope per repo:
 
-| Trigger | How | Scope reported |
-| --- | --- | --- |
-| Global | `LOOPOVER_MINER_KILL_SWITCH` env var (`1` / `true` / `yes` / `on`) | `"global"` — every repo |
+| Trigger  | How                                                                              | Scope reported            |
+| -------- | -------------------------------------------------------------------------------- | ------------------------- |
+| Global   | `LOOPOVER_MINER_KILL_SWITCH` env var (`1` / `true` / `yes` / `on`)               | `"global"` — every repo   |
 | Per-repo | `killSwitch.paused: true` in that repo's `.loopover-miner.yml` (`MinerGoalSpec`) | `"repo"` — that repo only |
 
 A global halt **always wins** and is reported as `"global"` even when the per-repo flag is also set.

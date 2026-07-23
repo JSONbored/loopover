@@ -12,16 +12,18 @@ import { Callout } from "@/components/site/primitives";
 // its own in-app /docs/ams-observability route (#6024, ported from the source packages/loopover-miner/docs/observability.md
 // this constant used to point at directly) -- an in-app Link keeps the reader on the docs site instead of bouncing
 // to GitHub.
-export const AMS_OBSERVABILITY_DOC_URL = "/docs/ams-observability";
+export const AMS_OBSERVABILITY_DOC_SLUG = "ams-observability";
 
 /** A `note` callout pointing a dual-role ORB+AMS operator at the "Observing your miner" observability guide. */
 export function AmsObservabilityCallout() {
   return (
     <Callout variant="note" title="Running the miner on this box too?">
       If you also run <strong>AMS</strong> (the <code>loopover-miner</code>) on this host, see{" "}
-      <Link to={AMS_OBSERVABILITY_DOC_URL}>Observing your miner</Link> to point Grafana at the
-      redacted AMS ledger datasources and load its Grafana dashboard — separate from the ORB
-      review-service observability above.
+      <Link to="/docs/$slug" params={{ slug: AMS_OBSERVABILITY_DOC_SLUG }}>
+        Observing your miner
+      </Link>{" "}
+      to point Grafana at the redacted AMS ledger datasources and load its Grafana dashboard —
+      separate from the ORB review-service observability above.
     </Callout>
   );
 }

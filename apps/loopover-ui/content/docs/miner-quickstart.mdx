@@ -1,6 +1,7 @@
 ---
 title: Miner quickstart by contribution lane
 description: Choose how you want to contribute, then follow the same loop — install, sign in, doctor, plan, preflight, packet — with the flags that fit your lane. About five minutes per lane.
+eyebrow: Get started
 ---
 
 LoopOver is copilot-only. It ranks and explains your options and drafts public-safe PR packets. It
@@ -24,11 +25,13 @@ npx -y @loopover/mcp@latest --help
 npm i -g @loopover/mcp@latest
 
 # sign in, confirm identity, check the session
+
 loopover-mcp login
 loopover-mcp whoami --json
 loopover-mcp status --json
 
 # verify API, auth, and the local scorer before any analysis
+
 loopover-mcp doctor --json`}
 />
 

@@ -41,7 +41,8 @@ function AgentsPage() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
-              to="/docs/mcp-clients"
+              to="/docs/$slug"
+              params={{ slug: "mcp-clients" }}
               className="inline-flex items-center gap-2 rounded-token bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               MCP client setup <ArrowRight className="size-4" />
@@ -188,7 +189,8 @@ loopover-mcp init-client --print cursor`}
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
-              to="/docs/mcp-clients"
+              to="/docs/$slug"
+              params={{ slug: "mcp-clients" }}
               className="inline-flex items-center gap-2 rounded-token bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Client setup <ArrowRight className="size-4" />

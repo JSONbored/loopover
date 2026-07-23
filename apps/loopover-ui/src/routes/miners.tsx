@@ -55,13 +55,15 @@ function MinersPage() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
-              to="/docs/quickstart"
+              to="/docs/$slug"
+              params={{ slug: "quickstart" }}
               className="inline-flex items-center gap-2 rounded-token bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install MCP <ArrowRight className="size-4" />
             </Link>
             <Link
-              to="/docs/miner-workflow"
+              to="/docs/$slug"
+              params={{ slug: "miner-workflow" }}
               className="inline-flex items-center gap-2 rounded-token border border-border bg-transparent px-4 py-2 text-token-sm hover:border-foreground/30"
             >
               Read the workflow
@@ -215,7 +217,8 @@ function MinersPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
-              to="/docs/quickstart"
+              to="/docs/$slug"
+              params={{ slug: "quickstart" }}
               className="inline-flex items-center gap-2 rounded-token bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install <ArrowRight className="size-4" />

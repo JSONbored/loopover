@@ -1,6 +1,7 @@
 ---
 title: AMS deployment guide
 description: Deploy @loopover/miner in laptop mode (single machine, zero Docker) or fleet mode (containerized workers) -- both 100% client-side, credentials never baked into images.
+eyebrow: Maintainers
 ---
 
 Two form factors for running `@loopover/miner`: **laptop mode** (single machine, zero Docker) and
@@ -57,9 +58,9 @@ loopover-miner init --interactive    # optional: guided prompt for GITHUB_TOKEN 
   `init --interactive` offers "Authorize with GitHub" (device flow — visit a URL, enter a short
   code, no token to copy or paste) as its first option once the miner's GitHub App OAuth client is
   configured; the original pasted-PAT prompt stays available as option 2, and is what the wizard
-  falls back to automatically on any device-flow failure. Unconfigured, the wizard is
-  byte-identical to the pasted-token-only prompt. Either way, the resulting `GITHUB_TOKEN` acts as
-  your own GitHub account — there is no separate bot identity.
+  falls back to automatically on any device-flow failure. Unconfigured, the wizard is byte-identical
+  to the pasted-token-only prompt. Either way, the resulting `GITHUB_TOKEN` acts as your own GitHub
+  account — there is no separate bot identity.
 </Callout>
 
 ### Expected layout after first use
@@ -150,9 +151,9 @@ The image entrypoint is `loopover-miner`; pass subcommands after the image name 
   config` and any full-env dump of the running container. For Docker Swarm/Kubernetes-managed
   secrets (mounted as a file, e.g. at `/run/secrets/github_token`), set `GITHUB_TOKEN_FILE` to that
   mount path instead — the miner reads and trims the file's contents at startup and uses it exactly
-  as if `GITHUB_TOKEN` had been set directly. If both are set, the plain `GITHUB_TOKEN` value
-  always wins. A missing or unreadable `GITHUB_TOKEN_FILE` fails the container fast with a clear
-  error naming the file path, rather than silently proceeding with no credential.
+  as if `GITHUB_TOKEN` had been set directly. If both are set, the plain `GITHUB_TOKEN` value always
+  wins. A missing or unreadable `GITHUB_TOKEN_FILE` fails the container fast with a clear error
+  naming the file path, rather than silently proceeding with no credential.
 </Callout>
 
 <CodeBlock
@@ -187,10 +188,10 @@ docker compose -f docker-compose.miner.yml up -d --build`}
 <Callout variant="warn" title="Scaling to N parallel workers">
   `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the
   **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent
-  access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give
-  each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2
-  …` — `-p` namespaces the volume) or point each at a distinct `LOOPOVER_MINER_CONFIG_DIR` on its
-  own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in
+  access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each
+  its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` —
+  `-p` namespaces the volume) or point each at a distinct `LOOPOVER_MINER_CONFIG_DIR` on its own
+  mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in
   [`k8s/`](https://github.com/JSONbored/loopover/tree/main/k8s) (per-pod volumes).
 </Callout>
 

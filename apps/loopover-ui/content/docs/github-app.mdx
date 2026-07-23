@@ -1,6 +1,7 @@
 ---
 title: GitHub App configuration
 description: Install a LoopOver GitHub App on a repo so it reviews your pull requests, then choose whether it should stay advisory or enforce repo-configured PR quality rules.
+eyebrow: Workflows
 ---
 
 Once installed, a **LoopOver GitHub App reviews every pull request** on the repos you select.
@@ -155,17 +156,19 @@ settings:
   publicSurface: comment_only
 
 # Friendly gate alias (wins over settings: for gate fields):
+
 gate:
-  enabled: true                 # review-agent check on/off
-  linkedIssue: advisory         # block | advisory | off
-  duplicates: block
-  readiness: { mode: advisory, minScore: 60 }
+enabled: true # review-agent check on/off
+linkedIssue: advisory # block | advisory | off
+duplicates: block
+readiness: { mode: advisory, minScore: 60 }
 
 # Public review-panel content:
+
 review:
-  footer: { text: "Reviewed by our bot." }   # custom lead — the Gittensor register link is always appended
-  note: "Run npm test before requesting review."
-  fields: { relatedWork: false }              # show/hide individual panel rows`}
+footer: { text: "Reviewed by our bot." } # custom lead — the Gittensor register link is always appended
+note: "Run npm test before requesting review."
+fields: { relatedWork: false } # show/hide individual panel rows`}
 />
 
 Maintainer-supplied footer and note text is dropped if it contains forbidden public language

@@ -17,5 +17,10 @@ export const docsSource = loader({
 export function getDocPageMeta(slugs: string[]) {
   const page = docsSource.getPage(slugs);
   if (!page) return null;
-  return { path: page.path, title: page.data.title, description: page.data.description };
+  return {
+    path: page.path,
+    title: page.data.title,
+    description: page.data.description,
+    eyebrow: page.data.eyebrow,
+  };
 }

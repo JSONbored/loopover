@@ -1,6 +1,7 @@
 ---
 title: Privacy & security
 description: Privacy is the product. These are hard rules, not best-effort goals.
+eyebrow: Operating
 ---
 
 ## Hard rules
@@ -61,12 +62,13 @@ LOOPOVER_REVIEW_IMPROVEMENT_SIGNAL="true"      # read-only PR quality-delta sign
 LOOPOVER_REVIEW_AMS_REPUTATION_BRIDGE="true"   # upgrade-only AMS track-record bridge (never shown; needs features.amsReputationBridge + LOOPOVER_AMS_TRACK_RECORD_URL)
 
 # Global (cron / endpoint) flags, not scoped by LOOPOVER_REVIEW_REPOS.
-LOOPOVER_REVIEW_CONTINUOUS="true"              # fleet-wide default: re-review on every push (else one-shot)
-LOOPOVER_REVIEW_OPS="true"                     # read-only anomaly scan + outcome stats endpoint
-LOOPOVER_REVIEW_SELFTUNE="true"                # self-tightening tuning loop, never loosens
-LOOPOVER_REVIEW_PARITY_AUDIT="true"            # shadow-record gate-decision parity readiness
-LOOPOVER_REVIEW_CONTENT_LANE="true"            # dedicated content/registry-repo review lane
-LOOPOVER_REVIEW_DRAFT="true"                   # public draft-submission (contributor fork PR) flow`}
+
+LOOPOVER_REVIEW_CONTINUOUS="true" # fleet-wide default: re-review on every push (else one-shot)
+LOOPOVER_REVIEW_OPS="true" # read-only anomaly scan + outcome stats endpoint
+LOOPOVER_REVIEW_SELFTUNE="true" # self-tightening tuning loop, never loosens
+LOOPOVER_REVIEW_PARITY_AUDIT="true" # shadow-record gate-decision parity readiness
+LOOPOVER_REVIEW_CONTENT_LANE="true" # dedicated content/registry-repo review lane
+LOOPOVER_REVIEW_DRAFT="true" # public draft-submission (contributor fork PR) flow`}
 />
 
 The internal-only controls never surface publicly. Submitter reputation, for example, can
@@ -102,7 +104,7 @@ anti-abuse defaults that reveal no review direction and are not per-repo tunable
 ## Orb fleet telemetry (#4893)
 
 The always-on fleet-calibration pipeline (`POST /v1/orb/ingest`) aggregates anonymized signals
-from every registered *and unregistered* self-host instance into one shared table
+from every registered _and unregistered_ self-host instance into one shared table
 (`orb_signals`) — see [self-hosting: GitHub App](/docs/self-hosting-github-app#telemetry-is-separate-from-token-brokerage)
 for what's exported today and how to opt out. That table is intentional and not a leak: repo/PR
 identifiers are HMAC-anonymized with a per-instance secret LoopOver's own collector never holds,
@@ -114,24 +116,23 @@ grows a hosted, per-customer model, what would be safe to add to this pipeline, 
 wouldn't?** A clear yes/no per category, so a future PR that touches this table has a rule to
 check itself against instead of relitigating anonymization from scratch.
 
-| Potential future data | Safe to add? | Why |
-| --- | --- | --- |
-| Raw repo/org names or logins, even opt-in | **No** | The anonymization promise is fleet-wide, not per-tenant-configurable — one customer opting into raw identifiers doesn't change what every *other* instance was told about this shared table. A hosted customer who wants their own data identifiable should read it back from their own instance/dashboard, never from the shared fleet table. |
-| PR/commit content, diffs, or comments | **No** | Never queried into the export today (the collector's own DB query selects only verdict/outcome/reversal/timestamps) — there is no path for this to leave an instance short of a deliberate, separate feature. Adding it to fleet telemetry would be a new capability, not an extension of this one. |
-| Full-text gate reasons | **No** | Already bucketed to a fixed, low-cardinality category before export specifically so free text (which can quote file paths, identifiers, or reviewer commentary) never leaves the instance. A hosted model doesn't change the fact that this text wasn't written for cross-tenant eyes. |
-| A raw `installation_id` column on `orb_signals` itself | **No** | `orb_signals`/`orb_instances` were built with only an opaque, HMAC-derived `instance_id` — retrofitting a raw installation id onto that table would retroactively de-anonymize every row collected under the existing anonymity promise. If hosted billing/support ever needs to map a fleet instance to a paying installation, that mapping belongs in a **separate** table (mirroring how `orb_github_installations` already keeps raw account identity in its own table, entirely apart from `orb_signals`), not a new column here. |
-| Per-instance metrics surfaced back to *that instance's own* operator | **Yes, with new authz** | `GET /v1/internal/fleet/analytics` already computes per-instance breakdowns keyed by the same opaque `instanceId` — the data already exists. A hosted per-customer dashboard could show a customer their own row. What doesn't exist yet is anything that maps "this session belongs to instance X" and enforces that a customer can only ever see their own opaque id, never another tenant's — that authz layer is new work, not a data-model change. |
-| Cross-tenant fleet-median/percentile comparisons (e.g. gate precision vs. the peer median) | **Yes, unchanged** | Already shipped, in aggregate form only — a single percentile/median across the whole fleet, with no way to reverse-engineer any other specific tenant's raw value from it. This category is the one place "more data" is already safe, because it was designed to stay aggregate-only from the start. |
+| Potential future data                                                                      | Safe to add?            | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------ | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Raw repo/org names or logins, even opt-in                                                  | **No**                  | The anonymization promise is fleet-wide, not per-tenant-configurable — one customer opting into raw identifiers doesn't change what every _other_ instance was told about this shared table. A hosted customer who wants their own data identifiable should read it back from their own instance/dashboard, never from the shared fleet table.                                                                                                                                                                                         |
+| PR/commit content, diffs, or comments                                                      | **No**                  | Never queried into the export today (the collector's own DB query selects only verdict/outcome/reversal/timestamps) — there is no path for this to leave an instance short of a deliberate, separate feature. Adding it to fleet telemetry would be a new capability, not an extension of this one.                                                                                                                                                                                                                                    |
+| Full-text gate reasons                                                                     | **No**                  | Already bucketed to a fixed, low-cardinality category before export specifically so free text (which can quote file paths, identifiers, or reviewer commentary) never leaves the instance. A hosted model doesn't change the fact that this text wasn't written for cross-tenant eyes.                                                                                                                                                                                                                                                 |
+| A raw `installation_id` column on `orb_signals` itself                                     | **No**                  | `orb_signals`/`orb_instances` were built with only an opaque, HMAC-derived `instance_id` — retrofitting a raw installation id onto that table would retroactively de-anonymize every row collected under the existing anonymity promise. If hosted billing/support ever needs to map a fleet instance to a paying installation, that mapping belongs in a **separate** table (mirroring how `orb_github_installations` already keeps raw account identity in its own table, entirely apart from `orb_signals`), not a new column here. |
+| Per-instance metrics surfaced back to _that instance's own_ operator                       | **Yes, with new authz** | `GET /v1/internal/fleet/analytics` already computes per-instance breakdowns keyed by the same opaque `instanceId` — the data already exists. A hosted per-customer dashboard could show a customer their own row. What doesn't exist yet is anything that maps "this session belongs to instance X" and enforces that a customer can only ever see their own opaque id, never another tenant's — that authz layer is new work, not a data-model change.                                                                                |
+| Cross-tenant fleet-median/percentile comparisons (e.g. gate precision vs. the peer median) | **Yes, unchanged**      | Already shipped, in aggregate form only — a single percentile/median across the whole fleet, with no way to reverse-engineer any other specific tenant's raw value from it. This category is the one place "more data" is already safe, because it was designed to stay aggregate-only from the start.                                                                                                                                                                                                                                 |
 
 <Callout variant="warn" title="A real gap, not a future one">
   Anonymization is enforced entirely on the **sender**, not the receiver: `ORB_ANONYMIZE=false`
-  makes a self-host instance export raw repo/PR names, and `POST /v1/orb/ingest` has no
-  server-side check that a submitted `repo_hash`/`pr_hash` actually looks like a hash before
-  storing it in the shared table — it validates only type and length. Today this only affects an
-  operator who deliberately opted out for their own private collector. It becomes a sharper
-  problem the moment `/v1/orb/ingest` is fronted by anything resembling a hosted, multi-tenant
-  path: a misconfigured or malicious sender could land raw identifiers in a table every other
-  instance was told stays anonymized. Closing this (reject a submission whose `repo_hash`/`pr_hash`
-  doesn't match the expected HMAC-output shape) is real follow-up work, tracked separately from
-  this review.
+  makes a self-host instance export raw repo/PR names, and `POST /v1/orb/ingest` has no server-side
+  check that a submitted `repo_hash`/`pr_hash` actually looks like a hash before storing it in the
+  shared table — it validates only type and length. Today this only affects an operator who
+  deliberately opted out for their own private collector. It becomes a sharper problem the moment
+  `/v1/orb/ingest` is fronted by anything resembling a hosted, multi-tenant path: a misconfigured or
+  malicious sender could land raw identifiers in a table every other instance was told stays
+  anonymized. Closing this (reject a submission whose `repo_hash`/`pr_hash` doesn't match the
+  expected HMAC-output shape) is real follow-up work, tracked separately from this review.
 </Callout>

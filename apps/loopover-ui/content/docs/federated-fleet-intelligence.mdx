@@ -1,6 +1,7 @@
 ---
 title: Federated fleet intelligence
 description: Opt-in sharing of anonymized gate-calibration aggregates between self-hosted LoopOver instances — what is shared, how consent works, and how trust is gated.
+eyebrow: Self-hosting
 ---
 
 Federated fleet intelligence is an **opt-in** path for self-hosted LoopOver (ORB) operators who want to compare their own gate calibration against peer medians. Nothing is shared unless you turn it on in config-as-code. There is no default collector and no automatic peer discovery.
@@ -15,20 +16,20 @@ Every field in the bundle body is aggregate-only. The export query never selects
 
 Fields currently enumerated on the signed body (`FederatedSignalBundleBody`):
 
-| Field | Meaning |
-| --- | --- |
-| `schemaVersion` | Bundle contract version (receivers can reject unknown versions) |
-| `instanceId` | Opaque per-instance handle (no PII) |
-| `generatedAt` | ISO timestamp the bundle was built |
-| `windowDays` | Calibration window length (so peers only median equal-length windows) |
-| `decided` | Resolved PRs in-window that the gate decided |
-| `mergePrecision` | P(merged & not reverted \| gate said merge), or null until enough samples |
-| `closePrecision` | P(closed & not reopened \| gate said close), or null until enough samples |
-| `fpRate` / `fnRate` | False-positive / false-negative rates, or null until eligible |
-| `reversalRate` | Share of decided PRs a human reversed |
-| `cycleP50Ms` / `cycleP95Ms` | Gate-decision → resolution latency percentiles |
-| `slopRate` | Share of decided PRs whose reason bucketed to `slop_advisory` |
-| `copycatRate` | Share whose reason bucketed to `duplicate_risk` (aggregate rate only) |
+| Field                       | Meaning                                                                   |
+| --------------------------- | ------------------------------------------------------------------------- |
+| `schemaVersion`             | Bundle contract version (receivers can reject unknown versions)           |
+| `instanceId`                | Opaque per-instance handle (no PII)                                       |
+| `generatedAt`               | ISO timestamp the bundle was built                                        |
+| `windowDays`                | Calibration window length (so peers only median equal-length windows)     |
+| `decided`                   | Resolved PRs in-window that the gate decided                              |
+| `mergePrecision`            | P(merged & not reverted \| gate said merge), or null until enough samples |
+| `closePrecision`            | P(closed & not reopened \| gate said close), or null until enough samples |
+| `fpRate` / `fnRate`         | False-positive / false-negative rates, or null until eligible             |
+| `reversalRate`              | Share of decided PRs a human reversed                                     |
+| `cycleP50Ms` / `cycleP95Ms` | Gate-decision → resolution latency percentiles                            |
+| `slopRate`                  | Share of decided PRs whose reason bucketed to `slop_advisory`             |
+| `copycatRate`               | Share whose reason bucketed to `duplicate_risk` (aggregate rate only)     |
 
 A detached `signature` accompanies the body. Export today signs with a local HMAC key; the trust design (#6477) calls for **operator-allowlisted peer public keys** on the receive path so verification does not require sharing an anonymization secret.
 
@@ -64,9 +65,9 @@ To also arm the **transport client** (push this instance's bundle and/or pull pe
 The trust model (#6477) is intentional and checkable — not a reputation system:
 
 1. **Explicit allowlist, not discovery.** Peer trust is operator-configured: you only consider bundles from sources you deliberately configured (a peer public key on your allowlist, or a collector URL you chose). There is no automatic peer discovery and no central PKI.
-2. **Collector mode is the same rule.** Pointing at a collector *is* the trust decision. The client does not add a second peer-vetting layer on top of that choice.
+2. **Collector mode is the same rule.** Pointing at a collector _is_ the trust decision. The client does not add a second peer-vetting layer on top of that choice.
 3. **Median, not mean.** Peer comparisons use a **median** of peer calibration metrics. A median resists a bounded number of outlier/poisoned bundles; a mean does not.
-4. **Sybil cost is on the receiver.** Flooding fake peers only matters if *you* added many fake keys to your own allowlist — that is self-limiting by construction.
+4. **Sybil cost is on the receiver.** Flooding fake peers only matters if _you_ added many fake keys to your own allowlist — that is self-limiting by construction.
 5. **Abuse recovery.** If a peer looks wrong, remove that key (or stop pointing at that collector). v1 does not ship a separate retroactive-detection subsystem.
 
 Until #6480's import/validation surface is live in your deployment, do not treat pulled files as automatically trusted calibration input.

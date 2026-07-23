@@ -1,6 +1,7 @@
 ---
 title: Capacity and throughput
 description: Real throughput and concurrency numbers for AMS's iterate-loop and the review-gate's PR-processing queue, so an operator can plan for load instead of guessing.
+eyebrow: Maintainers
 ---
 
 Real throughput and concurrency numbers for AMS's iterate-loop and the review-gate's PR-processing
@@ -39,15 +40,18 @@ REST GETs):
   items={[
     {
       title: "SWEEP_MAX_PRS = 3",
-      description: "The recurring sweep's per-tick cap — sized for a sweep that re-runs every ~2 minutes, so a low steady-state budget compounds safely across ticks.",
+      description:
+        "The recurring sweep's per-tick cap — sized for a sweep that re-runs every ~2 minutes, so a low steady-state budget compounds safely across ticks.",
     },
     {
       title: "ISSUE_WAKE_MAX_PRS = 25",
-      description: "One-shot budget for an issue-linked wake event — a rarer trigger than a merge, so a larger one-time budget doesn't risk compounding across repeated events in one rate-limit window.",
+      description:
+        "One-shot budget for an issue-linked wake event — a rarer trigger than a merge, so a larger one-time budget doesn't risk compounding across repeated events in one rate-limit window.",
     },
     {
       title: "MERGE_WAKE_MAX_PRS = 15",
-      description: "One-shot budget for a merge-triggered wake — sized lower than the issue-wake budget because merges are a far more common trigger; a repeated-merge burst inside one rate-limit window must not compound the way the rarer issue-wake trigger safely can.",
+      description:
+        "One-shot budget for a merge-triggered wake — sized lower than the issue-wake budget because merges are a far more common trigger; a repeated-merge burst inside one rate-limit window must not compound the way the rarer issue-wake trigger safely can.",
     },
   ]}
 />
@@ -61,21 +65,24 @@ attributes, read at `wrangler deploy` time (not runtime-configurable via `env.SO
   items={[
     {
       title: "max_batch_size = 5",
-      description: "The most jobs one batch can bundle at once — bounds how many heavy sweep/backfill jobs land in a single delivery.",
+      description:
+        "The most jobs one batch can bundle at once — bounds how many heavy sweep/backfill jobs land in a single delivery.",
     },
     {
       title: "max_concurrency = 8",
-      description: "Global consumer fan-out for multi-tenant volume (#4892) — aligned with the #4913 load-test concurrency=8 band. Per-installation admission (default limit 2) still caps how many background GitHub-budget jobs one tenant may run at once, so raising the global bound cannot let a single installation monopolize every worker slot.",
+      description:
+        "Global consumer fan-out for multi-tenant volume (#4892) — aligned with the #4913 load-test concurrency=8 band. Per-installation admission (default limit 2) still caps how many background GitHub-budget jobs one tenant may run at once, so raising the global bound cannot let a single installation monopolize every worker slot.",
     },
   ]}
 />
 
 <Callout variant="note" title="Why these defaults (and how to re-tune further)">
-  `max_batch_size × max_concurrency` (5 × 8 = 40) bounds Worker in-flight work. Rate-limit safety across
-  tenants comes from two already-shipped layers: each GitHub App installation has its own REST budget,
-  and `installation-concurrency-admission.ts` (#2970) caps per-install background GitHub fetches. Further
-  re-tuning still benefits from live `audit_events` / dashboard volume data when available — these defaults
-  are the architecture-justified baseline after the #4903–#4913 scaling work, not a production-volume fit.
+  `max_batch_size × max_concurrency` (5 × 8 = 40) bounds Worker in-flight work. Rate-limit safety
+  across tenants comes from two already-shipped layers: each GitHub App installation has its own
+  REST budget, and `installation-concurrency-admission.ts` (#2970) caps per-install background
+  GitHub fetches. Further re-tuning still benefits from live `audit_events` / dashboard volume data
+  when available — these defaults are the architecture-justified baseline after the #4903–#4913
+  scaling work, not a production-volume fit.
 </Callout>
 
 **Takeaways:**

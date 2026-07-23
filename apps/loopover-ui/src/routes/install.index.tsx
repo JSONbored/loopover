@@ -68,14 +68,16 @@ export function InstallPage() {
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link
-              to="/docs/github-app"
+              to="/docs/$slug"
+              params={{ slug: "github-app" }}
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install on GitHub
               <ArrowRight className="size-3.5" />
             </Link>
             <Link
-              to="/docs/beta-onboarding"
+              to="/docs/$slug"
+              params={{ slug: "beta-onboarding" }}
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token border border-border bg-transparent px-4 text-token-sm font-medium text-foreground transition-colors duration-150 hover:bg-accent focus-ring motion-reduce:transition-none"
             >
               Read the onboarding guide
@@ -125,7 +127,8 @@ export function InstallPage() {
             choose. You confirm the exact scopes on GitHub before the install completes, and you can
             review or revoke them at any time from your repository's installed-Apps settings. See{" "}
             <Link
-              to="/docs/privacy-security"
+              to="/docs/$slug"
+              params={{ slug: "privacy-security" }}
               className="text-foreground underline underline-offset-2"
             >
               privacy &amp; security

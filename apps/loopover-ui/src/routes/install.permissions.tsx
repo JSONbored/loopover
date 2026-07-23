@@ -204,7 +204,8 @@ export function InstallPermissionsPage() {
             You grant these on only the repositories you choose, and you can review or revoke them
             at any time from your repository&apos;s installed-Apps settings on GitHub. See{" "}
             <Link
-              to="/docs/privacy-security"
+              to="/docs/$slug"
+              params={{ slug: "privacy-security" }}
               className="text-foreground underline underline-offset-2"
             >
               privacy &amp; security

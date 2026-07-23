@@ -1,6 +1,7 @@
 ---
 title: AMS operations runbook
 description: Recover from SQLite lock contention, ledger corruption, and post-upgrade schema migrations in loopover-miner's local state.
+eyebrow: Maintainers
 ---
 
 Operator-facing runbook for **local SQLite state**: what the concurrency guarantees actually mean,
@@ -45,7 +46,7 @@ Default **5000 ms**; overridable per-test only — production stores always use 
     {
       title: "Two short-lived writers, same file",
       description:
-        "E.g. a CLI command finishing while loop is idle, or Grafana reading while the miner appends. SQLite waits up to 5 seconds for the lock, then proceeds or surfaces \"database is locked\".",
+        'E.g. a CLI command finishing while loop is idle, or Grafana reading while the miner appends. SQLite waits up to 5 seconds for the lock, then proceeds or surfaces "database is locked".',
     },
     {
       title: "Append-only ledgers",
@@ -67,9 +68,8 @@ Default **5000 ms**; overridable per-test only — production stores always use 
 
 <Callout variant="warn">
   **Invariant:** one active loop (or one intentional writer set) per state directory. Horizontal
-  scale = **isolated state dirs** — separate compose projects, separate
-  `LOOPOVER_MINER_CONFIG_DIR`, or the Kubernetes StatefulSet pattern in the [AMS deployment
-  guide](/docs/ams-deployment).
+  scale = **isolated state dirs** — separate compose projects, separate `LOOPOVER_MINER_CONFIG_DIR`,
+  or the Kubernetes StatefulSet pattern in the [AMS deployment guide](/docs/ams-deployment).
 </Callout>
 
 Quick health check — `doctor` includes `laptop-state-sqlite` (file exists + readable) and
@@ -118,9 +118,9 @@ Re-run `loopover-miner doctor`. If locks persist with a single process, see **Le
 below.
 
 <Callout variant="note">
-  Claims are local bookkeeping only. Two miners on different machines claiming the same GitHub
-  issue is a **fleet coordination** problem (duplicate-cluster adjudication in the engine), not
-  something SQLite resolves — split state dirs and use operational claim hygiene.
+  Claims are local bookkeeping only. Two miners on different machines claiming the same GitHub issue
+  is a **fleet coordination** problem (duplicate-cluster adjudication in the engine), not something
+  SQLite resolves — split state dirs and use operational claim hygiene.
 </Callout>
 
 ## Backup and restore
@@ -158,7 +158,7 @@ loopover-miner doctor --json                              # verify afterward`}
 />
 
 It also removes any leftover `-wal`/`-shm` sidecar files from the live directory after restoring
-each store — those hold in-flight writes from *before* the restore, and leaving them in place
+each store — those hold in-flight writes from _before_ the restore, and leaving them in place
 would let SQLite silently replay stale pre-restore writes back on top of the freshly restored
 file on next open.
 
@@ -184,10 +184,7 @@ Check disk space, permissions (`0600` file, `0700` parent), and backup tools cop
 **Remediation.** Stop the miner, then back up the whole state directory (even damaged files help
 post-mortems):
 
-<CodeBlock
-  lang="bash"
-  code={`cp -a "$STATE_DIR" "\${STATE_DIR}.bak.$(date +%Y%m%d%H%M%S)"`}
-/>
+<CodeBlock lang="bash" code={`cp -a "$STATE_DIR" "\${STATE_DIR}.bak.$(date +%Y%m%d%H%M%S)"`} />
 
 Choose a recovery tier:
 
@@ -267,8 +264,8 @@ tarball, pin the previous package version, and file an issue with the failing `u
 store filename.
 
 <Callout variant="note" title="Rolling fleet upgrades">
-  Upgrade and restart **one worker/state dir at a time** so isolated workers never share a
-  directory mid-migration.
+  Upgrade and restart **one worker/state dir at a time** so isolated workers never share a directory
+  mid-migration.
 </Callout>
 
 ## Related docs

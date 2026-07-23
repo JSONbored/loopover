@@ -94,7 +94,7 @@ jobs:
         run: npm run build --workspace @loopover/engine
 
       - name: Postgres integration test (real PG)
-        run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/loopover npx vitest run test/integration/selfhost-pg.test.ts
+        run: PG_TEST_URL=postgres://postgres:devpw@localhost:5432/loopover npx vitest run test/integration/selfhost-pg.test.ts test/integration/selfhost-pg-calibration.test.ts
 
       - name: Build the self-host bundle
         run: node --experimental-strip-types scripts/build-selfhost.ts

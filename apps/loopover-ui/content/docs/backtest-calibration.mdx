@@ -79,3 +79,26 @@ npx tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output corpus.jso
 ```
 
 Both CLIs are strictly read-only against the database.
+
+## Self-hosting
+
+On a self-host deployment the same calibration system runs against your Postgres instead of D1 —
+the capture writers, the persisted backtest runs, the trend and satisfaction-floor endpoints, and
+the loosening loop all go through the storage shim, so the corpus lives in your own
+`audit_events` table and never leaves your infrastructure. Parity is pinned by a real-Postgres
+integration suite that runs in CI.
+
+All three maintainer CLIs accept `--pg` to run against a self-host Postgres instead of D1. An
+explicit connection string wins; a bare `--pg` falls back to `DATABASE_URL`, the same variable the
+self-host stack itself boots from:
+
+```bash
+npx tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output corpus.json --pg "$DATABASE_URL"
+npx tsx scripts/backtest-track-record.ts --pg
+npx tsx scripts/backfill-calibration-corpus.ts --pg   # dry-run; add --apply to write
+```
+
+The pg path reuses the deployment's own dialect adapter, so the backfill keeps its
+`INSERT OR IGNORE` idempotency contract, and exported corpus manifests name only the database —
+never the credentials in your connection string. Each deployment's corpus is its own: there is no
+cross-store sync between a self-host Postgres and any other deployment.

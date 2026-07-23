@@ -7,9 +7,11 @@
 // (pure, unit-tested); this file is the thin IO wrapper — mirrors backtest-corpus-export.ts's identical split.
 //
 //   tsx scripts/backtest-track-record.ts --db loopover [--remote]
+//   tsx scripts/backtest-track-record.ts --pg postgres://…       (self-host Postgres — #8171; bare --pg uses DATABASE_URL)
 //
 // --remote reads the deployed D1 (default is the local miniflare DB). NEVER pass a write command.
 import { spawnSync } from "node:child_process";
+import { openPgDatabase, resolvePgConnection } from "./pg-cli.js";
 import { computeRegressedVerdictTrackRecord, type BacktestComparison } from "@loopover/engine";
 import { LOGIC_BACKTEST_EVENT_TYPE } from "./backtest-logic-check-core.js";
 
@@ -20,14 +22,18 @@ import { LOGIC_BACKTEST_EVENT_TYPE } from "./backtest-logic-check-core.js";
 // module with no Worker-bound imports, so THAT one is imported for real rather than hand-mirrored.
 const THRESHOLD_BACKTEST_EVENT_TYPE = "calibration.threshold_backtest_run";
 
-type Args = { db: string | undefined; remote: boolean };
+type Args = { db: string | undefined; remote: boolean; pgPresent: boolean; pgValue: string | undefined };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { db: undefined, remote: false };
+  const args: Args = { db: undefined, remote: false, pgPresent: false, pgValue: undefined };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--remote") args.remote = true;
     else if (flag === "--db") args.db = argv[++i];
+    else if (flag === "--pg") {
+      args.pgPresent = true;
+      if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--")) args.pgValue = argv[++i];
+    }
   }
   return args;
 }
@@ -46,17 +52,15 @@ function d1Query(db: string, remote: boolean, sql: string): Array<Record<string,
   return first?.results ?? [];
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.db) {
-    console.error("Usage: tsx scripts/backtest-track-record.ts --db <database> [--remote]");
+  const pgConnection = resolvePgConnection(args.pgPresent, args.pgValue, process.env.DATABASE_URL);
+  if (!pgConnection && !args.db) {
+    console.error("Usage: tsx scripts/backtest-track-record.ts --db <database> [--remote] | --pg <postgres://…>");
     process.exit(2);
   }
-  const rows = d1Query(
-    args.db,
-    args.remote,
-    `SELECT metadata_json FROM audit_events WHERE event_type IN ('${THRESHOLD_BACKTEST_EVENT_TYPE}', '${LOGIC_BACKTEST_EVENT_TYPE}') ORDER BY created_at ASC`,
-  );
+  const sql = `SELECT metadata_json FROM audit_events WHERE event_type IN ('${THRESHOLD_BACKTEST_EVENT_TYPE}', '${LOGIC_BACKTEST_EVENT_TYPE}') ORDER BY created_at ASC`;
+  const rows = pgConnection ? await pgQuery(pgConnection, sql) : d1Query(args.db!, args.remote, sql);
   const comparisons: BacktestComparison[] = [];
   for (const row of rows) {
     try {
@@ -75,4 +79,17 @@ function main() {
   }
 }
 
-main();
+// The pg sibling of d1Query: same fail-loud contract, same shim the Worker runs on (#8171).
+async function pgQuery(connection: string, sql: string): Promise<Array<Record<string, unknown>>> {
+  const session = openPgDatabase(connection);
+  try {
+    return (await session.db.prepare(sql).all<Record<string, unknown>>()).results ?? [];
+  } finally {
+    await session.close();
+  }
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

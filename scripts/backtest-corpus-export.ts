@@ -6,6 +6,7 @@
 // backtest-corpus-export-core.ts (unit-tested); this file is the thin IO wrapper — mirrors export-d1-data.ts.
 //
 //   tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output <file.json> [--remote] [--since-date <iso>] [--db loopover]
+//   … --pg postgres://…   reads a self-host Postgres instead (#8171; bare --pg uses DATABASE_URL)
 //
 // --remote reads the deployed D1 (default is the local miniflare DB). --since-date does an INCREMENTAL export
 // (rows whose created_at is >= the date); omit it for a full history. NEVER pass a write command. ORB only —
@@ -14,6 +15,7 @@ import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { buildBacktestCorpus, type BacktestCase, type HumanOverrideEvent, type RuleFiredEvent } from "@loopover/engine";
 import { buildBacktestCorpusManifest } from "./backtest-corpus-export-core.js";
+import { openPgDatabase, pgDatabaseLabel, resolvePgConnection } from "./pg-cli.js";
 
 type D1Row = Record<string, unknown>;
 
@@ -23,13 +25,15 @@ type Args = {
   remote: boolean;
   sinceDate: string | undefined;
   db: string;
+  pgPresent: boolean;
+  pgValue: string | undefined;
 };
 
 const RULE_FIRED_EVENT_TYPE_PREFIX = "signal.rule_fired:";
 const HUMAN_OVERRIDE_EVENT_TYPE_PREFIX = "signal.human_override:";
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { ruleId: undefined, output: undefined, remote: false, sinceDate: undefined, db: "loopover" };
+  const args: Args = { ruleId: undefined, output: undefined, remote: false, sinceDate: undefined, db: "loopover", pgPresent: false, pgValue: undefined };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     if (flag === "--remote") args.remote = true;
@@ -37,6 +41,10 @@ function parseArgs(argv: string[]): Args {
     else if (flag === "--output") args.output = argv[++i];
     else if (flag === "--since-date") args.sinceDate = argv[++i];
     else if (flag === "--db") args.db = argv[++i]!;
+    else if (flag === "--pg") {
+      args.pgPresent = true;
+      if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--")) args.pgValue = argv[++i];
+    }
   }
   return args;
 }
@@ -113,8 +121,9 @@ function rowEventType(row: D1Row): string {
   return typeof row.event_type === "string" ? row.event_type : "";
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const pgConnection = resolvePgConnection(args.pgPresent, args.pgValue, process.env.DATABASE_URL);
   if (!args.ruleId || !args.output) {
     console.error(
       "Usage: tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output <file.json> [--remote] [--since-date <iso>] [--db loopover]",
@@ -131,7 +140,7 @@ function main() {
     sinceClause +
     ` ORDER BY created_at ASC`;
 
-  const rows = d1Query(args.db, args.remote, sql);
+  const rows = pgConnection ? await pgQuery(pgConnection, sql) : d1Query(args.db, args.remote, sql);
   const fired: RuleFiredEvent[] = [];
   const overrides: HumanOverrideEvent[] = [];
   for (const row of rows) {
@@ -148,8 +157,9 @@ function main() {
   const cases: BacktestCase[] = buildBacktestCorpus(args.ruleId, fired, overrides);
   const manifest = buildBacktestCorpusManifest(args.ruleId, cases, {
     generatedAt: new Date().toISOString(),
-    source: args.remote ? "d1-remote" : "d1-local",
-    database: args.db,
+    // pgDatabaseLabel names the database WITHOUT the connection string's credentials.
+    source: pgConnection ? "postgres" : args.remote ? "d1-remote" : "d1-local",
+    database: pgConnection ? pgDatabaseLabel(pgConnection) : args.db,
     incremental: Boolean(args.sinceDate),
     ...(args.sinceDate ? { sinceDate: args.sinceDate } : {}),
   });
@@ -157,4 +167,17 @@ function main() {
   console.error(`exported ${manifest.caseCount} cases for rule ${args.ruleId} (checksum ${manifest.checksum.slice(0, 12)}…) → ${args.output}`);
 }
 
-main();
+// The pg sibling of d1Query: same fail-loud contract, same shim the Worker runs on (#8171).
+async function pgQuery(connection: string, sql: string): Promise<D1Row[]> {
+  const session = openPgDatabase(connection);
+  try {
+    return (await session.db.prepare(sql).all<D1Row>()).results ?? [];
+  } finally {
+    await session.close();
+  }
+}
+
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

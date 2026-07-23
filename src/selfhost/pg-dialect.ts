@@ -60,7 +60,17 @@ export function translateFunctions(sql: string): string {
       .replace(/datetime\(\s*'now'\s*\)/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
       // CURRENT_TIMESTAMP → SQLite's TEXT format (the columns are TEXT)
       .replace(/CURRENT_TIMESTAMP/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
-      // json_extract(col, '$.key') → (col::jsonb ->> 'key')  (single-level paths — all the codebase uses)
+      // date(<expr>) → TEXT 'YYYY-MM-DD' like SQLite's date(). Postgres would accept date(<text>) via an
+      // implicit cast, but it returns a `date`-typed value that node-pg parses into a JS Date object — so
+      // every day-bucketed trend read (rule-calibration-trend.ts, public-accuracy-trend.ts, stats.ts, ...)
+      // silently bucketed NOTHING on self-host: the JS-side week matching expects the TEXT day D1 returns
+      // (#8171). `datetime(` cannot match (the regex requires "(" immediately after "date").
+      .replace(/(?<![\w$])date\(\s*([A-Za-z0-9_.]+|\?)\s*\)/gi, `to_char(($1)::timestamptz, 'YYYY-MM-DD')`)
+      // json_extract(col, '$.a.b…') (nested paths) → (col::jsonb #>> '{a,b…}') — the persisted backtest runs
+      // read `$.comparison.verdict`, which the single-level rule below can't see; untranslated it is a hard
+      // "function json_extract does not exist" error swallowed by the fail-safe trend reads (#8171).
+      .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.((?:[A-Za-z0-9_]+\.)+[A-Za-z0-9_]+)'\s*\)/gi, (_m, col, path) => `((${col})::jsonb #>> '{${path.split(".").join(",")}}')`)
+      // json_extract(col, '$.key') → (col::jsonb ->> 'key')  (single-level paths)
       .replace(/json_extract\(\s*([^,]+?)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/gi, `(($1)::jsonb ->> '$2')`)
       // instr(haystack, needle) → strpos(haystack, needle): both are 1-based first-occurrence index, 0 if
       // absent -- a direct semantic match, no formula adjustment needed. Postgres has no `instr` builtin at

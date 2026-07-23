@@ -31,6 +31,21 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translateFunctions("json_extract(meta, '$.mode')")).toBe("((meta)::jsonb ->> 'mode')");
   });
 
+  it("translates nested json_extract paths to #>> and date() to a TEXT day (#8171 — both previously silent self-host gaps)", () => {
+    // Nested path: the persisted backtest runs read $.comparison.verdict — untranslated this is a hard
+    // "function json_extract does not exist" error swallowed by the fail-safe trend reads.
+    expect(translateFunctions("json_extract(metadata_json, '$.comparison.verdict')")).toBe("((metadata_json)::jsonb #>> '{comparison,verdict}')");
+    expect(translateFunctions("json_extract(m, '$.a.b.c')")).toBe("((m)::jsonb #>> '{a,b,c}')");
+    // date(): Postgres's implicit-cast date() returns a `date` node-pg parses into a JS Date object, so
+    // every day-bucketed trend read bucketed NOTHING on self-host. TEXT parity with SQLite instead.
+    expect(translateFunctions("SELECT date(created_at) AS day")).toBe("SELECT to_char((created_at)::timestamptz, 'YYYY-MM-DD') AS day");
+    expect(translateFunctions("date(pr.merged_at)")).toBe("to_char((pr.merged_at)::timestamptz, 'YYYY-MM-DD')");
+    expect(translateFunctions("WHERE date(t.first_seen) >= date(?)")).toBe("WHERE to_char((t.first_seen)::timestamptz, 'YYYY-MM-DD') >= to_char((?)::timestamptz, 'YYYY-MM-DD')");
+    // datetime( must NOT match the date( rule, and an unrelated identifier ending in date( must survive.
+    expect(translateFunctions("datetime('now')")).not.toContain("YYYY-MM-DD')");
+    expect(translateFunctions("candidate(x)")).toBe("candidate(x)");
+  });
+
   it("REGRESSION: translates instr(haystack, needle) to Postgres's strpos (SQLite has no `instr` on Postgres)", () => {
     expect(translateFunctions("instr(x, '#')")).toBe("strpos(x, '#')");
     expect(translateFunctions("instr(ra.target_id, '#') > 0")).toBe("strpos(ra.target_id, '#') > 0");

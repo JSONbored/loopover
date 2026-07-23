@@ -54,7 +54,10 @@ function d1Execute(db: string, remote: boolean, sql: string): Array<Record<strin
   const result = spawnSync("npx", ["wrangler", "d1", "execute", db, remote ? "--remote" : "--local", "--json", "--command", sql], {
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
+    // Fail loud instead of stalling the whole pass: a hung remote execute once sat 50 minutes silent.
+    timeout: 120_000,
   });
+  if (result.error) throw new Error(`wrangler d1 execute did not complete: ${result.error.message}`);
   if (result.status !== 0) {
     throw new Error(`wrangler d1 execute failed (${result.status}): ${(result.stderr || result.stdout || "").slice(0, 500)}`);
   }

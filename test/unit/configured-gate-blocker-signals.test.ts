@@ -315,4 +315,27 @@ describe("recordGateScoreSignals (#8223)", () => {
     ).resolves.toBeUndefined();
     vi.restoreAllMocks();
   });
+
+  it("INVARIANT (#8243): recorded confidence VARIES with finding inputs — constant-confidence capture can never return silently", async () => {
+    // The historical ledger's decision layer stamped 1.0 on every close while 38% reversed; the live
+    // capture is the corpus the loops now act on, so this pins that its confidence axis is real: three
+    // findings with three different confidences must record three different values, byte-for-byte.
+    const env = createTestEnv();
+    for (const [pr, confidence] of [[1, 0.55], [2, 0.72], [3, 0.97]] as const) {
+      await recordConfiguredGateBlockerSignals(
+        env,
+        advisory([finding({ code: "ai_consensus_defect", confidence })]),
+        blockAi,
+        "acme/widgets",
+        pr,
+        { aiReviewDiff: "diff --git a/x b/x" },
+      );
+    }
+    const rows = await env.DB.prepare(
+      "SELECT target_key, json_extract(metadata_json, '$.confidence') AS c FROM audit_events WHERE event_type = 'signal.rule_fired:ai_consensus_defect' ORDER BY target_key",
+    ).all<{ target_key: string; c: number }>();
+    const recorded = (rows.results ?? []).map((row) => row.c);
+    expect(recorded).toEqual([0.55, 0.72, 0.97]);
+    expect(new Set(recorded).size).toBe(3); // the axis varies — never a constant
+  });
 });

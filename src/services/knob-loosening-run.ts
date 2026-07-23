@@ -12,7 +12,14 @@
 //   • the override write is NOT best-effort (an unrecorded change is worse than none) — the audit trail is;
 //   • one structured error-level alert per applied step, never re-alerting (the next run starts from the
 //     already-loosened value and proposes nothing until the corpus justifies another step).
-import { buildBacktestCorpus, computeReliabilityCurve, deriveThresholdSuggestion, type ReliabilityCurve } from "@loopover/engine";
+import {
+  buildBacktestCorpus,
+  computeReliabilityCurve,
+  computeRepoCorpusDensity,
+  deriveThresholdSuggestion,
+  sliceCorpusByRepo,
+  type ReliabilityCurve,
+} from "@loopover/engine";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { recordAuditEvent } from "../db/repositories";
 import { evaluateKnobDrift, evaluateKnobLoosening, LOOSENABLE_KNOBS, type KnobDriftReport, type KnobLooseningProposal, type LoosenableKnob } from "./loosening-knobs";
@@ -159,6 +166,111 @@ export async function runScheduledKnobLoosening(env: Env, knob: LoosenableKnob):
     );
     return null;
   }
+}
+
+// ── Per-repo loosening loop (#8217, epic #8211 track B capstone) ─────────────────────────────────────────
+
+/** Repos evaluated per tick, hard-capped so a large-fleet future never turns the tick into a stampede.
+ *  Deterministic order + a system_flags cursor make successive ticks cover the whole eligible set. */
+export const PER_REPO_LOOSENING_MAX_REPOS_PER_TICK = 10;
+
+const PER_REPO_CURSOR_FLAG_PREFIX = "per_repo_loosening_cursor:";
+
+export type PerRepoLooseningResult = { repoFullName: string; applied: boolean; reason: string };
+
+/**
+ * Per-repo loosening evaluation (#8217): repos whose OWN labeled slice clears the knob's sample floors
+ * (computeRepoCorpusDensity — the same split + minimums as every evaluator) earn their own loosening
+ * step from their CURRENT resolved value; sparse repos keep inheriting the global value untouched.
+ * Same discipline as the global loop verbatim: smallest candidate step, visible improved + held-out
+ * non-regressed on the REPO slice, hard minimum, double flag gating, one error-level alert per applied
+ * step (`ev` stays per-knob; the repo rides the alert body — the Sentry-fingerprint discipline).
+ * Bounded work: at most {@link PER_REPO_LOOSENING_MAX_REPOS_PER_TICK} eligible repos per tick in
+ * deterministic order, resuming from a per-knob cursor. Fail-safe per repo.
+ */
+export async function runPerRepoKnobLoosening(env: Env, knob: LoosenableKnob, nowMs: number = Date.now()): Promise<PerRepoLooseningResult[]> {
+  if (knob.applyMode !== "live") return [];
+  if (!isKnobAutotuneEnabled(env, knob)) return [];
+  const results: PerRepoLooseningResult[] = [];
+  try {
+    const { fired, overrides } = await createSignalStore(env).queryRuleHistory(knob.ruleId, nowMs - CORPUS_LOOKBACK_MS);
+    const cases = buildBacktestCorpus(knob.ruleId, fired, overrides);
+    const density = computeRepoCorpusDensity(cases, knob.minVisibleCases, knob.minHeldOutCases, knob.heldOutFraction, knob.splitSeed);
+    const eligible = [...density.entries()]
+      .filter(([, stats]) => stats.eligible)
+      .map(([repo]) => repo)
+      .sort();
+    if (eligible.length === 0) return results;
+
+    const cursorKey = `${PER_REPO_CURSOR_FLAG_PREFIX}${knob.knobId}`;
+    const cursorRow = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(cursorKey).first<{ value: string }>();
+    const cursor = cursorRow?.value ?? "";
+    // Rotate: start after the cursor, wrap around, cap the batch.
+    const startIndex = eligible.findIndex((repo) => repo > cursor);
+    const rotated = startIndex === -1 ? eligible : [...eligible.slice(startIndex), ...eligible.slice(0, startIndex)];
+    const batch = rotated.slice(0, PER_REPO_LOOSENING_MAX_REPOS_PER_TICK);
+    const slices = sliceCorpusByRepo(cases);
+
+    for (const repoFullName of batch) {
+      try {
+        const currentValue = (await getKnobOverrideForRepo(env, knob, repoFullName)) ?? knob.shippedValue;
+        if (currentValue <= knob.hardMinimum) {
+          results.push({ repoFullName, applied: false, reason: "already_applied" });
+          continue;
+        }
+        // Non-null by construction: eligibility derives from the same slicing, so every eligible repo has a slice.
+        const proposal = evaluateKnobLoosening(knob, slices.get(repoFullName)!, currentValue);
+        if (!proposal || proposal.proposedValue >= currentValue || proposal.proposedValue < knob.hardMinimum) {
+          results.push({ repoFullName, applied: false, reason: "no_proposal" });
+          continue;
+        }
+        await env.DB.prepare(
+          "INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+          .bind(repoKnobOverrideFlagKey(knob, repoFullName), String(proposal.proposedValue))
+          .run();
+        await recordAuditEvent(env, {
+          eventType: knob.looseningEventType,
+          actor: "loopover",
+          targetKey: knob.ruleId,
+          outcome: "completed",
+          detail: `${knob.knobId} loosened for ${repoFullName}: ${proposal.currentValue} -> ${proposal.proposedValue} (repo-slice backtest-gated)`,
+          metadata: { proposal, repoFullName, scope: "repo" },
+        }).catch(() => undefined);
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "calibration_knob_loosened",
+            ev: knob.knobId,
+            at: new Date().toISOString(),
+            scope: "repo",
+            repoFullName,
+            currentValue: proposal.currentValue,
+            proposedValue: proposal.proposedValue,
+            visibleCases: proposal.visibleCases,
+            heldOutCases: proposal.heldOutCases,
+          }),
+        );
+        results.push({ repoFullName, applied: true, reason: "applied" });
+      } catch (error) {
+        console.warn(
+          JSON.stringify({ level: "warn", event: "per_repo_loosening_failed", ev: knob.knobId, repoFullName, error: error instanceof Error ? error.message : "unknown error" }),
+        );
+        results.push({ repoFullName, applied: false, reason: "error" });
+      }
+    }
+    const lastProcessed = batch[batch.length - 1]!;
+    await env.DB.prepare(
+      "INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+      .bind(cursorKey, lastProcessed)
+      .run();
+  } catch (error) {
+    console.warn(
+      JSON.stringify({ level: "warn", event: "per_repo_loosening_tick_failed", ev: knob.knobId, error: error instanceof Error ? error.message : "unknown error" }),
+    );
+  }
+  return results;
 }
 
 // ── Config-drift sentinel (#8213, epic #8211 track A) ────────────────────────────────────────────────────

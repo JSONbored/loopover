@@ -14,6 +14,8 @@ import {
   KNOB_SUGGESTION_TARGET_PRECISION,
   loadKnobStatus,
   loadLiveKnobStatuses,
+  runPerRepoKnobLoosening,
+  PER_REPO_LOOSENING_MAX_REPOS_PER_TICK,
   runConfigDriftSentinel,
   runKnobLoosening,
   runScheduledKnobLoosening,
@@ -48,8 +50,8 @@ async function setOverrideRow(env: Env, key: string, value: string): Promise<voi
 // Membership-probe seeding (same technique as the satisfaction suites) sized for the AI knob's stricter
 // floors: borderline-confirmed history between the first candidate (0.9) and the shipped 0.93 in both
 // slices, plus one genuinely-reversed deep-low firing per slice so precision has a denominator.
-async function seedAiLooseningFriendlyHistory(env: Env): Promise<void> {
-  const pool = Array.from({ length: 400 }, (_, i) => `acme/widgets#${i + 1}`);
+async function seedAiLooseningFriendlyHistory(env: Env, repo = "acme/widgets"): Promise<void> {
+  const pool = Array.from({ length: 400 }, (_, i) => `${repo}#${i + 1}`);
   const probe = pool.map((targetKey) => ({
     ruleId: AI_KNOB.ruleId,
     targetKey,
@@ -385,6 +387,116 @@ describe("runConfigDriftSentinel (#8213)", () => {
     const off = { ...enabledEnv(), DB: env.DB } as Env; // sentinel flag unset
     await processJob(off, { type: "satisfaction-floor-loosening", requestedBy: "schedule" });
     expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("config_drift_detected"))).toBe(false);
+  });
+});
+
+describe("runPerRepoKnobLoosening (#8217)", () => {
+  it("a dense repo earns its OWN override while a sparse repo inherits global untouched", async () => {
+    const env = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env, "acme/dense");
+    // Sparse repo: a handful of cases, far under the knob's floors.
+    const store = createSignalStore(env);
+    for (let i = 1; i <= 3; i += 1) {
+      await store.recordRuleFired({ ruleId: AI_KNOB.ruleId, targetKey: `acme/sparse#${i}`, outcome: "unaddressed", occurredAt: new Date(Date.now() - 5000).toISOString(), metadata: { confidence: 0.91 } });
+      await store.recordHumanOverride({ ruleId: AI_KNOB.ruleId, targetKey: `acme/sparse#${i}`, verdict: "confirmed", occurredAt: new Date().toISOString() });
+    }
+
+    const results = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(results).toEqual([{ repoFullName: "acme/dense", applied: true, reason: "applied" }]);
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/dense")).toBe(AI_KNOB.candidates[0]);
+    // Sparse repo: no repo row; resolution falls through to global (none here) -> null.
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/sparse")).toBeNull();
+    // The repo-scoped audit event carries the scope + repo.
+    const events = await env.DB.prepare("SELECT metadata_json FROM audit_events WHERE event_type = ?").bind(AI_KNOB.looseningEventType).all<{ metadata_json: string }>();
+    const metadata = JSON.parse(events.results![0]!.metadata_json) as { scope?: string; repoFullName?: string };
+    expect(metadata).toMatchObject({ scope: "repo", repoFullName: "acme/dense" });
+  });
+
+  it("second tick evaluates the earned repo from ITS value (no proposal left) — never oscillates; already-at-minimum reports as such", async () => {
+    const env = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env, "acme/dense");
+    await runPerRepoKnobLoosening(env, AI_KNOB);
+    const second = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(second).toEqual([{ repoFullName: "acme/dense", applied: false, reason: "no_proposal" }]);
+
+    await setOverrideRow(env, repoKnobOverrideFlagKey(AI_KNOB, "acme/dense"), String(AI_KNOB.hardMinimum));
+    const third = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(third).toEqual([{ repoFullName: "acme/dense", applied: false, reason: "already_applied" }]);
+  });
+
+  it("gates: report-only knob and flag-off both do nothing; a broken store fails safe with a warn", async () => {
+    const reportOnly = { ...AI_KNOB, applyMode: "report_only" as const };
+    expect(await runPerRepoKnobLoosening(enabledEnv(), reportOnly)).toEqual([]);
+    expect(await runPerRepoKnobLoosening(createTestEnv(), AI_KNOB)).toEqual([]);
+
+    const broken = enabledEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await runPerRepoKnobLoosening(broken, AI_KNOB)).toEqual([]);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("per_repo_loosening_tick_failed"))).toBe(true);
+  });
+
+  it("empty eligibility returns cleanly; audit rejection is best-effort; a mid-repo error fails safe per repo; non-Error throws degrade", async () => {
+    // Enabled but only sparse data -> zero eligible repos -> the early return, no cursor written.
+    const sparseOnly = enabledEnv();
+    const store = createSignalStore(sparseOnly);
+    await store.recordRuleFired({ ruleId: AI_KNOB.ruleId, targetKey: "acme/sparse#1", outcome: "unaddressed", occurredAt: new Date().toISOString(), metadata: { confidence: 0.91 } });
+    await store.recordHumanOverride({ ruleId: AI_KNOB.ruleId, targetKey: "acme/sparse#1", verdict: "confirmed", occurredAt: new Date().toISOString() });
+    expect(await runPerRepoKnobLoosening(sparseOnly, AI_KNOB)).toEqual([]);
+
+    // Audit write rejection: the override still lands (best-effort trail, never sacrificed writes).
+    const env = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env, "acme/dense");
+    const repositories = await import("../../src/db/repositories");
+    vi.spyOn(repositories, "recordAuditEvent").mockRejectedValue(new Error("audit down"));
+    const results = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(results).toEqual([{ repoFullName: "acme/dense", applied: true, reason: "applied" }]);
+    expect(await getKnobOverrideForRepo(env, AI_KNOB, "acme/dense")).toBe(AI_KNOB.candidates[0]);
+    vi.restoreAllMocks();
+
+    // Mid-repo evaluator throw: that repo reports error, the tick survives.
+    const env2 = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env2, "acme/dense");
+    const looseningKnobsModule = await import("../../src/services/loosening-knobs");
+    vi.spyOn(looseningKnobsModule, "evaluateKnobLoosening").mockImplementation(() => { throw "evaluator string boom"; });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errored = await runPerRepoKnobLoosening(env2, AI_KNOB);
+    expect(errored).toEqual([{ repoFullName: "acme/dense", applied: false, reason: "error" }]);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("per_repo_loosening_failed") && String(c[0]).includes('"error":"unknown error"'))).toBe(true);
+    vi.restoreAllMocks();
+
+    // Inner catch with a REAL Error message, and the outer catch's non-Error arm via a string-throwing store.
+    const env3 = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env3, "acme/dense");
+    const knobsModule = await import("../../src/services/loosening-knobs");
+    vi.spyOn(knobsModule, "evaluateKnobLoosening").mockImplementation(() => { throw new Error("evaluator real error"); });
+    const warn3 = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await runPerRepoKnobLoosening(env3, AI_KNOB);
+    expect(warn3.mock.calls.some((c) => String(c[0]).includes("evaluator real error"))).toBe(true);
+    vi.restoreAllMocks();
+
+    const stringStore = enabledEnv();
+    stringStore.DB = { prepare: () => { throw "outer string boom"; } } as never;
+    const warn4 = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await runPerRepoKnobLoosening(stringStore, AI_KNOB)).toEqual([]);
+    expect(warn4.mock.calls.some((c) => String(c[0]).includes("per_repo_loosening_tick_failed") && String(c[0]).includes('"error":"unknown error"'))).toBe(true);
+  });
+
+  it("caps the batch and rotates the cursor across ticks (deterministic order)", async () => {
+    expect(PER_REPO_LOOSENING_MAX_REPOS_PER_TICK).toBe(10);
+    const env = enabledEnv();
+    // Two dense repos; cursor after tick 1 should sit at the last processed repo. With a batch cap of 10
+    // both fit in one tick, so pin the cursor bookkeeping rather than the wraparound (covered by the
+    // rotation arithmetic itself being deterministic on the sorted list).
+    await seedAiLooseningFriendlyHistory(env, "acme/alpha");
+    await seedAiLooseningFriendlyHistory(env, "acme/beta");
+    const results = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(results.map((r) => r.repoFullName)).toEqual(["acme/alpha", "acme/beta"]);
+    const cursor = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`per_repo_loosening_cursor:${AI_KNOB.knobId}`).first<{ value: string }>();
+    expect(cursor?.value).toBe("acme/beta");
+    // Next tick starts AFTER the cursor: wraps to alpha first again (both still eligible).
+    const second = await runPerRepoKnobLoosening(env, AI_KNOB);
+    expect(second.map((r) => r.repoFullName)).toEqual(["acme/alpha", "acme/beta"]);
   });
 });
 

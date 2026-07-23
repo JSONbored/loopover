@@ -31,7 +31,7 @@ import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, run
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride, runActiveReviewReconciliation } from "../review/active-review-reconciliation";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { isSatisfactionFloorAutotuneEnabled, runScheduledSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
-import { GENERIC_LIVE_KNOBS, isConfigDriftSentinelEnabled, isKnobAutotuneEnabled, runConfigDriftSentinel, runScheduledKnobLoosening } from "../services/knob-loosening-run";
+import { GENERIC_LIVE_KNOBS, isConfigDriftSentinelEnabled, isKnobAutotuneEnabled, runConfigDriftSentinel, runPerRepoKnobLoosening, runScheduledKnobLoosening } from "../services/knob-loosening-run";
 import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
@@ -352,7 +352,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // #8176: every LATER live registry knob rides the same tick through the generic runner — each knob
       // is double-gated on its OWN wrangler var, so an un-flagged knob does zero work here.
       for (const knob of GENERIC_LIVE_KNOBS) {
-        if (isKnobAutotuneEnabled(env, knob)) await runScheduledKnobLoosening(env, knob);
+        if (isKnobAutotuneEnabled(env, knob)) {
+          await runScheduledKnobLoosening(env, knob);
+          // #8217: repos whose own labeled slice clears the floors earn repo-scoped steps; sparse repos
+          // inherit global. Bounded per tick with a rotating cursor; fail-safe internally.
+          await runPerRepoKnobLoosening(env, knob);
+        }
       }
       // #8213: the drift sentinel rides the same calibration tick, behind its own default-off flag.
       // Alert-only — it never writes a knob value — and internally fail-safe per knob.

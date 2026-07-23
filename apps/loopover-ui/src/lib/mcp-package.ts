@@ -8,7 +8,7 @@ export const MCP_PACKAGE_REGISTRY_URL = `https://registry.npmjs.org/${MCP_PACKAG
 export const MCP_PACKAGE_NPM_URL = `https://www.npmjs.com/package/${MCP_PACKAGE_NAME}`;
 // Tracks the latest PUBLISHED release: ui:version-audit requires this to equal npm dist-tags.latest, so it is
 // bumped to a new version only AFTER that version publishes (never ahead of npm).
-export const MCP_PACKAGE_KNOWN_LATEST_VERSION = "3.4.0";
+export const MCP_PACKAGE_KNOWN_LATEST_VERSION = "3.5.0";
 export const MCP_MINIMUM_SUPPORTED_VERSION = "0.5.0";
 
 export type NpmPackageMetadata = {

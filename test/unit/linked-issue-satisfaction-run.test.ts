@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runLoopOverLinkedIssueSatisfaction, type LinkedIssueSatisfactionRunInput } from "../../src/services/linked-issue-satisfaction-run";
+import { MAX_BODY_CHARS, MAX_DIFF_CHARS } from "../../src/services/linked-issue-satisfaction";
 import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS } from "../../src/services/ai-review";
 import { buildAiReviewDiff, processJob, runLinkedIssueSatisfactionForAdvisory } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
@@ -479,6 +480,38 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
         metadata: { confidence: 0.9 },
       });
       expect(history.overrides).toEqual([]); // firing alone is never an override
+    });
+
+    it("captures the bounded raw context (issueText/prTitle/prBody/diff) on the fired signal, truncating an over-limit body (#8129)", async () => {
+      stubIssueFetch();
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const env = enabledEnv(run);
+      const longBody = "x".repeat(MAX_BODY_CHARS + 500);
+      const longBodyPr = { ...pr, body: longBody };
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: longBodyPr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+
+      const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
+      expect(history.fired).toHaveLength(1);
+      const metadata = history.fired[0]?.metadata as Record<string, string>;
+      // The stored issue text is the same title+body composite the assessment itself consumed.
+      expect(metadata.issueText).toContain("Enrich SN74 Gittensor — add SSE stream");
+      expect(metadata.issueText).toContain("We need a live SSE stream surface for SN74 Gittensor.");
+      expect(metadata.prTitle).toBe("Add SSE stream endpoint");
+      // The over-limit body is truncated to the assessment's OWN bound, never stored raw.
+      expect(metadata.prBody).toBe(longBody.slice(0, MAX_BODY_CHARS));
+      expect(metadata.prBody).toHaveLength(MAX_BODY_CHARS);
+      expect(metadata.diff).toBe(buildAiReviewDiff(files).slice(0, MAX_DIFF_CHARS));
+    });
+
+    it("stores an empty prBody (not the string 'null'/'undefined') for a body-less PR (#8129)", async () => {
+      stubIssueFetch();
+      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const env = enabledEnv(run);
+      const bodylessPr = { ...pr, body: null as unknown as string };
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr: bodylessPr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+
+      const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
+      expect((history.fired[0]?.metadata as Record<string, string>).prBody).toBe("");
     });
 
     it("ADVISORY mode records NO fired signal for the same 'unaddressed' verdict (#8101 — no finding, no signal)", async () => {

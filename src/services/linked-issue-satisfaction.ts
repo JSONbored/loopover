@@ -29,9 +29,11 @@ export type LinkedIssueSatisfactionStatus = (typeof LINKED_ISSUE_SATISFACTION_ST
 export const LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR = 0.5;
 
 const MAX_RATIONALE_LENGTH = 400;
-const MAX_ISSUE_TEXT_CHARS = 6000;
-const MAX_DIFF_CHARS = 60000;
-const MAX_BODY_CHARS = 2000;
+// Exported (#8129) so the calibration fired-event capture reuses the assessment's OWN bounds for the raw
+// context it stores, instead of drifting behind a second set of hand-maintained limits.
+export const MAX_ISSUE_TEXT_CHARS = 6000;
+export const MAX_DIFF_CHARS = 60000;
+export const MAX_BODY_CHARS = 2000;
 
 export type LinkedIssueSatisfactionInput = {
   /** The already-fetched linked-issue title + body text (grounding already resolved this — see

@@ -132,6 +132,12 @@ services:
       GITHUB_WEBHOOK_SECRET_FILE: "${GITHUB_WEBHOOK_SECRET_FILE:-/run/secrets/github_webhook_secret}"
       LOOPOVER_API_TOKEN_FILE: "${LOOPOVER_API_TOKEN_FILE:-/run/secrets/loopover_api_token}"
       LOOPOVER_MCP_TOKEN_FILE: "${LOOPOVER_MCP_TOKEN_FILE:-/run/secrets/loopover_mcp_token}"
+      # Admin MCP surface (#7721): OFF by default (tools aren't even registered) and requires BOTH this
+      # flag AND its own higher-privilege token (never LOOPOVER_MCP_TOKEN) -- a leaked ordinary MCP
+      # credential can never rewrite fleet-wide gate policy through it. Writing through it also requires
+      # flipping the config mount below (under `volumes:`) from :ro to :rw yourself -- see its own comment.
+      LOOPOVER_MCP_ADMIN_ENABLED: "${LOOPOVER_MCP_ADMIN_ENABLED:-}"
+      LOOPOVER_MCP_ADMIN_TOKEN_FILE: "${LOOPOVER_MCP_ADMIN_TOKEN_FILE:-/run/secrets/loopover_mcp_admin_token}"
       INTERNAL_JOB_TOKEN_FILE: "${INTERNAL_JOB_TOKEN_FILE:-/run/secrets/internal_job_token}"
       SELFHOST_SETUP_TOKEN_FILE: "${SELFHOST_SETUP_TOKEN_FILE:-/run/secrets/selfhost_setup_token}"
       TOKEN_ENCRYPTION_SECRET_FILE: "${TOKEN_ENCRYPTION_SECRET_FILE:-/run/secrets/token_encryption_secret}"
@@ -153,7 +159,10 @@ services:
       # Container-private per-repo config dir (read-only). Create ./loopover-config/{owner}__{repo}/.loopover.yml
       # locally, optionally alongside a ./loopover-config/.loopover.yml global default that every per-repo file
       # is deep-merged over (gitignored — never commit real policy; see config/examples/ for generic templates).
-      # Absent ⇒ Docker mounts an empty dir ⇒ defaults apply.
+      # Absent ⇒ Docker mounts an empty dir ⇒ defaults apply. Stays :ro even with LOOPOVER_MCP_ADMIN_ENABLED
+      # set (#7721) -- the admin MCP write tools need this changed to :rw yourself before they can write
+      # anything; the app flag alone never makes this mount secretly writable. Flip it locally:
+      #   - ./loopover-config:/config:rw
       - ./loopover-config:/config:ro
     # Mounted read-only at /run/secrets/<name> (Compose's default target). See the top-level `secrets:`
     # block above and secrets/README.md.
@@ -172,6 +181,7 @@ services:
       - github_webhook_secret
       - loopover_api_token
       - loopover_mcp_token
+      - loopover_mcp_admin_token
       - internal_job_token
       - selfhost_setup_token
       - token_encryption_secret
@@ -1327,6 +1337,8 @@ secrets:
     file: ./secrets/loopover_api_token.txt
   loopover_mcp_token:
     file: ./secrets/loopover_mcp_token.txt
+  loopover_mcp_admin_token:
+    file: ./secrets/loopover_mcp_admin_token.txt
   internal_job_token:
     file: ./secrets/internal_job_token.txt
   selfhost_setup_token:

@@ -283,6 +283,18 @@ declare global {
     LOOPOVER_API_TOKEN?: string;
     /** Shared MCP bearer token (src/auth/security.ts). */
     LOOPOVER_MCP_TOKEN?: string;
+    /** Higher-privilege MCP bearer token (#7721), distinct from LOOPOVER_MCP_TOKEN so a leaked ordinary MCP
+     *  credential can never reach the admin config-write tools -- checked first in authenticatePrivateToken,
+     *  resolves to actor "mcp-admin". Self-host only in practice: the admin tools it unlocks operate on
+     *  LOOPOVER_REPO_CONFIG_DIR, which is unset (and thus a no-op) on the hosted Cloudflare deployment. */
+    LOOPOVER_MCP_ADMIN_TOKEN?: string;
+    /** Master opt-in (#7721, default OFF) for the "admin" MCP tool category (read/write a self-hosted instance's
+     *  own private .loopover.yml config). Gates TOOL REGISTRATION itself, not just call-time authorization --
+     *  matching this repo's "truly inert when off, tool not even registered" convention -- so the surface is
+     *  invisible in tools/list unless an operator explicitly turns it on. Each tool call still separately
+     *  requires actor === "mcp-admin" (LOOPOVER_MCP_ADMIN_TOKEN), so enabling this flag alone grants nothing to
+     *  a caller using the ordinary LOOPOVER_MCP_TOKEN. */
+    LOOPOVER_MCP_ADMIN_ENABLED?: string;
     INTERNAL_JOB_TOKEN: string;
     /** Repos the shared LOOPOVER_MCP_TOKEN may propose/decide/manage actions on (comma/whitespace `owner/repo`
      *  list, or `*`/`all` for every repo). Unset ⇒ none — LOOPOVER_MCP_TOKEN is a shared, end-user-obtainable

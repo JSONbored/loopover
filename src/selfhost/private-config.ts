@@ -32,8 +32,9 @@
 //
 // The reserved shared-base folder `_shared` is never treated as a bare repo-name config folder for a real GitHub
 // repo named `_shared`; use the owner-qualified or flat owner__repo candidates for that repository instead.
-import { readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, readdir, mkdir, copyFile, rename, writeFile, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
 import type {
@@ -353,4 +354,170 @@ export function makeLocalReviewContextReader(dir: string | undefined): RepoRevie
     }
     return { guide: null, skills: [] };
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Admin write path (#7721). Everything above this point is 100% read-only, mirroring the module's
+// original scope; these exports add the write half via the same candidate-path resolution the read
+// path already uses, so a write always lands on the SAME file a read of that scope would return.
+// ---------------------------------------------------------------------------------------------
+
+export type ConfigAdminScope = { kind: "global" } | { kind: "repo"; repoFullName: string };
+
+export type ConfigWriteResult =
+  | { ok: true; path: string; backupPath: string | null }
+  | { ok: false; error: string };
+
+export type ConfigValidationResult = { ok: true } | { ok: false; error: string };
+
+export type ConfigBackupEntry = { name: string; path: string; mtimeMs: number };
+
+/** Validate write content against the same YAML/JSON-mapping shape the read path's own
+ *  {@link parseConfigMapping} enforces for merging, but with a specific, actionable error message instead of a
+ *  bare null — a write rejection needs to tell the caller WHY, unlike a read fallback which just moves on to the
+ *  next layer. Deliberately reuses the same MAX_FOCUS_MANIFEST_BYTES ceiling and JSON/YAML detection heuristic
+ *  (leading `{`/`[`) as parseConfigMapping so a document that would merge cleanly on read also validates cleanly
+ *  on write, and vice versa. */
+export function validateConfigWriteContent(text: string): ConfigValidationResult {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, error: "Content is empty." };
+  if (trimmed.length > MAX_FOCUS_MANIFEST_BYTES) {
+    return { ok: false, error: `Content is ${trimmed.length} bytes, exceeding the ${MAX_FOCUS_MANIFEST_BYTES}-byte manifest size limit.` };
+  }
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  let parsed: unknown;
+  try {
+    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
+  } catch (error) {
+    return { ok: false, error: `Failed to parse as ${looksLikeJson ? "JSON" : "YAML"}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "Content must parse to a YAML/JSON mapping (object) at the top level, not a scalar, array, or null." };
+  }
+  return { ok: true };
+}
+
+/** Resolve the ONE relative path a read OR write of this scope resolves to, so the two never disagree: the
+ *  currently-existing candidate if one is already present (global: {@link GLOBAL_CONFIG_CANDIDATES}; repo:
+ *  {@link localConfigCandidates}'s same priority order the read path uses), else the preferred path a first
+ *  write creates (`.loopover.yml` at the config-dir root for global; the "clean, human-readable" bare
+ *  repo-name folder — see this module's header comment — for a repo with no config yet). Null only for an
+ *  invalid repo full name (no per-repo candidates at all). */
+async function resolveConfigScopePath(base: string, scope: ConfigAdminScope): Promise<string | null> {
+  if (scope.kind === "global") {
+    const existing = await readFirstExistingWithPath(base, GLOBAL_CONFIG_CANDIDATES);
+    return existing?.path ?? GLOBAL_CONFIG_CANDIDATES[0]!;
+  }
+  const candidates = localConfigCandidates(scope.repoFullName);
+  if (candidates.length === 0) return null;
+  const existing = await readFirstExistingWithPath(base, candidates);
+  if (existing) return existing.path;
+  const slash = scope.repoFullName.indexOf("/");
+  const repo = scope.repoFullName.slice(slash + 1).toLowerCase();
+  return join(repo, CONFIG_BASENAMES[0]!);
+}
+
+/** Write `content` to `absPath`, backing up any existing file first and writing atomically (temp file in the
+ *  same directory + rename, so a reader never observes a partially-written file). The backup is a plain copy
+ *  named `<original>.bak-<compact-ISO-timestamp>` alongside the original -- e.g. `.loopover.yml.bak-
+ *  20260723T094512345Z` -- so {@link listConfigBackupsForScope} can find it with a simple prefix match, and an
+ *  operator can `docker cp` it out or restore it by hand without any tool support. Creates the parent
+ *  directory (a brand-new per-repo folder) if it doesn't exist yet. No existing file to back up (first write
+ *  to this path) is not an error -- there is simply nothing to copy. */
+async function atomicWriteWithBackup(absPath: string, content: string): Promise<{ backupPath: string | null }> {
+  await mkdir(dirname(absPath), { recursive: true });
+  let backupPath: string | null = null;
+  const backupAbsPath = `${absPath}.bak-${new Date().toISOString().replace(/[-:]/g, "").replace(".", "")}`;
+  try {
+    await copyFile(absPath, backupAbsPath);
+    backupPath = backupAbsPath;
+  } catch (error) {
+    // ENOENT (no existing file at this path yet -- first write, nothing to back up) is the only
+    // expected/safe case to swallow. Anything else (EACCES, a host/container uid mismatch on the bind
+    // mount -- the exact class of bug secrets/README.md documents hitting in production on edge-nl-01,
+    // and this mount is bind-mounted the same way) means a file DOES exist but couldn't be safely copied
+    // -- proceeding to overwrite it anyway would silently destroy the only copy. Fail the whole write
+    // instead of a backup-less overwrite.
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+  }
+  const tmpAbsPath = `${absPath}.tmp-${randomUUID()}`;
+  await writeFile(tmpAbsPath, content, "utf8");
+  await rename(tmpAbsPath, absPath);
+  return { backupPath };
+}
+
+/** Write the global-default config (validated, backed up, atomic — see {@link atomicWriteWithBackup}). Lands
+ *  on whichever global candidate already exists, or creates `.loopover.yml` at the config-dir root if none
+ *  does yet. */
+export async function writeGlobalConfig(dir: string, content: string): Promise<ConfigWriteResult> {
+  const validation = validateConfigWriteContent(content);
+  if (!validation.ok) return validation;
+  const base = resolve(dir);
+  const relPath = (await resolveConfigScopePath(base, { kind: "global" }))!;
+  const { backupPath } = await atomicWriteWithBackup(resolve(base, relPath), content);
+  return { ok: true, path: relPath, backupPath };
+}
+
+/** Write a per-repo config override (validated, backed up, atomic — see {@link atomicWriteWithBackup}). Lands
+ *  on whichever of {@link localConfigCandidates}'s candidates already exists for this repo, or creates the
+ *  bare repo-name folder form if none does yet. */
+export async function writeRepoConfig(dir: string, repoFullName: string, content: string): Promise<ConfigWriteResult> {
+  const validation = validateConfigWriteContent(content);
+  if (!validation.ok) return validation;
+  const base = resolve(dir);
+  const relPath = await resolveConfigScopePath(base, { kind: "repo", repoFullName });
+  if (relPath === null) return { ok: false, error: `Invalid repo full name: ${repoFullName}` };
+  const { backupPath } = await atomicWriteWithBackup(resolve(base, relPath), content);
+  return { ok: true, path: relPath, backupPath };
+}
+
+/** Read the raw, single-layer (not merged) global-default config text, or null if none exists. Distinct from
+ *  {@link makeLocalManifestReader}'s reader, which returns the MERGED effective config for a repo (shared base
+ *  + global + per-repo folded together) — this is the "global" scope of #7721's admin read tool, and also
+ *  what a caller should read-modify-write against when editing just the global layer. */
+export async function readGlobalConfigRaw(dir: string): Promise<{ path: string; content: string } | null> {
+  const hit = await readFirstExistingWithPath(resolve(dir), GLOBAL_CONFIG_CANDIDATES);
+  return hit ? { path: hit.path, content: hit.text } : null;
+}
+
+/** Read the raw, single-layer (not merged) per-repo override text, or null if none exists (including an
+ *  invalid repo full name). Distinct from {@link makeLocalManifestReader}'s merged effective config — this is
+ *  the "repo" scope of #7721's admin read tool. */
+export async function readRepoConfigRaw(dir: string, repoFullName: string): Promise<{ path: string; content: string } | null> {
+  const candidates = localConfigCandidates(repoFullName);
+  if (candidates.length === 0) return null;
+  const hit = await readFirstExistingWithPath(resolve(dir), candidates);
+  return hit ? { path: hit.path, content: hit.text } : null;
+}
+
+/** List backups for a scope, newest first. Only ever looks alongside the ONE path
+ *  {@link resolveConfigScopePath} resolves for this scope (matching whatever a write to this scope would
+ *  target), not every historical candidate path a repo's config might once have lived at — so this always
+ *  agrees with what write/read report for the same scope. Empty (not an error) when the directory doesn't
+ *  exist, is unreadable, or has no matching backups yet. */
+export async function listConfigBackupsForScope(dir: string, scope: ConfigAdminScope): Promise<ConfigBackupEntry[]> {
+  const base = resolve(dir);
+  const relPath = await resolveConfigScopePath(base, scope);
+  if (relPath === null) return [];
+  const absPath = resolve(base, relPath);
+  const absDir = dirname(absPath);
+  const prefix = `${basename(absPath)}.bak-`;
+  let entries: string[];
+  try {
+    entries = await readdir(absDir);
+  } catch {
+    return [];
+  }
+  const relDir = dirname(relPath);
+  const backups: ConfigBackupEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+    try {
+      const info = await stat(join(absDir, entry));
+      backups.push({ name: entry, path: relDir === "." ? entry : join(relDir, entry), mtimeMs: info.mtimeMs });
+    } catch {
+      // Race: entry disappeared between readdir and stat — skip it rather than fail the whole listing.
+    }
+  }
+  return backups.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }

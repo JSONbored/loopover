@@ -307,6 +307,47 @@ features:
 
 The `features:` block above overrides a deployment-wide `LOOPOVER_REVIEW_*` flag (rag, reputation, safety) for this one repo, with three states per key: `true` forces the capability on for this repo (still subject to the env flag itself being enabled — it can never turn on a capability the operator has fully disabled at the deployment level); `false` forces it off for this repo regardless of the env flag; and omitting the key entirely falls back to the `LOOPOVER_REVIEW_REPOS` allowlist default, i.e. today's behavior for an operator who hasn't set anything here. See [Tuning your reviews](/docs/tuning) for the full `LOOPOVER_REVIEW_*` flag list this overrides.
 
+## MCP admin config tools
+
+By default the config above is edit-by-hand-and-restart only. Setting `LOOPOVER_MCP_ADMIN_ENABLED` additionally registers a small `admin` MCP tool category that reads and **writes** it: `loopover_admin_get_config`, `loopover_admin_write_config`, and `loopover_admin_list_config_backups`. Off by default, and three things have to be true before it does anything:
+
+1. **`LOOPOVER_MCP_ADMIN_ENABLED=1`** — registers the tools at all. Unset (or falsy) means they don't exist on the server, not just "reject the call" — the same "inert when off" convention `LOOPOVER_REVIEW_SCREENSHOTS`/`LOOPOVER_REVIEW_ENRICHMENT`/`LOOPOVER_REVIEW_OPS` already use elsewhere in this app.
+2. **A separate `LOOPOVER_MCP_ADMIN_TOKEN`.** Generate and set it exactly like any other bearer token below — but never reuse `LOOPOVER_MCP_TOKEN`'s value for it. They're deliberately different credentials so a leaked, end-user-obtainable `LOOPOVER_MCP_TOKEN` (see the callout above) can never rewrite fleet-wide gate policy; calls authenticated with the ordinary token are rejected even once the flag above is on.
+3. **The config mount itself flipped to `:rw`.** `docker-compose.yml` mounts `LOOPOVER_REPO_CONFIG_DIR` read-only regardless of the flag above — enabling the flag alone does not make the mount secretly writable. Edit the line yourself:
+
+<CodeBlock
+  filename=".env"
+  code={`LOOPOVER_MCP_ADMIN_ENABLED=1
+LOOPOVER_MCP_ADMIN_TOKEN=<random-32-byte-token>`}
+/>
+
+<CodeBlock
+  filename="docker-compose.yml"
+  code={`    volumes:
+      - ./loopover-config:/config:rw   # was :ro`}
+/>
+
+Restart the `loopover` service after changing either (`docker compose up -d --no-deps loopover`, or `./scripts/selfhost-update.sh`). Both tokens support the same `_FILE` secret-file convention as `LOOPOVER_MCP_TOKEN` — see `secrets/README.md`.
+
+`loopover_admin_write_config` validates against the same schema-aware validator `loopover_validate_config` already exposes (not a separate, looser check), writes a timestamped backup of whatever file it's about to overwrite first, and lands the new content via a temp-file-plus-rename atomic write. Pass `dryRun: true` to run that same validation and see what would happen without touching disk:
+
+<CodeBlock
+  lang="json"
+  filename="example: loopover_admin_write_config"
+  code={`{
+  "scope": "repo",
+  "repoFullName": "your-org/your-repo",
+  "dryRun": true,
+  "content": "gate:\\n  checkMode: visible\\n"
+}`}
+/>
+
+Drop `dryRun` (or set it to `false`) to write for real once you're happy with the dry-run result. `scope` is `"global"` (the mount-root default file) or `"repo"` (pass `repoFullName`); `loopover_admin_get_config` additionally accepts `"effective"` to read the exact deep-merged view a real review sees, same as the "Private per-repo config" deep-merge described above. `loopover_admin_list_config_backups` takes the same `scope`/`repoFullName` pair and returns each backup's path and timestamp, newest first.
+
+<Callout variant="warn" title="Boundaries">
+  These tools only read and write `LOOPOVER_REPO_CONFIG_DIR`. They do not trigger a redeploy, and they do not touch the public dashboard or `/v1/app/*` settings surface — `LOOPOVER_MCP_ADMIN_TOKEN` cannot sign into the control panel or call the routes `ADMIN_GITHUB_LOGINS` gates.
+</Callout>
+
 ## Config-as-code blocks with no dashboard equivalent
 
 Everything above has a dashboard row it mirrors. The fields below exist **only** in `.loopover.yml` — there is no DB column or dashboard toggle for them, so a self-host operator who never reads the example file may not know they exist.

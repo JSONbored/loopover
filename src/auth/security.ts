@@ -15,7 +15,7 @@ function nonBlank(value: string | undefined): string | undefined {
 }
 
 export type AuthIdentity =
-  | { kind: "static"; actor: "api" | "mcp" | "internal" }
+  | { kind: "static"; actor: "api" | "mcp" | "mcp-admin" | "internal" }
   | { kind: "session"; actor: string; session: AuthSessionRecord };
 
 export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -109,6 +109,11 @@ export function createOpaqueToken(prefix = "gts"): string {
 export async function authenticatePrivateToken(env: Env, token: string | undefined): Promise<AuthIdentity | null> {
   if (!token) return null;
   if (await timingSafeEqual(token, nonBlank(env.LOOPOVER_API_TOKEN))) return { kind: "static", actor: "api" };
+  // Checked before the general LOOPOVER_MCP_TOKEN: a distinct, higher-privilege credential (#7721) so a leaked
+  // ordinary MCP token can never reach the admin config-write tools, which gate on actor === "mcp-admin"
+  // specifically. Order doesn't change behavior here (the two secrets are never equal in a real deployment),
+  // but checking the more-privileged token first keeps this function reading top-to-bottom by privilege.
+  if (await timingSafeEqual(token, nonBlank(env.LOOPOVER_MCP_ADMIN_TOKEN))) return { kind: "static", actor: "mcp-admin" };
   if (await timingSafeEqual(token, nonBlank(env.LOOPOVER_MCP_TOKEN))) return { kind: "static", actor: "mcp" };
   return authenticateSessionToken(env, token);
 }

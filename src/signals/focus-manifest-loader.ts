@@ -47,6 +47,14 @@ export function setLocalManifestReader(reader: RepoFocusManifestFetcher | null):
   localManifestReader = reader;
 }
 
+/** The currently-registered reader, or null if unset (cloud, or self-host without the dir). Exposed read-only
+ *  so another Workers-safe consumer (the admin MCP tools' "effective" config scope, #7721) can reuse the SAME
+ *  merged-config computation this loader already performs, instead of re-implementing shared/global/per-repo
+ *  layering a second time. */
+export function getLocalManifestReader(): RepoFocusManifestFetcher | null {
+  return localManifestReader;
+}
+
 /**
  * Async source for a repo's review CONTEXT (#review-skills): the `review/CLAUDE.md` guide + `review/skills/*.md` rubric
  * modules from the container-private config dir. Registered once at boot by the Node entry (server.ts); the filesystem

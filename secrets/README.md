@@ -63,6 +63,7 @@ see the tradeoff explained above for why `600` breaks the app's own ability to r
 | `github_webhook_secret.txt` | `GITHUB_WEBHOOK_SECRET_FILE` | HMAC key GitHub webhook deliveries are verified against. |
 | `loopover_api_token.txt` | `LOOPOVER_API_TOKEN_FILE` | Server-to-server API bearer token. |
 | `loopover_mcp_token.txt` | `LOOPOVER_MCP_TOKEN_FILE` | Shared MCP bearer token. |
+| `loopover_mcp_admin_token.txt` | `LOOPOVER_MCP_ADMIN_TOKEN_FILE` | Higher-privilege MCP admin token (config read/write tools); inert unless `LOOPOVER_MCP_ADMIN_ENABLED` is also set. |
 | `internal_job_token.txt` | `INTERNAL_JOB_TOKEN_FILE` | Gates internal-only routes (e.g. `/v1/internal/*`). |
 | `selfhost_setup_token.txt` | `SELFHOST_SETUP_TOKEN_FILE` | Unlocks the first-run `/setup` wizard. |
 | `token_encryption_secret.txt` | `TOKEN_ENCRYPTION_SECRET_FILE` | AES-256-GCM master secret for maintainer BYOK keys at rest. |
@@ -80,7 +81,7 @@ of those too; add a matching `secrets:` entry in `docker-compose.yml` (or a
 ## Never commit real files here
 
 Everything in this directory except this README is gitignored. `scripts/selfhost-init-secrets.sh`
-generates a real random value for the seven self-generatable files (so `docker compose build`/`up`
+generates a real random value for each self-generatable file (so `docker compose build`/`up`
 never fails on a missing file, and boots without any manual `openssl` step) and creates only an
 **empty** placeholder for the four externally-issued ones it can't generate a usable value for. Either
 way, it only ever touches the *permissions* of a file that is still empty, never its content — the

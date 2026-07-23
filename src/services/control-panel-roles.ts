@@ -169,7 +169,7 @@ export function buildControlPanelRoleSummary(args: RoleSummaryInputs): ControlPa
   };
 }
 
-export function buildStaticControlPanelRoleSummary(actor: "api" | "mcp" | "internal"): ControlPanelRoleSummary {
+export function buildStaticControlPanelRoleSummary(actor: "api" | "mcp" | "mcp-admin" | "internal"): ControlPanelRoleSummary {
   return {
     login: actor,
     generatedAt: nowIso(),

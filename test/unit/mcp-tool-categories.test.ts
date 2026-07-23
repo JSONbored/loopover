@@ -5,7 +5,13 @@ import { LoopoverMcp, MCP_TOOL_CATEGORIES, MCP_TOOL_CATEGORY_IDS } from "../../s
 import { createTestEnv } from "../helpers/d1";
 
 async function listRegisteredTools() {
-  const mcpServer = new LoopoverMcp(createTestEnv()).createServer();
+  // LOOPOVER_MCP_ADMIN_ENABLED: true -- the "admin" category (#7721) is this server's first-ever
+  // CONDITIONALLY-registered tool set (every other tool always registers). The default-off test env
+  // would otherwise make this file's own "exact sync" test below permanently fail: those 3 tool names
+  // are legitimately always present in MCP_TOOL_CATEGORIES (a static map), but never actually
+  // registered unless this flag is on. Enabling it here exercises the FULL possible tool surface, which
+  // is what "every map entry has a real, registered tool" should mean.
+  const mcpServer = new LoopoverMcp(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" })).createServer();
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await mcpServer.connect(serverTransport);
   const client = new Client({ name: "tool-category-test", version: "0.1.0" }, { capabilities: {} });

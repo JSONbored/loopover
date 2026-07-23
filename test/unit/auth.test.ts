@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../../src/auth/github-oauth";
 import { enforceRateLimit, RateLimiter, routeClassForPath } from "../../src/auth/rate-limit";
 import { authenticatePrivateToken, buildBrowserSessionCookie, createSessionForGitHubUser, extractCookieValue, isAuthorizedGitHubSessionLogin, isMcpActuationRepoAllowed, revokeSession, timingSafeEqual } from "../../src/auth/security";
+import { createApp } from "../../src/api/routes";
 import { PRODUCT_USER_AGENT } from "../../src/github/client";
 import { issueOrbEnrollment } from "../../src/orb/broker";
 import { createTestEnv, type TestD1Database } from "../helpers/d1";
@@ -41,6 +42,30 @@ describe("private-beta auth and rate limiting", () => {
     await expect(authenticatePrivateToken(env, "new-mcp-token")).resolves.toMatchObject({ kind: "static", actor: "mcp" });
     // The default fixture values must no longer authenticate once overridden.
     await expect(authenticatePrivateToken(env, "test-api-token")).resolves.toBeNull();
+  });
+
+  it("authenticates LOOPOVER_MCP_ADMIN_TOKEN to actor mcp-admin, distinct from and unaffected by the ordinary LOOPOVER_MCP_TOKEN (#7721)", async () => {
+    const env = createTestEnv({ LOOPOVER_MCP_ADMIN_TOKEN: "admin-token", LOOPOVER_MCP_TOKEN: "ordinary-token" });
+    await expect(authenticatePrivateToken(env, "admin-token")).resolves.toMatchObject({ kind: "static", actor: "mcp-admin" });
+    await expect(authenticatePrivateToken(env, "ordinary-token")).resolves.toMatchObject({ kind: "static", actor: "mcp" });
+    // Unset LOOPOVER_MCP_ADMIN_TOKEN never accidentally accepts an empty/undefined credential.
+    const unset = createTestEnv();
+    await expect(authenticatePrivateToken(unset, "")).resolves.toBeNull();
+    await expect(authenticatePrivateToken(unset, undefined)).resolves.toBeNull();
+  });
+
+  it("excludes both mcp and mcp-admin static identities from app-role-gated routes (#7721)", async () => {
+    const env = createTestEnv({ LOOPOVER_MCP_ADMIN_TOKEN: "admin-token" });
+    const app = createApp();
+    const mcpRes = await app.request("/v1/app/overview", { headers: { authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}` } }, env);
+    expect(mcpRes.status).toBe(403);
+    await expect(mcpRes.json()).resolves.toMatchObject({ error: "insufficient_role" });
+    const adminRes = await app.request("/v1/app/overview", { headers: { authorization: "Bearer admin-token" } }, env);
+    expect(adminRes.status).toBe(403);
+    await expect(adminRes.json()).resolves.toMatchObject({ error: "insufficient_role" });
+    // A genuine operator-owned static credential (api) is unaffected by this exclusion.
+    const apiRes = await app.request("/v1/app/overview", { headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}` } }, env);
+    expect(apiRes.status).not.toBe(403);
   });
 
   it("scopes MCP static-token actuation to an explicit repo allowlist, denying by default (#2253)", () => {

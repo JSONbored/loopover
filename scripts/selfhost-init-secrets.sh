@@ -44,6 +44,7 @@ RANDOM_SECRET_FILES=(
   "github_webhook_secret.txt"
   "loopover_api_token.txt"
   "loopover_mcp_token.txt"
+  "loopover_mcp_admin_token.txt"
   "internal_job_token.txt"
   "selfhost_setup_token.txt"
   "token_encryption_secret.txt"

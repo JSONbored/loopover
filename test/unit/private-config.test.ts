@@ -1,8 +1,24 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GLOBAL_CONFIG_CANDIDATES, isReviewSkillEnabled, localConfigCandidates, makeLocalManifestReader, makeLocalReviewContextReader, mergeConfigOverlay, parseReviewSkill, SHARED_BASE_CONFIG_CANDIDATES, type LocalManifestLoadResult } from "../../src/selfhost/private-config";
+import {
+  GLOBAL_CONFIG_CANDIDATES,
+  isReviewSkillEnabled,
+  listConfigBackupsForScope,
+  localConfigCandidates,
+  makeLocalManifestReader,
+  makeLocalReviewContextReader,
+  mergeConfigOverlay,
+  parseReviewSkill,
+  readGlobalConfigRaw,
+  readRepoConfigRaw,
+  SHARED_BASE_CONFIG_CANDIDATES,
+  validateConfigWriteContent,
+  writeGlobalConfig,
+  writeRepoConfig,
+  type LocalManifestLoadResult,
+} from "../../src/selfhost/private-config";
 import { loadRepoReviewContext, setLocalReviewContextReader, type RepoFocusManifestFetcher } from "../../src/signals/focus-manifest-loader";
 import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
 
@@ -573,6 +589,164 @@ describe("makeLocalReviewContextReader (#review-skills)", () => {
     expect(await reader("JSONbored/unknown-repo")).toEqual({ guide: null, skills: [] }); // no folder
     expect(await reader("owner/..")).toEqual({ guide: null, skills: [] }); // invalid repo segment → no candidates
     expect(await reader("noslash")).toEqual({ guide: null, skills: [] }); // invalid full name (no slash)
+  });
+});
+
+describe("validateConfigWriteContent (#7721)", () => {
+  it("rejects empty content", () => {
+    expect(validateConfigWriteContent("")).toEqual({ ok: false, error: "Content is empty." });
+    expect(validateConfigWriteContent("   \n  ")).toEqual({ ok: false, error: "Content is empty." });
+  });
+  it("rejects content over the manifest byte ceiling", () => {
+    const result = validateConfigWriteContent("gate:\n  mode: advisory\n" + "x".repeat(MAX_FOCUS_MANIFEST_BYTES));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("exceeding the");
+  });
+  it("rejects unparseable YAML with the parser's own error message", () => {
+    const result = validateConfigWriteContent("gate: [unterminated");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Failed to parse as YAML");
+  });
+  it("rejects unparseable JSON when the content looks JSON-shaped", () => {
+    const result = validateConfigWriteContent("{ not valid json");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Failed to parse as JSON");
+  });
+  it("rejects a top-level scalar, array, or null", () => {
+    expect(validateConfigWriteContent("just a string").ok).toBe(false);
+    expect(validateConfigWriteContent("[1, 2, 3]").ok).toBe(false);
+    expect(validateConfigWriteContent("null").ok).toBe(false);
+  });
+  it("accepts a valid YAML mapping", () => {
+    expect(validateConfigWriteContent("gate:\n  mode: advisory\n")).toEqual({ ok: true });
+  });
+  it("accepts a valid JSON mapping", () => {
+    expect(validateConfigWriteContent('{"gate": {"mode": "advisory"}}')).toEqual({ ok: true });
+  });
+});
+
+describe("writeGlobalConfig / readGlobalConfigRaw (#7721)", () => {
+  it("creates .loopover.yml at the config-dir root on first write, no backup", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    const result = await writeGlobalConfig(dir, "gate:\n  mode: advisory\n");
+    expect(result).toEqual({ ok: true, path: GLOBAL_CONFIG_CANDIDATES[0], backupPath: null });
+    expect(readFileSync(join(dir, GLOBAL_CONFIG_CANDIDATES[0]!), "utf8")).toBe("gate:\n  mode: advisory\n");
+    expect(await readGlobalConfigRaw(dir)).toEqual({ path: GLOBAL_CONFIG_CANDIDATES[0], content: "gate:\n  mode: advisory\n" });
+  });
+
+  it("writes back to an already-existing .loopover.yaml instead of creating a new .loopover.yml", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    writeFileSync(join(dir, ".loopover.yaml"), "gate:\n  mode: hold\n");
+    const result = await writeGlobalConfig(dir, "gate:\n  mode: advisory\n");
+    expect(result.ok && result.path).toBe(".loopover.yaml");
+    expect(existsSync(join(dir, ".loopover.yml"))).toBe(false); // no duplicate created
+    expect(readFileSync(join(dir, ".loopover.yaml"), "utf8")).toBe("gate:\n  mode: advisory\n");
+  });
+
+  it("backs up the existing file before overwriting, and the backup keeps the ORIGINAL content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    await writeGlobalConfig(dir, "gate:\n  mode: hold\n");
+    const second = await writeGlobalConfig(dir, "gate:\n  mode: advisory\n");
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.backupPath).not.toBeNull();
+    expect(readFileSync(second.backupPath!, "utf8")).toBe("gate:\n  mode: hold\n");
+    expect(readFileSync(join(dir, GLOBAL_CONFIG_CANDIDATES[0]!), "utf8")).toBe("gate:\n  mode: advisory\n");
+  });
+
+  it("leaves no stray .tmp-* file behind after a successful write", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    await writeGlobalConfig(dir, "gate:\n  mode: advisory\n");
+    expect(readdirSync(dir).some((name) => name.includes(".tmp-"))).toBe(false);
+  });
+
+  it("propagates a non-ENOENT backup failure instead of silently overwriting without a backup", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    // A directory where a file is expected: copyFile throws EISDIR, not ENOENT -- the write must fail
+    // loudly rather than treat this the same as "no existing file, nothing to back up."
+    mkdirSync(join(dir, GLOBAL_CONFIG_CANDIDATES[0]!));
+    await expect(writeGlobalConfig(dir, "gate:\n  mode: advisory\n")).rejects.toThrow();
+  });
+
+  it("rejects invalid content and writes nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    const result = await writeGlobalConfig(dir, "not: [valid");
+    expect(result.ok).toBe(false);
+    expect(existsSync(join(dir, ".loopover.yml"))).toBe(false);
+  });
+
+  it("readGlobalConfigRaw returns null when nothing exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    expect(await readGlobalConfigRaw(dir)).toBeNull();
+  });
+});
+
+describe("writeRepoConfig / readRepoConfigRaw (#7721)", () => {
+  it("creates the bare repo-name folder on first write for this repo", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    const result = await writeRepoConfig(dir, "JSONbored/loopover", "gate:\n  mode: advisory\n");
+    expect(result).toEqual({ ok: true, path: join("loopover", ".loopover.yml"), backupPath: null });
+    expect(await readRepoConfigRaw(dir, "JSONbored/loopover")).toEqual({
+      path: join("loopover", ".loopover.yml"),
+      content: "gate:\n  mode: advisory\n",
+    });
+  });
+
+  it("writes back to an existing owner-qualified file instead of creating the bare-folder form", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    mkdirSync(join(dir, "jsonbored__loopover"), { recursive: true });
+    writeFileSync(join(dir, "jsonbored__loopover", ".loopover.yml"), "gate:\n  mode: hold\n");
+    const result = await writeRepoConfig(dir, "JSONbored/loopover", "gate:\n  mode: advisory\n");
+    expect(result.ok && result.path).toBe(join("jsonbored__loopover", ".loopover.yml"));
+    expect(existsSync(join(dir, "loopover", ".loopover.yml"))).toBe(false); // no duplicate in the bare folder
+  });
+
+  it("rejects an invalid repo full name without touching the filesystem", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    const result = await writeRepoConfig(dir, "no-slash", "gate:\n  mode: advisory\n");
+    expect(result).toEqual({ ok: false, error: "Invalid repo full name: no-slash" });
+  });
+
+  it("rejects invalid content before ever resolving a path", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    const result = await writeRepoConfig(dir, "JSONbored/loopover", "");
+    expect(result).toEqual({ ok: false, error: "Content is empty." });
+  });
+
+  it("readRepoConfigRaw returns null for a repo with no config and for an invalid repo name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-write-"));
+    expect(await readRepoConfigRaw(dir, "JSONbored/nonexistent")).toBeNull();
+    expect(await readRepoConfigRaw(dir, "no-slash")).toBeNull();
+  });
+});
+
+describe("listConfigBackupsForScope (#7721)", () => {
+  it("empty for a scope with no backups yet", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-backups-"));
+    expect(await listConfigBackupsForScope(dir, { kind: "global" })).toEqual([]);
+    expect(await listConfigBackupsForScope(dir, { kind: "repo", repoFullName: "JSONbored/loopover" })).toEqual([]);
+  });
+
+  it("lists global backups newest-first after repeated writes, and never mixes in repo-scope backups", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-backups-"));
+    await writeGlobalConfig(dir, "gate:\n  mode: hold\n");
+    await writeGlobalConfig(dir, "gate:\n  mode: warn\n"); // 1st backup, of "hold"
+    await new Promise((r) => setTimeout(r, 2)); // ensure a distinct mtime ordering
+    await writeGlobalConfig(dir, "gate:\n  mode: advisory\n"); // 2nd backup, of "warn"
+    await writeRepoConfig(dir, "JSONbored/loopover", "gate:\n  mode: hold\n"); // unrelated repo-scope write
+
+    const globalBackups = await listConfigBackupsForScope(dir, { kind: "global" });
+    expect(globalBackups.length).toBe(2);
+    expect(globalBackups[0]!.mtimeMs).toBeGreaterThanOrEqual(globalBackups[1]!.mtimeMs); // newest first
+    expect(globalBackups.every((b) => b.name.startsWith(`${GLOBAL_CONFIG_CANDIDATES[0]}.bak-`))).toBe(true);
+
+    const repoBackups = await listConfigBackupsForScope(dir, { kind: "repo", repoFullName: "JSONbored/loopover" });
+    expect(repoBackups).toEqual([]); // first write to this repo scope — nothing to back up yet
+  });
+
+  it("empty (not an error) for an invalid repo full name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-admin-backups-"));
+    expect(await listConfigBackupsForScope(dir, { kind: "repo", repoFullName: "no-slash" })).toEqual([]);
   });
 });
 

@@ -112,6 +112,9 @@ import { buildRecommendationQualityReport } from "../services/recommendation-qua
 import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
+import { getConfigAdminFunctions } from "./private-config-admin-registry";
+import { getLocalManifestReader } from "../signals/focus-manifest-loader";
+import type { ConfigAdminScope } from "../selfhost/private-config";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
 import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
@@ -345,6 +348,23 @@ const lintPrTextShape = {
 const validateConfigShape = {
   content: z.string().max(256 * 1024),
   source: z.enum(["repo_file", "api_record", "none"]).optional(),
+};
+
+// #7721 admin tools — self-hosted-instance-only, gated behind LOOPOVER_MCP_ADMIN_ENABLED at
+// registration and actor === "mcp-admin" at call time (see the tool descriptions and handlers below).
+const adminConfigScopeShape = {
+  scope: z.enum(["effective", "global", "repo"]),
+  repoFullName: z.string().min(3).max(200).optional(),
+};
+const adminWriteConfigShape = {
+  scope: z.enum(["global", "repo"]),
+  repoFullName: z.string().min(3).max(200).optional(),
+  content: z.string().max(256 * 1024),
+  dryRun: z.boolean().optional(),
+};
+const adminListBackupsShape = {
+  scope: z.enum(["global", "repo"]),
+  repoFullName: z.string().min(3).max(200).optional(),
 };
 
 const preflightShape = {
@@ -1634,6 +1654,27 @@ const validateConfigOutputSchema = {
   normalized: z.record(z.string(), z.unknown()).optional(),
   status: z.enum(["ok", "warn", "error"]).optional(),
 };
+
+const adminGetConfigOutputSchema = {
+  configured: z.boolean(),
+  found: z.boolean().optional(),
+  path: z.string().nullable().optional(),
+  content: z.string().nullable().optional(),
+};
+const adminWriteConfigOutputSchema = {
+  configured: z.boolean(),
+  ok: z.boolean().optional(),
+  dryRun: z.boolean().optional(),
+  path: z.string().optional(),
+  backupPath: z.string().nullable().optional(),
+  error: z.string().optional(),
+};
+const adminListBackupsOutputSchema = {
+  configured: z.boolean(),
+  backups: z
+    .array(z.object({ name: z.string(), path: z.string(), mtimeMs: z.number() }))
+    .optional(),
+};
 // #550: output schemas for the remaining tools (preflight/score/local-branch/agent), so MCP clients can
 // machine-validate their results. Same lenient style as the schemas above — documented top-level keys,
 // all optional, complex values as z.unknown(). No behavior change; these mirror the existing payloads.
@@ -1888,11 +1929,15 @@ async function describeMcpUsageRequest(request: Request, telemetryMetadata: Reco
 // list. The ids mirror the issue's suggested surfaces: contributor discovery/planning, local-branch
 // & PR prep, review/gate prediction, agent automation, maintainer/repo-owner, and registry/config
 // utility. Attached to each tool as MCP `_meta.category` at registration (see createServer).
-export type McpToolCategory = "discovery" | "branch" | "review" | "agent" | "maintainer" | "utility";
+// "admin" (#7721) is the newest category: self-hosted-operator-only tools that read/write the
+// instance's OWN private .loopover.yml config. Unlike every other category, its tools are only
+// REGISTERED at all when LOOPOVER_MCP_ADMIN_ENABLED is truthy (see isMcpAdminEnabled below) -- every
+// other category's tools always exist and are gated purely by identity/allowlist at call time.
+export type McpToolCategory = "discovery" | "branch" | "review" | "agent" | "maintainer" | "utility" | "admin";
 
 // Canonical category order for grouped rendering (contributor-facing surfaces first, operator ones
 // last). Kept as a single source of truth so a display/grouping consumer never invents its own order.
-export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "branch", "review", "agent", "maintainer", "utility"];
+export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "branch", "review", "agent", "maintainer", "utility", "admin"];
 
 // Every registered tool maps to exactly one category. Listed in registration order (matching
 // createServer) so a new tool without a category entry is easy to spot in review; the
@@ -1998,7 +2043,17 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_agent_get_run: "agent",
   loopover_agent_explain_next_action: "agent",
   loopover_agent_prepare_pr_packet: "branch",
+  loopover_admin_get_config: "admin",
+  loopover_admin_write_config: "admin",
+  loopover_admin_list_config_backups: "admin",
 };
+
+/** Master opt-in for the "admin" tool category (#7721), default OFF. Same truthy-string convention as every
+ *  other LOOPOVER_* flag in this repo. Gates tool REGISTRATION in createServer() below; each admin tool
+ *  handler additionally requires actor === "mcp-admin" at call time regardless of this flag. */
+function isMcpAdminEnabled(env: Env): boolean {
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_MCP_ADMIN_ENABLED ?? "").trim());
+}
 
 export class LoopoverMcp {
   private accessScopePromise: Promise<ControlPanelAccessScope> | null = null;
@@ -3055,6 +3110,46 @@ export class LoopoverMcp {
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
     );
 
+    // ── Admin tools (#7721) ──────────────────────────────────────────────
+    // Registered only when LOOPOVER_MCP_ADMIN_ENABLED is truthy -- "not just gated at call time" per the
+    // issue, matching this repo's "truly inert when off, tool not even registered" convention (contrast
+    // every OTHER category above, whose tools always exist and are gated purely by identity/allowlist
+    // inside their handlers). Each handler ALSO independently requires actor === "mcp-admin"
+    // (requireMcpAdmin) -- defense in depth, so enabling this flag alone never grants anything to a caller
+    // still using the ordinary LOOPOVER_MCP_TOKEN.
+    if (isMcpAdminEnabled(this.env)) {
+      register(
+        "loopover_admin_get_config",
+        {
+          description:
+            "Self-hosted-operator only. Read this instance's own private .loopover.yml config: the merged effective config for a repo (shared base + global default + per-repo override), or just the raw global-default layer, or just the raw per-repo layer. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if LOOPOVER_REPO_CONFIG_DIR is unset.",
+          inputSchema: adminConfigScopeShape,
+          outputSchema: adminGetConfigOutputSchema,
+        },
+        async (input) => this.toolResult(await this.adminGetConfig(input)),
+      );
+      register(
+        "loopover_admin_write_config",
+        {
+          description:
+            "Self-hosted-operator only. Write this instance's own private global-default or per-repo .loopover.yml config: validated, a timestamped backup of any existing file first, atomic write. Set dryRun=true to validate without writing. Requires LOOPOVER_MCP_ADMIN_TOKEN. The config mount stays read-only (:ro) by default in docker-compose.yml -- an operator must flip it to :rw themselves before a real (non-dry-run) write can succeed.",
+          inputSchema: adminWriteConfigShape,
+          outputSchema: adminWriteConfigOutputSchema,
+        },
+        async (input) => this.toolResult(await this.adminWriteConfig(input)),
+      );
+      register(
+        "loopover_admin_list_config_backups",
+        {
+          description:
+            "Self-hosted-operator only. List timestamped backups (newest first) created by loopover_admin_write_config for the global-default or a specific repo's config. Requires LOOPOVER_MCP_ADMIN_TOKEN.",
+          inputSchema: adminListBackupsShape,
+          outputSchema: adminListBackupsOutputSchema,
+        },
+        async (input) => this.toolResult(await this.adminListConfigBackups(input)),
+      );
+    }
+
     // ── Miner planning prompts ───────────────────────────────────────────
     server.registerPrompt(
       "loopover_select_contribution_issue",
@@ -3803,6 +3898,114 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver manifest validation: ${report.status}.`,
       data: report as unknown as Record<string, unknown>,
+    };
+  }
+
+  /** actor === "mcp-admin" only -- a distinct, higher-privilege credential (LOOPOVER_MCP_ADMIN_TOKEN, #7721)
+   *  from the ordinary shared `mcp` identity, so a leaked LOOPOVER_MCP_TOKEN can never reach these tools even
+   *  though LOOPOVER_MCP_ADMIN_ENABLED already gates whether they're registered at all. Session identities
+   *  (browser login) are never admin either -- this is a self-hosted-operator CLI/automation credential, not
+   *  something a dashboard session inherits. */
+  private requireMcpAdmin(): void {
+    if (this.identity.kind === "static" && this.identity.actor === "mcp-admin") return;
+    throw new Error("Forbidden: this tool requires the LOOPOVER_MCP_ADMIN_TOKEN credential.");
+  }
+
+  private adminScopeRepoFullName(scope: string, repoFullName: string | undefined): string {
+    if (scope !== "repo" && scope !== "effective") return "";
+    if (!repoFullName) throw new Error(`repoFullName is required when scope is "${scope}".`);
+    return repoFullName;
+  }
+
+  private async adminGetConfig(input: { scope: "effective" | "global" | "repo"; repoFullName?: string | undefined }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const functions = getConfigAdminFunctions();
+    if (!functions) {
+      return {
+        summary: "LoopOver admin config tools: not configured (LOOPOVER_REPO_CONFIG_DIR is unset on this instance).",
+        data: { configured: false },
+      };
+    }
+    if (input.scope === "effective") {
+      const repoFullName = this.adminScopeRepoFullName(input.scope, input.repoFullName);
+      const reader = getLocalManifestReader();
+      const loaded = reader ? await reader(repoFullName) : null;
+      const content = typeof loaded === "string" ? loaded : (loaded?.content ?? null);
+      return {
+        summary: content === null ? `LoopOver admin config: no effective config found for ${repoFullName}.` : `LoopOver admin config: effective config loaded for ${repoFullName}.`,
+        data: { configured: true, found: content !== null, path: null, content },
+      };
+    }
+    const hit =
+      input.scope === "global"
+        ? await functions.readGlobal()
+        : await functions.readRepo(this.adminScopeRepoFullName(input.scope, input.repoFullName));
+    return {
+      summary: hit ? `LoopOver admin config: ${input.scope} config loaded from ${hit.path}.` : `LoopOver admin config: no ${input.scope} config found.`,
+      data: { configured: true, found: hit !== null, path: hit?.path ?? null, content: hit?.content ?? null },
+    };
+  }
+
+  private async adminWriteConfig(input: {
+    scope: "global" | "repo";
+    repoFullName?: string | undefined;
+    content: string;
+    dryRun?: boolean | undefined;
+  }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    if (input.scope === "repo" && !input.repoFullName) {
+      throw new Error('repoFullName is required when scope is "repo".');
+    }
+    if (input.dryRun) {
+      // Reuses the richer, schema-aware validator loopover_validate_config already exposes (unknown-field
+      // warnings, not just "is this valid YAML/JSON") -- a dry run is meant to preview what a real write
+      // would accept, so it should apply the SAME bar an operator would otherwise only discover by writing
+      // for real. The actual write path below still runs its own independent structural check
+      // (validateConfigWriteContent in private-config.ts) before touching disk regardless.
+      const report = buildFocusManifestValidation({ content: input.content, source: "repo_file" });
+      return {
+        summary: `LoopOver admin config dry run: ${report.status}.`,
+        data: { configured: true, dryRun: true, ...report } as unknown as Record<string, unknown>,
+      };
+    }
+    const functions = getConfigAdminFunctions();
+    if (!functions) {
+      return {
+        summary: "LoopOver admin config tools: not configured (LOOPOVER_REPO_CONFIG_DIR is unset on this instance).",
+        data: { configured: false },
+      };
+    }
+    const result =
+      input.scope === "global" ? await functions.writeGlobal(input.content) : await functions.writeRepo(input.repoFullName!, input.content);
+    if (!result.ok) {
+      return {
+        summary: `LoopOver admin config write failed: ${result.error}`,
+        data: { configured: true, ok: false, error: result.error },
+      };
+    }
+    return {
+      summary: `LoopOver admin config written to ${result.path}${result.backupPath ? ` (backed up to ${result.backupPath})` : ""}.`,
+      data: { configured: true, ok: true, path: result.path, backupPath: result.backupPath },
+    };
+  }
+
+  private async adminListConfigBackups(input: { scope: "global" | "repo"; repoFullName?: string | undefined }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    if (input.scope === "repo" && !input.repoFullName) {
+      throw new Error('repoFullName is required when scope is "repo".');
+    }
+    const functions = getConfigAdminFunctions();
+    if (!functions) {
+      return {
+        summary: "LoopOver admin config tools: not configured (LOOPOVER_REPO_CONFIG_DIR is unset on this instance).",
+        data: { configured: false },
+      };
+    }
+    const scope: ConfigAdminScope = input.scope === "global" ? { kind: "global" } : { kind: "repo", repoFullName: input.repoFullName! };
+    const backups = await functions.listBackups(scope);
+    return {
+      summary: `LoopOver admin config: ${backups.length} backup(s) for ${input.scope === "global" ? "the global config" : input.repoFullName}.`,
+      data: { configured: true, backups: backups as unknown as Array<Record<string, unknown>> },
     };
   }
 

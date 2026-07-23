@@ -6783,7 +6783,10 @@ async function requireAppRole(c: ProtectedRouteContext, allowedRoles: ControlPan
   if (!identity) return c.json({ error: "unauthorized" }, 401);
   if (identity.kind !== "session") {
     // LOOPOVER_MCP_TOKEN is a shared end-user credential; it must not satisfy app-role gates implicitly.
-    if (identity.actor === "mcp") return c.json({ error: "insufficient_role" }, 403);
+    // LOOPOVER_MCP_ADMIN_TOKEN (#7721) is narrower still by design -- config read/write only, explicitly
+    // NOT the public dashboard/API settings surface these app-role gates protect -- so it's excluded here
+    // too, same as the ordinary mcp token.
+    if (identity.actor === "mcp" || identity.actor === "mcp-admin") return c.json({ error: "insufficient_role" }, 403);
     return null;
   }
   const summary = await loadControlPanelRoleSummary(c.env, identity.actor);

@@ -74,7 +74,13 @@ import { createS3BlobStore } from "./selfhost/s3-blob-store";
 import {
   makeLocalManifestReader,
   makeLocalReviewContextReader,
+  readGlobalConfigRaw,
+  readRepoConfigRaw,
+  writeGlobalConfig,
+  writeRepoConfig,
+  listConfigBackupsForScope,
 } from "./selfhost/private-config";
+import { setConfigAdminFunctions } from "./mcp/private-config-admin-registry";
 import { assertSelfHostPreflight } from "./selfhost/preflight";
 import {
   buildSentryOpenTelemetryBridge,
@@ -365,6 +371,24 @@ async function main(): Promise<void> {
   // (or legacy `<repo>/review/CLAUDE.md`) + skills/*.md, injected into the reviewer prompt so reviews follow each
   // repo's conventions. Unset dir ⇒ null reader ⇒ no change.
   setLocalReviewContextReader(makeLocalReviewContextReader(repoConfigDir));
+  // Admin config read/write (#7721): same repoConfigDir, wired unconditionally here (not gated on
+  // LOOPOVER_MCP_ADMIN_ENABLED) -- that flag instead gates whether src/mcp/server.ts even REGISTERS the
+  // admin tools that call these functions, so an operator flipping the flag off doesn't require a
+  // restart-order dance with this wiring. Unset dir ⇒ null functions ⇒ the admin tools report a clear
+  // "not configured" result rather than throwing. The write functions still respect docker-compose.yml's
+  // default `:ro` config mount at the OS level -- registering them here does not itself make the mount
+  // writable; an operator who wants this capability flips it to `:rw` themselves (documented separately).
+  setConfigAdminFunctions(
+    repoConfigDir
+      ? {
+          readGlobal: () => readGlobalConfigRaw(repoConfigDir),
+          readRepo: (repoFullName) => readRepoConfigRaw(repoConfigDir, repoFullName),
+          writeGlobal: (content) => writeGlobalConfig(repoConfigDir, content),
+          writeRepo: (repoFullName, content) => writeRepoConfig(repoConfigDir, repoFullName, content),
+          listBackups: (scope) => listConfigBackupsForScope(repoConfigDir, scope),
+        }
+      : null,
+  );
   // Boot-time visibility (config-drift guardrail): state which config dir is actually in effect, unconditionally
   // -- neither reader above logs anything, so an operator previously had no way to confirm from the logs alone
   // which directory (if any) was live, which is exactly the ambiguity that let a stale, no-longer-mounted config

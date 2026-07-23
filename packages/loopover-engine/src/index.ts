@@ -350,6 +350,7 @@ export {
   type WorktreeRemoveResult,
 } from "./miner/worktree-plan.js";
 export * from "./miner/worktree-pool.js";
+export * from "./miner/attempt-db-fork.js";
 export {
   invokeCodingAgentDriver,
   type AttemptLogSink,

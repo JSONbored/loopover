@@ -120,10 +120,13 @@ function pullLinkedIssues(repo: string, pull: GithubPull): number[] {
 }
 
 /** Merged PRs in `repo` whose merge could fall inside any pending close's lookback window. Pages
- *  sort=updated desc and stops once updated_at (an upper bound on merged_at) predates the oldest close. */
+ *  sort=updated desc and stops once updated_at (an upper bound on merged_at, so nothing past it can have
+ *  merged inside any window) predates the oldest close. Depth is budget-bound, not page-capped: a busy
+ *  repo's history is deeper than any fixed small cap, and a silently truncated listing looks exactly like
+ *  "no successors" — the first full production dry-run proved that failure mode (#8170). */
 async function fetchMergedSuccessors(budget: RequestBudget, repo: string, oldestClosedAtIso: string): Promise<SuccessorSide[]> {
   const successors: SuccessorSide[] = [];
-  for (let page = 1; page <= 10 && !budget.exhausted; page += 1) {
+  for (let page = 1; page <= 200 && !budget.exhausted; page += 1) {
     const pulls = await githubJson<Array<GithubPull & { updated_at: string }>>(
       budget,
       `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`,

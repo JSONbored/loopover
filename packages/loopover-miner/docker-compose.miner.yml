@@ -25,9 +25,18 @@ services:
       context: ../..
       dockerfile: packages/loopover-miner/Dockerfile
     image: loopover-miner:latest
-    # ENTRYPOINT is `loopover-miner`; `run` is the continuous fleet-worker loop.
+    # ENTRYPOINT is egress-firewall-entrypoint.sh (#7857), which sets up the network-egress firewall as root
+    # then execs `loopover-miner` as the unprivileged `node` user; `run` is the continuous fleet-worker loop.
     command: ["run"]
     restart: unless-stopped
+    # #7857: NET_ADMIN/NET_RAW so the entrypoint's iptables/ipset egress-firewall setup can actually configure
+    # rules -- same capability class this repo's own tailscale service already grants (docker-compose.yml), just
+    # container-scoped here rather than host-networked. The container itself still runs the real miner command
+    # as the unprivileged `node` user throughout (see the Dockerfile's own comment) -- these capabilities are
+    # only ever exercised by the root-owned entrypoint's brief setup window before it drops privileges.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     # Operator-supplied secrets/config (GITHUB_TOKEN, optional provider keys). Copy the .example, fill it in,
     # and NEVER commit the real file — env vars stay out of the compose file and out of `docker inspect` args.
     env_file:

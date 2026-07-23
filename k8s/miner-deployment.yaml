@@ -30,6 +30,10 @@ spec:
         app.kubernetes.io/name: loopover-miner
         app.kubernetes.io/component: fleet-worker
     spec:
+      # #7857's network-egress firewall (deny-by-default, ratified allowlist) is NOT enforced on this
+      # deployment path yet -- `runAsNonRoot: true` below is a hard, kubelet-enforced constraint that rules out
+      # the root-then-drop entrypoint the Docker/Compose path uses; a k8s-native initContainer-based equivalent
+      # is tracked in #8282. Do not weaken runAsNonRoot to work around this -- follow #8282 instead.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

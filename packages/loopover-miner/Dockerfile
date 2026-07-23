@@ -25,14 +25,27 @@ ENV NODE_ENV=production \
     LOOPOVER_MINER_CONFIG_DIR=/data/miner \
     LOOPOVER_MINER_VERSION=${LOOPOVER_VERSION} \
     PATH=/app/node_modules/.bin:$PATH
+# #7857: dnsmasq/iptables/ipset implement the network-egress firewall (deny-by-default, allowlisted via the
+# operator's own .loopover-ams.yml); gosu drops from root to the node user after that firewall is set up --
+# see egress-firewall-entrypoint.sh for the full mechanism and why this image now starts as root.
+RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq iptables ipset gosu \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/packages/loopover-miner ./packages/loopover-miner
 COPY --from=build --chown=node:node /app/packages/loopover-engine ./packages/loopover-engine
-RUN mkdir -p /data/miner && chown -R node:node /data
-USER node
+RUN mkdir -p /data/miner && chown -R node:node /data \
+    && chmod 755 /app/packages/loopover-miner/scripts/egress-firewall-entrypoint.sh
 VOLUME ["/data/miner"]
 # No HEALTHCHECK: the miner is a batch/CLI workload (`docker run … loopover-miner <cmd>`), not a
 # long-running HTTP service — there is no steady-state endpoint to probe unless an operator wraps
 # the container in their own supervising loop.
-ENTRYPOINT ["loopover-miner"]
+#
+# #7857: this image now starts as ROOT (no `USER node` here) so the entrypoint can set up the egress firewall,
+# which needs root/NET_ADMIN to configure iptables/ipset -- but it never RUNS the miner itself as root. The
+# entrypoint's own last action is `exec gosu node loopover-miner ...`, which both drops privileges AND replaces
+# the entrypoint process (`exec`, not a child) -- the actual miner command runs as `node`, exactly as it always
+# has, for the entire remainder of the container's life. `docker-compose.miner.yml` grants the NET_ADMIN/NET_RAW
+# capabilities this setup step needs (see that file's own comment); `LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL` is
+# the documented opt-out for an operator who hits a real snag (see the entrypoint script's own header).
+ENTRYPOINT ["/app/packages/loopover-miner/scripts/egress-firewall-entrypoint.sh"]
 CMD ["doctor"]

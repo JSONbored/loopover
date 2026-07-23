@@ -139,6 +139,20 @@ docker compose -f docker-compose.miner.yml up -d --build
 
 **Scaling to N parallel workers.** `docker compose -f docker-compose.miner.yml up -d --scale miner=N` gives every replica the **same** `miner-data` volume — and the miner's SQLite ledgers are **not** safe for concurrent access, so N replicas on one volume will contend/corrupt. To run N **isolated** workers, give each its own state: run N separate compose projects (`docker compose -p miner-1 …`, `-p miner-2 …` — `-p` namespaces the volume) or point each at a distinct `LOOPOVER_MINER_CONFIG_DIR` on its own mount. For built-in isolated horizontal scaling, use the Kubernetes StatefulSet in [`k8s/`](../../k8s/) (per-pod volumes).
 
+### Network-egress firewall (Docker Compose / `docker run`)
+
+The container enforces deny-by-default network egress for the coding-agent execution environment (#7648, #7857): outbound traffic is blocked except to a curated allowlist (OS package registries, GitHub — the target repo's own git remote) plus whatever an operator declares in [`.loopover-ams.yml`](../../.loopover-ams.yml.example)'s `networkAllowlist` (ecosystem registries like npm/PyPI, or specific extra hostnames). This applies to the **whole container**, not just the coding-agent subprocess — no per-process network isolation exists yet, so the miner's own necessary calls (the Orb broker, Sentry, the discovery-index plane, Neon) are allowed automatically whenever their corresponding feature is actually configured.
+
+This changes what the container needs at `docker run`/Compose time:
+
+- `docker-compose.miner.yml` already grants the required `NET_ADMIN`/`NET_RAW` capabilities — nothing to change if you use it as-is.
+- Running with a bare `docker run` instead: add `--cap-add=NET_ADMIN --cap-add=NET_RAW`.
+- The image now starts as **root** (not `node`) so its entrypoint can configure the firewall, then drops to the unprivileged `node` user before running anything else — the actual miner process runs exactly as before.
+
+If the firewall setup itself fails (a misconfigured environment, `dnsmasq`/`iptables` erroring), the container **fails to start** rather than silently running with no restriction — that's deliberate (a coding-agent sandbox with no network policy at all is worse than not running). If you hit a real snag, `LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL=1` is the documented escape hatch to get unblocked, then use `.loopover-ams.yml`'s `networkAllowlist` to fix it properly and remove the override.
+
+Only covers Docker/Compose today. Kubernetes (`k8s/miner-deployment.yaml`) and systemd (bare-host) need their own privilege-setup mechanism (a k8s `initContainer`, a systemd `ExecStartPre=+`) — tracked separately in [#8282](https://github.com/JSONbored/loopover/issues/8282), not yet enforced on those paths.
+
 ### Running fleet mode alongside ORB's `ams-observability` profile
 
 Fleet mode keeps miner state in a named `miner-data` volume, but ORB's `ams-reporting-exporter` (root [`docker-compose.yml`](../../docker-compose.yml), `--profile ams-observability`) reads the miner's ledgers from a **host** directory (default `~/.config/loopover-miner`). A named volume's host path is a Docker-managed internal detail, so the two never line up on their own — the exporter reads an empty directory and the Grafana AMS datasources stay **silently empty**.

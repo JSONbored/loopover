@@ -175,6 +175,7 @@ export * from "./calibration/backtest-track-record.js";
 // same way scripts/backtest-corpus-export.ts already imports BacktestCase.
 export * from "./calibration/backtest-split.js";
 export * from "./calibration/backtest-threshold.js";
+export * from "./calibration/reliability-curve.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

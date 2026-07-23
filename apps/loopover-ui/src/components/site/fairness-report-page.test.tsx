@@ -11,6 +11,24 @@ vi.mock("@/lib/api/request", () => ({
 }));
 vi.mock("@/lib/api/origin", () => ({ getApiOrigin: () => "https://api.example.test" }));
 
+// Mirrors proof-of-power-stats.test.tsx: <Link> needs a real router context; render a plain <a>.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    to,
+    children,
+    ...props
+  }: {
+    to: string;
+    children: ReactNode;
+    className?: string;
+    "aria-label"?: string;
+  }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
+}));
+
 import { FairnessReportPage } from "./fairness-report-page";
 import type { PublicStats } from "./proof-of-power-stats-model";
 
@@ -49,6 +67,47 @@ const FIXTURE: PublicStats = {
 describe("FairnessReportPage (#fairness-analytics)", () => {
   afterEach(() => {
     apiFetch.mockReset();
+  });
+
+  it("renders the measured per-rule precision table with the insufficient-data null state — never 0% (#8231)", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        rulePrecision: {
+          windowDays: 90,
+          rules: [
+            { ruleId: "linked_issue_scope_mismatch", decided: 42, precision: 0.952 },
+            { ruleId: "slop_gate_score", decided: 3, precision: null },
+          ],
+          reversals: { reopened: 2, reverted: 1, superseded: 0 },
+          latestBacktestRun: { corpusChecksum: "a".repeat(64), at: "2026-07-22T00:00:00.000Z" },
+        },
+      },
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Measured accuracy per rule")).toBeTruthy());
+    expect(screen.getByText("linked_issue_scope_mismatch")).toBeTruthy();
+    expect(screen.getByText("95.2%")).toBeTruthy();
+    // The below-floor rule renders the deliberate null state — the literal words, not a zero.
+    expect(screen.getAllByText("insufficient data").length).toBeGreaterThanOrEqual(2); // the explainer + the table cell
+    expect(screen.queryByText("0%")).toBeNull();
+    // The reproducibility freeze point surfaces the truncated corpus checksum.
+    expect(screen.getByText(/Reproducibility freeze point/)).toBeTruthy();
+    expect(screen.getByText(/aaaaaaaaaaaaaaaa…/)).toBeTruthy();
+    // And the walkthrough link points at the docs page.
+    expect(screen.getByRole("link", { name: /verify this review/i })).toBeTruthy();
+  });
+
+  it("hides the per-rule section entirely when the API response predates rulePrecision (deployment skew) or has no rules (#8231)", async () => {
+    apiFetch.mockResolvedValue({ ok: true, data: FIXTURE, durationMs: 10 });
+    renderWithClient(<FairnessReportPage />);
+    await waitFor(() =>
+      expect(screen.getByText("Is ORB treating contributors fairly?")).toBeTruthy(),
+    );
+    expect(screen.queryByText("Measured accuracy per rule")).toBeNull();
   });
 
   it("renders a content-shaped loading skeleton", () => {

@@ -101,6 +101,7 @@ export const docsNav: DocsGroup[] = [
       { to: "/docs/scoreability", label: "Scoreability" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/backtest-calibration", label: "Backtest & calibration" },
+      { to: "/docs/verify-this-review", label: "Verify this review" },
     ],
   },
   {

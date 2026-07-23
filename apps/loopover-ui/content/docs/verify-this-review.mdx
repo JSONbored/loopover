@@ -1,0 +1,101 @@
+---
+title: Verify this review
+description: Re-run LoopOver's published backtest corpus yourself — download a checksummed snapshot, replay the same scorer, and compare against the published numbers.
+eyebrow: Core concepts
+---
+
+## Why this page exists
+
+LoopOver publishes measured per-rule precision on the [fairness report](/fairness). Numbers on a
+website only build trust if a skeptic can check them without asking anyone's permission. This
+page is the end-to-end walkthrough: export the same corpus snapshot the numbers come from, verify
+its checksum, replay the same scorer over it, and compare what you get against what is published.
+
+Everything below runs read-only against a database export and pure functions from
+`@loopover/engine`. Nothing posts anywhere, nothing needs an API key.
+
+## 1. Export the corpus snapshot
+
+Every rule's fired/override history exports as a versioned, checksummed JSON snapshot
+([backtest &amp; calibration](/docs/backtest-calibration) explains how that history is recorded):
+
+```bash
+npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output corpus.json --remote
+```
+
+On a self-host deployment, point the same CLI at your own Postgres instead:
+
+```bash
+npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output corpus.json --pg "$DATABASE_URL"
+```
+
+The snapshot's `checksum` field is a SHA-256 over the canonicalized cases (keys sorted, so
+property order can never change the hash). The fairness report's *reproducibility freeze point*
+shows the checksum of the corpus behind the latest persisted backtest run — an export of the same
+window reproduces the same checksum, byte for byte.
+
+## 2. Verify the checksum
+
+The manifest is self-verifying: recompute the hash over its own `cases` array and compare it to
+the recorded `checksum`. The canonicalization lives in `scripts/backtest-corpus-export-core.ts`
+(`buildBacktestCorpusManifest`), so the check is one short script:
+
+```bash
+node --experimental-strip-types -e '
+import { readFileSync } from "node:fs";
+import { buildBacktestCorpusManifest } from "./scripts/backtest-corpus-export-core.ts";
+const saved = JSON.parse(readFileSync("corpus.json", "utf8"));
+const recomputed = buildBacktestCorpusManifest(saved.ruleId, saved.cases);
+console.log(recomputed.checksum === saved.checksum ? "checksum OK" : "CHECKSUM MISMATCH");
+'
+```
+
+## 3. Replay the scorer
+
+The published precision comes from the same pure functions any Node script can import:
+`scoreBacktest` replays a classifier over the labeled cases, and `compareBacktestScores` applies
+the Pareto-floor verdict between two scores. Replaying the shipped confidence floor over your
+verified snapshot:
+
+```bash
+node --experimental-strip-types -e '
+import { readFileSync } from "node:fs";
+import { buildConfidenceThresholdClassifier, scoreBacktest } from "@loopover/engine";
+const saved = JSON.parse(readFileSync("corpus.json", "utf8"));
+const report = scoreBacktest(saved.ruleId, saved.cases, buildConfidenceThresholdClassifier(0.5));
+console.log(report);
+'
+```
+
+- **"Reversed" is the positive class** — a prediction of `reversed` says the rule's original
+  firing was wrong, and it is scored against what a human actually decided.
+- **`null` is never `0`.** Precision and recall stay `null` below the decided-sample floor;
+  the fairness report renders that as *insufficient data*, never as a zero.
+
+## 4. Compare against the published numbers
+
+The [fairness report](/fairness) renders each rule's decided-case count and measured precision
+from the public stats endpoint (`/v1/public/stats`, the `rulePrecision` block). The aggregated
+run history is also readable directly:
+
+```bash
+npx tsx scripts/backtest-track-record.ts --db loopover --remote
+```
+
+Your replayed `confirmed / decided` for a rule should match the published precision for the same
+window; the freeze-point checksum ties the published numbers to the exact corpus you just
+verified.
+
+## What this proves — and what it does not
+
+<Callout variant="note">
+  **Proved:** the published scores are real computations over a real, checksummed, replayable
+  corpus — not hand-entered numbers. Anyone can independently reproduce them from the snapshot.
+
+  **Not proved:** that the live gate *ran this exact code* when it made its decisions. Verifying
+  the runtime itself is an attestation problem — a trusted-execution boundary, not a replay
+  boundary — and is tracked as its own explicitly-scoped decision in
+  [#8136](https://github.com/JSONbored/loopover/issues/8136) and
+  [#8137](https://github.com/JSONbored/loopover/issues/8137). This walkthrough is honest about
+  stopping at the reproducibility line rather than implying the stronger guarantee.
+</Callout>

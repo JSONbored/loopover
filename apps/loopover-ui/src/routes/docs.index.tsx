@@ -95,6 +95,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/ai-summaries", label: "AI summaries policy" },
       { to: "/docs/backtest-calibration", label: "Backtest & calibration" },
+      { to: "/docs/verify-this-review", label: "Verify this review" },
     ],
   },
   {

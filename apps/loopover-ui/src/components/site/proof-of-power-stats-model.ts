@@ -58,6 +58,21 @@ export type PublicStats = {
     merged: number;
     filteredPct: number | null;
   }>;
+
+  /** Measured per-rule precision + the reproducibility freeze point (#8230/#8231). Optional-chained by
+   *  consumers: until the backend carrying it is deployed, an older /v1/public/stats response simply won't
+   *  have the field yet, and every surface must degrade to hiding the section rather than throw. */
+  rulePrecision?: {
+    windowDays: number;
+    rules: Array<{
+      ruleId: string;
+      decided: number;
+      /** confirmed / decided; null below the decided-sample floor -- rendered as "insufficient data", NEVER 0%. */
+      precision: number | null;
+    }>;
+    reversals: { reopened: number; reverted: number; superseded: number };
+    latestBacktestRun: { corpusChecksum: string; at: string } | null;
+  };
 };
 
 /** Relative "updated Ns ago" label from the payload's updatedAt (mirrors MetaStrip's freshness logic). */

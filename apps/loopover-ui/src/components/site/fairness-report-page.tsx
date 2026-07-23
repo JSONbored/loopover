@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 
 import { getApiOrigin } from "@/lib/api/origin";
 import { apiFetch } from "@/lib/api/request";
@@ -251,6 +252,71 @@ export function FairnessReportPage() {
                 </table>
               </TableScroll>
             </div>
+
+            {data.rulePrecision && data.rulePrecision.rules.length > 0 ? (
+              <div className="mt-10">
+                <h2 className="text-token-lg font-medium">Measured accuracy per rule</h2>
+                <p className="mt-2 text-token-sm text-muted-foreground">
+                  Precision of each automated rule over its human-decided cases in the last{" "}
+                  {data.rulePrecision.windowDays} days. A rule below the decided-sample floor shows{" "}
+                  <span className="font-medium text-foreground">insufficient data</span> — an
+                  unknown is never rendered as 0%. Reproduce these numbers yourself:{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "verify-this-review" }}
+                    className="underline underline-offset-2"
+                  >
+                    verify this review
+                  </Link>
+                  .
+                </p>
+                <TableScroll className="mt-4" label="Measured precision per rule">
+                  <table className="w-full min-w-[28rem] text-left text-token-sm">
+                    <caption className="sr-only">
+                      Decided cases and measured precision per rule.
+                    </caption>
+                    <thead className="text-token-xs text-muted-foreground">
+                      <tr>
+                        <th scope="col" className="pb-2 pr-4 font-medium">
+                          Rule
+                        </th>
+                        <th scope="col" className="pb-2 pr-4 font-medium">
+                          Decided
+                        </th>
+                        <th scope="col" className="pb-2 font-medium">
+                          Precision
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.rulePrecision.rules.map((row) => (
+                        <tr key={row.ruleId} className="border-t border-hairline">
+                          <td className="py-2 pr-4 font-mono text-token-xs">{row.ruleId}</td>
+                          <td className="py-2 pr-4">{intFmt.format(row.decided)}</td>
+                          <td className="py-2">
+                            {row.precision != null ? (
+                              `${pctFmt.format(row.precision * 100)}%`
+                            ) : (
+                              <span className="text-muted-foreground">insufficient data</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
+                {data.rulePrecision.latestBacktestRun ? (
+                  <p className="mt-3 text-token-xs text-muted-foreground">
+                    Reproducibility freeze point: corpus checksum{" "}
+                    <span className="font-mono">
+                      {data.rulePrecision.latestBacktestRun.corpusChecksum.slice(0, 16)}…
+                    </span>{" "}
+                    from the latest persisted backtest run (
+                    {new Date(data.rulePrecision.latestBacktestRun.at).toLocaleDateString()}).
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </StateBoundary>

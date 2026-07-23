@@ -72,15 +72,30 @@ jobs:
       - name: Build engine package
         run: npx turbo run build --filter=@loopover/engine
 
+      # Every step from here down FAILS OPEN (notice + green, never a red check): the review engine
+      # auto-closes a contributor PR on ANY failed check, required or not — so an advisory job that can go
+      # red on an infra problem (an under-scoped CLOUDFLARE_API_TOKEN, a D1 outage, a comment-post hiccup)
+      # would let OUR plumbing close an innocent contributor's PR. "Never blocks merge" (#8105) has to hold
+      # against this job's own failures, not just its verdicts.
+      #
       # Read-only corpus export (#8084's CLI, reused as-is — no new D1 read code). The wrangler secrets are
       # available here because the fork guard above already excluded fork-originated runs.
       - name: Export corpus from D1
+        id: corpus
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output backtest-corpus.json --remote
+        run: |
+          if npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output backtest-corpus.json --remote; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Corpus export from D1 failed (missing or under-scoped CLOUDFLARE_API_TOKEN — it needs D1 read/write on the loopover database). Logic backtest skipped; advisory only, never fails the PR."
+          fi
 
       - name: Run logic backtest
+        id: backtest
+        if: ${{ steps.corpus.outputs.available == 'true' }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -88,7 +103,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          npx tsx scripts/backtest-logic-check.ts \
+          if npx tsx scripts/backtest-logic-check.ts \
             --rule-id linked_issue_scope_mismatch \
             --corpus backtest-corpus.json \
             --head-root . \
@@ -98,23 +113,34 @@ jobs:
             --base-sha "$BASE_SHA" \
             --persist --remote --db loopover \
             --repo "$GITHUB_REPOSITORY" \
-            --pr "$PR_NUMBER"
+            --pr "$PR_NUMBER"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Logic backtest run failed — no comparison produced. Advisory only, never fails the PR."
+          fi
 
       # Update-in-place keyed on the comment marker so a re-run edits the existing comment instead of
       # stacking a new one per push.
       - name: Post or update the PR comment
+        if: ${{ steps.backtest.outputs.ready == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          marker="<!-- loopover-logic-backtest -->"
-          # --paginate runs the --jq filter once per page, so pin to the first emitted id.
-          comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-            --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty" | head -n 1)
-          if [ -n "$comment_id" ]; then
-            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -X PATCH -F body=@backtest-comment.md
-          else
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@backtest-comment.md
+          post_comment() {
+            marker="<!-- loopover-logic-backtest -->"
+            # --paginate runs the --jq filter once per page, so pin to the first emitted id.
+            comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty" | head -n 1)
+            if [ -n "$comment_id" ]; then
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -X PATCH -F body=@backtest-comment.md
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@backtest-comment.md
+            fi
+          }
+          if ! post_comment; then
+            echo "::notice::PR comment post failed — backtest result computed and persisted but not posted. Advisory only, never fails the PR."
           fi
 
   # The fork half of ci.yml's paired fork==true/!=true convention: fork-originated pull_request runs get no

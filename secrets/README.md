@@ -64,6 +64,7 @@ see the tradeoff explained above for why `600` breaks the app's own ability to r
 | `loopover_api_token.txt` | `LOOPOVER_API_TOKEN_FILE` | Server-to-server API bearer token. |
 | `loopover_mcp_token.txt` | `LOOPOVER_MCP_TOKEN_FILE` | Shared MCP bearer token. |
 | `loopover_mcp_admin_token.txt` | `LOOPOVER_MCP_ADMIN_TOKEN_FILE` | Higher-privilege MCP admin token (config read/write tools); inert unless `LOOPOVER_MCP_ADMIN_ENABLED` is also set. |
+| `redeploy_companion_token.txt` | `REDEPLOY_COMPANION_TOKEN_FILE` | Shared secret with the host-side redeploy companion (`systemd/loopover-redeploy-companion.service.example`) -- copy the SAME value into that unit's `EnvironmentFile`, it is not two independent secrets. |
 | `internal_job_token.txt` | `INTERNAL_JOB_TOKEN_FILE` | Gates internal-only routes (e.g. `/v1/internal/*`). |
 | `selfhost_setup_token.txt` | `SELFHOST_SETUP_TOKEN_FILE` | Unlocks the first-run `/setup` wizard. |
 | `token_encryption_secret.txt` | `TOKEN_ENCRYPTION_SECRET_FILE` | AES-256-GCM master secret for maintainer BYOK keys at rest. |

@@ -470,6 +470,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/queue-common.ts",
   },
   {
+    name: "REDEPLOY_COMPANION_SOCKET_PATH",
+    firstReference: "src/server.ts",
+  },
+  {
+    name: "REDEPLOY_COMPANION_TOKEN",
+    firstReference: "src/server.ts",
+  },
+  {
     name: "REDIS_URL",
     firstReference: "src/selfhost/preflight.ts",
   },
@@ -658,6 +666,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `QUEUE_CONCURRENCY` | `src/selfhost/pg-queue.ts` |",
   "| `QUEUE_DEAD_LETTER_AUTO_RETRY_MAX_EXTRA_ATTEMPTS` | `src/selfhost/queue-common.ts` |",
   "| `QUEUE_STARTUP_JITTER_MIN_JOBS` | `src/selfhost/queue-common.ts` |",
+  "| `REDEPLOY_COMPANION_SOCKET_PATH` | `src/server.ts` |",
+  "| `REDEPLOY_COMPANION_TOKEN` | `src/server.ts` |",
   "| `REDIS_URL` | `src/selfhost/preflight.ts` |",
   "| `REVIEW_AUDIT_DIR` | `src/server.ts` |",
   "| `REVIEW_AUDIT_S3_ACCESS_KEY_ID` | `src/server.ts` |",

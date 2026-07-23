@@ -1,0 +1,55 @@
+# Host-side redeploy companion (#7723): lets the `loopover` app container trigger a real self-redeploy
+# (pull the published image, restart, wait for health) WITHOUT mounting /var/run/docker.sock into an
+# app-facing container. See scripts/redeploy-companion.ts's own header for the full design rationale.
+#
+# OPT-IN, NOT REQUIRED: without this unit installed and running, the loopover_admin_trigger_redeploy MCP
+# tool simply reports connection-refused -- every other admin tool and the app itself are completely
+# unaffected. An operator who only wants the config read/write admin tools (#7721) can ignore this file.
+#
+# Install (adjust the placeholders below to your host):
+#   sudo useradd --system --no-create-home loopover-redeploy         # if you don't already have a dedicated user
+#   sudo usermod -aG docker loopover-redeploy                        # needs `docker compose` access
+#   ./scripts/selfhost-init-secrets.sh                                # generates secrets/redeploy_companion_token.txt
+#                                                                      #   if it doesn't already exist (idempotent)
+#   sudo install -m 600 -o loopover-redeploy /dev/null /etc/loopover-redeploy-companion.env
+#   printf 'REDEPLOY_COMPANION_TOKEN=%s\n' "$(cat secrets/redeploy_companion_token.txt)" | \
+#     sudo tee /etc/loopover-redeploy-companion.env >/dev/null
+#   # MUST be the exact same value the `loopover` container reads via REDEPLOY_COMPANION_TOKEN_FILE
+#   # (docker-compose.yml, defaulting to that same secrets/redeploy_companion_token.txt) -- this is a SHARED
+#   # secret both sides authenticate with, not two independent ones. If you rotate it, update both.
+#   sudo cp systemd/loopover-redeploy-companion.service.example /etc/systemd/system/loopover-redeploy-companion.service
+#   sudo $EDITOR /etc/systemd/system/loopover-redeploy-companion.service   # fix User/Group/WorkingDirectory below
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now loopover-redeploy-companion.service
+#   journalctl -u loopover-redeploy-companion -f
+#
+# Then in docker-compose.yml, bind-mount the same socket path (read-write) into the `loopover` service, and
+# set LOOPOVER_MCP_ADMIN_ENABLED=1 + the SAME REDEPLOY_COMPANION_TOKEN value as an env var on that service --
+# see docker-compose.yml's own comment above the loopover-redeploy volume mount for the exact lines.
+
+[Unit]
+Description=LoopOver self-redeploy companion (host-side, no docker.sock exposure)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# REQUIRED: a dedicated, non-root user in the `docker` group (needs `docker compose` access; nothing more --
+# specifically NOT sudo/root, and NOT a user with any other host privilege).
+User=loopover-redeploy
+Group=loopover-redeploy
+# REQUIRED: the repo checkout this compose stack actually runs from -- scripts/deploy-selfhost-image.sh is
+# invoked relative to this directory, exactly as if you ran it by hand.
+WorkingDirectory=/opt/loopover
+Environment=REDEPLOY_COMPANION_SOCKET_PATH=/run/loopover-redeploy.sock
+Environment=REDEPLOY_COMPANION_REPO_ROOT=/opt/loopover
+# REQUIRED: REDEPLOY_COMPANION_TOKEN. Keep it out of this unit file -- use a root-owned 0600 EnvironmentFile:
+EnvironmentFile=/etc/loopover-redeploy-companion.env
+ExecStart=/usr/bin/node --experimental-strip-types /opt/loopover/scripts/redeploy-companion.ts
+Restart=on-failure
+RestartSec=10
+# The socket is created fresh on every start (redeploy-companion.ts removes a stale one from an unclean prior
+# shutdown itself), so no RuntimeDirectory bookkeeping is needed here beyond /run/ already existing.
+
+[Install]
+WantedBy=multi-user.target

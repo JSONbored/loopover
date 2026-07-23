@@ -295,6 +295,17 @@ declare global {
      *  requires actor === "mcp-admin" (LOOPOVER_MCP_ADMIN_TOKEN), so enabling this flag alone grants nothing to
      *  a caller using the ordinary LOOPOVER_MCP_TOKEN. */
     LOOPOVER_MCP_ADMIN_ENABLED?: string;
+    /** Shared secret with the host-side redeploy companion (#7723, systemd/loopover-redeploy-companion.service.example)
+     *  that the loopover_admin_trigger_redeploy MCP tool authenticates with -- a SEPARATE credential from
+     *  LOOPOVER_MCP_ADMIN_TOKEN (defense in depth: the MCP-layer gate and the host-socket gate are two
+     *  independent checks). Self-host only; unset means the tool reports "not configured" rather than
+     *  attempting a connection. Must match the companion's own EnvironmentFile value exactly -- see
+     *  secrets/README.md. */
+    REDEPLOY_COMPANION_TOKEN?: string;
+    /** Filesystem path to the redeploy companion's Unix domain socket, bind-mounted into this container
+     *  (docker-compose.yml). Default: /run/loopover-redeploy.sock -- override only if you changed the
+     *  companion's own REDEPLOY_COMPANION_SOCKET_PATH to something else. */
+    REDEPLOY_COMPANION_SOCKET_PATH?: string;
     INTERNAL_JOB_TOKEN: string;
     /** Repos the shared LOOPOVER_MCP_TOKEN may propose/decide/manage actions on (comma/whitespace `owner/repo`
      *  list, or `*`/`all` for every repo). Unset ⇒ none — LOOPOVER_MCP_TOKEN is a shared, end-user-obtainable

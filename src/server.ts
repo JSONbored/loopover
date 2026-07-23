@@ -81,6 +81,8 @@ import {
   listConfigBackupsForScope,
 } from "./selfhost/private-config";
 import { setConfigAdminFunctions } from "./mcp/private-config-admin-registry";
+import { setRedeployTrigger } from "./mcp/redeploy-companion-registry";
+import { triggerRedeploy } from "./selfhost/redeploy-companion-client";
 import { assertSelfHostPreflight } from "./selfhost/preflight";
 import {
   buildSentryOpenTelemetryBridge,
@@ -387,6 +389,18 @@ async function main(): Promise<void> {
           writeRepo: (repoFullName, content) => writeRepoConfig(repoConfigDir, repoFullName, content),
           listBackups: (scope) => listConfigBackupsForScope(repoConfigDir, scope),
         }
+      : null,
+  );
+  // Redeploy trigger (#7723): a SEPARATE opt-in from the config admin tools above -- an operator can run the
+  // config read/write tools with no host companion installed at all (setRedeployTrigger stays null; the tool
+  // itself, gated the same LOOPOVER_MCP_ADMIN_ENABLED way, reports a clear "not configured" result instead of
+  // throwing). Requires BOTH the socket path and the shared companion token -- the socket path alone would
+  // let a caller attempt a connection with no way to authenticate against whatever answers it.
+  const redeployCompanionToken = nonBlank(process.env.REDEPLOY_COMPANION_TOKEN);
+  const redeployCompanionSocketPath = nonBlank(process.env.REDEPLOY_COMPANION_SOCKET_PATH) ?? "/run/loopover-redeploy.sock";
+  setRedeployTrigger(
+    redeployCompanionToken
+      ? (image) => triggerRedeploy({ socketPath: redeployCompanionSocketPath, token: redeployCompanionToken }, image)
       : null,
   );
   // Boot-time visibility (config-drift guardrail): state which config dir is actually in effect, unconditionally

@@ -345,7 +345,49 @@ Restart the `loopover` service after changing either (`docker compose up -d --no
 Drop `dryRun` (or set it to `false`) to write for real once you're happy with the dry-run result. `scope` is `"global"` (the mount-root default file) or `"repo"` (pass `repoFullName`); `loopover_admin_get_config` additionally accepts `"effective"` to read the exact deep-merged view a real review sees, same as the "Private per-repo config" deep-merge described above. `loopover_admin_list_config_backups` takes the same `scope`/`repoFullName` pair and returns each backup's path and timestamp, newest first.
 
 <Callout variant="warn" title="Boundaries">
-  These tools only read and write `LOOPOVER_REPO_CONFIG_DIR`. They do not trigger a redeploy, and they do not touch the public dashboard or `/v1/app/*` settings surface — `LOOPOVER_MCP_ADMIN_TOKEN` cannot sign into the control panel or call the routes `ADMIN_GITHUB_LOGINS` gates.
+  These three tools only read and write `LOOPOVER_REPO_CONFIG_DIR`. Triggering a redeploy is a separate tool with its own separate token — see "MCP redeploy trigger" below. None of the admin tools touch the public dashboard or `/v1/app/*` settings surface — `LOOPOVER_MCP_ADMIN_TOKEN` cannot sign into the control panel or call the routes `ADMIN_GITHUB_LOGINS` gates.
+</Callout>
+
+## MCP redeploy trigger
+
+A fourth `admin`-category tool, `loopover_admin_trigger_redeploy` (#7723): pulls the published image, restarts this instance, and waits for it to report healthy — the same sequence `./scripts/deploy-selfhost-image.sh` runs by hand, triggered remotely through an MCP client instead. Same `LOOPOVER_MCP_ADMIN_ENABLED` + `LOOPOVER_MCP_ADMIN_TOKEN` gating as the config tools above, plus one more layer specific to this tool.
+
+<Callout variant="warn" title="Why this needs a whole extra moving part, not just another admin tool">
+  Every other admin tool runs entirely inside this container. Triggering a redeploy can't: this container has to end up running a *new* image, which means something *outside* this container has to do the actual `docker compose pull && up -d`. The obvious shortcut — mount `/var/run/docker.sock` into this container so it can ask Docker to do it — is explicitly the thing this repo tells contributors never to do (see `docker-proxy`'s own comment in `docker-compose.yml`: a bind-mounted socket, even read-only, is "effectively host root"; `review-enrichment/src/analyzers/iac-misconfig.ts` flags exactly this pattern in the PRs this bot reviews for everyone else). Extending the existing `docker-proxy` sidecar (`tecnativa/docker-socket-proxy`) doesn't avoid the problem either — its access-control model has no way to scope a restart to *one* named container, only "any container reachable through the socket," and it has no concept of "pull a new image" at all (that's compose-level orchestration, not a single Docker Engine API call).
+
+  The design here instead runs a small **host companion** — a plain Node process, outside Docker entirely, installed as a systemd service (`systemd/loopover-redeploy-companion.service.example`) — that listens on a Unix domain socket and, on an authenticated request, shells out to the real `deploy-selfhost-image.sh`. This container reaches it via a narrow, purpose-built socket bind-mounted in (never the Docker socket itself), authenticated with its own separate shared secret (`REDEPLOY_COMPANION_TOKEN`) so a leaked `LOOPOVER_MCP_ADMIN_TOKEN` alone still can't trigger a redeploy — two independent credentials have to both be compromised, not one.
+</Callout>
+
+**Entirely opt-in.** Skip this whole section and the other three admin tools work exactly as documented above — `loopover_admin_trigger_redeploy` just reports `configured: false` until you set it up.
+
+<CodeBlock
+  filename="shell"
+  code={`./scripts/selfhost-init-secrets.sh                                   # generates secrets/redeploy_companion_token.txt
+sudo useradd --system --no-create-home loopover-redeploy
+sudo usermod -aG docker loopover-redeploy
+sudo install -m 600 -o loopover-redeploy /dev/null /etc/loopover-redeploy-companion.env
+printf 'REDEPLOY_COMPANION_TOKEN=%s\\n' "$(cat secrets/redeploy_companion_token.txt)" | \\
+  sudo tee /etc/loopover-redeploy-companion.env >/dev/null
+sudo cp systemd/loopover-redeploy-companion.service.example /etc/systemd/system/loopover-redeploy-companion.service
+# edit User/Group/WorkingDirectory in that file to match your host, then:
+sudo systemctl daemon-reload
+sudo systemctl enable --now loopover-redeploy-companion.service`}
+/>
+
+The `loopover` service's `docker-compose.yml` entry already bind-mounts the companion's socket and reads `REDEPLOY_COMPANION_TOKEN_FILE` — nothing to add there. Restart the `loopover` service once the companion is running so it picks up the token.
+
+<CodeBlock
+  lang="json"
+  filename="example: loopover_admin_trigger_redeploy"
+  code={`{
+  "image": "ghcr.io/jsonbored/loopover-selfhost:orb-v0.1.0"
+}`}
+/>
+
+`image` is optional — omit it to redeploy whatever `LOOPOVER_IMAGE` is already configured (the same default `deploy-selfhost-image.sh` itself uses). The tool call doesn't return until the companion's own health-wait finishes (or times out), and streams back every log line the real script printed along the way, so a failed redeploy comes back with the actual reason, not just a bare non-zero exit code.
+
+<Callout variant="note" title="This restarts the very process serving the tool call">
+  A successful redeploy means this container gets replaced mid-request. The companion waits for the *new* container to report healthy before it responds, so the tool call itself completes normally either way — but expect the connection to briefly drop if you're also watching logs live.
 </Callout>
 
 ## Config-as-code blocks with no dashboard equivalent

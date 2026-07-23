@@ -113,6 +113,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { getConfigAdminFunctions } from "./private-config-admin-registry";
+import { getRedeployTrigger } from "./redeploy-companion-registry";
 import { getLocalManifestReader } from "../signals/focus-manifest-loader";
 import type { ConfigAdminScope } from "../selfhost/private-config";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
@@ -365,6 +366,17 @@ const adminWriteConfigShape = {
 const adminListBackupsShape = {
   scope: z.enum(["global", "repo"]),
   repoFullName: z.string().min(3).max(200).optional(),
+};
+// #7723: image is intentionally the same shape deploy-selfhost-image.sh's own validate_inputs already
+// enforces (no whitespace/quote/backslash/compose-interpolation chars) -- redundant with the companion's own
+// check, but a caller gets a clear MCP-level error instead of an opaque host-side rejection.
+const adminTriggerRedeployShape = {
+  image: z
+    .string()
+    .min(1)
+    .max(512)
+    .regex(/^[^\s"'\\${}]+$/, "must not contain whitespace, quotes, backslashes, or compose interpolation characters")
+    .optional(),
 };
 
 const preflightShape = {
@@ -1675,6 +1687,13 @@ const adminListBackupsOutputSchema = {
     .array(z.object({ name: z.string(), path: z.string(), mtimeMs: z.number() }))
     .optional(),
 };
+const adminTriggerRedeployOutputSchema = {
+  configured: z.boolean(),
+  ok: z.boolean().optional(),
+  exitCode: z.number().nullable().optional(),
+  log: z.array(z.string()).optional(),
+  error: z.string().optional(),
+};
 // #550: output schemas for the remaining tools (preflight/score/local-branch/agent), so MCP clients can
 // machine-validate their results. Same lenient style as the schemas above — documented top-level keys,
 // all optional, complex values as z.unknown(). No behavior change; these mirror the existing payloads.
@@ -2046,6 +2065,7 @@ export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
   loopover_admin_get_config: "admin",
   loopover_admin_write_config: "admin",
   loopover_admin_list_config_backups: "admin",
+  loopover_admin_trigger_redeploy: "admin",
 };
 
 /** Master opt-in for the "admin" tool category (#7721), default OFF. Same truthy-string convention as every
@@ -3148,6 +3168,16 @@ export class LoopoverMcp {
         },
         async (input) => this.toolResult(await this.adminListConfigBackups(input)),
       );
+      register(
+        "loopover_admin_trigger_redeploy",
+        {
+          description:
+            "Self-hosted-operator only. Trigger a real redeploy of this instance (pull the published image, restart, wait for health) via the host-side redeploy companion (#7723) -- NOT via the Docker socket, which is never mounted into this container. Optional `image` pins a specific tag/digest; omitted uses the companion's own default (the currently-configured LOOPOVER_IMAGE). Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if REDEPLOY_COMPANION_TOKEN is unset or the companion isn't reachable at REDEPLOY_COMPANION_SOCKET_PATH -- see systemd/loopover-redeploy-companion.service.example to set it up. A real redeploy restarts this very process; the tool call itself completes (with the companion's full log) before that restart happens, since the companion waits for the new container to report healthy before responding.",
+          inputSchema: adminTriggerRedeployShape,
+          outputSchema: adminTriggerRedeployOutputSchema,
+        },
+        async (input) => this.toolResult(await this.adminTriggerRedeploy(input)),
+      );
     }
 
     // ── Miner planning prompts ───────────────────────────────────────────
@@ -4007,6 +4037,33 @@ export class LoopoverMcp {
       summary: `LoopOver admin config: ${backups.length} backup(s) for ${input.scope === "global" ? "the global config" : input.repoFullName}.`,
       data: { configured: true, backups: backups as unknown as Array<Record<string, unknown>> },
     };
+  }
+
+  private async adminTriggerRedeploy(input: { image?: string | undefined }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const trigger = getRedeployTrigger();
+    if (!trigger) {
+      return {
+        summary: "LoopOver redeploy trigger: not configured (REDEPLOY_COMPANION_TOKEN is unset on this instance, or the companion isn't installed).",
+        data: { configured: false },
+      };
+    }
+    try {
+      const result = await trigger(input.image);
+      return {
+        summary: result.ok
+          ? `LoopOver redeploy: completed successfully${input.image ? ` (${input.image})` : ""}.`
+          : `LoopOver redeploy failed (exit ${result.exitCode ?? "unknown"}): ${result.error ?? "see log"}.`,
+        data: { configured: true, ok: result.ok, exitCode: result.exitCode, log: result.log, ...(result.error !== undefined ? { error: result.error } : {}) },
+      };
+    } catch (error) {
+      // A connection/protocol failure to the companion itself (socket missing, timeout, unauthorized) --
+      // distinct from a redeploy that ran and failed (handled above via result.ok === false).
+      return {
+        summary: `LoopOver redeploy trigger: could not reach the host companion: ${error instanceof Error ? error.message : String(error)}`,
+        data: { configured: true, ok: false, exitCode: null, error: error instanceof Error ? error.message : String(error) },
+      };
+    }
   }
 
   private async canAccessRepo(fullName: string): Promise<boolean> {

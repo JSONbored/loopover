@@ -26,7 +26,7 @@ eyebrow: Self-hosting
   ]}
 />
 
-`docker-compose.yml` ships native Docker Compose `secrets:` mounts for the highest-value secrets (the GitHub App private key, webhook secret, API/MCP/MCP-admin/internal-job tokens, the setup token, the two token-encryption master keys, the Orb enrollment secret, the PagerDuty routing key, and the Claude Code subscription token) — file-mounted at `/run/secrets/<name>`, never exposed via `docker inspect` or `docker compose config` the way a plain `environment:`/`env_file` value is. This is purely additive: an inline `.env` value always takes priority if you set both, so you can migrate one secret at a time, or not at all. See `secrets/README.md` for the full file list.
+`docker-compose.yml` ships native Docker Compose `secrets:` mounts for the highest-value secrets (the GitHub App private key, webhook secret, API/MCP/MCP-admin/redeploy-companion/internal-job tokens, the setup token, the two token-encryption master keys, the Orb enrollment secret, the PagerDuty routing key, and the Claude Code subscription token) — file-mounted at `/run/secrets/<name>`, never exposed via `docker inspect` or `docker compose config` the way a plain `environment:`/`env_file` value is. This is purely additive: an inline `.env` value always takes priority if you set both, so you can migrate one secret at a time, or not at all. See `secrets/README.md` for the full file list.
 
 <CodeBlock
   filename="shell"
@@ -50,7 +50,7 @@ category a secret falls into before rotating it.
     {
       title: "Freely rotatable",
       description:
-        "GITHUB_WEBHOOK_SECRET, LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_MCP_ADMIN_TOKEN, INTERNAL_JOB_TOKEN, SELFHOST_SETUP_TOKEN, REES_SHARED_SECRET. Static bearer comparisons -- nothing is encrypted with them. Generate a new value, restart both sides. Only cost: updating callers holding the old value.",
+        "GITHUB_WEBHOOK_SECRET, LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_MCP_ADMIN_TOKEN, INTERNAL_JOB_TOKEN, SELFHOST_SETUP_TOKEN, REES_SHARED_SECRET. Static bearer comparisons -- nothing is encrypted with them. Generate a new value, restart both sides. Only cost: updating callers holding the old value. REDEPLOY_COMPANION_TOKEN is the one exception in this list that needs a second manual step: it's shared between this container and the separate host companion process, so rotating it means updating BOTH secrets/redeploy_companion_token.txt and the companion's own /etc/loopover-redeploy-companion.env, not just one file.",
     },
     {
       title: "Externally issued",

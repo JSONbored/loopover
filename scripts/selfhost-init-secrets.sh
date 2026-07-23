@@ -45,6 +45,7 @@ RANDOM_SECRET_FILES=(
   "loopover_api_token.txt"
   "loopover_mcp_token.txt"
   "loopover_mcp_admin_token.txt"
+  "redeploy_companion_token.txt"
   "internal_job_token.txt"
   "selfhost_setup_token.txt"
   "token_encryption_secret.txt"

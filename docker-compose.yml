@@ -138,6 +138,13 @@ services:
       # flipping the config mount below (under `volumes:`) from :ro to :rw yourself -- see its own comment.
       LOOPOVER_MCP_ADMIN_ENABLED: "${LOOPOVER_MCP_ADMIN_ENABLED:-}"
       LOOPOVER_MCP_ADMIN_TOKEN_FILE: "${LOOPOVER_MCP_ADMIN_TOKEN_FILE:-/run/secrets/loopover_mcp_admin_token}"
+      # loopover_admin_trigger_redeploy (#7723): a SEPARATE credential from LOOPOVER_MCP_ADMIN_TOKEN, checked
+      # by the host-side companion itself (systemd/loopover-redeploy-companion.service.example), not by this
+      # app -- defense in depth across the two independent layers (MCP-tool auth here, host-socket auth
+      # there). Entirely opt-in: absent the companion running on the host with a matching token, the tool call
+      # just reports connection-refused -- every other admin tool is unaffected.
+      REDEPLOY_COMPANION_SOCKET_PATH: "${REDEPLOY_COMPANION_SOCKET_PATH:-/run/loopover-redeploy.sock}"
+      REDEPLOY_COMPANION_TOKEN_FILE: "${REDEPLOY_COMPANION_TOKEN_FILE:-/run/secrets/redeploy_companion_token}"
       INTERNAL_JOB_TOKEN_FILE: "${INTERNAL_JOB_TOKEN_FILE:-/run/secrets/internal_job_token}"
       SELFHOST_SETUP_TOKEN_FILE: "${SELFHOST_SETUP_TOKEN_FILE:-/run/secrets/selfhost_setup_token}"
       TOKEN_ENCRYPTION_SECRET_FILE: "${TOKEN_ENCRYPTION_SECRET_FILE:-/run/secrets/token_encryption_secret}"
@@ -164,6 +171,13 @@ services:
       # anything; the app flag alone never makes this mount secretly writable. Flip it locally:
       #   - ./loopover-config:/config:rw
       - ./loopover-config:/config:ro
+      # Host redeploy companion socket (#7723, opt-in -- see systemd/loopover-redeploy-companion.service.example
+      # for the host-side setup). Deliberately a single narrow Unix socket, never /var/run/docker.sock: this
+      # mount grants the app container reach to exactly one purpose-built request/response protocol on the
+      # host, not the full Docker Engine API. Absent (companion not installed) ⇒ Docker bind-mounts an empty
+      # placeholder file here ⇒ the admin tool's connection attempt fails closed with connection-refused, same
+      # "present but harmless when unconfigured" degradation as the config mount above.
+      - "${REDEPLOY_COMPANION_SOCKET_PATH:-/run/loopover-redeploy.sock}:${REDEPLOY_COMPANION_SOCKET_PATH:-/run/loopover-redeploy.sock}"
     # Mounted read-only at /run/secrets/<name> (Compose's default target). See the top-level `secrets:`
     # block above and secrets/README.md.
     #
@@ -182,6 +196,7 @@ services:
       - loopover_api_token
       - loopover_mcp_token
       - loopover_mcp_admin_token
+      - redeploy_companion_token
       - internal_job_token
       - selfhost_setup_token
       - token_encryption_secret
@@ -1339,6 +1354,8 @@ secrets:
     file: ./secrets/loopover_mcp_token.txt
   loopover_mcp_admin_token:
     file: ./secrets/loopover_mcp_admin_token.txt
+  redeploy_companion_token:
+    file: ./secrets/redeploy_companion_token.txt
   internal_job_token:
     file: ./secrets/internal_job_token.txt
   selfhost_setup_token:

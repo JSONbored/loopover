@@ -12,7 +12,7 @@ import {
 } from "../../src/services/satisfaction-floor-loosening";
 import { LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR } from "../../src/services/linked-issue-satisfaction";
 import { DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE } from "../../src/rules/advisory";
-import { buildReportOnlyKnobRecs } from "../../src/review/loosening-recs";
+import { buildKnobReliabilityRecs, buildReportOnlyKnobRecs } from "../../src/review/loosening-recs";
 
 const AI_KNOB = LOOSENABLE_KNOBS.ai_review_close_confidence!;
 
@@ -118,6 +118,29 @@ describe("evaluateKnobLoosening on the close-confidence knob (#8159)", () => {
 
   it("refuses to step below the hard minimum even from an already-loosened current value", () => {
     expect(evaluateKnobLoosening(AI_KNOB, aiLooseningFriendlyCorpus(), AI_KNOB.hardMinimum)).toBeNull();
+  });
+});
+
+describe("buildKnobReliabilityRecs (#8227)", () => {
+  const status = (over: Partial<{ knobId: string; liveValue: number; reliability: { suggestion: number | null } | null }> = {}) => ({
+    knobId: "ai_review_close_confidence",
+    liveValue: 0.93,
+    reliability: { suggestion: 0.9 },
+    ...over,
+  });
+
+  it("emits one info rec per live knob whose derived suggestion differs from live — and nothing otherwise", () => {
+    const recs = buildKnobReliabilityRecs([
+      status(), // differs -> rec
+      status({ knobId: "satisfaction_floor", liveValue: 0.5, reliability: { suggestion: 0.5 } }), // equal -> silent
+      status({ knobId: "third", reliability: { suggestion: null } }), // no suggestion -> silent
+      status({ knobId: "fourth", reliability: null }), // no curve -> silent
+    ]);
+    expect(recs).toHaveLength(1);
+    expect(recs[0]!.project).toBe("global:ai_review_close_confidence");
+    expect(recs[0]!.severity).toBe("info");
+    expect(recs[0]!.message).toContain("0.9");
+    expect(recs[0]!.message).toContain("SURFACING ONLY");
   });
 });
 

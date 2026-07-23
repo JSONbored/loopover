@@ -11,6 +11,7 @@ import {
   repoKnobOverrideFlagKey,
   isKnobAutotuneEnabled,
   isConfigDriftSentinelEnabled,
+  KNOB_SUGGESTION_TARGET_PRECISION,
   loadKnobStatus,
   loadLiveKnobStatuses,
   runConfigDriftSentinel,
@@ -437,11 +438,30 @@ describe("loadKnobStatus / loadLiveKnobStatuses (#8161 generalized)", () => {
     expect(corrupt.applied[0]!.proposedValue).toBeNull();
   });
 
+  it("reliability view (#8227): curve + derived suggestion ride the status; empty corpus and read blips degrade to null", async () => {
+    expect(KNOB_SUGGESTION_TARGET_PRECISION).toBe(0.9);
+    const empty = await loadKnobStatus(createTestEnv(), AI_KNOB);
+    expect(empty.reliability).toBeNull(); // no cases at all -> no curve, never a fake one
+
+    const env = enabledEnv();
+    await seedAiLooseningFriendlyHistory(env);
+    const status = await loadKnobStatus(env, AI_KNOB);
+    expect(status.reliability).not.toBeNull();
+    expect(status.reliability!.curve.buckets.length).toBeGreaterThan(0);
+    const decided = status.reliability!.curve.buckets.reduce((sum, b) => sum + b.cases, 0);
+    expect(decided).toBeGreaterThan(0);
+    // The suggestion, when present, respects the knob's own hard minimum — same bound as every evaluator.
+    if (status.reliability!.suggestion !== null) {
+      expect(status.reliability!.suggestion).toBeGreaterThanOrEqual(AI_KNOB.hardMinimum);
+    }
+  });
+
   it("degrades on a broken DB (null override, empty history) and lists every live registry knob", async () => {
     const broken = createTestEnv();
     broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
     const status = await loadKnobStatus(broken, AI_KNOB);
     expect(status).toMatchObject({ storedOverride: null, applied: [], liveValue: AI_KNOB.shippedValue, drift: null });
+    expect(status).toMatchObject({ storedOverride: null, applied: [], liveValue: AI_KNOB.shippedValue, reliability: null });
 
     const statuses = await loadLiveKnobStatuses(createTestEnv());
     expect(statuses.map((s) => s.knobId).sort()).toEqual(["ai_review_close_confidence", "satisfaction_floor"]);

@@ -41,8 +41,9 @@ import { buildRepoOutcomeCalibration } from "../services/outcome-calibration";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { errorMessage } from "../utils/json";
 import { computeTuningRecommendations, type GateEvalReport, type GateEvalRow } from "./auto-tune";
-import { buildReportOnlyKnobRecs, buildSatisfactionFloorLooseningRecs } from "./loosening-recs";
+import { buildKnobReliabilityRecs, buildReportOnlyKnobRecs, buildSatisfactionFloorLooseningRecs } from "./loosening-recs";
 import { loadReportOnlyKnobProposals, loadSatisfactionFloorRecState } from "../services/satisfaction-floor-loosening-run";
+import { loadLiveKnobStatuses } from "../services/knob-loosening-run";
 import { runAutoApplyRecommendations, type StorageEnv } from "./auto-apply";
 
 /** True when the self-improvement loop is enabled. Flag-OFF (default) → every export below is a no-op. Truthy
@@ -166,6 +167,8 @@ export async function runSelfTune(env: Env): Promise<void> {
           // #8159: report-only registry knobs surface their evidence in the same pass -- payload-less, so
           // the apply path below ignores them identically.
           recs.push(...buildReportOnlyKnobRecs(await loadReportOnlyKnobProposals(env, nowMs)));
+          // #8227: the curve-derived view beside the ladder, one line per live knob with a differing suggestion.
+          recs.push(...buildKnobReliabilityRecs(await loadLiveKnobStatuses(env)));
         }
         // runAutoApplyRecommendations only ever consumes recs that carry a TIGHTENING overridePayload, shadow-
         // soaks them, and promotes a soaked override only when isStrictlyTightening + evidence + soak pass.

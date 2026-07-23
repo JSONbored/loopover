@@ -67,6 +67,28 @@ export function buildSatisfactionFloorLooseningRecs(input: SatisfactionFloorRecI
  * reviewed decision (its consumption plumbing changes real authority), never a flag flip. Same hard
  * boundary: no overridePayload, ever.
  */
+/** Reliability-curve view beside the ladder (#8227): one info-severity rec per live knob whose DERIVED
+ *  floor suggestion differs from its live value — evidence shown, authority unchanged (the ladder machinery
+ *  still owns movement; ladder replacement is #8227's recorded soak decision, not this rec). */
+export function buildKnobReliabilityRecs(
+  statuses: readonly { knobId: string; liveValue: number; reliability: { suggestion: number | null } | null }[],
+): TuningRec[] {
+  const recs: TuningRec[] = [];
+  for (const status of statuses) {
+    const suggestion = status.reliability?.suggestion ?? null;
+    if (suggestion === null || suggestion === status.liveValue) continue;
+    recs.push({
+      project: `global:${status.knobId}`,
+      severity: "info",
+      message:
+        `Reliability-curve view for ${status.knobId}: the derived floor at the 0.9 precision bar is ${suggestion} ` +
+        `vs live ${status.liveValue}. Curve-derived suggestions are SURFACING ONLY — the bounded candidate ladder ` +
+        "still owns any movement; treat a persistent gap as soak evidence for the ladder-replacement decision.",
+    });
+  }
+  return recs;
+}
+
 export function buildReportOnlyKnobRecs(proposals: readonly KnobLooseningProposal[]): TuningRec[] {
   return proposals.map((proposal) => ({
     project: `global:${proposal.knobId}`,

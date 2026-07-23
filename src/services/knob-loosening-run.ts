@@ -12,7 +12,7 @@
 //   • the override write is NOT best-effort (an unrecorded change is worse than none) — the audit trail is;
 //   • one structured error-level alert per applied step, never re-alerting (the next run starts from the
 //     already-loosened value and proposes nothing until the corpus justifies another step).
-import { buildBacktestCorpus } from "@loopover/engine";
+import { buildBacktestCorpus, computeReliabilityCurve, deriveThresholdSuggestion, type ReliabilityCurve } from "@loopover/engine";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { recordAuditEvent } from "../db/repositories";
 import { evaluateKnobDrift, evaluateKnobLoosening, LOOSENABLE_KNOBS, type KnobDriftReport, type KnobLooseningProposal, type LoosenableKnob } from "./loosening-knobs";
@@ -266,8 +266,19 @@ export type KnobStatus = {
   /** The CURRENT drift report at the live value (#8213) — computed on read, deliberately NOT flag-gated
    *  (an operator must see a standing drift even while the sentinel is off); null when clean/insufficient. */
   drift: KnobDriftReport | null;
+  /** Reliability view (#8227): the rule's claimed-confidence curve over the trailing corpus plus the
+   *  DERIVED floor suggestion at {@link KNOB_SUGGESTION_TARGET_PRECISION} — surfaced NEXT TO the
+   *  ladder-based machinery, never replacing it (the ladder-replacement decision is #8227's recorded
+   *  soak, not this field). Null when the corpus read fails or is empty. */
+  reliability: { curve: ReliabilityCurve; suggestion: number | null } | null;
   applied: KnobAppliedEntry[];
 };
+
+/** The precision bar a derived-floor suggestion must clear (#8227): 0.9 — the floors exist so the
+ *  at-or-above class is trustworthy enough for autonomous disposition, and nine-in-ten human-confirmed
+ *  is the same order the close-confidence knob's own tight ladder implies. Surfacing-only: no evaluator
+ *  consumes this constant. */
+export const KNOB_SUGGESTION_TARGET_PRECISION = 0.9;
 
 const KNOB_STATUS_HISTORY_LIMIT = 25;
 
@@ -327,6 +338,18 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     drift = null; // degrade -- the endpoint must not throw on a read blip
   }
 
+  let reliability: KnobStatus["reliability"] = null;
+  try {
+    const { fired, overrides } = await createSignalStore(env).queryRuleHistory(knob.ruleId, Date.now() - CORPUS_LOOKBACK_MS);
+    const cases = buildBacktestCorpus(knob.ruleId, fired, overrides);
+    if (cases.length > 0) {
+      const curve = computeReliabilityCurve(cases);
+      reliability = { curve, suggestion: deriveThresholdSuggestion(curve, KNOB_SUGGESTION_TARGET_PRECISION, knob.hardMinimum) };
+    }
+  } catch {
+    reliability = null; // degrade -- the endpoint must not throw on a read blip
+  }
+
   const applied: KnobAppliedEntry[] = [];
   try {
     const rows = await env.DB.prepare("SELECT created_at, metadata_json FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?")
@@ -364,6 +387,7 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     storedOverride,
     repoOverrides,
     drift,
+    reliability,
     applied,
   };
 }

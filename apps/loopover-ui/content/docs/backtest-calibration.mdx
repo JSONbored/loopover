@@ -108,6 +108,14 @@ loosening loop owns that direction). One alert per drift episode: a standing unc
 re-alerts, a changed one does, and recovery clears the episode. The sentinel is **alert-only** — it never
 writes a knob value — and the knobs status endpoint shows each knob's current drift report regardless of
 the flag, so a standing drift is always visible.
+## Reliability curves
+
+Beside the candidate-ladder machinery, each live knob's status now carries its rule's
+claimed-confidence **reliability curve** (per-bucket empirical precision over the trailing corpus, null
+below the sample floor) and the floor that *falls out* of it at the 0.9 precision bar. The advisor shows
+the derived suggestion next to the ladder proposal whenever they differ. Curve-derived suggestions are
+surfacing-only: the bounded ladder still owns any movement, and replacing it is a recorded soak decision
+(#8227), not a side effect of the curves existing.
 
 ## Counterfactual replay (design)
 

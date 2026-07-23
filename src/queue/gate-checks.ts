@@ -94,6 +94,7 @@ export function gateCheckPolicy(
     selfAuthoredLinkedIssueGateMode: settings.selfAuthoredLinkedIssueGateMode,
     linkedIssueSatisfactionGateMode: settings.linkedIssueSatisfactionGateMode,
     contentLaneDeliverableGateMode: settings.contentLaneDeliverableGateMode,
+    backtestRegressionGateMode: settings.backtestRegressionGateMode,
     authorMergedPrCount: authorHistory?.mergedPrCount,
     authorClosedUnmergedPrCount: authorHistory?.closedUnmergedPrCount,
     slopGateMinScore: settings.slopGateMinScore ?? null,

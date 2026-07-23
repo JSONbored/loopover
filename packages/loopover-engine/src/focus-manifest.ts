@@ -165,6 +165,12 @@ export type FocusManifestGateConfig = {
    *  `linkedIssueSatisfaction` immediately above in shape, but is a purely structural check, not an AI
    *  opinion, so it carries none of that feature's AI-budget/confidence-floor machinery. */
   contentLaneDeliverable: GateRuleMode | null;
+  /** `gate.backtestRegression` (#8105, epic #8082): off|advisory|block, advisory by default — governs what a
+   *  REGRESSED pre-merge backtest verdict (#8138 threshold / #8139 logic) does. `advisory` renders the
+   *  comparison but never blocks (the shipped pre-#8105 behavior); `block` escalates it into a
+   *  `backtest_regression` hard blocker; `off` silences the backtest advisory entirely. DB-backed
+   *  (dashboard-settable too); this overrides the stored value like every other `gate:` field. */
+  backtestRegression: GateRuleMode | null;
   dryRun: boolean | null;
   /** `gate.premergeContentRecheck` (#2550): for a PR touching `migrations/**`, re-verify against a live,
    *  freshly-fetched tip of the base branch — unioned with this PR's own new migration filenames — for a
@@ -1303,6 +1309,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   selfAuthoredLinkedIssue: null,
   linkedIssueSatisfaction: null,
   contentLaneDeliverable: null,
+  backtestRegression: null,
   dryRun: null,
   premergeContentRecheck: null,
   requireFreshRebaseWindowMinutes: null,
@@ -1788,6 +1795,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     selfAuthoredLinkedIssue: normalizeOptionalGateMode(record.selfAuthoredLinkedIssue, "gate.selfAuthoredLinkedIssue", warnings),
     linkedIssueSatisfaction: normalizeOptionalGateMode(record.linkedIssueSatisfaction, "gate.linkedIssueSatisfaction", warnings),
     contentLaneDeliverable: normalizeOptionalGateMode(record.contentLaneDeliverable, "gate.contentLaneDeliverable", warnings),
+    backtestRegression: normalizeOptionalGateMode(record.backtestRegression, "gate.backtestRegression", warnings),
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     premergeContentRecheck: normalizeOptionalBoolean(record.premergeContentRecheck, "gate.premergeContentRecheck", warnings),
     requireFreshRebaseWindowMinutes: normalizeOptionalPositiveInteger(record.requireFreshRebaseWindow, "gate.requireFreshRebaseWindow", warnings),
@@ -1845,6 +1853,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.selfAuthoredLinkedIssue !== null ||
     gate.linkedIssueSatisfaction !== null ||
     gate.contentLaneDeliverable !== null ||
+    gate.backtestRegression !== null ||
     gate.dryRun !== null ||
     gate.premergeContentRecheck !== null ||
     gate.requireFreshRebaseWindowMinutes !== null ||

@@ -310,6 +310,8 @@ describe("check-docs-drift script", () => {
           'import { PUBLIC_COMMAND_ENTRIES, MAINTAINER_COMMAND_ENTRIES, ACTION_COMMAND_ENTRIES } from "@/lib/command-reference";',
         "apps/loopover-ui/content/docs/how-reviews-work.mdx": buildGateModePageText(),
         "apps/loopover-ui/content/docs/github-app.mdx": buildGateModePageText(),
+        // #8105: backtestRegressionGateMode's manifest row names this page too.
+        "apps/loopover-ui/content/docs/backtest-calibration.mdx": buildGateModePageText(),
       };
       return files;
     }
@@ -327,10 +329,10 @@ describe("check-docs-drift script", () => {
       const result = checkDocsDrift({ root: "/fake", readFile: makeReadFile(files) });
 
       expect(result.failures).toEqual([]);
-      // gateModes bumped 13 -> 14 for contentLaneDeliverableGateMode (#content-lane-deliverable).
-      // settingsFields = 14 GATE_MODE_MANIFEST fields + 20 synthetic extras; focusManifestFields = 18
+      // gateModes bumped 14 -> 15 for backtestRegressionGateMode (#8105).
+      // settingsFields = 15 GATE_MODE_MANIFEST fields + 20 synthetic extras; focusManifestFields = 18
       // synthetic review fields + the nested review.visual.productionUrl leaf (#4617).
-      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 14, settingsFields: 34, focusManifestFields: 19 });
+      expect(result.counts).toEqual({ flags: 10, commands: 19, gateModes: 15, settingsFields: 35, focusManifestFields: 19 });
     });
 
     it("catches an unmapped *GateMode field missing from GATE_MODE_MANIFEST", () => {

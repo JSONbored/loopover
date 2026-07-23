@@ -2389,6 +2389,7 @@ function repoSettings(repoFullName: string): RepositorySettings {
     selfAuthoredLinkedIssueGateMode: "advisory",
     linkedIssueSatisfactionGateMode: "off",
     contentLaneDeliverableGateMode: "off",
+    backtestRegressionGateMode: "advisory",
     slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,

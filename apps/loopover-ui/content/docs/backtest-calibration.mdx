@@ -15,9 +15,10 @@ threshold or rewrites detection logic gets scored against the real recorded hist
 targets, the same raw inputs — instead of being eyeballed.
 
 <Callout variant="note">
-  Everything on this page is advisory-only today. A backtest verdict — even a regression — never
-  blocks a merge. Whether a REGRESSED verdict should ever gate merges is a tracked, deliberately
-  separate decision that waits for real production track-record data.
+  Everything on this page is advisory-only by default. A REGRESSED verdict blocks a merge only if a
+  repo explicitly opts in via `backtestRegressionGateMode: block` (`.loopover.yml
+  gate.backtestRegression`) — the shipped default is `advisory`, and the flip is meant to wait for
+  real production track-record data.
 </Callout>
 
 ## The corpus

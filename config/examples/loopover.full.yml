@@ -343,6 +343,16 @@ gate:
   # value.
   contentLaneDeliverable: off
 
+  # Backtest-regression gate (#8105). Governs what a REGRESSED verdict from the
+  # pre-merge backtest (threshold #8138 / logic #8139) does: advisory (default)
+  # renders the comparison in the review comment but never blocks; block
+  # escalates it into a backtest_regression hard blocker; off silences the
+  # backtest advisory entirely. Flip to block only once the persisted track
+  # record (scripts/backtest-track-record.ts, #8140) supports it.
+  # off | advisory | block. Default: advisory. DB-backed (dashboard-settable
+  # too); this overrides the stored value.
+  backtestRegression: advisory
+
   # Gate-check dry-run. When true, the posted check conclusion remains the real
   # non-enforcing verdict while comments/check text may also show the would-be
   # stricter verdict for AI-review blocker mode. It does not disable downstream

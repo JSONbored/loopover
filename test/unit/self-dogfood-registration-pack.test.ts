@@ -66,6 +66,7 @@ function settingsFor(repoFullName: string, overrides: Partial<RepositorySettings
     selfAuthoredLinkedIssueGateMode: "advisory",
     linkedIssueSatisfactionGateMode: "off",
     contentLaneDeliverableGateMode: "off",
+    backtestRegressionGateMode: "advisory",
     slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,

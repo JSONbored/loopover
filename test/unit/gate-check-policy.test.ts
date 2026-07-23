@@ -989,6 +989,33 @@ describe("linked-issue satisfaction gate blocker (#1961/#3906)", () => {
   });
 });
 
+describe("backtest-regression gate blocker (#8105)", () => {
+  const backtestAdvisory = (): Advisory => ({
+    ...missingIssueAdvisory(),
+    findings: [{ code: "backtest_regression", title: "Backtest regression against recorded history", severity: "warning", detail: "Backtesting this PR's threshold change REGRESSED linked_issue_scope_mismatch on at least one axis.", action: "Revisit the changed threshold so no backtest axis regresses, or ask a maintainer to override." }],
+  });
+
+  it("blocks (failure) under backtestRegressionGateMode: block", () => {
+    const result = evaluateGateCheck(backtestAdvisory(), { backtestRegressionGateMode: "block", confirmedContributor: true });
+    expect(result.conclusion).toBe("failure");
+    expect(result.blockers.map((b) => b.code)).toContain("backtest_regression");
+  });
+
+  it("stays advisory (never blocks) under unset (default advisory), explicit advisory, and off — the shipped pre-#8105 behavior", () => {
+    expect(evaluateGateCheck(backtestAdvisory(), {}).conclusion).toBe("success"); // unset ⇒ defaults to advisory
+    expect(evaluateGateCheck(backtestAdvisory(), { backtestRegressionGateMode: "advisory" }).conclusion).toBe("success");
+    expect(evaluateGateCheck(backtestAdvisory(), { backtestRegressionGateMode: "off" }).conclusion).toBe("success");
+    const advisoryResult = evaluateGateCheck(backtestAdvisory(), { backtestRegressionGateMode: "advisory" });
+    expect(advisoryResult.warnings.map((w) => w.code)).toContain("backtest_regression");
+  });
+
+  it("resolveEffectiveSettings maps gate.backtestRegression → backtestRegressionGateMode, and gateCheckPolicy threads it", () => {
+    const eff = resolveEffectiveSettings(settings({}), parseFocusManifest({ gate: { backtestRegression: "block" } }));
+    expect(eff.backtestRegressionGateMode).toBe("block");
+    expect(gateCheckPolicy(settings({ backtestRegressionGateMode: "block" }), null, true).backtestRegressionGateMode).toBe("block");
+  });
+});
+
 describe("content-lane linked-issue deliverable gate blocker (#content-lane-deliverable)", () => {
   const deliverableAdvisory = (): Advisory => ({
     ...missingIssueAdvisory(),

@@ -57,6 +57,8 @@ export const repositorySettings = sqliteTable("repository_settings", {
   // Content-lane linked-issue deliverable gate (#content-lane-deliverable): off by default. Only meaningful
   // for a repo with a registry content-lane spec resolved. Enforcement lands in the content-lane wire, not here.
   contentLaneDeliverableGateMode: text("content_lane_deliverable_gate_mode").notNull().default("off"),
+  // Backtest-regression gate (#8105): advisory by default -- the shipped pre-#8105 behavior. See types.ts.
+  backtestRegressionGateMode: text("backtest_regression_gate_mode").notNull().default("advisory"),
   slopGateMinScore: integer("slop_gate_min_score"),
   slopAiAdvisory: integer("slop_ai_advisory", { mode: "boolean" }).notNull().default(false),
   // AI-review low-confidence disposition (#4603): one_shot | hold_for_review | advisory_only. Governs a

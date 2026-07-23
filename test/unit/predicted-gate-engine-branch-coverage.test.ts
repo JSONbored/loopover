@@ -59,6 +59,10 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("duplicate_pr_risk"), block)).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), advisory)).toBe(false);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_consensus_defect"), block)).toBe(true);
+    // Backtest-regression gate (#8105): absent (defaults to advisory), explicit advisory, and block.
+    expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("backtest_regression"), advisory)).toBe(false);
+    expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("backtest_regression"), { ...advisory, backtestRegressionGateMode: "advisory" as const })).toBe(false);
+    expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("backtest_regression"), { ...block, backtestRegressionGateMode: "block" as const })).toBe(true);
     expect(gateAdvisoryInternals.isConfiguredGateBlocker(finding("ai_review_split"), advisory)).toBe(false);
     // #4603: aiReviewLowConfidenceDisposition branches — the default ("hold_for_review", exercised by the
     // bare `block` policy above with no confidence set) and "one_shot" both ignore confidence entirely and

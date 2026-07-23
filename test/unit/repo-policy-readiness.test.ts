@@ -31,6 +31,7 @@ function settings(overrides: Partial<RepositorySettings> = {}): RepositorySettin
     selfAuthoredLinkedIssueGateMode: "advisory",
     linkedIssueSatisfactionGateMode: "off",
     contentLaneDeliverableGateMode: "off",
+    backtestRegressionGateMode: "advisory",
     slopAiAdvisory: false,
     qualityGateMinScore: null,
     autoLabelEnabled: true,

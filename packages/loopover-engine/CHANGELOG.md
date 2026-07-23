@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.10.0](https://github.com/JSONbored/loopover/compare/engine-v3.9.0...engine-v3.10.0) (2026-07-23)
+
+
+### Features
+
+* **calibration:** per-provider reviewer track records from the consensus corpus ([#8228](https://github.com/JSONbored/loopover/issues/8228)) ([#8238](https://github.com/JSONbored/loopover/issues/8238)) ([f20cdf1](https://github.com/JSONbored/loopover/commit/f20cdf1d9188af4a3f6457be9b076701b2720f4d))
+
 ## [3.9.0](https://github.com/JSONbored/loopover/compare/engine-v3.8.0...engine-v3.9.0) (2026-07-23)
 
 

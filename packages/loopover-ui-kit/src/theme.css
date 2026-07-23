@@ -126,7 +126,9 @@
 
   /* Accent — Lovable Lime. Same hex in light + dark, ink is dark olive
      so contrast on the lime surface stays ≥ AA. */
-  --accent-lime: oklch(0.45 0.16 130); /* AA-safe grass-lime for text and CTAs */
+  --accent-lime: oklch(
+    0.45 0.16 130
+  ); /* AA-safe grass-lime for text and CTAs */
   --accent-lime-soft: oklch(0.9 0.08 120); /* highlight wash */
   --accent-ink: oklch(0.99 0 0); /* white text on lime button */
 
@@ -282,13 +284,16 @@
     border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
   }
   .border-b-hairline {
-    border-bottom: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--foreground) 6%, transparent);
   }
   .border-l-hairline {
-    border-left: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+    border-left: 1px solid
+      color-mix(in oklab, var(--foreground) 6%, transparent);
   }
   .border-r-hairline {
-    border-right: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+    border-right: 1px solid
+      color-mix(in oklab, var(--foreground) 6%, transparent);
   }
   .divide-hairline > * + * {
     border-top: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);

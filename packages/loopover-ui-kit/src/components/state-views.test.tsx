@@ -1,6 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { EmptyState, ErrorState, LoadingState, StateBoundary } from "./state-views";
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  StateBoundary,
+} from "./state-views";
 
 describe("LoadingState / EmptyState / ErrorState copy (#793)", () => {
   it("LoadingState shows its default copy under a polite status role", () => {
@@ -23,7 +28,9 @@ describe("LoadingState / EmptyState / ErrorState copy (#793)", () => {
     render(<ErrorState />);
     expect(screen.getByRole("alert")).toBeTruthy();
     expect(screen.getByText("Couldn't load this")).toBeTruthy();
-    expect(screen.getByText(/Something went wrong fetching this data/)).toBeTruthy();
+    expect(
+      screen.getByText(/Something went wrong fetching this data/),
+    ).toBeTruthy();
   });
 
   it("ErrorState shows connectivity copy for a network errorKind, and treats timeout the same way", () => {
@@ -42,7 +49,13 @@ describe("LoadingState / EmptyState / ErrorState copy (#793)", () => {
   });
 
   it("ErrorState: an explicit title/description always wins over the errorKind default", () => {
-    render(<ErrorState errorKind="network" title="Custom title" description="Custom description" />);
+    render(
+      <ErrorState
+        errorKind="network"
+        title="Custom title"
+        description="Custom description"
+      />,
+    );
     expect(screen.getByText("Custom title")).toBeTruthy();
     expect(screen.getByText("Custom description")).toBeTruthy();
   });

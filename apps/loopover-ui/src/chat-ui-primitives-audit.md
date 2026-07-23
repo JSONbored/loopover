@@ -37,7 +37,7 @@ against the four primitives #6230 will eventually need. No code changes accompan
 - **`apps/loopover-ui/src/components/site/command-palette.tsx`** (`CommandPalette`) has the only
   bare `<input>` + live-filtered scrollable `<ul>` combination in the app (⌘K-triggered, `Escape`
   closes it, results navigate on click). It's close to "text input driving a list," but it is a
-  *search-and-navigate* palette, not a composer: there's no `onKeyDown` handling for `Enter` at all
+  _search-and-navigate_ palette, not a composer: there's no `onKeyDown` handling for `Enter` at all
   (results are selected by click, not by keyboard submit), no multi-line/auto-grow textarea, and no
   concept of "submit this text as a message." A submit-on-Enter composer would need to be built new,
   informed by this file's open/close and keyboard-listener patterns rather than by reusing its input.
@@ -61,11 +61,11 @@ against the four primitives #6230 will eventually need. No code changes accompan
 - **A live streaming-text consumer.** Grepping `apps/loopover-ui/src` for
   `EventSource|ReadableStream|text/event-stream|streaming` returns exactly one hit outside this
   audit: a comment in `apps/loopover-ui/src/lib/analytics-proxy.ts` explaining that the analytics
-  proxy buffers its (tiny) request body specifically so it does *not* need a streaming/duplex
+  proxy buffers its (tiny) request body specifically so it does _not_ need a streaming/duplex
   request — i.e. the one file that mentions "streaming" is explicitly the case of avoiding it. There
   is no code anywhere in the app that consumes an `EventSource`, a `fetch` response's `ReadableStream`
   body, or a `text/event-stream` response today. `animated-terminal.tsx` (above) is the closest
-  *rendering* precedent, but it has no real stream to consume from.
+  _rendering_ precedent, but it has no real stream to consume from.
 - **A chat-bubble / message-list component.** Nothing pairs an avatar, a role-colored bubble, and a
   timestamp into a reusable per-message unit. `audit-feed.tsx`'s table rows are the nearest list
   pattern, but as noted above they're tabular, not conversational.

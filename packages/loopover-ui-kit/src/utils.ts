@@ -10,7 +10,10 @@ export function cn(...inputs: ClassValue[]) {
  * just-written timestamp can land marginally in the future — clamp to "just now" instead
  * of rendering a negative age.
  */
-export function relativeTimeFromNow(timestampMs: number, nowMs: number): string {
+export function relativeTimeFromNow(
+  timestampMs: number,
+  nowMs: number,
+): string {
   const deltaSeconds = Math.max(0, Math.floor((nowMs - timestampMs) / 1000));
   if (deltaSeconds < 60) return "just now";
   const minutes = Math.floor(deltaSeconds / 60);

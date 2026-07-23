@@ -1,4 +1,10 @@
-import { Loader2, Inbox, AlertTriangle, RefreshCw, WifiOff } from "lucide-react";
+import {
+  Loader2,
+  Inbox,
+  AlertTriangle,
+  RefreshCw,
+  WifiOff,
+} from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -8,7 +14,10 @@ export type ApiFailureKind = "timeout" | "network" | "http";
 
 /** `errorKind`s that mean "we never reached the server" as opposed to "the server answered with an
  *  error" — StateBoundary/ErrorState use this to show connectivity-specific copy and iconography (#793). */
-const NETWORK_ERROR_KINDS: ReadonlySet<ApiFailureKind> = new Set(["network", "timeout"]);
+const NETWORK_ERROR_KINDS: ReadonlySet<ApiFailureKind> = new Set([
+  "network",
+  "timeout",
+]);
 
 /**
  * Shared state primitives so every panel/route renders a consistent
@@ -56,7 +65,9 @@ function Shell({
       <div className="text-muted-foreground">{icon}</div>
       <div className="text-token-sm font-medium text-foreground">{title}</div>
       {description && (
-        <div className="max-w-prose text-token-sm text-muted-foreground">{description}</div>
+        <div className="max-w-prose text-token-sm text-muted-foreground">
+          {description}
+        </div>
       )}
       {(action || secondaryAction) && (
         <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
@@ -165,8 +176,10 @@ export function ErrorState({
   toastOnRetry?: boolean;
   className?: string;
 }) {
-  const isNetworkIssue = errorKind !== undefined && NETWORK_ERROR_KINDS.has(errorKind);
-  const resolvedTitle = title ?? (isNetworkIssue ? "Can't reach the server" : "Couldn't load this");
+  const isNetworkIssue =
+    errorKind !== undefined && NETWORK_ERROR_KINDS.has(errorKind);
+  const resolvedTitle =
+    title ?? (isNetworkIssue ? "Can't reach the server" : "Couldn't load this");
   const resolvedDescription =
     description ??
     (isNetworkIssue
@@ -190,7 +203,8 @@ export function ErrorState({
             onClick={() => {
               if (toastOnRetry) {
                 toast("Retrying…", {
-                  description: "We’ll request the data again and keep this view in place.",
+                  description:
+                    "We’ll request the data again and keep this view in place.",
                 });
               }
               onRetry();
@@ -254,10 +268,12 @@ export function StateBoundary({
   }) => void;
   children: ReactNode;
 }) {
-  const isNetworkIssue = errorKind !== undefined && NETWORK_ERROR_KINDS.has(errorKind);
+  const isNetworkIssue =
+    errorKind !== undefined && NETWORK_ERROR_KINDS.has(errorKind);
   // Preserve the pre-#793 defaults exactly when no errorKind is given; when one is given and the caller
   // didn't override the copy, fall through to ErrorState's own network-aware defaults instead.
-  const resolvedErrorTitle = errorTitle ?? (isNetworkIssue ? undefined : "Couldn't load data");
+  const resolvedErrorTitle =
+    errorTitle ?? (isNetworkIssue ? undefined : "Couldn't load data");
   const resolvedErrorDescription =
     errorDescription ??
     (isNetworkIssue
@@ -284,11 +300,20 @@ export function StateBoundary({
       });
     }
     wasFailureNotifyActive.current = failureNotifyActive;
-  }, [isError, errorLabel, errorKind, resolvedErrorDescription, onRetry, onFailureNotify]);
+  }, [
+    isError,
+    errorLabel,
+    errorKind,
+    resolvedErrorDescription,
+    onRetry,
+    onFailureNotify,
+  ]);
 
   if (isLoading) {
     return (
-      loadingSkeleton ?? <LoadingState title={loadingTitle} description={loadingDescription} />
+      loadingSkeleton ?? (
+        <LoadingState title={loadingTitle} description={loadingDescription} />
+      )
     );
   }
 

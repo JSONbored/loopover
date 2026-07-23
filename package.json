@@ -60,7 +60,7 @@
     "ui:kit:build": "npm run build --workspace @loopover/ui-kit",
     "ui:build": "npm run ui:kit:build && turbo run build --filter=@loopover/engine && npm run ui:openapi && npm run extension:build && npm run miner-extension:build && npm --workspace @loopover/ui run build && npm --workspace @loopover/ui-miner run build",
     "ui:preview": "npm run ui:build && wrangler dev --config apps/loopover-ui/dist/server/wrangler.json --ip 127.0.0.1 --port 4173 --local",
-    "ui:lint": "npm run ui:kit:build && npm --workspace @loopover/ui run lint && npm --workspace @loopover/ui-miner run lint",
+    "ui:lint": "npm run ui:kit:build && npm --workspace @loopover/ui-kit run format:check && npm --workspace @loopover/ui run format:check && npm --workspace @loopover/ui run lint && npm --workspace @loopover/ui-miner run format:check && npm --workspace @loopover/ui-miner run lint",
     "ui:typecheck": "npm run ui:kit:build && npm --workspace @loopover/ui run typecheck && npm --workspace @loopover/ui-miner run typecheck",
     "preui:test": "npm run check-node-version",
     "ui:test": "npm run ui:kit:build && npm --workspace @loopover/ui run test && npm --workspace @loopover/ui-miner run test && npm --workspace @loopover/miner-extension run test",

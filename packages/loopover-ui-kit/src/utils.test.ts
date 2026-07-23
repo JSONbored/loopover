@@ -31,10 +31,14 @@ describe("relativeTimeFromNow (#2219)", () => {
     expect(relativeTimeFromNow(now - (HOUR_MS - 1000), now)).toBe("59m ago");
     // hours bucket: 60m flips to 1h; 23h59m still reads 23h
     expect(relativeTimeFromNow(now - HOUR_MS, now)).toBe("1h ago");
-    expect(relativeTimeFromNow(now - (DAY_MS - MINUTE_MS), now)).toBe("23h ago");
+    expect(relativeTimeFromNow(now - (DAY_MS - MINUTE_MS), now)).toBe(
+      "23h ago",
+    );
     // days bucket: 24h flips to 1d and keeps counting
     expect(relativeTimeFromNow(now - DAY_MS, now)).toBe("1d ago");
-    expect(relativeTimeFromNow(now - 3 * DAY_MS - 2 * HOUR_MS, now)).toBe("3d ago");
+    expect(relativeTimeFromNow(now - 3 * DAY_MS - 2 * HOUR_MS, now)).toBe(
+      "3d ago",
+    );
   });
 
   it("clamps a future (clock-skewed) timestamp to 'just now' instead of a negative age", () => {

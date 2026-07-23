@@ -104,6 +104,17 @@ export const LATEST_ONLY_SIGNAL_SNAPSHOT_TYPES = [
   "repo-doc-refresh-attempt",
   "repo-focus-manifest",
   "repo-public-focus-manifest",
+  // 2026-07-23 recurrence of #3810, new offenders: the contributor-intelligence writers (processors.ts's
+  // scoring pass) append one ~36KB row PER CONTRIBUTOR PER PASS for these three types — ~6GB in three
+  // weeks at current review volume, refilling D1's 10GB cap before the 90-day age window could ever
+  // engage. No reader consumes them as a series (the canonical latest lives in the dedicated
+  // contributor_evidence / contributor_scoring_profiles upsert tables; nothing calls
+  // listSignalSnapshots for contributor-* types), so latest-only is lossless for every actual consumer.
+  // contributor-decision-pack stays EXCLUDED: the retention doc above records it as a bounded
+  // trend/change series by design, and its volume is a fraction of these three.
+  "contributor-evidence-graph",
+  "contributor-outcome-history",
+  "contributor-strategy",
 ] as const;
 
 /**

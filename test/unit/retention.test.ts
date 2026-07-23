@@ -162,6 +162,32 @@ describe("dedupeSignalSnapshots", () => {
     expect(remaining?.id).toBe("s-3");
   });
 
+  it("dedupes the contributor-intelligence types to latest-per-contributor (2026-07 recurrence of #3810: ~6GB in three weeks)", async () => {
+    const env = createTestEnv();
+    for (const signalType of ["contributor-evidence-graph", "contributor-outcome-history", "contributor-strategy"] as const) {
+      await insertSignalSnapshot(env, `${signalType}-old`, signalType, "octocat", "2026-07-01T00:00:00.000Z");
+      await insertSignalSnapshot(env, `${signalType}-new`, signalType, "octocat", "2026-07-02T00:00:00.000Z");
+      await insertSignalSnapshot(env, `${signalType}-other`, signalType, "hubot", "2026-07-02T00:00:00.000Z");
+    }
+    // decision-pack is a bounded trend series by design — must remain untouched.
+    await insertSignalSnapshot(env, "pack-1", "contributor-decision-pack", "octocat", "2026-07-01T00:00:00.000Z");
+    await insertSignalSnapshot(env, "pack-2", "contributor-decision-pack", "octocat", "2026-07-02T00:00:00.000Z");
+
+    const results = await dedupeSignalSnapshots(env);
+    const byType = Object.fromEntries(results.map((r) => [r.signalType, r.deleted]));
+    expect(byType["contributor-evidence-graph"]).toBe(1);
+    expect(byType["contributor-outcome-history"]).toBe(1);
+    expect(byType["contributor-strategy"]).toBe(1);
+
+    const remaining = await env.DB.prepare("SELECT id FROM signal_snapshots ORDER BY id").all<{ id: string }>();
+    const ids = (remaining.results ?? []).map((row) => row.id);
+    expect(ids).toContain("contributor-strategy-new");
+    expect(ids).toContain("contributor-strategy-other");
+    expect(ids).not.toContain("contributor-strategy-old");
+    expect(ids).toContain("pack-1"); // series preserved
+    expect(ids).toContain("pack-2");
+  });
+
   it("dedupes private and public focus-manifest cache snapshots (regression for storage exhaustion)", async () => {
     const env = createTestEnv();
     await insertSignalSnapshot(env, "private-old", REPO_FOCUS_MANIFEST_SIGNAL, "JSONbored/loopover", "2026-06-01T00:00:00.000Z");

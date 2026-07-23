@@ -1,4 +1,4 @@
 {
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Source of truth for the self-hostable loopover-orb container image's target release version (ghcr.io/jsonbored/loopover-selfhost). Bumped by a maintainer when a feat/fix/breaking change since the last stable orb-v tag warrants moving to a new target version -- scripts/orb-release-core.ts and .github/workflows/orb-beta-release.yml read this file to decide what version the next automated beta snapshot targets. Promoting a beta to a stable orb-vX.Y.Z release is still a manual `git tag` -- this manifest only drives the automated beta channel."
 }

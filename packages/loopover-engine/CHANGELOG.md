@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.9.0](https://github.com/JSONbored/loopover/compare/engine-v3.8.0...engine-v3.9.0) (2026-07-23)
+
+
+### Features
+
+* **calibration:** pure per-repo corpus slicing + density stats ([#8233](https://github.com/JSONbored/loopover/issues/8233)) ([c1e2ab2](https://github.com/JSONbored/loopover/commit/c1e2ab21bceb9e169b29fe637297c7ee024404d1))
+
 ## [3.8.0](https://github.com/JSONbored/loopover/compare/engine-v3.7.0...engine-v3.8.0) (2026-07-23)
 
 

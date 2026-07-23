@@ -71,7 +71,7 @@ export function renderProviderTable(records: readonly ProviderTrackRecord[]): st
   return lines.join("\n");
 }
 
-function parseArgs(argv: string[]): { fixtures?: string; artifacts: string; variants: string[]; seedSuffix: string; maxFixtures: number } {
+function parseArgs(argv: string[]): { fixtures: string | undefined; artifacts: string; variants: string[]; seedSuffix: string; maxFixtures: number } {
   const args = { fixtures: undefined as string | undefined, artifacts: ".counterfactual-artifacts", variants: [] as string[], seedSuffix: "default", maxFixtures: 500 };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];

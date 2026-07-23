@@ -178,6 +178,7 @@ export * from "./calibration/backtest-track-record.js";
 export * from "./calibration/backtest-split.js";
 export * from "./calibration/backtest-threshold.js";
 export * from "./calibration/provider-track-record.js";
+export * from "./calibration/reliability-curve.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

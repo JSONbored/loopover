@@ -66,6 +66,10 @@ export function gateCheckPolicy(
     guardrailHit: boolean;
     guardrailMatches?: ReturnType<typeof guardrailPathMatches> | undefined;
   },
+  // #8176: the backtest-gated GLOBAL default-override for the AI close-confidence floor, resolved by the
+  // env-bearing caller (getAiReviewCloseConfidenceOverride — flag-gated + bounds-validated). It only fills
+  // the DEFAULT: an explicit per-repo `gate.aiReview.closeConfidence` setting always wins below.
+  aiReviewCloseConfidenceOverride?: number | null,
 ) {
   // `settings` is already the EFFECTIVE config (`.loopover.yml` > DB > defaults), resolved upstream by
   // resolveRepositorySettings, so the blocker modes here reflect the repo's config file directly.
@@ -81,8 +85,9 @@ export function gateCheckPolicy(
     qualityGateMinScore: settings.qualityGateMinScore ?? null,
     aiReviewGateMode: settings.aiReviewMode,
     // Calibrated AI close-confidence floor (#7) — config-as-code via `.loopover.yml gate.aiReview.closeConfidence`,
-    // resolved into settings upstream. `null`/undefined ⇒ advisory.ts applies the 0.93 default.
-    aiReviewCloseConfidence: settings.aiReviewCloseConfidence ?? null,
+    // resolved into settings upstream. When the repo has no explicit setting, the #8176 backtest-gated
+    // global override (if any) becomes the default; `null` ⇒ advisory.ts applies the 0.93 shipped default.
+    aiReviewCloseConfidence: settings.aiReviewCloseConfidence ?? aiReviewCloseConfidenceOverride ?? null,
     // Sub-floor AI-judgment disposition (#4603) — DB-backed (dashboard-settable) + `.loopover.yml
     // gate.aiReview.lowConfidenceDisposition` override, resolved into settings upstream. `null`/undefined ⇒
     // advisory.ts applies the "hold_for_review" default.

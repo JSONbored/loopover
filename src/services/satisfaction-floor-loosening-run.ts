@@ -281,9 +281,16 @@ export async function loadSatisfactionFloorStatus(env: Env): Promise<Satisfactio
  * each one's consumption plumbing ships as its own reviewed change (see LOOSENABLE_KNOBS' applyMode doc).
  * Fail-safe per knob: a corpus error skips that knob rather than breaking the advisor pass.
  */
-export async function loadReportOnlyKnobProposals(env: Env, nowMs: number = Date.now()): Promise<KnobLooseningProposal[]> {
+export async function loadReportOnlyKnobProposals(
+  env: Env,
+  nowMs: number = Date.now(),
+  // Parameterized for tests: with #8176 flipping ai_review_close_confidence to live, the SHIPPED registry
+  // currently has no report-only knob — this path stays, fully covered, for the next knob that enters
+  // report-only (every new knob starts there per the registry's applyMode contract).
+  knobs: readonly (typeof LOOSENABLE_KNOBS)[string][] = Object.values(LOOSENABLE_KNOBS),
+): Promise<KnobLooseningProposal[]> {
   const proposals: KnobLooseningProposal[] = [];
-  for (const knob of Object.values(LOOSENABLE_KNOBS)) {
+  for (const knob of knobs) {
     if (knob.applyMode !== "report_only") continue;
     try {
       const { fired, overrides } = await createSignalStore(env).queryRuleHistory(knob.ruleId, nowMs - CORPUS_LOOKBACK_MS);

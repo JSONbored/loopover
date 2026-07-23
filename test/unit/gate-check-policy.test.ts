@@ -21,6 +21,18 @@ function settings(over: Partial<RepositorySettings> = {}): RepositorySettings {
   } as unknown as RepositorySettings;
 }
 
+describe("gateCheckPolicy — #8176 global close-confidence default-override", () => {
+  it("fills the default only when the repo has no explicit setting, and the explicit setting always wins", () => {
+    // No explicit setting: the backtest-gated override becomes the default.
+    expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, 0.9).aiReviewCloseConfidence).toBe(0.9);
+    // Explicit per-repo setting: the override must NEVER displace it.
+    expect(gateCheckPolicy(settings({ aiReviewCloseConfidence: 0.97 }), null, undefined, null, undefined, undefined, 0.9).aiReviewCloseConfidence).toBe(0.97);
+    // Neither: null, so advisory.ts applies its shipped default.
+    expect(gateCheckPolicy(settings(), null, undefined, null, undefined, undefined, null).aiReviewCloseConfidence).toBeNull();
+    expect(gateCheckPolicy(settings()).aiReviewCloseConfidence).toBeNull();
+  });
+});
+
 function missingIssueAdvisory(): Advisory {
   return {
     id: "advisory-policy",

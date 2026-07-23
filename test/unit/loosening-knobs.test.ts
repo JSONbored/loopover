@@ -29,14 +29,21 @@ describe("LOOSENABLE_KNOBS registry invariants (#8159)", () => {
       heldOutFraction: SATISFACTION_FLOOR_HELD_OUT_FRACTION,
       splitSeed: SATISFACTION_FLOOR_SPLIT_SEED,
       applyMode: "live",
+      // #8176's apply plumbing — pinned to the legacy run module's constants by knob-loosening-run.test.ts.
+      overrideFlagKey: "satisfaction_floor_override",
+      looseningEventType: "calibration.satisfaction_floor_loosened",
+      autotuneEnvVar: "SATISFACTION_FLOOR_AUTOTUNE_ENABLED",
     });
   });
 
-  it("pins the close-confidence knob to the shipped default, tight bounds, and REPORT-ONLY apply mode", () => {
+  it("pins the close-confidence knob to the shipped default, tight bounds, and its LIVE apply plumbing (#8176)", () => {
     expect(AI_KNOB.shippedValue).toBe(DEFAULT_AI_REVIEW_CLOSE_CONFIDENCE);
     expect(AI_KNOB.ruleId).toBe("ai_consensus_defect");
-    expect(AI_KNOB.applyMode).toBe("report_only");
+    expect(AI_KNOB.applyMode).toBe("live"); // flipped by #8176 — the override consumer ships with it
     expect(AI_KNOB.hardMinimum).toBe(0.85);
+    expect(AI_KNOB.overrideFlagKey).toBe("ai_review_close_confidence_override");
+    expect(AI_KNOB.looseningEventType).toBe("calibration.ai_review_close_confidence_loosened");
+    expect(AI_KNOB.autotuneEnvVar).toBe("AI_REVIEW_CLOSE_CONFIDENCE_AUTOTUNE_ENABLED");
   });
 
   it("every entry satisfies the structural safety invariants: candidates strictly below shipped, at/above the hard minimum, descending; ids and seeds unique", () => {

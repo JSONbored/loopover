@@ -29,7 +29,7 @@ describe("docs route Suspense fallback (#6982)", () => {
     expect(screen.getByText("Loading…")).toBeTruthy();
   });
 
-  it("every docs.*.tsx route imports LoadingState and uses it as the sole Suspense fallback, not a hand-rolled <p>", () => {
+  it("the single dynamic docs.$slug.tsx route imports LoadingState and uses it as the sole Suspense fallback, not a hand-rolled <p>", () => {
     const routesDir = join(process.cwd(), "src/routes");
     const docsRouteFiles = readdirSync(routesDir).filter(
       (name) => name.startsWith("docs.") && name.endsWith(".tsx") && !name.endsWith(".test.tsx"),
@@ -38,14 +38,16 @@ describe("docs route Suspense fallback (#6982)", () => {
     // fumadocs-spike-api-reference.tsx is a standalone Scalar API-reference spike (#6037) that wraps
     // ClientOnly, not Suspense; docs.index.tsx is a static landing page with no MDX content and no
     // Suspense boundary; docs.tsx is the shared parent layout route, not a content page. None were
-    // part of this issue's 46-file scope.
+    // part of this issue's original 46-file scope, nor of #8151's dynamic-route collapse.
     const outOfScope = new Set([
       "docs.fumadocs-spike-api-reference.tsx",
       "docs.index.tsx",
       "docs.tsx",
     ]);
     const inScope = docsRouteFiles.filter((name) => !outOfScope.has(name));
-    expect(inScope.length).toBe(49);
+    // #8151: the 49 per-page docs.<slug>.tsx files collapsed into one dynamic docs.$slug.tsx
+    // route -- a shape assertion now, not a per-page count bumped on every new docs page.
+    expect(inScope).toEqual(["docs.$slug.tsx"]);
 
     for (const file of inScope) {
       const source = readFileSync(join(routesDir, file), "utf8");

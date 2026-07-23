@@ -16,14 +16,15 @@ const nav = [
   { to: "/roadmap", label: "Roadmap" },
 ] as const;
 
+// Resolved through the single dynamic /docs/$slug route (#8151).
 const docsMenu = [
-  { to: "/docs/quickstart", label: "Quickstart", hint: "Install MCP + first run" },
-  { to: "/docs/mcp-clients", label: "MCP clients", hint: "Codex · Claude · Cursor" },
-  { to: "/docs/github-app", label: "GitHub App", hint: "Quiet maintainer setup" },
-  { to: "/docs/maintainer-self-hosting", label: "Self-host", hint: "Run the review service" },
-  { to: "/docs/scoreability", label: "Scoreability", hint: "How projections work" },
-  { to: "/docs/upstream-drift", label: "Upstream drift", hint: "Snapshot freshness" },
-  { to: "/docs/troubleshooting", label: "Troubleshooting", hint: "Common errors" },
+  { slug: "quickstart", label: "Quickstart", hint: "Install MCP + first run" },
+  { slug: "mcp-clients", label: "MCP clients", hint: "Codex · Claude · Cursor" },
+  { slug: "github-app", label: "GitHub App", hint: "Quiet maintainer setup" },
+  { slug: "maintainer-self-hosting", label: "Self-host", hint: "Run the review service" },
+  { slug: "scoreability", label: "Scoreability", hint: "How projections work" },
+  { slug: "upstream-drift", label: "Upstream drift", hint: "Snapshot freshness" },
+  { slug: "troubleshooting", label: "Troubleshooting", hint: "Common errors" },
 ] as const;
 
 export function SiteHeader() {
@@ -115,8 +116,9 @@ export function SiteHeader() {
                   <div className="grid grid-cols-2 gap-1 p-2">
                     {docsMenu.map((item) => (
                       <Link
-                        key={item.to}
-                        to={item.to}
+                        key={item.slug}
+                        to="/docs/$slug"
+                        params={{ slug: item.slug }}
                         onClick={() => setDocsOpen(false)}
                         activeProps={{ className: "bg-muted/60 text-foreground" }}
                         className="group relative flex flex-col gap-0.5 rounded-token px-3 py-2 text-token-sm text-foreground/85 transition-all duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-ring"

@@ -9,11 +9,12 @@ import { z } from "zod";
 // in the browser.
 //
 // The import of docs-source.server is dynamic (inside the handler) rather than a static
-// top-level import: this file itself is a static import in every docs.*.tsx route, and a
+// top-level import: this file itself is a static import in docs.$slug.tsx (and
+// docs.miner-coding-agent.tsx before #8151 collapsed it into that one dynamic route), and a
 // static top-level import here would drag docs-source.server.ts's eager content/docs/*.mdx
 // glob into any test that merely imports a docs.*.tsx route module without invoking its
-// loader (e.g. docs.miner-coding-agent.test.tsx importing named exports for assertions) --
-// vitest.config.ts doesn't register the fumadocs-mdx plugin needed to parse those files.
+// loader -- vitest.config.ts doesn't register the fumadocs-mdx plugin needed to parse those
+// files.
 export const getDocPage = createServerFn({ method: "POST" })
   .inputValidator(z.object({ slugs: z.array(z.string()) }))
   .handler(async ({ data }) => {

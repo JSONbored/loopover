@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: The MCP ships with diagnostics. Start with doctor, then drill in.
+eyebrow: Operating
 ---
 
 ## Health checks
@@ -28,6 +29,7 @@ work is happening; traces answer _where time went_ inside a review job.
 docker compose --profile observability up -d
 
 # Export app queue-job and AI-provider spans to Tempo.
+
 OTEL_TRACES_EXPORTER=otlp
 OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.05

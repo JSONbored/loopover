@@ -106,7 +106,8 @@ export function ApiStatusBanner() {
             </button>
           )}
           <Link
-            to="/docs/troubleshooting"
+            to="/docs/$slug"
+            params={{ slug: "troubleshooting" }}
             hash="api-status"
             className={cn(
               "inline-flex h-7 items-center rounded-token px-2 text-token-2xs font-medium underline-offset-2 hover:underline focus-ring",

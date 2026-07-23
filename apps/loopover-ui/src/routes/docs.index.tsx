@@ -141,7 +141,8 @@ function AudienceCard({ icon, title, description, primary, links }: Audience) {
       <h2 className="font-display text-token-lg font-semibold text-foreground">{title}</h2>
       <p className="mt-1 text-token-sm text-muted-foreground">{description}</p>
       <Link
-        to={primary.to as "/docs"}
+        to="/docs/$slug"
+        params={{ slug: primary.to.slice("/docs/".length) }}
         className="mt-4 inline-flex items-center gap-1.5 self-start rounded-token bg-mint px-3 py-1.5 text-token-xs font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
       >
         {primary.label}
@@ -151,7 +152,8 @@ function AudienceCard({ icon, title, description, primary, links }: Audience) {
         {links.map((l) => (
           <li key={l.to}>
             <Link
-              to={l.to as "/docs"}
+              to="/docs/$slug"
+              params={{ slug: l.to.slice("/docs/".length) }}
               className="inline-flex items-center gap-1.5 text-foreground/80 transition-colors hover:text-mint"
             >
               <ArrowRight className="size-3 opacity-60" />

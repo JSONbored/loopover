@@ -1,6 +1,7 @@
 ---
 title: Quickstart
 description: A minimal self-host boot path for maintainers -- start the service, verify readiness, and keep the first rollout safe.
+eyebrow: Self-hosting
 ---
 
 ## 1. Copy the sample env
@@ -240,19 +241,19 @@ Nothing below needs a flag to start; everything past the first row needs an expl
   loopover app + Redis        SQLite database, dry-run-friendly, Orb telemetry (see Callout below)
 
 RECOMMENDED FOR PRODUCTION (opt-in)
-  --profile postgres             shared/multi-instance database (pgvector-capable)
-  --profile pgbouncer            connection pooling in front of Postgres
-  --profile caddy                automatic HTTPS via Let's Encrypt
-  --profile litestream            continuous SQLite backup to S3-compatible storage
-  --profile observability        Prometheus + Alertmanager + Loki + Grafana
+--profile postgres shared/multi-instance database (pgvector-capable)
+--profile pgbouncer connection pooling in front of Postgres
+--profile caddy automatic HTTPS via Let's Encrypt
+--profile litestream continuous SQLite backup to S3-compatible storage
+--profile observability Prometheus + Alertmanager + Loki + Grafana
 
 OPT-IN, NOT REQUIRED FOR A TRIAL INSTANCE
-  --profile qdrant                dedicated RAG vector store (else sqlite-vec/pgvector)
-  --profile ollama                local model for AI review or embeddings
-  --profile tailscale             private network sidecar
-  --profile runners               self-hosted GitHub Actions runner
-  --profile backup                scheduled backup + backup-exporter jobs
-  AI_PROVIDER=...                 off by default; reviews are deterministic-only until set`} />
+--profile qdrant dedicated RAG vector store (else sqlite-vec/pgvector)
+--profile ollama local model for AI review or embeddings
+--profile tailscale private network sidecar
+--profile runners self-hosted GitHub Actions runner
+--profile backup scheduled backup + backup-exporter jobs
+AI_PROVIDER=... off by default; reviews are deterministic-only until set`} />
 
 <Callout variant="safety">
   Orb fleet-calibration telemetry (verdict, outcome, cycle time — never repo names, code, or logins)

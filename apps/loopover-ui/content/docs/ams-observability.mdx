@@ -1,6 +1,7 @@
 ---
 title: Observing your miner
 description: Point Grafana at redacted AMS reporting exports to see attempt and prediction history without exposing the miner's live local ledgers.
+eyebrow: Maintainers
 ---
 
 How to point Grafana at redacted miner reporting exports to see attempt and prediction history
@@ -73,9 +74,9 @@ visualize AMS activity, add a dashboard JSON there — or import one at runtime 
 Ledger` datasources above.
 
 <Callout variant="note">
-  Panels should query only the redacted reporting schema (e.g. `SELECT * FROM
-  attempt_log_events`), never a `payload_json`/`reason` column — the exporter drops both, so a
-  panel referencing them returns no such column.
+  Panels should query only the redacted reporting schema (e.g. `SELECT * FROM attempt_log_events`),
+  never a `payload_json`/`reason` column — the exporter drops both, so a panel referencing them
+  returns no such column.
 </Callout>
 
 ## Prometheus metrics (opt-in)

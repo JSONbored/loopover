@@ -1,6 +1,7 @@
 ---
 title: Security
 description: The self-host stack holds maintainer credentials and policy. Keep those boundaries explicit.
+eyebrow: Self-hosting
 ---
 
 ## Secret handling
@@ -20,7 +21,7 @@ description: The self-host stack holds maintainer credentials and policy. Keep t
     {
       title: "Rotate deliberately",
       description:
-        "Cadence, per-secret procedure, and the categories that can't be rotated safely yet -- see \"Secret rotation policy\" below.",
+        'Cadence, per-secret procedure, and the categories that can\'t be rotated safely yet -- see "Secret rotation policy" below.',
     },
   ]}
 />
@@ -71,20 +72,23 @@ rm secrets/loopover_api_token.txt && ./scripts/selfhost-init-secrets.sh   # gene
 docker compose up -d --no-deps loopover
 
 # Freely rotatable secret -- hosted Worker path
+
 wrangler secret put LOOPOVER_API_TOKEN
+
 # then redeploy`}
+
 />
 
 <Callout variant="warn" title="Encryption master keys have no safe rotation path yet">
   `TOKEN_ENCRYPTION_SECRET` (maintainer BYOK AI-provider keys at rest) and
   `DRAFT_TOKEN_ENCRYPTION_SECRET` (in-flight contributor draft OAuth tokens) are AES-256-GCM keys
-  every already-encrypted row was written against. The decrypt path always derives the AES key
-  from whatever value is currently set, with no fallback to a prior value -- there is no
-  re-encryption tooling in this codebase today. Rotating `TOKEN_ENCRYPTION_SECRET` means every
-  maintainer who saved a BYOK provider key has to re-enter it; rotating
-  `DRAFT_TOKEN_ENCRYPTION_SECRET` fails any draft submission mid-flight. Only rotate these two on
-  suspected compromise, and treat the resulting key/token loss as an accepted, unavoidable cost
-  until a re-encrypt-in-place migration exists (tracked as separate follow-up work).
+  every already-encrypted row was written against. The decrypt path always derives the AES key from
+  whatever value is currently set, with no fallback to a prior value -- there is no re-encryption
+  tooling in this codebase today. Rotating `TOKEN_ENCRYPTION_SECRET` means every maintainer who
+  saved a BYOK provider key has to re-enter it; rotating `DRAFT_TOKEN_ENCRYPTION_SECRET` fails any
+  draft submission mid-flight. Only rotate these two on suspected compromise, and treat the
+  resulting key/token loss as an accepted, unavoidable cost until a re-encrypt-in-place migration
+  exists (tracked as separate follow-up work).
 </Callout>
 
 `ORB_ENROLLMENT_SECRET` has the same gap from the other direction: `orb_enrollments.revoked_at` is
@@ -233,6 +237,7 @@ The shipped `caddy/Caddyfile` reverse-proxies to `loopover:8787` on the compose 
 		output stderr
 		format json
 	}
+
 }`}
 />
 

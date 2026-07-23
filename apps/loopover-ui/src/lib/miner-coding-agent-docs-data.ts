@@ -1,22 +1,10 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
-import { Suspense } from "react";
-
-import { DocsPage } from "@/components/site/docs-page";
-import { LoadingState } from "@/components/site/state-views";
-import { docsClientLoader } from "@/lib/docs-client-loader";
-import { getDocPage } from "@/lib/docs-source.functions";
-
-// Rendered from content/docs/miner-coding-agent.mdx via fumadocs-mdx's browser entry
-// (docsClientLoader), through the existing DocsPage/Callout/CodeBlock/FeatureRow
-// primitives -- not fumadocs-ui's bundled components. See docs-source.server.ts's comment
-// for why the loader below resolves only a plain, serializable path string.
-//
-// The three arrays below no longer feed this page's own JSX -- their prose was
-// hand-transcribed into the migrated .mdx above -- but they stay exported because
+// content/docs/miner-coding-agent.mdx's prose was hand-transcribed from these arrays during the
+// fumadocs migration (#6037) -- they no longer feed any page's own JSX (the dynamic docs.$slug.tsx
+// route just renders the compiled MDX), but stay exported because
 // docs.miner-coding-agent.test.tsx imports them directly (asserting
-// MINER_CODING_AGENT_PROVIDER_ITEMS against packages/loopover-engine's
-// CODING_AGENT_DRIVER_NAMES, and MINER_CODING_AGENT_ENV_ROWS's env var names). Keep
-// both this data and the corresponding MDX content in sync if either changes.
+// MINER_CODING_AGENT_PROVIDER_ITEMS against packages/loopover-engine's CODING_AGENT_DRIVER_NAMES,
+// and MINER_CODING_AGENT_ENV_ROWS's env var names). Keep both this data and the corresponding MDX
+// content in sync if either changes.
 export const MINER_CODING_AGENT_PROVIDER_ITEMS: Array<{ title: string; description: string }> = [
   {
     title: "noop",
@@ -98,42 +86,3 @@ export const MINER_CODING_AGENT_TRUST_ROWS: Array<{ title: string; description: 
       "The Codex home or auth path is not isolated from operator-owned storage. Remove the unsafe override.",
   },
 ];
-
-export const Route = createFileRoute("/docs/miner-coding-agent")({
-  loader: async () => {
-    const page = await getDocPage({ data: { slugs: ["miner-coding-agent"] } });
-    if (!page) throw notFound();
-    return page;
-  },
-  head: () => ({
-    meta: [
-      { title: "Miner coding-agent driver — LoopOver docs" },
-      {
-        name: "description",
-        content:
-          "Enable Claude Code or Codex as the miner's coding-agent driver, and document the provider, model, timeout, and credential troubleshooting paths.",
-      },
-      { property: "og:title", content: "Miner coding-agent driver — LoopOver docs" },
-      {
-        property: "og:description",
-        content:
-          "Enable Claude Code or Codex as the miner's coding-agent driver, and document the provider, model, timeout, and credential troubleshooting paths.",
-      },
-      { property: "og:url", content: "/docs/miner-coding-agent" },
-    ],
-    links: [{ rel: "canonical", href: "/docs/miner-coding-agent" }],
-  }),
-  component: MinerCodingAgentDriverDocs,
-});
-
-export function MinerCodingAgentDriverDocs() {
-  const { path, title, description } = Route.useLoaderData();
-  const Content = docsClientLoader.getComponent(path);
-  return (
-    <DocsPage eyebrow="Configuration" title={title} description={description}>
-      <Suspense fallback={<LoadingState />}>
-        <Content />
-      </Suspense>
-    </DocsPage>
-  );
-}

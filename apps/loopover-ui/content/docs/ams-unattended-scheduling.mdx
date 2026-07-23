@@ -1,6 +1,7 @@
 ---
 title: Unattended scheduling & failure alerting
 description: Run the miner's scheduled commands -- manage poll and discover -- unattended on cron or systemd, and alert reliably when a run fails.
+eyebrow: Maintainers
 ---
 
 Operational guidance for running the miner's scheduled commands — `manage poll` and `discover` —
@@ -9,9 +10,9 @@ commands most likely to run on a schedule; everything they need is local and the
 interactive prompts.
 
 <Callout variant="note">
-  Scope: scheduling + failure alerting for `manage poll` / `discover`. For local-state recovery
-  see the [AMS operations runbook](/docs/ams-operations-runbook); for deployment layout see the
-  [AMS deployment guide](/docs/ams-deployment).
+  Scope: scheduling + failure alerting for `manage poll` / `discover`. For local-state recovery see
+  the [AMS operations runbook](/docs/ams-operations-runbook); for deployment layout see the [AMS
+  deployment guide](/docs/ams-deployment).
 </Callout>
 
 ## The exit-code contract (what to alert on)
@@ -48,12 +49,16 @@ MAILTO=you@example.com
 LOOPOVER_MINER_NO_UPDATE_CHECK=1
 
 # Poll a tracked PR every 10 minutes. The || branch fires on any non-zero exit: it logs the failing
+
 # code to syslog AND re-raises it with exit "$status", so the failure stays visible to exit-status
+
 # monitoring instead of being masked by logger's own success.
-*/10 * * * * /usr/local/bin/loopover-miner manage poll acme/widgets 42 --json || { status=$?; logger -t loopover-miner "manage poll failed (exit $status)"; exit "$status"; }
+
+_/10 _ \* \* \* /usr/local/bin/loopover-miner manage poll acme/widgets 42 --json || { status=$?; logger -t loopover-miner "manage poll failed (exit $status)"; exit "$status"; }
 
 # Discover + enqueue candidate work hourly.
-0 * * * * /usr/local/bin/loopover-miner discover --search "label:good-first-issue" --json || { status=$?; logger -t loopover-miner "discover failed (exit $status)"; exit "$status"; }`}
+
+0 \* \* \* \* /usr/local/bin/loopover-miner discover --search "label:good-first-issue" --json || { status=$?; logger -t loopover-miner "discover failed (exit $status)"; exit "$status"; }`}
 />
 
 Two cron facts to get right here:
@@ -66,8 +71,8 @@ Two cron facts to get right here:
 
 <Callout variant="warn" title="A bare || logger … hides the failure">
   `logger` succeeds (exit 0), so `cmd || logger …` makes the whole cron job exit 0 — any
-  exit-status-based monitoring then sees success. Capture the code first (`status=$?`) and
-  re-raise it (`exit "$status"`) as shown, so the real failing code survives.
+  exit-status-based monitoring then sees success. Capture the code first (`status=$?`) and re-raise
+  it (`exit "$status"`) as shown, so the real failing code survives.
 </Callout>
 
 ## systemd (service + timer)
@@ -86,7 +91,9 @@ OnFailure=loopover-miner-alert@%n.service
 [Service]
 Type=oneshot
 Environment=LOOPOVER_MINER_NO_UPDATE_CHECK=1
+
 # A non-zero exit (2) marks the unit failed and triggers OnFailure=.
+
 ExecStart=/usr/local/bin/loopover-miner discover --search "label:good-first-issue" --json`}
 />
 

@@ -56,13 +56,15 @@ function MaintainersPage() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
-              to="/docs/maintainer-self-hosting"
+              to="/docs/$slug"
+              params={{ slug: "maintainer-self-hosting" }}
               className="inline-flex items-center gap-2 rounded-token bg-mint px-4 py-2 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Self-host reviews <ArrowRight className="size-4" />
             </Link>
             <Link
-              to="/docs/maintainer-workflow"
+              to="/docs/$slug"
+              params={{ slug: "maintainer-workflow" }}
               className="inline-flex items-center gap-2 rounded-token border border-border bg-transparent px-4 py-2 text-token-sm hover:border-foreground/30"
             >
               Maintainer workflow
@@ -230,7 +232,8 @@ GET /v1/repos/:owner/:repo/registration-readiness`}
               Open the preview <ArrowRight className="size-4" />
             </Link>
             <Link
-              to="/docs/maintainer-self-hosting"
+              to="/docs/$slug"
+              params={{ slug: "maintainer-self-hosting" }}
               className="inline-flex items-center gap-2 rounded-token border border-border bg-transparent px-4 py-2 text-token-sm hover:border-foreground/30"
             >
               Self-host reviews

@@ -5,16 +5,17 @@ import { CODING_AGENT_DRIVER_NAMES } from "../../../../packages/loopover-engine/
 import {
   MINER_CODING_AGENT_ENV_ROWS,
   MINER_CODING_AGENT_PROVIDER_ITEMS,
-  MinerCodingAgentDriverDocs,
-} from "./docs.miner-coding-agent";
+} from "./miner-coding-agent-docs-data";
 
 // Renders from content/docs/miner-coding-agent.mdx via the fumadocs client-loader (see
 // docs-source.server.ts's comment) -- a synchronous component render can't exercise that path
-// without a full router context, so this is now a content drift-guard on the .mdx source,
-// matching the pattern in docs-selfhost-activation-paths.test.ts.
+// without a full router context, so this is a content drift-guard on the .mdx source, matching
+// the pattern in docs-selfhost-activation-paths.test.ts. Moved out of src/routes/ (#8151) once
+// docs.miner-coding-agent.tsx (its former sibling) was deleted along with the other 48
+// per-page docs.<slug>.tsx route files -- this file tests content data, not routing.
 const MDX_PATH = "content/docs/miner-coding-agent.mdx";
 
-describe("miner coding-agent docs page", () => {
+describe("miner coding-agent docs content", () => {
   it("documents the expected sections", () => {
     const source = readFileSync(MDX_PATH, "utf8");
     expect(source).toContain("title: Miner coding-agent driver");
@@ -37,9 +38,5 @@ describe("miner coding-agent docs page", () => {
       "MINER_CODING_AGENT_CODEX_MODEL",
       "MINER_CODING_AGENT_TIMEOUT_MS",
     ]);
-  });
-
-  it("exports the route component used by the route definition", () => {
-    expect(typeof MinerCodingAgentDriverDocs).toBe("function");
   });
 });

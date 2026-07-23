@@ -1,9 +1,10 @@
 ---
 title: Fleet run-manifest
 description: The top-level config a fleet operator authors to run the miner across many repos at once -- which repos are in scope and how the worktree/concurrency budget is split.
+eyebrow: Maintainers
 ---
 
-The **fleet run-manifest** is the top-level config a *fleet operator* authors to run the miner
+The **fleet run-manifest** is the top-level config a _fleet operator_ authors to run the miner
 across many repos at once: it declares which repos are in scope for a fleet run and how a finite
 worktree/concurrency budget is split between them. It is parsed by
 `parseFleetRunManifestContent` / `parseFleetRunManifest` in `@loopover/engine`
@@ -50,7 +51,7 @@ opposite direction of intent:
 
 This module produces only the parsed, typed manifest. Driving the fleet concurrency allocator
 from it is the allocator's own concern, and the cross-repo `portfolio-queue.js` backlog reads the
-same repo list — both *consume* this manifest; neither wiring lives here.
+same repo list — both _consume_ this manifest; neither wiring lives here.
 
 ## Example (`fleet-run.yml`)
 

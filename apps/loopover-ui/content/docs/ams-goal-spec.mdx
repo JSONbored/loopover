@@ -1,6 +1,7 @@
 ---
 title: "MinerGoalSpec (.loopover-miner.yml)"
 description: Per-repo configuration telling an autonomous LoopOver miner what to look for and how to behave when targeting a repo -- the full field reference.
+eyebrow: Maintainers
 ---
 
 Per-repo configuration telling an autonomous LoopOver miner what to look for and how to behave
@@ -17,8 +18,8 @@ Discovery order (first match wins):
 - `.github/loopover-miner.json`
 
 <Callout variant="note">
-  Every field is optional. Unknown keys are ignored; a malformed field falls back to its
-  documented default with a warning — a broken file never hard-fails the miner.
+  Every field is optional. Unknown keys are ignored; a malformed field falls back to its documented
+  default with a warning — a broken file never hard-fails the miner.
 </Callout>
 
 ## Relationship to `.loopover.yml`
@@ -113,13 +114,12 @@ Per-repo kill-switch consulted by the Governor chokepoint before every write act
 Per-repo dry-run/live execution opt-in consulted by the Governor chokepoint.
 
 <Callout variant="warn">
-  A freshly-configured miner always defaults to dry-run (observe/log only, never execute a
-  write) — this field is the only per-repo path to live mode, and it alone is not sufficient: the
-  miner's own operator must also separately opt in globally (env var
-  `LOOPOVER_MINER_LIVE_MODE=live`) before writes actually execute. A repo that wants to guarantee
-  it never receives live automated writes, regardless of any operator's global setting, should use
-  `killSwitch.paused: true` instead — the kill-switch always takes precedence over any live-mode
-  opt-in.
+  A freshly-configured miner always defaults to dry-run (observe/log only, never execute a write) —
+  this field is the only per-repo path to live mode, and it alone is not sufficient: the miner's own
+  operator must also separately opt in globally (env var `LOOPOVER_MINER_LIVE_MODE=live`) before
+  writes actually execute. A repo that wants to guarantee it never receives live automated writes,
+  regardless of any operator's global setting, should use `killSwitch.paused: true` instead — the
+  kill-switch always takes precedence over any live-mode opt-in.
 </Callout>
 
 - `liveModeOptIn` (string or `null`, default: `null`) — must equal EXACTLY the literal `"live"` to

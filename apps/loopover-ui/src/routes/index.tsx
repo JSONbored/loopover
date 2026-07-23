@@ -79,13 +79,15 @@ function Hero() {
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-2">
             <Link
-              to="/docs/quickstart"
+              to="/docs/$slug"
+              params={{ slug: "quickstart" }}
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install MCP →
             </Link>
             <Link
-              to="/docs/maintainer-self-hosting"
+              to="/docs/$slug"
+              params={{ slug: "maintainer-self-hosting" }}
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token border border-border bg-transparent px-4 text-token-sm font-medium text-foreground transition-colors duration-150 hover:bg-accent focus-ring motion-reduce:transition-none"
             >
               Self-host reviews →
@@ -351,7 +353,8 @@ function Boundary() {
         ))}
       </ul>
       <Link
-        to="/docs/privacy-security"
+        to="/docs/$slug"
+        params={{ slug: "privacy-security" }}
         className="mt-4 inline-block text-token-sm text-coral hover:underline"
       >
         Read the privacy posture →
@@ -391,29 +394,30 @@ loopover-mcp analyze-branch --login your-login --json`}
           <ul className="mt-3 divide-y divide-border">
             {[
               {
-                to: "/docs/quickstart" as const,
+                slug: "quickstart",
                 label: "Quickstart",
                 hint: "Install + first analysis",
               },
               {
-                to: "/docs/mcp-clients" as const,
+                slug: "mcp-clients",
                 label: "MCP clients",
                 hint: "Codex · Claude · Cursor",
               },
               {
-                to: "/docs/scoreability" as const,
+                slug: "scoreability",
                 label: "Scoreability",
                 hint: "How projections work",
               },
               {
-                to: "/docs/privacy-security" as const,
+                slug: "privacy-security",
                 label: "Privacy & security",
                 hint: "Public / private boundary",
               },
             ].map((d) => (
-              <li key={d.to}>
+              <li key={d.slug}>
                 <Link
-                  to={d.to}
+                  to="/docs/$slug"
+                  params={{ slug: d.slug }}
                   className="group flex items-center justify-between gap-3 py-2.5 text-token-sm text-foreground/85 transition-colors duration-150 hover:text-foreground focus-ring rounded-token"
                 >
                   <span className="font-medium">{d.label}</span>
@@ -427,13 +431,21 @@ loopover-mcp analyze-branch --login your-login --json`}
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-token-sm">
-        <Link to="/docs/quickstart" className="text-coral hover:underline">
+        <Link
+          to="/docs/$slug"
+          params={{ slug: "quickstart" }}
+          className="text-coral hover:underline"
+        >
           Quickstart →
         </Link>
         <Link to="/api" className="text-muted-foreground hover:text-foreground">
           API reference
         </Link>
-        <Link to="/docs/mcp-clients" className="text-muted-foreground hover:text-foreground">
+        <Link
+          to="/docs/$slug"
+          params={{ slug: "mcp-clients" }}
+          className="text-muted-foreground hover:text-foreground"
+        >
           Configure Claude / Cursor / Codex
         </Link>
       </div>
@@ -642,7 +654,8 @@ function ClosingCta() {
           </div>
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <Link
-              to="/docs/quickstart"
+              to="/docs/$slug"
+              params={{ slug: "quickstart" }}
               className="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-token bg-coral px-4 text-token-sm font-medium text-primary-foreground transition-[filter,transform] duration-150 hover:brightness-110 active:scale-[0.98] focus-ring motion-reduce:transition-none motion-reduce:active:scale-100"
             >
               Install MCP →

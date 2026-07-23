@@ -1,6 +1,7 @@
 ---
 title: Branch analysis
 description: LoopOver analyzes branches using metadata only. Your source code never leaves your machine.
+eyebrow: Core concepts
 ---
 
 ## Inputs
@@ -33,19 +34,19 @@ Authorization: Bearer ••••••••
 Content-Type: application/json
 
 {
-  "login": "your-github-login",
-  "repoFullName": "entrius/gittensor",
-  "baseRef": "main",
-  "headRef": "feat/scorer-cleanup",
-  "changedFiles": [
-    { "path": "src/scorer.ts", "additions": 42, "deletions": 8, "status": "modified" }
-  ],
-  "labels": ["scorer", "ready-for-review"],
-  "linkedIssues": [421],
-  "commitMessages": ["refactor scorer gating", "fix linked-issue projection"],
-  "validation": [
-    { "command": "npm run typecheck", "status": "passed" }
-  ]
+"login": "your-github-login",
+"repoFullName": "entrius/gittensor",
+"baseRef": "main",
+"headRef": "feat/scorer-cleanup",
+"changedFiles": [
+{ "path": "src/scorer.ts", "additions": 42, "deletions": 8, "status": "modified" }
+],
+"labels": ["scorer", "ready-for-review"],
+"linkedIssues": [421],
+"commitMessages": ["refactor scorer gating", "fix linked-issue projection"],
+"validation": [
+{ "command": "npm run typecheck", "status": "passed" }
+]
 }`}
 />
 

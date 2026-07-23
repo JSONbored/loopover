@@ -1,6 +1,7 @@
 ---
 title: REES analyzer reference
 description: Every analyzer name you can put in REES_ANALYZERS, what it inspects, what it reports, and whether it needs network or GitHub token access.
+eyebrow: Self-hosting
 ---
 
 import { REES_ANALYZERS, REES_ANALYZER_NAMES, REES_PROFILES } from "@/lib/rees-analyzers";
@@ -17,9 +18,11 @@ local and low-cost registry checks.
 REES_ANALYZERS=all
 
 # A subset runs only the named analyzers.
+
 REES_ANALYZERS=secret,actionPin,redos
 
 # Invalid names are ignored; if none are valid, REES runs no analyzers.
+
 REES_ANALYZERS=unknownName`}
 />
 

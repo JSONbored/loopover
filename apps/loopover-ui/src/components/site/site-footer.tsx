@@ -4,6 +4,10 @@ import { Github } from "lucide-react";
 import { LoopOverMark } from "./mark";
 import { HealthDot } from "./health-dot";
 
+// Docs entries carry a bare `docSlug` (resolved through the single dynamic /docs/$slug route, #8151)
+// instead of a `to` -- the two are rendered by different <Link> branches below since TanStack
+// Router's typed `to`/`params` pairing can't be satisfied by one polymorphic call across a static
+// route and a dynamic-segment route in the same array.
 const cols = [
   {
     title: "Product",
@@ -17,19 +21,19 @@ const cols = [
   {
     title: "Docs",
     links: [
-      { to: "/docs/quickstart", label: "Quickstart" },
-      { to: "/docs/mcp-clients", label: "MCP clients" },
-      { to: "/docs/github-app", label: "GitHub App" },
-      { to: "/docs/maintainer-self-hosting", label: "Self-host reviews" },
-      { to: "/docs/privacy-security", label: "Privacy & security" },
+      { docSlug: "quickstart", label: "Quickstart" },
+      { docSlug: "mcp-clients", label: "MCP clients" },
+      { docSlug: "github-app", label: "GitHub App" },
+      { docSlug: "maintainer-self-hosting", label: "Self-host reviews" },
+      { docSlug: "privacy-security", label: "Privacy & security" },
     ],
   },
   {
     title: "Reference",
     links: [
       { to: "/api", label: "API reference" },
-      { to: "/docs/scoreability", label: "Scoreability" },
-      { to: "/docs/upstream-drift", label: "Upstream drift" },
+      { docSlug: "scoreability", label: "Scoreability" },
+      { docSlug: "upstream-drift", label: "Upstream drift" },
       { to: "/changelog", label: "Changelog" },
     ],
   },
@@ -37,7 +41,7 @@ const cols = [
     title: "Project",
     links: [
       { to: "/roadmap", label: "Roadmap" },
-      { to: "/docs/troubleshooting", label: "Troubleshooting" },
+      { docSlug: "troubleshooting", label: "Troubleshooting" },
       { to: "/docs", label: "All docs" },
     ],
   },
@@ -80,13 +84,23 @@ export function SiteFooter() {
             </div>
             <ul className="space-y-2 text-token-sm">
               {c.links.map((l) => (
-                <li key={l.to}>
-                  <Link
-                    to={l.to}
-                    className="text-foreground/80 transition-colors duration-150 hover:text-mint focus-ring rounded-token"
-                  >
-                    {l.label}
-                  </Link>
+                <li key={"docSlug" in l ? `/docs/${l.docSlug}` : l.to}>
+                  {"docSlug" in l ? (
+                    <Link
+                      to="/docs/$slug"
+                      params={{ slug: l.docSlug }}
+                      className="text-foreground/80 transition-colors duration-150 hover:text-mint focus-ring rounded-token"
+                    >
+                      {l.label}
+                    </Link>
+                  ) : (
+                    <Link
+                      to={l.to}
+                      className="text-foreground/80 transition-colors duration-150 hover:text-mint focus-ring rounded-token"
+                    >
+                      {l.label}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

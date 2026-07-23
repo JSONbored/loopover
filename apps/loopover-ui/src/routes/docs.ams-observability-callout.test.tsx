@@ -3,12 +3,28 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
+// Interpolates $-params the same way the real router resolves `to`/`params` into a concrete href,
+// so this stub's rendered link stays a faithful stand-in after #8151 moved the callout's Link from a
+// plain string `to` to the typed `to="/docs/$slug" params={{ slug }}` form every docs link now uses.
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, children }: { to: string; children: ReactNode }) => <a href={to}>{children}</a>,
+  Link: ({
+    to,
+    params,
+    children,
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children: ReactNode;
+  }) => {
+    const href = params
+      ? to.replace(/\$([a-zA-Z0-9_]+)/g, (_match, name: string) => params[name] ?? `$${name}`)
+      : to;
+    return <a href={href}>{children}</a>;
+  },
 }));
 
 import {
-  AMS_OBSERVABILITY_DOC_URL,
+  AMS_OBSERVABILITY_DOC_SLUG,
   AmsObservabilityCallout,
 } from "../components/site/ams-observability-callout";
 
@@ -27,12 +43,12 @@ describe("AMS observability cross-reference callout", () => {
   it("renders a link to the Observing your miner guide", () => {
     render(<AmsObservabilityCallout />);
     const link = screen.getByRole("link", { name: "Observing your miner" });
-    expect(link.getAttribute("href")).toBe(AMS_OBSERVABILITY_DOC_URL);
+    expect(link.getAttribute("href")).toBe(`/docs/${AMS_OBSERVABILITY_DOC_SLUG}`);
   });
 
-  it("targets a well-formed, non-empty in-app docs path (guards against a blank/copy-paste link)", () => {
-    expect(AMS_OBSERVABILITY_DOC_URL).toBeTruthy();
-    expect(AMS_OBSERVABILITY_DOC_URL.startsWith("/docs/")).toBe(true);
+  it("targets a well-formed, non-empty in-app docs slug (guards against a blank/copy-paste link)", () => {
+    expect(AMS_OBSERVABILITY_DOC_SLUG).toBeTruthy();
+    expect(AMS_OBSERVABILITY_DOC_SLUG.startsWith("/")).toBe(false);
   });
 
   it.each(ROUTES_WITH_CALLOUT)("wires the callout into %s", (_path, docPath) => {

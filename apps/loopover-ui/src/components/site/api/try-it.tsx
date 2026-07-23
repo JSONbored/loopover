@@ -284,7 +284,8 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
                 ? "You're offline. Live API calls are paused until your connection returns."
                 : "The LoopOver API isn't responding. We've paused live calls until it's back."}{" "}
               <Link
-                to="/docs/troubleshooting"
+                to="/docs/$slug"
+                params={{ slug: "troubleshooting" }}
                 hash="api-status"
                 className="underline-offset-2 hover:underline"
               >

@@ -1,6 +1,7 @@
 ---
 title: Miner config precedence
 description: How AMS layers configuration across per-repo goal spec, operator env, CLI flags, and operator policy files -- the order each concern actually implements today.
+eyebrow: Maintainers
 ---
 
 AMS does **not** have a single `config.js` resolver. Configuration is layered by concern across
@@ -87,8 +88,8 @@ First existing file wins (engine `MINER_GOAL_SPEC_FILENAMES`):
 
 <Callout variant="warn">
   This is an **AND** requirement, not "last writer wins". Either side missing or malformed →
-  dry-run. There is also **no CLI flag wired to governor live mode** today —
-  `attempt --live` / `loop --live` affect coding-agent spawn mode only (below).
+  dry-run. There is also **no CLI flag wired to governor live mode** today — `attempt --live` /
+  `loop --live` affect coding-agent spawn mode only (below).
 </Callout>
 
 ### Coding-agent execution mode (spawn the driver?)
@@ -151,9 +152,9 @@ cached, so a later call retries rather than staying stuck).
 requiring auth fail the same way they did before this feature existed).
 
 <Callout variant="note">
-  This is a distinct concern from "Discover forge credential env var name" above, which resolves
-  the *name* of an env var to read, not the token *value* itself; `discover --token-env` is
-  unaffected by this section.
+  This is a distinct concern from "Discover forge credential env var name" above, which resolves the
+  *name* of an env var to read, not the token *value* itself; `discover --token-env` is unaffected
+  by this section.
 </Callout>
 
 ### Local SQLite store paths

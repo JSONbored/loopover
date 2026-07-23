@@ -325,7 +325,8 @@ export function MinerPanel() {
                 <p className="mt-1 text-token-xs text-muted-foreground">
                   Each blocker links to how to clear it.{" "}
                   <Link
-                    to="/docs/scoreability"
+                    to="/docs/$slug"
+                    params={{ slug: "scoreability" }}
                     className="text-mint underline-offset-4 hover:underline"
                   >
                     See scoreability docs →

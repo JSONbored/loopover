@@ -2,9 +2,25 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
+// Interpolates $-params the same way the real router resolves `to`/`params` into a concrete href
+// (#8151 moved every docs link from a plain string `to` to the typed `to="/docs/$slug" params={{ slug }}`
+// form), so this stub's rendered link stays a faithful stand-in.
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => () => ({}),
-  Link: ({ to, children }: { to: string; children: ReactNode }) => <a href={to}>{children}</a>,
+  Link: ({
+    to,
+    params,
+    children,
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children: ReactNode;
+  }) => {
+    const href = params
+      ? to.replace(/\$([a-zA-Z0-9_]+)/g, (_match, name: string) => params[name] ?? `$${name}`)
+      : to;
+    return <a href={href}>{children}</a>;
+  },
 }));
 
 import { InstallPage } from "./install.index";

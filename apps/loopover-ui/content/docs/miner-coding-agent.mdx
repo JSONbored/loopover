@@ -1,6 +1,7 @@
 ---
 title: Miner coding-agent driver
 description: Choose a production provider, override the right model and timeout knobs, and recognize credential failures before you chase the wrong layer.
+eyebrow: Configuration
 ---
 
 The miner resolves `MINER_CODING_AGENT_PROVIDER` as a comma-separated preference list. The first
@@ -47,6 +48,7 @@ MINER_CODING_AGENT_CLAUDE_MODEL=<optional-claude-model>
 MINER_CODING_AGENT_TIMEOUT_MS=120000
 
 # Prefer Codex, fall back to Claude.
+
 MINER_CODING_AGENT_PROVIDER=codex-cli,claude-cli
 MINER_CODING_AGENT_CODEX_MODEL=<optional-codex-model>`}
 />

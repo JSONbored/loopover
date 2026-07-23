@@ -1,6 +1,7 @@
 ---
 title: Running ORB and AMS together
 description: Run ORB (self-hosted PR review) and AMS (the autonomous miner) together on one host -- shared state, aligned .env, and working AMS Grafana panels in fleet mode.
+eyebrow: Self-hosting
 ---
 
 ORB (self-hosted PR review) and AMS (the autonomous miner) each run on their own, but there is one
@@ -67,7 +68,7 @@ two never line up on their own and the Grafana AMS datasources stay **silently e
 ## 3. Bridge the state so AMS panels populate
 
 The AMS package ships an opt-in override that relocates the fleet miner's `/data/miner` state onto
-the *same* host directory the exporter reads — using the same `LOOPOVER_MINER_CONFIG_DIR`
+the _same_ host directory the exporter reads — using the same `LOOPOVER_MINER_CONFIG_DIR`
 variable and default, so there is no `docker volume inspect` archaeology. Copy the example (it is
 gitignored) and run all three compose files together with both profiles:
 
@@ -77,14 +78,14 @@ gitignored) and run all three compose files together with both profiles:
    packages/loopover-miner/docker-compose.miner.override.yml   # edit the host path only for a non-default location
 
 docker compose \\
-  -f docker-compose.yml \\
-  -f packages/loopover-miner/docker-compose.miner.yml \\
-  -f packages/loopover-miner/docker-compose.miner.override.yml \\
-  --profile observability --profile ams-observability up -d`}
+-f docker-compose.yml \\
+-f packages/loopover-miner/docker-compose.miner.yml \\
+-f packages/loopover-miner/docker-compose.miner.override.yml \\
+--profile observability --profile ams-observability up -d`}
 />
 
 The override bind-mounts `/data/miner` to `${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}`
-— Compose merges by container path, so this *replaces* the base file's `miner-data` named-volume
+— Compose merges by container path, so this _replaces_ the base file's `miner-data` named-volume
 mount for the same target rather than adding a second one. The exporter's own bind is the same
 source: `${LOOPOVER_MINER_CONFIG_DIR:-~/.config/loopover-miner}:/ams-ledgers:ro`. Both sides now
 read one location.

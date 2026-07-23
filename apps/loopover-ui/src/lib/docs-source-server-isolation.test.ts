@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 // fumadocs-mdx lookup behind a createServerFn (docs-source.functions.ts) so the client always
 // fetches the result over the wire instead of re-executing the server-only module itself.
 //
-// docs-source.server.ts isn't imported here: like docs.miner-coding-agent.test.tsx and
+// docs-source.server.ts isn't imported here: like miner-coding-agent-docs-data.test.ts and
 // docs.ams-observability-callout.test.tsx, actually evaluating fumadocs-mdx's generated
 // `collections/server` module needs the fumadocs-mdx Vite plugin (registered for the app build,
 // not this standalone vitest.config.ts), so this is a source-level drift guard instead.
@@ -28,8 +28,11 @@ describe("docs.*.tsx routes never import docs-source(.server) directly", () => {
   );
   const inScope = docsRouteFiles.filter((name) => !outOfScope.has(name));
 
-  it("found the expected set of in-scope docs route files", () => {
-    expect(inScope.length).toBe(49);
+  // #8151: the 49 per-page docs.<slug>.tsx files collapsed into one dynamic docs.$slug.tsx
+  // route, so this is now a shape assertion (exactly the dynamic route, nothing else) rather
+  // than a per-page count that had to be bumped on every new docs page.
+  it("found exactly the single dynamic docs route, nothing else, in scope", () => {
+    expect(inScope).toEqual(["docs.$slug.tsx"]);
   });
 
   it.each(inScope)(

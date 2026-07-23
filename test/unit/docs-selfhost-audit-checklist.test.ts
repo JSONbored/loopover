@@ -11,6 +11,7 @@ import {
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const ROUTES_DIR = resolve(REPO_ROOT, "apps/loopover-ui/src/routes");
+const CONTENT_DIR = resolve(REPO_ROOT, "apps/loopover-ui/content/docs");
 // SPIKE (#6037): these two pages' prose now lives in the migrated content/docs/*.mdx files, not
 // the route .tsx, which only orchestrates the fumadocs loader + client-loader -- point the drift
 // guard at the actual content source. docs.index.tsx (below, for the docs-hub link check) is the
@@ -28,9 +29,9 @@ describe("self-host docs accuracy audit (#1829)", () => {
   const maintainerSource = readFileSync(MAINTAINER_INDEX, "utf8");
   const packageJson = JSON.parse(readFileSync(PACKAGE_JSON, "utf8")) as { scripts: Record<string, string> };
 
-  it("manifest lists every self-host docs route file on disk", () => {
+  it("manifest lists every self-host docs content file on disk (pages are content/docs/*.mdx since the #8182 dynamic route)", () => {
     for (const page of SELFHOST_DOCS_PAGES) {
-      expect(existsSync(resolve(ROUTES_DIR, page.routeFile)), page.routeFile).toBe(true);
+      expect(existsSync(resolve(CONTENT_DIR, page.contentFile)), page.contentFile).toBe(true);
     }
   });
 

@@ -3,75 +3,77 @@
 export type SelfHostDocsPageLink = {
   title: string;
   path: string;
-  routeFile: string;
+  /** The page's real source since the #8182 dynamic-route migration: content/docs/<slug>.mdx (the
+   *  one docs.$slug.tsx route serves every page — there is no per-page .tsx to point at anymore). */
+  contentFile: string;
 };
 
 export const SELFHOST_DOCS_PAGES = [
   {
     title: "Quickstart",
     path: "/docs/self-hosting-quickstart",
-    routeFile: "docs.self-hosting-quickstart.tsx",
+    contentFile: "self-hosting-quickstart.mdx",
   },
   {
     title: "Configuration",
     path: "/docs/self-hosting-configuration",
-    routeFile: "docs.self-hosting-configuration.tsx",
+    contentFile: "self-hosting-configuration.mdx",
   },
   {
     title: "GitHub App and Orb",
     path: "/docs/self-hosting-github-app",
-    routeFile: "docs.self-hosting-github-app.tsx",
+    contentFile: "self-hosting-github-app.mdx",
   },
   {
     title: "AI providers",
     path: "/docs/self-hosting-ai-providers",
-    routeFile: "docs.self-hosting-ai-providers.tsx",
+    contentFile: "self-hosting-ai-providers.mdx",
   },
   {
     title: "REES enrichment",
     path: "/docs/self-hosting-rees",
-    routeFile: "docs.self-hosting-rees.tsx",
+    contentFile: "self-hosting-rees.mdx",
   },
   {
     title: "REES analyzer reference",
     path: "/docs/self-hosting-rees-analyzers",
-    routeFile: "docs.self-hosting-rees-analyzers.tsx",
+    contentFile: "self-hosting-rees-analyzers.mdx",
   },
-  { title: "RAG indexing", path: "/docs/self-hosting-rag", routeFile: "docs.self-hosting-rag.tsx" },
+  { title: "RAG indexing", path: "/docs/self-hosting-rag", contentFile: "self-hosting-rag.mdx" },
   {
     title: "Operations",
     path: "/docs/self-hosting-operations",
-    routeFile: "docs.self-hosting-operations.tsx",
+    contentFile: "self-hosting-operations.mdx",
   },
   {
     title: "Backup and scaling",
     path: "/docs/self-hosting-backup-scaling",
-    routeFile: "docs.self-hosting-backup-scaling.tsx",
+    contentFile: "self-hosting-backup-scaling.mdx",
   },
   {
     title: "Releases and images",
     path: "/docs/self-hosting-releases",
-    routeFile: "docs.self-hosting-releases.tsx",
+    contentFile: "self-hosting-releases.mdx",
   },
   {
     title: "Release checklist",
     path: "/docs/self-hosting-release-checklist",
-    routeFile: "docs.self-hosting-release-checklist.tsx",
+    contentFile: "self-hosting-release-checklist.mdx",
   },
   {
     title: "Security",
     path: "/docs/self-hosting-security",
-    routeFile: "docs.self-hosting-security.tsx",
+    contentFile: "self-hosting-security.mdx",
   },
   {
     title: "Troubleshooting",
     path: "/docs/self-hosting-troubleshooting",
-    routeFile: "docs.self-hosting-troubleshooting.tsx",
+    contentFile: "self-hosting-troubleshooting.mdx",
   },
   {
     title: "Docs accuracy audit",
     path: "/docs/self-hosting-docs-audit",
-    routeFile: "docs.self-hosting-docs-audit.tsx",
+    contentFile: "self-hosting-docs-audit.mdx",
   },
 ] as const;
 

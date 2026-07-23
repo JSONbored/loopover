@@ -495,29 +495,31 @@ repeat the extension block in your override file:
   TEMP: /tmp/runner/tmp
 
 services:
-runner-2-tmp-init:
-image: alpine:3.20
-profiles: ["runners"]
-volumes: - runner-work-2:/tmp/runner
-command: ["sh", "-c", "mkdir -p /tmp/runner/tmp && chmod 1777 /tmp/runner/tmp"]
+  runner-2-tmp-init:
+    image: alpine:3.20
+    profiles: ["runners"]
+    volumes:
+      - runner-work-2:/tmp/runner
+    command: ["sh", "-c", "mkdir -p /tmp/runner/tmp && chmod 1777 /tmp/runner/tmp"]
 
-runner-2:
-image: myoung34/github-runner:ubuntu-jammy
-profiles: ["runners"]
-depends_on:
-runner-2-tmp-init:
-condition: service_completed_successfully
-environment:
-<<: \*runner-tmp-env
-RUNNER_NAME: loopover-runner-2
-RUNNER_SCOPE: \${RUNNER_SCOPE:-repo}
-REPO_URL: \${RUNNER_REPO_URL:-}
-RUNNER_TOKEN: \${RUNNER_TOKEN:-}
-RUNNER_WORKDIR: /tmp/runner
-volumes: - runner-work-2:/tmp/runner
+  runner-2:
+    image: myoung34/github-runner:ubuntu-jammy
+    profiles: ["runners"]
+    depends_on:
+      runner-2-tmp-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *runner-tmp-env
+      RUNNER_NAME: loopover-runner-2
+      RUNNER_SCOPE: \${RUNNER_SCOPE:-repo}
+      REPO_URL: \${RUNNER_REPO_URL:-}
+      RUNNER_TOKEN: \${RUNNER_TOKEN:-}
+      RUNNER_WORKDIR: /tmp/runner
+    volumes:
+      - runner-work-2:/tmp/runner
 
 volumes:
-runner-work-2:`}
+  runner-work-2:`}
 />
 
 ## Enabling Sentry (your own DSN)

@@ -10,7 +10,8 @@ import {
 
 const repoRoot = process.cwd();
 const runbookPath = join(repoRoot, "apps/loopover-ui/content/docs/ams-kill-switch-incident.mdx");
-const routePath = join(repoRoot, "apps/loopover-ui/src/routes/docs.ams-kill-switch-incident.tsx");
+// #8182 replaced the per-page thin route with the one dynamic docs route — that file now serves this page.
+const routePath = join(repoRoot, "apps/loopover-ui/src/routes/docs.$slug.tsx");
 const docsNavPath = join(repoRoot, "apps/loopover-ui/src/components/site/docs-nav.tsx");
 
 describe("kill-switch incident runbook (#4809)", () => {
@@ -20,7 +21,7 @@ describe("kill-switch incident runbook (#4809)", () => {
     const nav = readFileSync(docsNavPath, "utf8");
 
     expect(runbook).toContain("title: Kill-switch incident runbook");
-    expect(route).toContain('createFileRoute("/docs/ams-kill-switch-incident")');
+    expect(route).toContain('createFileRoute("/docs/$slug")');
     expect(nav).toContain('to: "/docs/ams-kill-switch-incident"');
   });
 

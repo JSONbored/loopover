@@ -1,0 +1,188 @@
+# Counterfactual prompt replay (#8222, sub-epic #8218, epic #8211 track C). When a PR touches the reviewer
+# judge-prompt surface, this job replays the CANONICAL judge prompt from BOTH the PR's head and base
+# checkouts (scripts/print-review-prompt.ts — the #8139 dual-checkout mechanism) against the recorded
+# raw-context fixture corpus, and posts the Pareto-floored comparison as its own advisory comment. Mirrors
+# backtest-logic-check.yml's posture end-to-end: separate workflow (untouched PRs pay nothing), advisory
+# only (#8105 — never a required check, never blocks merge), every step fails OPEN (notice + green; the
+# review engine auto-closes contributor PRs on ANY red check, so this job's own plumbing must never redden).
+#
+# SPEND GUARD (#8222's requirement): the replay costs real model inference, so the whole run is gated on
+# the deployment explicitly configuring a budget — the COUNTERFACTUAL_REPLAY_BUDGET repo variable (neuron
+# units, see COUNTERFACTUAL_DEFAULT_NEURON_BUDGET) plus the provider endpoint/model below. Unset (the
+# default), the job posts a visible "skipped: no replay budget configured" notice and does nothing else.
+name: counterfactual-replay
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    # Exactly the judge-prompt surface: REVIEW_PROMPT_VERSION + buildSystemPrompt/parseModelReview live
+    # here. Keep in sync with #8222's spec.
+    paths:
+      - "src/services/ai-review.ts"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: counterfactual-replay-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: counterfactual replay (advisory)
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # The budget gate comes FIRST so an unconfigured deployment pays one echo, not an npm ci.
+      - name: Check replay budget configuration
+        id: budget
+        env:
+          REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
+          REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
+          REPLAY_PROVIDER_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+        run: |
+          if [ -n "$REPLAY_BUDGET" ] && [ -n "$REPLAY_MODEL" ] && [ -n "$REPLAY_PROVIDER_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Counterfactual replay skipped: no replay budget configured (set the COUNTERFACTUAL_REPLAY_BUDGET + COUNTERFACTUAL_REPLAY_MODEL repo variables and the COUNTERFACTUAL_OLLAMA_URL secret to enable). Advisory only, never fails the PR."
+          fi
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        with:
+          persist-credentials: false
+
+      # The PR's base commit inside the head workspace — base-side dynamic imports resolve bare specifiers
+      # by walking up into the head checkout's node_modules, so one npm ci serves both sides (#8139).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .replay-base
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install deps
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        run: npm ci --ignore-scripts
+
+      - name: Build engine package
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        run: npx turbo run build --filter=@loopover/engine
+
+      # Everything below fails OPEN — notice + green, never a red check (#8105 held against our own infra).
+      - name: Extract base/head canonical prompts
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        id: prompts
+        run: |
+          if npx tsx scripts/print-review-prompt.ts --root . > head-prompt.txt \
+            && npx tsx scripts/print-review-prompt.ts --root .replay-base > base-prompt.txt \
+            && npx tsx scripts/print-review-prompt.ts --root . --version-only > head-version.txt \
+            && npx tsx scripts/print-review-prompt.ts --root .replay-base --version-only > base-version.txt; then
+            if cmp -s head-prompt.txt base-prompt.txt; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Judge prompt surface touched but the canonical prompt text is byte-identical across base/head — nothing to replay."
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Prompt extraction failed — replay skipped. Advisory only, never fails the PR."
+          fi
+
+      - name: Export corpus from D1
+        if: ${{ steps.budget.outputs.configured == 'true' && steps.prompts.outputs.changed == 'true' }}
+        id: corpus
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if npx tsx scripts/backtest-corpus-export.ts --rule-id ai_consensus_defect --output replay-corpus.json --remote; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Corpus export from D1 failed — replay skipped. Advisory only, never fails the PR."
+          fi
+
+      # Two runs over the IDENTICAL deterministic sample (seed = head SHA, per the design contract's
+      # per-PR determinism requirement): base prompt first (the baseline artifact), then head with
+      # --baseline (comparison + comment + persisted run event).
+      - name: Replay base and head prompts
+        if: ${{ steps.corpus.outputs.available == 'true' }}
+        id: replay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
+          REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
+          REPLAY_PROVIDER_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BASE_VERSION=$(cat base-version.txt)
+          HEAD_VERSION=$(cat head-version.txt)
+          if npx tsx scripts/counterfactual-replay.ts \
+              --fixtures replay-corpus.json \
+              --variant "${BASE_VERSION}@${REPLAY_MODEL}" \
+              --prompt-file base-prompt.txt \
+              --budget "$REPLAY_BUDGET" \
+              --seed-suffix "$HEAD_SHA" \
+              --ollama-url "$REPLAY_PROVIDER_URL" \
+              --out base-scores.json \
+            && npx tsx scripts/counterfactual-replay.ts \
+              --fixtures replay-corpus.json \
+              --variant "${HEAD_VERSION}@${REPLAY_MODEL}" \
+              --prompt-file head-prompt.txt \
+              --budget "$REPLAY_BUDGET" \
+              --seed-suffix "$HEAD_SHA" \
+              --ollama-url "$REPLAY_PROVIDER_URL" \
+              --baseline base-scores.json \
+              --base-variant-label "$BASE_VERSION" \
+              --comment-out replay-comment.md \
+              --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
+              --persist --remote --db loopover \
+              --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Counterfactual replay failed — no comparison produced. Advisory only, never fails the PR."
+          fi
+
+      - name: Post or update the PR comment
+        if: ${{ steps.replay.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          post_comment() {
+            marker="<!-- loopover-counterfactual-backtest -->"
+            comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty" | head -n 1)
+            if [ -n "$comment_id" ]; then
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -X PATCH -F body=@replay-comment.md
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@replay-comment.md
+            fi
+          }
+          if ! post_comment; then
+            echo "::notice::PR comment post failed — replay computed and persisted but not posted. Advisory only, never fails the PR."
+          fi
+
+  # Fork half of the paired convention: fork runs get no secrets, so the replay cannot run — say so.
+  fork-notice:
+    name: counterfactual replay (skipped for fork PRs)
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain the skip
+        run: echo "::notice::Fork PR — repo secrets are withheld, so the counterfactual replay is skipped. Advisory only; nothing blocks."

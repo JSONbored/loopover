@@ -987,6 +987,20 @@ const IMPROVEMENT_SIGNAL_SUFFIX =
  *  prioritization suffix when on, then the inline-findings instruction when the caller asked for them, then the
  *  improvement-signal instruction when the caller resolved that feature on; all absent (default) → the base
  *  prompt, byte-identical to today. */
+/** #8222: the judge-prompt VERSION the counterfactual replay workflow keys on. Bump this on ANY change
+ *  that shapes the judge's verdict surface — REVIEW_SYSTEM_PROMPT, buildSystemPrompt's suffix composition,
+ *  or parseModelReview's accepted output shape. The CI replay compares base vs head canonical prompts and
+ *  only spends when the version (or the canonical text) actually changed. */
+export const REVIEW_PROMPT_VERSION = "review-prompt-v1";
+
+/** #8222: the CANONICAL judge prompt — buildSystemPrompt with every optional suffix absent, which is the
+ *  exact base-model system prompt a default-configured repo's review runs under. The replay harness diffs
+ *  and replays THIS text across a PR's base/head checkouts (the #8139 dual-checkout mechanism), so it must
+ *  stay a pure function of the source alone: no inputs, no env, no clock. */
+export function buildCanonicalJudgePrompt(): string {
+  return buildSystemPrompt({ repoFullName: "canonical/fixture", title: "", body: "", diff: "" } as LoopOverAiReviewInput);
+}
+
 function buildSystemPrompt(input: LoopOverAiReviewInput): string {
   const groundingSuffix = input.grounding?.systemSuffix ?? "";
   // Review-enrichment brief (#1472): the REES supplies a one-line discipline suffix ("treat a listed CVE/secret as

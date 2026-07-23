@@ -162,6 +162,41 @@ contract (`@loopover/engine`'s `counterfactual-contract` module). Three decision
   excluded from the confusion matrix and counted separately, never coerced to a verdict, so a degenerate
   prompt cannot farm precision by failing to answer on hard cases.
 
+### The replay harness
+
+The contract is implemented by `scripts/counterfactual-replay.ts` (pure core in
+`counterfactual-replay-core.ts`). A worked local example against an ollama model:
+
+```bash
+# 1. Export the labeled corpus (raw-context diffs included) to a manifest:
+tsx scripts/backtest-corpus-export.ts --rule-id ai_consensus_defect --output corpus.json --remote
+
+# 2. Score the current prompt as the baseline:
+tsx scripts/counterfactual-replay.ts --fixtures corpus.json \
+  --variant review-prompt-v1@llama3.1:8b --out baseline.json
+
+# 3. Score a candidate prompt against the SAME deterministic sample and print the Pareto comparison:
+tsx scripts/counterfactual-replay.ts --fixtures corpus.json \
+  --variant candidate@llama3.1:8b --prompt-file candidate-prompt.txt \
+  --baseline baseline.json
+```
+
+Raw model outputs cache under `.counterfactual-artifacts/` (never committed), so re-scoring after a
+parser or mapping change costs nothing. Exit codes reflect operational success only — never a verdict.
+
+### The prompt-change workflow
+
+A PR that touches the reviewer judge-prompt surface (`src/services/ai-review.ts` — bump
+`REVIEW_PROMPT_VERSION` whenever a change shapes the judge's verdict) triggers the
+`counterfactual-replay` advisory workflow: it extracts the **canonical judge prompt** from both the
+base and head checkouts, replays both over the identical seeded sample (seed = head SHA, so re-runs
+per push are deterministic), posts the comparison as an update-in-place PR comment, and persists a
+`calibration.counterfactual_backtest_run` event feeding the same REGRESSED-verdict track record as the
+threshold and logic backtests. The check spends nothing unless the deployment explicitly configures a
+replay budget (repo variables `COUNTERFACTUAL_REPLAY_BUDGET`/`COUNTERFACTUAL_REPLAY_MODEL` plus the
+provider endpoint secret) — otherwise it posts a visible "skipped: no replay budget configured" notice.
+Advisory forever until a separate, explicit authority decision, exactly like every other backtest gate.
+
 ## Self-hosting
 
 On a self-host deployment the same calibration system runs against your Postgres instead of D1 —

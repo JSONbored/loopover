@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Read-only D1 → REGRESSED-verdict track-record summary (#8140, epic #8082). Reads the BacktestComparison
-// results the advisory backtests persist — #8138's ORB-native threshold runs AND #8139's CI-side logic
-// runs, sibling event types with the same metadata.comparison shape — out of audit_events via `wrangler d1
+// results the advisory backtests persist — #8138's ORB-native threshold runs, #8139's CI-side logic
+// runs, and #8222's CI-side counterfactual prompt replays, sibling event types with the same
+// metadata.comparison shape — out of audit_events via `wrangler d1
 // execute --json`, aggregates them with the pure computeRegressedVerdictTrackRecord (@loopover/engine), and
 // prints the summary #8105's Phase-2 merge-gating decision needs. The aggregation lives in the engine
 // (pure, unit-tested); this file is the thin IO wrapper — mirrors backtest-corpus-export.ts's identical split.
@@ -14,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { openPgDatabase, resolvePgConnection } from "./pg-cli.js";
 import { computeRegressedVerdictTrackRecord, type BacktestComparison } from "@loopover/engine";
 import { LOGIC_BACKTEST_EVENT_TYPE } from "./backtest-logic-check-core.js";
+import { COUNTERFACTUAL_BACKTEST_EVENT_TYPE } from "./counterfactual-replay-core.js";
 
 // Mirrors THRESHOLD_BACKTEST_EVENT_TYPE in src/services/threshold-backtest-run.ts (#8138's writer) and must
 // be kept in sync with it by hand — that module is Worker-bound (D1 repositories import graph) and
@@ -59,7 +61,7 @@ async function main() {
     console.error("Usage: tsx scripts/backtest-track-record.ts --db <database> [--remote] | --pg <postgres://…>");
     process.exit(2);
   }
-  const sql = `SELECT metadata_json FROM audit_events WHERE event_type IN ('${THRESHOLD_BACKTEST_EVENT_TYPE}', '${LOGIC_BACKTEST_EVENT_TYPE}') ORDER BY created_at ASC`;
+  const sql = `SELECT metadata_json FROM audit_events WHERE event_type IN ('${THRESHOLD_BACKTEST_EVENT_TYPE}', '${LOGIC_BACKTEST_EVENT_TYPE}', '${COUNTERFACTUAL_BACKTEST_EVENT_TYPE}') ORDER BY created_at ASC`;
   const rows = pgConnection ? await pgQuery(pgConnection, sql) : d1Query(args.db!, args.remote, sql);
   const comparisons: BacktestComparison[] = [];
   for (const row of rows) {

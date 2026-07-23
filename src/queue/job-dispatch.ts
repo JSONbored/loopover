@@ -31,7 +31,7 @@ import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, run
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride, runActiveReviewReconciliation } from "../review/active-review-reconciliation";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { isSatisfactionFloorAutotuneEnabled, runScheduledSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
-import { GENERIC_LIVE_KNOBS, isKnobAutotuneEnabled, runScheduledKnobLoosening } from "../services/knob-loosening-run";
+import { GENERIC_LIVE_KNOBS, isConfigDriftSentinelEnabled, isKnobAutotuneEnabled, runConfigDriftSentinel, runScheduledKnobLoosening } from "../services/knob-loosening-run";
 import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
@@ -354,6 +354,9 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       for (const knob of GENERIC_LIVE_KNOBS) {
         if (isKnobAutotuneEnabled(env, knob)) await runScheduledKnobLoosening(env, knob);
       }
+      // #8213: the drift sentinel rides the same calibration tick, behind its own default-off flag.
+      // Alert-only — it never writes a knob value — and internally fail-safe per knob.
+      if (isConfigDriftSentinelEnabled(env)) await runConfigDriftSentinel(env);
       return;
     case "selftune":
       // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Defense-in-depth: the cron only

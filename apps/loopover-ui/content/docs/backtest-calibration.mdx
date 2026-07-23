@@ -96,6 +96,18 @@ Every earned scope applies the identical loosening-only validation (strictly bel
 the hard minimum), and the knob's autotune flag gates *all* earned scopes at once — turning the flag off
 restores shipped behavior everywhere instantly, no cleanup. The knobs status endpoint lists each knob's
 per-repo overrides so a lingering row is always visible.
+## Config-drift sentinel
+
+Stale configuration — rules that were right when set and wrong after the repo's reality moved — is the
+largest empirically-measured wrongness source in the historical ledger. The drift sentinel closes that
+gap: on the calibration tick (behind `CONFIG_DRIFT_SENTINEL_ENABLED`, default off) it replays each live
+knob's **current** value against the trailing corpus and alerts when a *tighter* alternative (or a revert
+to the shipped default) Pareto-dominates what is live — same splits, same floors, same never-on-noise
+minimums as every other calibration verdict. Looser-dominating findings are deliberately suppressed (the
+loosening loop owns that direction). One alert per drift episode: a standing unchanged drift never
+re-alerts, a changed one does, and recovery clears the episode. The sentinel is **alert-only** — it never
+writes a knob value — and the knobs status endpoint shows each knob's current drift report regardless of
+the flag, so a standing drift is always visible.
 
 ## Counterfactual replay (design)
 

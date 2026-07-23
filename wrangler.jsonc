@@ -42,6 +42,7 @@
     // deliberately; flipping back OFF instantly restores the shipped floor (the override stops being read).
     "SATISFACTION_FLOOR_AUTOTUNE_ENABLED": "false",
     "AI_REVIEW_CLOSE_CONFIDENCE_AUTOTUNE_ENABLED": "false",
+    "CONFIG_DRIFT_SENTINEL_ENABLED": "false",
     "LOOPOVER_AUTO_FILE_DRIFT_ISSUES": "false",
     "LOOPOVER_DRIFT_ISSUE_REPO": "JSONbored/loopover",
     // LoopOver rebrand (issue #4765): full cutover, loopover.ai only. gittensory.aethereal.dev is retired

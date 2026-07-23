@@ -15,7 +15,7 @@
 import { buildBacktestCorpus } from "@loopover/engine";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { recordAuditEvent } from "../db/repositories";
-import { evaluateKnobLoosening, LOOSENABLE_KNOBS, type KnobLooseningProposal, type LoosenableKnob } from "./loosening-knobs";
+import { evaluateKnobDrift, evaluateKnobLoosening, LOOSENABLE_KNOBS, type KnobDriftReport, type KnobLooseningProposal, type LoosenableKnob } from "./loosening-knobs";
 
 const CORPUS_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000; // mirrors threshold-backtest-run's 90-day window
 
@@ -161,6 +161,81 @@ export async function runScheduledKnobLoosening(env: Env, knob: LoosenableKnob):
   }
 }
 
+// ── Config-drift sentinel (#8213, epic #8211 track A) ────────────────────────────────────────────────────
+
+/** Truthy-string flag for the drift sentinel — default off, so a deploy is byte-identical until opted in. */
+export function isConfigDriftSentinelEnabled(env: Env): boolean {
+  const value = ((env as unknown as Record<string, unknown>).CONFIG_DRIFT_SENTINEL_ENABLED as string | undefined ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "on" || value === "yes";
+}
+
+const DRIFT_FINGERPRINT_FLAG_PREFIX = "config_drift_fingerprint:";
+
+export type ConfigDriftTickResult = { knobId: string; state: "alerted" | "standing" | "suppressed_looser" | "clean" };
+
+/**
+ * One sentinel pass over every live knob (#8213): replay the CURRENT live value against the knob's
+ * trailing corpus and alert when a TIGHTER (or shipped-revert) alternative Pareto-dominates it — the
+ * stale-config signal the #8170 retro analysis proved is the operator's largest wrongness source. A
+ * LOOSER winner is suppressed (the loosening loop's own surfacing owns that direction). Episode dedup:
+ * the last-alerted fingerprint (knob + direction + dominating value) persists in system_flags; a standing
+ * unchanged drift never re-alerts, a CHANGED drift does, and a cleared drift clears the fingerprint.
+ * ALERT-ONLY authority — the sentinel never writes a knob value. Fail-safe per knob.
+ */
+export async function runConfigDriftSentinel(env: Env, knobs: readonly LoosenableKnob[] = Object.values(LOOSENABLE_KNOBS)): Promise<ConfigDriftTickResult[]> {
+  const results: ConfigDriftTickResult[] = [];
+  for (const knob of knobs) {
+    if (knob.applyMode !== "live") continue;
+    try {
+      const liveValue = (await getKnobOverride(env, knob)) ?? knob.shippedValue;
+      const { fired, overrides } = await createSignalStore(env).queryRuleHistory(knob.ruleId, Date.now() - CORPUS_LOOKBACK_MS);
+      const report = evaluateKnobDrift(knob, buildBacktestCorpus(knob.ruleId, fired, overrides), liveValue);
+      const fingerprintKey = `${DRIFT_FINGERPRINT_FLAG_PREFIX}${knob.knobId}`;
+      const stored = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(fingerprintKey).first<{ value: string }>();
+
+      if (!report || report.direction === "looser") {
+        if (stored) {
+          await env.DB.prepare("DELETE FROM system_flags WHERE key = ?").bind(fingerprintKey).run();
+        }
+        results.push({ knobId: knob.knobId, state: report ? "suppressed_looser" : "clean" });
+        continue;
+      }
+
+      const fingerprint = `${knob.knobId}:${report.direction}:${report.dominatingValue}`;
+      if (stored?.value === fingerprint) {
+        results.push({ knobId: knob.knobId, state: "standing" });
+        continue;
+      }
+      await env.DB.prepare(
+        "INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      )
+        .bind(fingerprintKey, fingerprint)
+        .run();
+      // Same Workers-Logs + Sentry notify path as the loosening alert; `ev` keeps knobs distinct.
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "config_drift_detected",
+          ev: knob.knobId,
+          at: new Date().toISOString(),
+          direction: report.direction,
+          liveValue: report.liveValue,
+          dominatingValue: report.dominatingValue,
+          visibleCases: report.visibleCases,
+          heldOutCases: report.heldOutCases,
+        }),
+      );
+      results.push({ knobId: knob.knobId, state: "alerted" });
+    } catch (error) {
+      console.warn(
+        JSON.stringify({ level: "warn", event: "config_drift_tick_failed", ev: knob.knobId, error: error instanceof Error ? error.message : "unknown error" }),
+      );
+      results.push({ knobId: knob.knobId, state: "clean" });
+    }
+  }
+  return results;
+}
+
 // ── Operator status (the #8161 surface generalized across live knobs) ────────────────────────────────────
 
 export type KnobAppliedEntry = {
@@ -188,6 +263,9 @@ export type KnobStatus = {
   /** Per-repo earned overrides (#8216), validated rows only, sorted by repo — an operator must see every
    *  scope that would take effect the moment the flag is on. */
   repoOverrides: KnobRepoOverride[];
+  /** The CURRENT drift report at the live value (#8213) — computed on read, deliberately NOT flag-gated
+   *  (an operator must see a standing drift even while the sentinel is off); null when clean/insufficient. */
+  drift: KnobDriftReport | null;
   applied: KnobAppliedEntry[];
 };
 
@@ -240,6 +318,15 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     /* degrade to an empty listing -- the endpoint must not throw on a read blip */
   }
 
+  let drift: KnobDriftReport | null = null;
+  try {
+    const liveValue = flagEnabled && storedOverride !== null ? storedOverride : knob.shippedValue;
+    const { fired, overrides } = await createSignalStore(env).queryRuleHistory(knob.ruleId, Date.now() - CORPUS_LOOKBACK_MS);
+    drift = evaluateKnobDrift(knob, buildBacktestCorpus(knob.ruleId, fired, overrides), liveValue);
+  } catch {
+    drift = null; // degrade -- the endpoint must not throw on a read blip
+  }
+
   const applied: KnobAppliedEntry[] = [];
   try {
     const rows = await env.DB.prepare("SELECT created_at, metadata_json FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?")
@@ -276,6 +363,7 @@ export async function loadKnobStatus(env: Env, knob: LoosenableKnob): Promise<Kn
     liveValue: flagEnabled && storedOverride !== null ? storedOverride : knob.shippedValue,
     storedOverride,
     repoOverrides,
+    drift,
     applied,
   };
 }

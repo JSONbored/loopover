@@ -10,8 +10,10 @@ import {
   getKnobOverrideForRepo,
   repoKnobOverrideFlagKey,
   isKnobAutotuneEnabled,
+  isConfigDriftSentinelEnabled,
   loadKnobStatus,
   loadLiveKnobStatuses,
+  runConfigDriftSentinel,
   runKnobLoosening,
   runScheduledKnobLoosening,
 } from "../../src/services/knob-loosening-run";
@@ -277,6 +279,114 @@ describe("processor + endpoint wiring (#8176)", () => {
   });
 });
 
+describe("runConfigDriftSentinel (#8213)", () => {
+  const driftEnv = (base?: Env) => ({ ...(base ?? enabledEnv()), CONFIG_DRIFT_SENTINEL_ENABLED: "true" as never }) as Env;
+
+  // A corpus where TIGHTENING wins: reversed cases sit at 0.91 — a 0.85 live floor misses them, the
+  // shipped 0.93 catches them (recall up, no precision loss) — the stale-config shape the sentinel exists
+  // to flag. Same membership-probe technique as the loosening seeder.
+  async function seedDriftFriendlyHistory(env: Env): Promise<void> {
+    const pool = Array.from({ length: 400 }, (_, i) => `acme/widgets#${i + 1}`);
+    const probe = pool.map((targetKey) => ({
+      ruleId: AI_KNOB.ruleId, targetKey, outcome: "unaddressed", label: "confirmed" as const,
+      firedAt: "2026-07-01T00:00:00.000Z", decidedAt: "2026-07-02T00:00:00.000Z",
+    }));
+    const { visible, heldOut } = splitBacktestCorpus(probe, AI_KNOB.heldOutFraction, AI_KNOB.splitSeed);
+    const store = createSignalStore(env);
+    const now = Date.now();
+    const seed = async (targetKey: string, confidence: number, verdict: "confirmed" | "reversed", i: number) => {
+      await store.recordRuleFired({ ruleId: AI_KNOB.ruleId, targetKey, outcome: "unaddressed", occurredAt: new Date(now - 10_000 - i).toISOString(), metadata: { confidence } });
+      await store.recordHumanOverride({ ruleId: AI_KNOB.ruleId, targetKey, verdict, occurredAt: new Date(now - i).toISOString() });
+    };
+    let i = 0;
+    for (const c of visible.slice(0, AI_KNOB.minVisibleCases + 4)) await seed(c.targetKey, 0.91, "reversed", i++);
+    for (const c of heldOut.slice(0, AI_KNOB.minHeldOutCases + 2)) await seed(c.targetKey, 0.91, "reversed", i++);
+    await seed(visible[AI_KNOB.minVisibleCases + 5]!.targetKey, 0.2, "reversed", i++);
+    await seed(heldOut[AI_KNOB.minHeldOutCases + 3]!.targetKey, 0.2, "reversed", i++);
+  }
+
+  it("flag parse mirrors the house convention", () => {
+    expect(isConfigDriftSentinelEnabled({ CONFIG_DRIFT_SENTINEL_ENABLED: "true" } as unknown as Env)).toBe(true);
+    expect(isConfigDriftSentinelEnabled({ CONFIG_DRIFT_SENTINEL_ENABLED: "false" } as unknown as Env)).toBe(false);
+    expect(isConfigDriftSentinelEnabled({} as unknown as Env)).toBe(false);
+  });
+
+  it("alerts ONCE per drift episode, stays silent while it stands, re-alerts on change, clears on recovery", async () => {
+    const env = driftEnv();
+    // A live override at the hard minimum with a corpus proving the SHIPPED value dominates it → a
+    // 'shipped'-direction (revert) drift, the actionable class.
+    await setOverrideRow(env, AI_KNOB.overrideFlagKey, String(AI_KNOB.hardMinimum));
+    await seedDriftFriendlyHistory(env); // reversed cluster at 0.91: shipped 0.93 dominates a 0.85 live floor
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const first = await runConfigDriftSentinel(env);
+    expect(first.find((r) => r.knobId === AI_KNOB.knobId)?.state).toBe("alerted");
+    expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes("config_drift_detected"))).toHaveLength(1);
+
+    errorSpy.mockClear();
+    const second = await runConfigDriftSentinel(env);
+    expect(second.find((r) => r.knobId === AI_KNOB.knobId)?.state).toBe("standing");
+    expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes("config_drift_detected"))).toHaveLength(0);
+
+    // Recovery: remove the override -- live returns to shipped, nothing dominates, fingerprint clears.
+    await env.DB.prepare("DELETE FROM system_flags WHERE key = ?").bind(AI_KNOB.overrideFlagKey).run();
+    const third = await runConfigDriftSentinel(env);
+    expect(third.find((r) => r.knobId === AI_KNOB.knobId)?.state).toBe("clean");
+    // And a NEW episode after recovery alerts again.
+    await setOverrideRow(env, AI_KNOB.overrideFlagKey, String(AI_KNOB.hardMinimum));
+    const fourth = await runConfigDriftSentinel(env);
+    expect(fourth.find((r) => r.knobId === AI_KNOB.knobId)?.state).toBe("alerted");
+  });
+
+  it("suppresses a LOOSER-dominating result (the loosening loop owns that direction) and clears any stale fingerprint", async () => {
+    const env = driftEnv();
+    await seedAiLooseningFriendlyHistory(env); // from shipped 0.93, candidate 0.9 dominates → looser
+    await env.DB.prepare("INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
+      .bind(`config_drift_fingerprint:${AI_KNOB.knobId}`, "stale")
+      .run();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const results = await runConfigDriftSentinel(env);
+    expect(results.find((r) => r.knobId === AI_KNOB.knobId)?.state).toBe("suppressed_looser");
+    expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes("config_drift_detected"))).toHaveLength(0);
+    const fp = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?").bind(`config_drift_fingerprint:${AI_KNOB.knobId}`).first();
+    expect(fp ?? null).toBeNull(); // TestD1 returns undefined where live D1 returns null
+  });
+
+  it("is clean on an empty corpus and fail-safe per knob on a broken store", async () => {
+    const clean = await runConfigDriftSentinel(driftEnv());
+    expect(clean.every((r) => r.state === "clean")).toBe(true);
+
+    const broken = driftEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const results = await runConfigDriftSentinel(broken);
+    expect(results.every((r) => r.state === "clean")).toBe(true);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("config_drift_tick_failed"))).toBe(true);
+
+    // Non-Error throw degrades to the generic message; a report-only knob is skipped entirely.
+    const stringThrow = driftEnv();
+    stringThrow.DB = { prepare: () => { throw "string boom"; } } as never;
+    await runConfigDriftSentinel(stringThrow);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('"error":"unknown error"'))).toBe(true);
+    const reportOnly = { ...AI_KNOB, knobId: "future_knob", applyMode: "report_only" as const };
+    expect(await runConfigDriftSentinel(driftEnv(), [reportOnly])).toEqual([]);
+  });
+
+  it("the calibration tick job runs the sentinel only when its flag is ON (dispatch wiring)", async () => {
+    const env = driftEnv();
+    await setOverrideRow(env, AI_KNOB.overrideFlagKey, String(AI_KNOB.hardMinimum));
+    await seedDriftFriendlyHistory(env);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await processJob(env, { type: "satisfaction-floor-loosening", requestedBy: "schedule" });
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("config_drift_detected"))).toBe(true);
+
+    errorSpy.mockClear();
+    const off = { ...enabledEnv(), DB: env.DB } as Env; // sentinel flag unset
+    await processJob(off, { type: "satisfaction-floor-loosening", requestedBy: "schedule" });
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("config_drift_detected"))).toBe(false);
+  });
+});
+
 describe("loadKnobStatus / loadLiveKnobStatuses (#8161 generalized)", () => {
   it("reports a lingering override row even with the flag OFF, and the live value only when ON", async () => {
     const env = createTestEnv();
@@ -331,7 +441,7 @@ describe("loadKnobStatus / loadLiveKnobStatuses (#8161 generalized)", () => {
     const broken = createTestEnv();
     broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
     const status = await loadKnobStatus(broken, AI_KNOB);
-    expect(status).toMatchObject({ storedOverride: null, applied: [], liveValue: AI_KNOB.shippedValue });
+    expect(status).toMatchObject({ storedOverride: null, applied: [], liveValue: AI_KNOB.shippedValue, drift: null });
 
     const statuses = await loadLiveKnobStatuses(createTestEnv());
     expect(statuses.map((s) => s.knobId).sort()).toEqual(["ai_review_close_confidence", "satisfaction_floor"]);

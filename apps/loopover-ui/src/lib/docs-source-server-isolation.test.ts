@@ -29,7 +29,7 @@ describe("docs.*.tsx routes never import docs-source(.server) directly", () => {
   const inScope = docsRouteFiles.filter((name) => !outOfScope.has(name));
 
   it("found the expected set of in-scope docs route files", () => {
-    expect(inScope.length).toBe(48);
+    expect(inScope.length).toBe(49);
   });
 
   it.each(inScope)(

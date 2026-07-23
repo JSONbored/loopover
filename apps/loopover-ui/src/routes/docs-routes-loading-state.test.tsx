@@ -45,7 +45,7 @@ describe("docs route Suspense fallback (#6982)", () => {
       "docs.tsx",
     ]);
     const inScope = docsRouteFiles.filter((name) => !outOfScope.has(name));
-    expect(inScope.length).toBe(48);
+    expect(inScope.length).toBe(49);
 
     for (const file of inScope) {
       const source = readFileSync(join(routesDir, file), "utf8");

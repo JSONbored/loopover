@@ -61,6 +61,7 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "Scoreability", to: "/docs/scoreability", group: "Docs" },
   { label: "Upstream drift", to: "/docs/upstream-drift", group: "Docs" },
   { label: "AI summaries policy", to: "/docs/ai-summaries", group: "Docs" },
+  { label: "Backtest & calibration", to: "/docs/backtest-calibration", group: "Docs" },
   { label: "Privacy & security", to: "/docs/privacy-security", group: "Docs" },
   { label: "Troubleshooting", to: "/docs/troubleshooting", group: "Docs" },
   { label: "API reference", to: "/api", group: "Reference" },

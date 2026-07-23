@@ -94,6 +94,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/self-hosting-rees-analyzers", label: "REES analyzers" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/ai-summaries", label: "AI summaries policy" },
+      { to: "/docs/backtest-calibration", label: "Backtest & calibration" },
     ],
   },
   {

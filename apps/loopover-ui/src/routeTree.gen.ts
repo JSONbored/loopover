@@ -63,6 +63,7 @@ import { Route as DocsFederatedFleetIntelligenceRouteImport } from './routes/doc
 import { Route as DocsCapacityRouteImport } from './routes/docs.capacity'
 import { Route as DocsBranchAnalysisRouteImport } from './routes/docs.branch-analysis'
 import { Route as DocsBetaOnboardingRouteImport } from './routes/docs.beta-onboarding'
+import { Route as DocsBacktestCalibrationRouteImport } from './routes/docs.backtest-calibration'
 import { Route as DocsAmsUnattendedSchedulingRouteImport } from './routes/docs.ams-unattended-scheduling'
 import { Route as DocsAmsSizingRouteImport } from './routes/docs.ams-sizing'
 import { Route as DocsAmsOperationsRunbookRouteImport } from './routes/docs.ams-operations-runbook'
@@ -376,6 +377,11 @@ const DocsBetaOnboardingRoute = DocsBetaOnboardingRouteImport.update({
   path: '/beta-onboarding',
   getParentRoute: () => DocsRoute,
 } as any)
+const DocsBacktestCalibrationRoute = DocsBacktestCalibrationRouteImport.update({
+  id: '/backtest-calibration',
+  path: '/backtest-calibration',
+  getParentRoute: () => DocsRoute,
+} as any)
 const DocsAmsUnattendedSchedulingRoute =
   DocsAmsUnattendedSchedulingRouteImport.update({
     id: '/ams-unattended-scheduling',
@@ -554,6 +560,7 @@ export interface FileRoutesByFullPath {
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
   '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
+  '/docs/backtest-calibration': typeof DocsBacktestCalibrationRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/capacity': typeof DocsCapacityRoute
@@ -633,6 +640,7 @@ export interface FileRoutesByTo {
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
   '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
+  '/docs/backtest-calibration': typeof DocsBacktestCalibrationRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/capacity': typeof DocsCapacityRoute
@@ -717,6 +725,7 @@ export interface FileRoutesById {
   '/docs/ams-operations-runbook': typeof DocsAmsOperationsRunbookRoute
   '/docs/ams-sizing': typeof DocsAmsSizingRoute
   '/docs/ams-unattended-scheduling': typeof DocsAmsUnattendedSchedulingRoute
+  '/docs/backtest-calibration': typeof DocsBacktestCalibrationRoute
   '/docs/beta-onboarding': typeof DocsBetaOnboardingRoute
   '/docs/branch-analysis': typeof DocsBranchAnalysisRoute
   '/docs/capacity': typeof DocsCapacityRoute
@@ -802,6 +811,7 @@ export interface FileRouteTypes {
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
     | '/docs/ams-unattended-scheduling'
+    | '/docs/backtest-calibration'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/capacity'
@@ -881,6 +891,7 @@ export interface FileRouteTypes {
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
     | '/docs/ams-unattended-scheduling'
+    | '/docs/backtest-calibration'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/capacity'
@@ -964,6 +975,7 @@ export interface FileRouteTypes {
     | '/docs/ams-operations-runbook'
     | '/docs/ams-sizing'
     | '/docs/ams-unattended-scheduling'
+    | '/docs/backtest-calibration'
     | '/docs/beta-onboarding'
     | '/docs/branch-analysis'
     | '/docs/capacity'
@@ -1405,6 +1417,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsBetaOnboardingRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/docs/backtest-calibration': {
+      id: '/docs/backtest-calibration'
+      path: '/backtest-calibration'
+      fullPath: '/docs/backtest-calibration'
+      preLoaderRoute: typeof DocsBacktestCalibrationRouteImport
+      parentRoute: typeof DocsRoute
+    }
     '/docs/ams-unattended-scheduling': {
       id: '/docs/ams-unattended-scheduling'
       path: '/ams-unattended-scheduling'
@@ -1658,6 +1677,7 @@ interface DocsRouteChildren {
   DocsAmsOperationsRunbookRoute: typeof DocsAmsOperationsRunbookRoute
   DocsAmsSizingRoute: typeof DocsAmsSizingRoute
   DocsAmsUnattendedSchedulingRoute: typeof DocsAmsUnattendedSchedulingRoute
+  DocsBacktestCalibrationRoute: typeof DocsBacktestCalibrationRoute
   DocsBetaOnboardingRoute: typeof DocsBetaOnboardingRoute
   DocsBranchAnalysisRoute: typeof DocsBranchAnalysisRoute
   DocsCapacityRoute: typeof DocsCapacityRoute
@@ -1711,6 +1731,7 @@ const DocsRouteChildren: DocsRouteChildren = {
   DocsAmsOperationsRunbookRoute: DocsAmsOperationsRunbookRoute,
   DocsAmsSizingRoute: DocsAmsSizingRoute,
   DocsAmsUnattendedSchedulingRoute: DocsAmsUnattendedSchedulingRoute,
+  DocsBacktestCalibrationRoute: DocsBacktestCalibrationRoute,
   DocsBetaOnboardingRoute: DocsBetaOnboardingRoute,
   DocsBranchAnalysisRoute: DocsBranchAnalysisRoute,
   DocsCapacityRoute: DocsCapacityRoute,

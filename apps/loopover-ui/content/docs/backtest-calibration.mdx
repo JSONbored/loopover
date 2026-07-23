@@ -1,0 +1,79 @@
+---
+title: Backtest & calibration
+description: How LoopOver measures whether its own review rules are right — and backtests threshold and logic changes against real history before they ship.
+---
+
+## What this is
+
+Every time a configured gate blocker fires, LoopOver records it. Every time a human later
+overrides that call (or confirms it), LoopOver records that too. Paired together, the two
+histories become a labeled corpus: _this rule fired against this PR, and a person later said it
+was right ("confirmed") or wrong ("reversed")_.
+
+That corpus makes a rule change **testable before it merges**. A PR that tunes a confidence
+threshold or rewrites detection logic gets scored against the real recorded history — the same
+targets, the same raw inputs — instead of being eyeballed.
+
+<Callout variant="note">
+  Everything on this page is advisory-only today. A backtest verdict — even a regression — never
+  blocks a merge. Whether a REGRESSED verdict should ever gate merges is a tracked, deliberately
+  separate decision that waits for real production track-record data.
+</Callout>
+
+## The corpus
+
+- **Fired events** — recorded when a configured blocker actually carries gate authority, with
+  bounded raw context: the issue text, PR title/body, and diff the rule evaluated, and (for the
+  AI-judgment rule `linked_issue_scope_mismatch`) the model's own raw response text.
+- **Override events** — recorded when a human reverses an automated call, or confirms one (for
+  example, an owner closing a PR that was held for low AI confidence confirms the hold).
+- **`secret_leak` is permanently excluded from raw-context capture.** Storing the diff that
+  triggered a leaked-credential finding would store the credential itself in the audit trail.
+  This rule can therefore never be logic-backtested — by design, not omission.
+
+## Two backtests, two mechanisms
+
+**Threshold changes** run inside LoopOver's own review pass. When a PR's diff changes a known
+confidence-threshold constant, the old and new values are replayed as classifiers over the
+rule's recorded history, and the comparison is rendered directly into the unified review
+comment. No code from the PR is ever executed — a threshold is just a number.
+
+**Logic/regex changes** run in a dedicated CI workflow instead, because honestly verifying a
+rewritten detection function requires _executing the PR's own code_ against history — something
+the production review service must never do. The workflow checks out both the PR's head and its
+base, replays each recorded case's captured raw context through both versions of the detection
+function, and posts its own clearly-labeled **"Logic backtest"** PR comment, separate from the
+unified review comment. It triggers only for PRs touching the watched detection-logic paths,
+skips drafts and forks (fork runs get no secrets), and fails open: an infrastructure problem
+produces a skip notice, never a red check.
+
+## Reading the comparison
+
+Both backtests score the same way:
+
+- **"Reversed" is the positive class.** A classifier predicting "reversed" is saying the rule's
+  original firing was wrong. Precision and recall are computed against the human labels, and
+  stay `N/A` when there is not enough decided data — unknown is never coerced to zero.
+- **The Pareto floor decides the verdict.** A candidate that regresses on _any_ axis is
+  **REGRESSED**, even if the other axis improved. Trading precision for recall is a regression,
+  not a net win. Otherwise the verdict is _improved_ (some axis moved up) or _unchanged_.
+- Cases recorded before raw-context capture existed are skipped and counted in the comment —
+  replaying them against empty inputs would bias both sides, so they are never scored.
+
+## The track record
+
+Every backtest run persists its comparison as structured audit data. The accumulated record —
+how often runs regress, per rule — is the evidence base for the pending merge-gating decision,
+readable at any time with the maintainer CLI:
+
+```bash
+npx tsx scripts/backtest-track-record.ts --db loopover --remote
+```
+
+The corpus itself can be exported as a versioned, checksummed snapshot:
+
+```bash
+npx tsx scripts/backtest-corpus-export.ts --rule-id <ruleId> --output corpus.json --remote
+```
+
+Both CLIs are strictly read-only against the database.

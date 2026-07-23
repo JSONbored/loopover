@@ -245,7 +245,35 @@ describe("self-host image deploy script", () => {
     try {
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain(
-        "image contains unsupported whitespace, quote, backslash, or compose interpolation characters",
+        "image contains unsupported whitespace, quote, backslash, compose interpolation, or shell metacharacters",
+      );
+      expect(readFileSync(harness.envPath, "utf8")).toBe("EXISTING=1\n");
+      expect(harness.readImages()).toBe("");
+      expect(harness.readCalls()).not.toContain(" pull ");
+    } finally {
+      harness.cleanup();
+    }
+  });
+
+  // Defense-in-depth, not a currently-reachable code-execution path: every reference to the resolved image
+  // value downstream (resolve_image's printf, this heredoc's "$IMAGE") is properly quoted, so a backtick or
+  // other shell metacharacter arriving as a real argv element (never through a shell -- see
+  // redeploy-companion.ts's own spawn() call, which never sets shell: true) stays inert literal text all the
+  // way through. Rejecting these anyway costs nothing (no legitimate image reference ever contains them) and
+  // guards against any future change to this script -- or a caller of it -- that stops quoting consistently.
+  it.each([
+    "registry.example/loopover:`touch /tmp/pwned`",
+    "registry.example/loopover:latest;rm -rf /",
+    "registry.example/loopover:latest|cat /etc/passwd",
+    "registry.example/loopover:latest&&whoami",
+    "registry.example/loopover:latest>/tmp/pwned",
+    "registry.example/loopover:latest</etc/passwd",
+  ])("rejects shell metacharacters in image %s", (image) => {
+    const { harness, result } = runHarness({ args: [image], envFile: "EXISTING=1\n" });
+    try {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "image contains unsupported whitespace, quote, backslash, compose interpolation, or shell metacharacters",
       );
       expect(readFileSync(harness.envPath, "utf8")).toBe("EXISTING=1\n");
       expect(harness.readImages()).toBe("");

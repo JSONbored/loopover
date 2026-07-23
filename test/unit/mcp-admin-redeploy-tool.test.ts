@@ -73,6 +73,18 @@ describe("MCP admin redeploy tool: input validation (#7723)", () => {
     expect(result.isError).toBe(true);
     expect(trigger).not.toHaveBeenCalled();
   });
+
+  it.each(["has`a`backtick", "has;a;semicolon", "has|a|pipe", "has&an&ampersand", "has<a>anglebracket"])(
+    "rejects shell metacharacters in image: %s",
+    async (image) => {
+      const trigger = vi.fn();
+      setRedeployTrigger(trigger);
+      const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }));
+      const result = await client.callTool({ name: "loopover_admin_trigger_redeploy", arguments: { image } });
+      expect(result.isError).toBe(true);
+      expect(trigger).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("MCP admin redeploy tool: trigger call (#7723)", () => {

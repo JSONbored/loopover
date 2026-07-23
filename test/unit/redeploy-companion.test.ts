@@ -132,6 +132,31 @@ describe("handleConnection (#7723)", () => {
     expect(deploy).not.toHaveBeenCalled();
   });
 
+  it.each(["has`a`backtick", "has;a;semicolon", "has|a|pipe", "has&an&ampersand", "has<a>anglebracket"])(
+    "rejects shell metacharacters in an image override: %s",
+    async (image) => {
+      const written: string[] = [];
+      const deploy = vi.fn();
+      await handleConnection(TOKEN, JSON.stringify({ token: TOKEN, image }), () => false, vi.fn(), (line) => written.push(line), deploy);
+      expect(written).toEqual([JSON.stringify({ ok: false, error: "invalid_image_override" })]);
+      expect(deploy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a legitimate image reference with no false-positive rejection", async () => {
+    const written: string[] = [];
+    const deploy = vi.fn().mockImplementation(async () => ({ ok: true, exitCode: 0 }));
+    await handleConnection(
+      TOKEN,
+      JSON.stringify({ token: TOKEN, image: "ghcr.io/jsonbored/loopover-selfhost@sha256:abcdef0123456789" }),
+      () => false,
+      vi.fn(),
+      (line) => written.push(line),
+      deploy,
+    );
+    expect(deploy).toHaveBeenCalledExactlyOnceWith("ghcr.io/jsonbored/loopover-selfhost@sha256:abcdef0123456789", expect.any(Function));
+  });
+
   it("runs a valid authenticated request end to end: sets busy, streams logs, writes the terminal result, clears busy", async () => {
     const written: string[] = [];
     const busyStates: boolean[] = [];

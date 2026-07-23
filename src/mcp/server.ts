@@ -367,15 +367,16 @@ const adminListBackupsShape = {
   scope: z.enum(["global", "repo"]),
   repoFullName: z.string().min(3).max(200).optional(),
 };
-// #7723: image is intentionally the same shape deploy-selfhost-image.sh's own validate_inputs already
-// enforces (no whitespace/quote/backslash/compose-interpolation chars) -- redundant with the companion's own
-// check, but a caller gets a clear MCP-level error instead of an opaque host-side rejection.
+// #7723: image is intentionally the same character class deploy-selfhost-image.sh's own validate_inputs
+// enforces (no whitespace/quote/backslash/compose-interpolation/shell-metacharacter chars) -- redundant with
+// both that script's own check and the companion's own isSafeImageOverride, but a caller gets a clear
+// MCP-level error instead of an opaque host-side rejection two hops away.
 const adminTriggerRedeployShape = {
   image: z
     .string()
     .min(1)
     .max(512)
-    .regex(/^[^\s"'\\${}]+$/, "must not contain whitespace, quotes, backslashes, or compose interpolation characters")
+    .regex(/^[^\s"'\\${}`;|&<>]+$/, "must not contain whitespace, quotes, backslashes, compose interpolation, or shell metacharacters")
     .optional(),
 };
 

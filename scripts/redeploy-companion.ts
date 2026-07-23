@@ -69,12 +69,18 @@ function parseRequestLine(line: string): RedeployRequest | null {
   return parsed as RedeployRequest;
 }
 
-/** Same shape docker-compose.yml's SELFHOST_SERVICE default and deploy-selfhost-image.sh's own IMAGE
- *  validation already enforce -- rejects anything that could smuggle shell metacharacters into the spawned
- *  script's argv, even though `spawn` (no shell) never interprets them itself; this is a second, independent
- *  guard on the value before it ever reaches that script's own `validate_inputs`. */
+/** Same character class deploy-selfhost-image.sh's own `validate_inputs` enforces -- this is a second,
+ *  independent guard on the value before it ever reaches that script, giving a caller a clear MCP-level
+ *  rejection instead of an opaque host-side one. Not load-bearing against code execution on its own: `spawn`
+ *  below never sets `shell: true`, so the image string always reaches deploy-selfhost-image.sh as a single,
+ *  literal argv element regardless of its contents, and that script only ever references it through properly
+ *  quoted expansions ("$1", "$IMAGE") -- confirmed empirically, not just by inspection: none of these
+ *  characters are exploitable via the current call path. Rejected anyway because no legitimate Docker image
+ *  reference ever needs whitespace, quotes, `$`/`{`/`}` (compose interpolation), or shell metacharacters like
+ *  backticks/`;`/`|`/`&`/`<`/`>` -- costs nothing today and guards against either side of this call ever
+ *  losing that quoting discipline later. */
 function isSafeImageOverride(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\s"'\\${}]/.test(value);
+  return typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\s"'\\${}`;|&<>]/.test(value);
 }
 
 export type RunDeployResult = { ok: boolean; exitCode: number | null; error?: string };

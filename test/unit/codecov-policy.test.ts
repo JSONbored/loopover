@@ -61,12 +61,23 @@ describe("Codecov policy", () => {
     // every upload below it — must skip on that output rather than fail closed on a missing lcov. The
     // policy stays: absent that explicit escape hatch, a missing report still fails the build, and the
     // uploads can never run without the verify guard's own condition.
-    expect(String(verifyStep.if)).toBe("${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}");
-    // EVERY upload below the verify step must carry the same escape: with zero matched tests there is no
-    // lcov/junit at all, and the coverage uploads' fail_ci_if_error would turn that non-event red.
+    expect(String(verifyStep.if)).toBe(
+      "${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' }}",
+    );
+    // EVERY upload below the verify step must carry the same escapes: with zero matched tests there is no
+    // lcov/junit at all, and the coverage uploads' fail_ci_if_error would turn that non-event red. The
+    // second escape (#8194) is the scoped run that matched tests which PASSED but exercised nothing under
+    // src/** -- an empty lcov there is a legitimate outcome, never a failed suite.
     expect(String(coverageUpload.if)).toContain("success()");
     expect(String(coverageUpload.if)).toContain("no_tests_matched != 'true'");
+    expect(String(coverageUpload.if)).toContain("no_src_coverage != 'true'");
     expect(String(testResultsUpload.if)).toContain("no_tests_matched != 'true'");
+    expect(String(testResultsUpload.if)).toContain("no_src_coverage != 'true'");
+    // The scoped branch must derive BOTH outputs from the run itself (vitest's own stdout + exit status),
+    // never from re-deriving selection logic -- pin the detector lines so they can't silently vanish.
+    const coverageStep = steps[stepNames.indexOf("Test with coverage (shard ${{ matrix.shard }}/3)")]!;
+    expect(String(coverageStep.run)).toContain('grep -q "No test files found" vitest-scoped-output.log');
+    expect(String(coverageStep.run)).toContain('echo "no_src_coverage=true"');
     expect(String(verifyStep.run)).toContain("coverage/lcov.info is missing or empty");
     expect(String(verifyStep.run)).toContain("exit 1");
 

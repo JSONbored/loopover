@@ -1058,6 +1058,16 @@ jobs:
             npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/3 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}" 2>&1 | tee vitest-scoped-output.log
             if grep -q "No test files found" vitest-scoped-output.log; then
               echo "no_tests_matched=true" >> "$GITHUB_OUTPUT"
+            elif [ ! -s coverage/lcov.info ]; then
+              # #8194 (the week's third scoped-selection edge case, PR #8192's shards): the selection
+              # matched and PASSED real tests -- set -o pipefail above means this line is only reachable
+              # on vitest exit 0 -- but none of them exercise anything under coverage.include (src/**):
+              # a test-only/docs-drift diff. --coverage.all=false then writes an empty or absent lcov,
+              # which is NOT a failed run; the junit report written above is the proof the suite ran.
+              # Without this output, "Verify coverage report exists" fails the green run. The success
+              # signal here is the test run itself, never the coverage file's size.
+              echo "scoped run passed but exercised no src/** files -- skipping coverage artifacts for this shard"
+              echo "no_src_coverage=true" >> "$GITHUB_OUTPUT"
             fi
           else
             # Duration-aware sharding (#ci-duration-aware-sharding), full-suite case only: vitest's own
@@ -1092,10 +1102,12 @@ jobs:
       - name: Verify coverage report exists
         # Skipped when the scoped-selection branch above matched zero test files (steps.coverage.outputs.
         # no_tests_matched) -- a legitimately test-free diff (e.g. docs-only under a scoped path) writes no
-        # coverage/lcov.info at all, and that is not a failure. A real failure (tests ran and either failed
-        # or the coverage step crashed before writing output) still fails this job via `success()` below,
-        # same as before.
-        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}
+        # coverage/lcov.info at all, and that is not a failure. Also skipped when the selection matched
+        # tests that PASSED but exercised nothing under src/** (no_src_coverage, #8194) -- same legitimacy,
+        # different detector: tests matched, so no_tests_matched can't see it. A real failure (tests ran
+        # and either failed or the coverage step crashed before writing output) still fails this job via
+        # `success()` below, same as before.
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' }}
         run: |
           if [ ! -s coverage/lcov.info ]; then
             echo "::error title=Coverage::coverage/lcov.info is missing or empty"
@@ -1104,7 +1116,7 @@ jobs:
       # Consumed by validate-tests-merge to re-check the global coverage threshold against all shards
       # combined -- see this job's own header comment.
       - name: Upload coverage blob report
-        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-blob-shard-${{ matrix.shard }}
@@ -1115,7 +1127,7 @@ jobs:
       - name: Upload coverage to Codecov
         # Same no_tests_matched skip as the verify step above (#8167 follow-up): with zero matched tests
         # there is no lcov to upload, and fail_ci_if_error would otherwise turn that non-event red.
-        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' && github.event.pull_request.head.repo.fork != true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -1133,7 +1145,7 @@ jobs:
       # override, etc). Condition dropped the push-or-backend check since this job's own `if:` already
       # covers it.
       - name: Upload coverage to Codecov (fork PR tokenless)
-        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork == true }}
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' && github.event.pull_request.head.repo.fork == true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage/lcov.info
@@ -1147,7 +1159,7 @@ jobs:
       # their upload non-blocking so a JUnit ingestion hiccup does not fail CI
       # after the tests and hard coverage upload have already passed.
       - name: Upload Vitest results to Codecov
-        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' && github.event.pull_request.head.repo.fork != true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -1160,7 +1172,7 @@ jobs:
           override_pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
           fail_ci_if_error: false
       - name: Upload Vitest results to Codecov (fork PR tokenless)
-        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && github.event.pull_request.head.repo.fork == true }}
+        if: ${{ !cancelled() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' && github.event.pull_request.head.repo.fork == true }}
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./reports/junit/vitest.xml

@@ -23,7 +23,8 @@
 // applyAutoTune engages nothing → isHoldOnly is false → the merge path is unchanged. The breaker only engages
 // once a repo's merge precision actually drops below the floor over a real sample.
 
-import { recordAuditEvent } from "../db/repositories";
+import { getPullRequest, listPullRequestFiles, recordAuditEvent } from "../db/repositories";
+import { evaluateSuccessorMatch, REVERSAL_SUPERSEDED_EVENT_TYPE, SUPERSEDED_LOOKBACK_MS } from "./reversal-superseded";
 import { createSignalStore } from "./signal-tracking-wire";
 import { AI_JUDGMENT_BLOCKER_CODES } from "../rules/advisory";
 import { tryEnqueueDecisionPackRebuild } from "../services/decision-pack";
@@ -675,6 +676,10 @@ export async function recordReversalSignals(
       await recordConfiguredGateBlockerOverrides(env, targetId).catch(() => undefined); // #8104
       await recordLinkedIssueScopeMismatchOverride(env, targetId).catch(() => undefined); // #8101
     }
+    // #8166: the one-shot culture's reversal shape — this merge may supersede a bot-CLOSED sibling PR
+    // (same linked issue, or same author reworking the same files). Best-effort, like every signal here.
+    await recordSupersededReversals(env, repoFullName, pr.number, payload.pull_request?.user?.login ?? null).catch(() => undefined);
+
     const reverted = parseRevertedPrNumber(pr.body);
     if (!reverted) return;
     const revertedTargetKey = reviewAuditTargetId(repoFullName, reverted);
@@ -924,5 +929,79 @@ export async function runSelfTuneBreaker(env: Env): Promise<void> {
         message: errorMessage(error).slice(0, 200),
       }),
     );
+  }
+}
+
+/**
+ * #8166: scan the window for bot-CLOSED PRs this merge supersedes, and record the culture-correct reversal
+ * signal for each match: a `reversal_superseded` row in BOTH stores (like its reopen/revert siblings, with
+ * the matched heuristics in the audit metadata so borderline calls stay reviewable), plus the SAME per-rule
+ * "the firing was wrong" overrides the reopen path records (#8101/#8104) — which is what finally feeds the
+ * calibration corpus its positive class. Conservative + idempotent: evaluateSuccessorMatch's own bar
+ * decides, a target with an existing superseded row is never re-recorded, and every step fails safe.
+ */
+export async function recordSupersededReversals(
+  env: Env,
+  repoFullName: string,
+  mergedPrNumber: number,
+  mergedAuthorLogin: string | null,
+): Promise<void> {
+  try {
+    const project = repoFullName.slice(0, 200);
+    const mergedRecord = await getPullRequest(env, repoFullName, mergedPrNumber);
+    if (!mergedRecord) return;
+    const mergedFiles = (await listPullRequestFiles(env, repoFullName, mergedPrNumber)).map((file) => file.path);
+    const merged = {
+      authorLogin: mergedAuthorLogin ?? mergedRecord.authorLogin,
+      linkedIssues: mergedRecord.linkedIssues,
+      files: mergedFiles,
+    };
+
+    const sinceIso = new Date(Date.now() - SUPERSEDED_LOOKBACK_MS).toISOString();
+    const candidates = await env.DB.prepare(
+      // Same bot-close definition as lastBotActionWasClose: real (non-dry-run) executed closes only.
+      `SELECT DISTINCT target_key FROM audit_events
+        WHERE event_type = 'agent.action.close' AND outcome IN ('success', 'completed')
+          AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
+          AND target_key LIKE ? AND created_at >= ?`,
+    )
+      .bind(`${project}#%`, sinceIso)
+      .all<{ target_key: string }>();
+
+    for (const row of candidates.results ?? []) {
+      const targetKey = row.target_key;
+      const closedNumber = Number(targetKey.slice(targetKey.lastIndexOf("#") + 1));
+      if (!Number.isFinite(closedNumber) || closedNumber === mergedPrNumber) continue;
+      // Idempotent per closed target: one superseded record ever, however many successors merge later.
+      const already = await env.DB.prepare("SELECT 1 AS x FROM audit_events WHERE event_type = ? AND target_key = ? LIMIT 1")
+        .bind(REVERSAL_SUPERSEDED_EVENT_TYPE, targetKey)
+        .first<{ x: number }>();
+      if (already) continue;
+
+      const closedRecord = await getPullRequest(env, repoFullName, closedNumber);
+      if (!closedRecord) continue;
+      const closedFiles = (await listPullRequestFiles(env, repoFullName, closedNumber)).map((file) => file.path);
+      const heuristics = evaluateSuccessorMatch(merged, {
+        authorLogin: closedRecord.authorLogin,
+        linkedIssues: closedRecord.linkedIssues,
+        files: closedFiles,
+      });
+      if (!heuristics) continue;
+
+      const summary = `Bot-closed PR #${closedNumber} superseded by merged PR #${mergedPrNumber}.`;
+      await appendReviewAudit(env, { project, targetId: targetKey, eventType: REVERSAL_SUPERSEDED_EVENT_TYPE, summary });
+      await recordAuditEvent(env, {
+        eventType: REVERSAL_SUPERSEDED_EVENT_TYPE,
+        actor: mergedAuthorLogin,
+        targetKey,
+        outcome: "completed",
+        detail: summary,
+        metadata: { repoFullName, pullNumber: closedNumber, supersededBy: mergedPrNumber, heuristics },
+      }).catch(() => undefined);
+      await recordConfiguredGateBlockerOverrides(env, targetKey).catch(() => undefined); // #8104
+      await recordLinkedIssueScopeMismatchOverride(env, targetKey).catch(() => undefined); // #8101
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "reversal_superseded_error", repo: repoFullName, message: errorMessage(error).slice(0, 200) }));
   }
 }

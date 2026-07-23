@@ -310,7 +310,7 @@ export async function getPublicStats(
          SELECT substr(target_key, 1, instr(target_key, '#') - 1) AS project,
                 CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number
            FROM audit_events
-          WHERE event_type IN ('reversal_reopened', 'reversal_reverted')
+          WHERE event_type IN ('reversal_reopened', 'reversal_reverted', 'reversal_superseded')
             AND outcome = 'completed' AND instr(target_key, '#') > 0
        ) ev
         WHERE LOWER(ev.project) IN (${inList})

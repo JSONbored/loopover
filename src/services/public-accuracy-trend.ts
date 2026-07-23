@@ -126,7 +126,7 @@ async function loadReversalDayRows(env: Env, projects: string[], sinceIso: strin
       ) orig
       JOIN (
         SELECT DISTINCT target_key FROM audit_events
-         WHERE event_type IN ('reversal_reopened', 'reversal_reverted') AND outcome = 'completed'
+         WHERE event_type IN ('reversal_reopened', 'reversal_reverted', 'reversal_superseded') AND outcome = 'completed'
       ) rev ON rev.target_key = orig.target_key
       WHERE LOWER(orig.project) IN (${inList})
       GROUP BY day`,

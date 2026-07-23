@@ -122,10 +122,13 @@ describe("synthesizeBackfillRows (#8157)", () => {
 describe("buildBackfillInsertStatements (#8157)", () => {
   const report = synthesizeBackfillRows([decisionRow(), decisionRow({ number: 8 }), decisionRow({ number: 9 })]);
 
-  it("renders INSERT OR IGNORE with the full audit_events column list and SQL-escaped values", () => {
+  it("renders latest-decision-wins UPSERTs with the full audit_events column list and SQL-escaped values", () => {
     const escaped = synthesizeBackfillRows([decisionRow({ repo: "o'brien/repo" })]);
     const [statement] = buildBackfillInsertStatements(escaped.rows);
-    expect(statement).toMatch(/^INSERT OR IGNORE INTO audit_events \(id, event_type, actor, target_key, outcome, detail, metadata_json, created_at\) VALUES /);
+    expect(statement).toMatch(/^INSERT INTO audit_events \(id, event_type, actor, target_key, outcome, detail, metadata_json, created_at\) VALUES /);
+    // ORB-review finding: a target whose terminal decision changed between runs must be UPDATED, never
+    // silently dropped -- the conflict clause updates exactly the decision-bearing columns.
+    expect(statement).toContain("ON CONFLICT(id) DO UPDATE SET detail = excluded.detail, metadata_json = excluded.metadata_json, created_at = excluded.created_at");
     expect(statement).toContain("o''brien/repo#7");
     expect(sqlStringLiteral("it's")).toBe("'it''s'");
   });

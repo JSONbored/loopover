@@ -152,9 +152,12 @@ export function sqlStringLiteral(value: string): string {
 }
 
 /**
- * Render the synthesized rows as chunked `INSERT OR IGNORE` statements (idempotency comes from the
- * deterministic ids: a re-run, or an overlap with a prior partial apply, silently no-ops instead of
- * double-writing). Chunked so a statement never grows past what `wrangler d1 execute --command` sanely
+ * Render the synthesized rows as chunked UPSERT statements. Idempotency comes from the deterministic
+ * targetKey-derived ids; `ON CONFLICT(id) DO UPDATE` (rather than OR IGNORE) makes the semantics "latest
+ * decision wins" ACROSS runs too, matching the transform's own latest-terminal-wins dedupe: a target whose
+ * terminal decision changed between two backfill runs gets its pair UPDATED, never silently dropped
+ * (ORB-review finding on the original OR IGNORE shape), while a re-run over identical data remains an
+ * effective no-op. Chunked so a statement never grows past what `wrangler d1 execute --command` sanely
  * carries. Returns [] for an empty report.
  */
 export function buildBackfillInsertStatements(rows: readonly SynthesizedAuditRow[], chunkSize = 50): string[] {
@@ -169,7 +172,10 @@ export function buildBackfillInsertStatements(rows: readonly SynthesizedAuditRow
             .join(", ")})`,
       )
       .join(", ");
-    statements.push(`INSERT OR IGNORE INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ${values}`);
+    statements.push(
+      `INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ${values} ` +
+        `ON CONFLICT(id) DO UPDATE SET detail = excluded.detail, metadata_json = excluded.metadata_json, created_at = excluded.created_at`,
+    );
   }
   return statements;
 }

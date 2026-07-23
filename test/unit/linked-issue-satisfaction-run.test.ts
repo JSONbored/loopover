@@ -1107,3 +1107,40 @@ describe("linked-issue satisfaction wired end-to-end through the real webhook pi
     expect(gatePatchBody.conclusion).not.toBe("failure");
   });
 });
+
+describe("confidence-floor override threading (#8121)", () => {
+  const unaddressedBorderline = () => satisfactionJson({ status: "unaddressed", confidence: 0.42, rationale: "The diff does not touch the SSE surface at all." });
+
+  async function setFloorOverride(env: Env, value: string) {
+    await env.DB.prepare("INSERT INTO system_flags (key, value, updated_at) VALUES ('satisfaction_floor_override', ?, CURRENT_TIMESTAMP)").bind(value).run();
+  }
+
+  it("keeps the shipped floor when the autotune flag is off: a 0.42-confidence unaddressed call stays unpublished", async () => {
+    const run = vi.fn(async () => ({ response: unaddressedBorderline() }));
+    const env = enabledEnv(run);
+    await setFloorOverride(env, "0.4"); // present but the flag is off -- must be ignored
+    const out = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
+    expect(out).toMatchObject({ status: "ok", result: null });
+  });
+
+  it("publishes the same call once the backtest-gated override lowers the live floor below its confidence", async () => {
+    const run = vi.fn(async () => ({ response: unaddressedBorderline() }));
+    const env = enabledEnv(run);
+    (env as { SATISFACTION_FLOOR_AUTOTUNE_ENABLED?: string }).SATISFACTION_FLOOR_AUTOTUNE_ENABLED = "true";
+    await setFloorOverride(env, "0.4");
+    const out = await runLoopOverLinkedIssueSatisfaction(env, baseInput);
+    expect(out.status).toBe("ok");
+    if (out.status !== "ok") throw new Error("unreachable");
+    expect(out.result).toMatchObject({ status: "unaddressed", confidence: 0.42 });
+  });
+
+  it("an explicit input.confidenceFloor wins over the stored override", async () => {
+    const run = vi.fn(async () => ({ response: unaddressedBorderline() }));
+    const env = enabledEnv(run);
+    (env as { SATISFACTION_FLOOR_AUTOTUNE_ENABLED?: string }).SATISFACTION_FLOOR_AUTOTUNE_ENABLED = "true";
+    await setFloorOverride(env, "0.3");
+    // Explicit floor ABOVE the call's confidence: the override (0.3) would publish it; the input floor must win.
+    const out = await runLoopOverLinkedIssueSatisfaction(env, { ...baseInput, confidenceFloor: 0.45 });
+    expect(out).toMatchObject({ status: "ok", result: null });
+  });
+});

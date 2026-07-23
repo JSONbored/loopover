@@ -112,7 +112,12 @@ export function buildLinkedIssueSatisfactionPrompt(input: LinkedIssueSatisfactio
 /** Parse the model's raw JSON text response into a {@link LinkedIssueSatisfactionResult}, or null when the
  *  output is unusable (no JSON object, invalid status, or the confidence floor rejects an "unaddressed" call).
  *  PURE — never throws (a malformed blob that matches the brace regex but fails JSON.parse is caught). */
-export function parseLinkedIssueSatisfactionOpinion(text: string): LinkedIssueSatisfactionResult | null {
+export function parseLinkedIssueSatisfactionOpinion(
+  text: string,
+  // #8121: the floor is overridable ONLY downward and only via the backtest-gated loosening loop -- callers
+  // without an override pass nothing and get the shipped constant, byte-identical to before.
+  confidenceFloor: number = LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR,
+): LinkedIssueSatisfactionResult | null {
   const match = text
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/```$/i, "")
@@ -129,7 +134,7 @@ export function parseLinkedIssueSatisfactionOpinion(text: string): LinkedIssueSa
   const confidence = parseConfidence(obj.confidence);
   // Fail-safe floor (#2172): a low-confidence "unaddressed" is never published as unaddressed — the caller
   // gets no finding at all rather than a shaky "you didn't fix this" call. addressed/partial are unaffected.
-  if (obj.status === "unaddressed" && confidence < LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR) return null;
+  if (obj.status === "unaddressed" && confidence < confidenceFloor) return null;
   if (!rationale) return null;
   return { status: obj.status, rationale, confidence };
 }
@@ -143,10 +148,11 @@ export function parseLinkedIssueSatisfactionOpinion(text: string): LinkedIssueSa
 export function buildLinkedIssueSatisfactionResult(
   issueText: string | null | undefined,
   modelResponseText: string,
+  confidenceFloor: number = LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR,
 ): LinkedIssueSatisfactionResult | null {
   if (!(issueText ?? "").trim()) return null;
   try {
-    const opinion = parseLinkedIssueSatisfactionOpinion(modelResponseText);
+    const opinion = parseLinkedIssueSatisfactionOpinion(modelResponseText, confidenceFloor);
     if (!opinion) return null;
     const safeRationale = toPublicSafe(opinion.rationale);
     if (!safeRationale) return null;

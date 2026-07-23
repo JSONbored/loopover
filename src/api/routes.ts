@@ -320,7 +320,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
-import { isSatisfactionFloorAutotuneEnabled, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
+import { isSatisfactionFloorAutotuneEnabled, loadSatisfactionFloorStatus, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
@@ -4825,6 +4825,12 @@ export function createApp() {
     const result = await runSatisfactionFloorLoosening(c.env);
     return c.json(result);
   });
+
+  // Operator visibility for the loosening loop (#8161): flag state, shipped vs live floor, the stored
+  // override row, and the applied-loosening history with both split verdicts. Deliberately NOT flag-gated
+  // (unlike the trigger above): an operator must be able to see a lingering override row while the flag is
+  // off. Same INTERNAL_JOB_TOKEN gate via the /v1/internal/* middleware; aggregate numbers/verdicts only.
+  app.get("/v1/internal/calibration/satisfaction-floor", async (c) => c.json(await loadSatisfactionFloorStatus(c.env)));
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };

@@ -172,3 +172,104 @@ export async function loadSatisfactionFloorRecState(env: Env, nowMs: number = Da
 
   return { flagEnabled, proposal, lastAppliedAt };
 }
+
+// ── Operator visibility (#8161) ────────────────────────────────────────────────────────────────────────
+
+export type SatisfactionFloorAppliedEntry = {
+  at: string;
+  currentFloor: number | null;
+  proposedFloor: number | null;
+  visibleCases: number | null;
+  heldOutCases: number | null;
+  visibleVerdict: string | null;
+  heldOutVerdict: string | null;
+};
+
+export type SatisfactionFloorStatus = {
+  flagEnabled: boolean;
+  shippedFloor: number;
+  /** The floor the live assessment actually uses right now: the validated override when the flag is on,
+   *  else the shipped constant. */
+  liveFloor: number;
+  /** The RAW stored override row (validated), reported even when the flag is off — an operator looking at
+   *  this surface needs to see a lingering row that would take effect the moment the flag flips. Null when
+   *  no row exists or the stored value fails the loosening-only bounds. */
+  storedOverride: number | null;
+  applied: SatisfactionFloorAppliedEntry[];
+};
+
+const SATISFACTION_FLOOR_STATUS_HISTORY_LIMIT = 25;
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function verdictOrNull(value: unknown): string | null {
+  const verdict = (value as { verdict?: unknown } | undefined)?.verdict;
+  return typeof verdict === "string" ? verdict : null;
+}
+
+/**
+ * The operator status read (#8161): flag state, shipped vs live floor, the stored override row (validated,
+ * shown regardless of flag state — see the type's own doc), and the applied-loosening history projected
+ * from the calibration.satisfaction_floor_loosened audit events (#8121's evidence trail), newest first.
+ * Aggregate numbers and verdicts only — no corpus content of any kind. Fail-safe: a read error degrades the
+ * affected section (empty history / null override) rather than throwing the operator endpoint.
+ */
+export async function loadSatisfactionFloorStatus(env: Env): Promise<SatisfactionFloorStatus> {
+  const flagEnabled = isSatisfactionFloorAutotuneEnabled(env);
+
+  let storedOverride: number | null = null;
+  try {
+    const row = await env.DB.prepare("SELECT value FROM system_flags WHERE key = ?")
+      .bind(SATISFACTION_FLOOR_OVERRIDE_FLAG_KEY)
+      .first<{ value: string }>();
+    if (row) {
+      const parsed = Number(row.value);
+      if (Number.isFinite(parsed) && parsed < LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR && parsed >= SATISFACTION_FLOOR_HARD_MINIMUM) {
+        storedOverride = parsed;
+      }
+    }
+  } catch {
+    storedOverride = null;
+  }
+
+  const applied: SatisfactionFloorAppliedEntry[] = [];
+  try {
+    const rows = await env.DB.prepare(
+      "SELECT created_at, metadata_json FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?",
+    )
+      .bind(SATISFACTION_FLOOR_LOOSENING_EVENT_TYPE, SATISFACTION_FLOOR_STATUS_HISTORY_LIMIT)
+      .all<{ created_at: string; metadata_json: string }>();
+    /* v8 ignore next -- .all() over a live D1/TestD1 always yields a defined results array, never undefined;
+     * the ?? [] guards a future driver-shape change, mirroring loadOrbDayRows' identical note. */
+    for (const row of rows.results ?? []) {
+      let proposal: Record<string, unknown> = {};
+      try {
+        const metadata = JSON.parse(row.metadata_json) as { proposal?: Record<string, unknown> };
+        proposal = metadata.proposal && typeof metadata.proposal === "object" ? metadata.proposal : {};
+      } catch {
+        /* corrupt row -- keep the entry with nulls rather than hiding that an apply happened */
+      }
+      applied.push({
+        at: row.created_at,
+        currentFloor: numberOrNull(proposal.currentFloor),
+        proposedFloor: numberOrNull(proposal.proposedFloor),
+        visibleCases: numberOrNull(proposal.visibleCases),
+        heldOutCases: numberOrNull(proposal.heldOutCases),
+        visibleVerdict: verdictOrNull(proposal.visible),
+        heldOutVerdict: verdictOrNull(proposal.heldOut),
+      });
+    }
+  } catch {
+    /* degrade to an empty history -- the endpoint must not throw on a read blip */
+  }
+
+  return {
+    flagEnabled,
+    shippedFloor: LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR,
+    liveFloor: flagEnabled && storedOverride !== null ? storedOverride : LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR,
+    storedOverride,
+    applied,
+  };
+}

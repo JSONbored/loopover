@@ -274,9 +274,11 @@ describe("loadReportOnlyKnobProposals (#8159)", () => {
     expect(await loadReportOnlyKnobProposals(enabledEnv())).toEqual([]);
   });
 
-  it("surfaces a proposal for the close-confidence knob from its own (backfill-shaped) corpus", async () => {
+  it("surfaces a proposal for a report-only knob from its own corpus (the shipped registry is all-live since #8176, so the knob is crafted)", async () => {
     const env = enabledEnv();
-    const knob = (await import("../../src/services/loosening-knobs")).LOOSENABLE_KNOBS.ai_review_close_confidence!;
+    // #8176 flipped ai_review_close_confidence to live; a report-only twin of it keeps this path pinned
+    // for the next knob that enters report-only (every new knob starts there).
+    const knob = { ...(await import("../../src/services/loosening-knobs")).LOOSENABLE_KNOBS.ai_review_close_confidence!, applyMode: "report_only" as const };
     const { splitBacktestCorpus } = await import("@loopover/engine");
     const pool = Array.from({ length: 400 }, (_, i) => ({
       ruleId: knob.ruleId,
@@ -298,7 +300,7 @@ describe("loadReportOnlyKnobProposals (#8159)", () => {
     await seed(visible[knob.minVisibleCases + 10]!.targetKey, 0.5, "reversed");
     await seed(heldOut[knob.minHeldOutCases + 6]!.targetKey, 0.5, "reversed");
 
-    const proposals = await loadReportOnlyKnobProposals(env);
+    const proposals = await loadReportOnlyKnobProposals(env, Date.now(), [knob]);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]!.knobId).toBe("ai_review_close_confidence");
     expect(proposals[0]!.proposedValue).toBe(0.9);

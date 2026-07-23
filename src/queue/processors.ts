@@ -426,6 +426,7 @@ export { runRetentionPrune } from "./retention";
 // test/unit/gate-check-policy.test.ts and test/unit/repository-settings-enforcement.test.ts's existing
 // `import { gateCheckPolicy } from "../../src/queue/processors"` keeps working unchanged.
 import { auditGateCheckPermissionMissing, gateCheckPolicy, recordPublishedGateCheckSummary } from "./gate-checks";
+import { getAiReviewCloseConfidenceOverride } from "../services/knob-loosening-run";
 export { gateCheckPolicy } from "./gate-checks";
 // #4013 step 9: same shim shape for the AI-review-orchestration functions -- imported here for this file's
 // own remaining internal callers, and re-exported so the many existing tests importing claimAiReviewLock,
@@ -1538,6 +1539,9 @@ export async function sweepRepoRegate(
   // isScheduledRegateSweepJob (queue-common.ts) misclassifies it as background maintenance and it inherits the
   // exact starvation this priority mechanism exists to avoid. Ordinary stale candidates keep the sweep prefix
   // unchanged.
+  // #8176: the global close-confidence default-override, resolved once for the sweep (same value the main
+  // webhook path threads; an explicit per-repo setting still wins inside gateCheckPolicy).
+  const sweepCloseConfidenceOverride = await getAiReviewCloseConfidenceOverride(env);
   for (const [index, pr] of candidates.entries()) {
     const others = openPullRequests.filter(
       (other) => other.number !== pr.number,
@@ -1561,7 +1565,7 @@ export async function sweepRepoRegate(
     });
     const gate = evaluateGateCheck(
       advisory,
-      gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null),
+      gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, sweepCloseConfidenceOverride),
     );
     verdicts[String(pr.number)] = gate.conclusion;
     if (gate.conclusion === "failure" || gate.conclusion === "action_required")
@@ -10381,6 +10385,8 @@ async function maybePublishPrPublicSurface(
       slopRisk,
       authorHistory,
       gateSizeContext,
+      // #8176: backtest-gated global default for the close-confidence floor (explicit per-repo wins inside).
+      await getAiReviewCloseConfidenceOverride(env),
     );
     gateEvaluation = await withReviewPipelineSpan(
       "selfhost.review.gate",
@@ -11871,7 +11877,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env)));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
@@ -12102,7 +12108,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await getAiReviewCloseConfidenceOverride(env)));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") {
     const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", loopoverFooter(env)].join("\n"));

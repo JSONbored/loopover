@@ -31,6 +31,7 @@ import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, run
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride, runActiveReviewReconciliation } from "../review/active-review-reconciliation";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
 import { isSatisfactionFloorAutotuneEnabled, runScheduledSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
+import { GENERIC_LIVE_KNOBS, isKnobAutotuneEnabled, runScheduledKnobLoosening } from "../services/knob-loosening-run";
 import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
@@ -348,6 +349,11 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       // flag is ON, but a stale in-flight job landing after a flag-flip must still no-op. Never throws into
       // the queue (the scheduled wrapper fails safe).
       if (isSatisfactionFloorAutotuneEnabled(env)) await runScheduledSatisfactionFloorLoosening(env);
+      // #8176: every LATER live registry knob rides the same tick through the generic runner — each knob
+      // is double-gated on its OWN wrangler var, so an un-flagged knob does zero work here.
+      for (const knob of GENERIC_LIVE_KNOBS) {
+        if (isKnobAutotuneEnabled(env, knob)) await runScheduledKnobLoosening(env, knob);
+      }
       return;
     case "selftune":
       // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Defense-in-depth: the cron only

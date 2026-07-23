@@ -440,7 +440,13 @@ async function runRawContextPass(args: Args, budget: RequestBudget, state: Curso
       state.rawContextResumeFrom = row.target_key;
       continue;
     }
-    const patched = patchFiredMetadataWithDiff(row.metadata_json, await diffResponse.text());
+    const diffText = await diffResponse.text();
+    // The D1 CLI driver inlines the UPDATE as literal SQL (wrangler --command cannot bind parameters), and
+    // quote-doubling can double the payload: a full 120KB diff exceeds D1's per-statement length
+    // (SQLITE_TOOBIG, hit live at row 37 of the first cloud apply). Cap the literal path with a
+    // self-describing marker; the pg driver binds parameters and keeps the full bound diff.
+    const bounded = pgSession || diffText.length <= 45_000 ? diffText : `${diffText.slice(0, 45_000)}\n[diff truncated: D1 CLI statement-length limit]`;
+    const patched = patchFiredMetadataWithDiff(row.metadata_json, bounded);
     if (patched === null) {
       report.alreadyPatched += 1;
     } else if (args.apply) {

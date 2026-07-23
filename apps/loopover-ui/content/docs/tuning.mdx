@@ -259,6 +259,12 @@ forward and wins whenever both are set for the same field.
   `advisory` renders the assessment in the review comment without blocking;
   `block` additionally lets a confidence-floor-passing "unaddressed" verdict
   become a blocker.
+- `gate.backtestRegression` — governs what a REGRESSED verdict from the
+  [pre-merge backtest](/docs/backtest-calibration) does. Default `advisory`:
+  the comparison renders in the review comment but never blocks. `block`
+  escalates a REGRESSED verdict into a hard blocker — flip it only once the
+  persisted track record supports gating. `off` silences the backtest advisory
+  entirely.
 - `gate.contentLaneDeliverable` — only meaningful for a repo with a registry
   content-lane spec configured (`contentLane`); a no-op otherwise. Fully
   deterministic (a text/path match, no AI call): when the PR's primary linked
@@ -381,36 +387,42 @@ testExpectations:
 linkedIssuePolicy: preferred
 
 # Gate policy — checkMode is set explicitly (not the legacy, ambiguous "enabled" alias)
+
 gate:
-  checkMode: visible
-  pack: gittensor
-  duplicates: block
-  linkedIssue: advisory
-  readiness:
-    mode: advisory
-    minScore: 70
-  slop:
-    mode: block
-    minScore: 60
-    aiAdvisory: true
-  mergeReadiness: advisory
-  manifestPolicy: block
-  aiReview:
-    mode: advisory
-    byok: true
-    provider: anthropic
-    model: claude-3-5-sonnet-latest
+checkMode: visible
+pack: gittensor
+duplicates: block
+linkedIssue: advisory
+readiness:
+mode: advisory
+minScore: 70
+slop:
+mode: block
+minScore: 60
+aiAdvisory: true
+mergeReadiness: advisory
+manifestPolicy: block
+aiReview:
+mode: advisory
+byok: true
+provider: anthropic
+model: claude-3-5-sonnet-latest
 
 # Generic settings overrides -- commentMode/checkRunMode/checkRunDetailLevel/badgeEnabled are
+
 # config-as-code only (no DB column or dashboard toggle); this file is their sole source.
+
 settings:
-  commentMode: detected_contributors_only
-  checkRunMode: enabled
-  checkRunDetailLevel: standard
-  badgeEnabled: true
-  # Optional path holds. Omitted or [] means no path guardrails.
-  # hardGuardrailGlobs:
-  #   - "src/selfhost/**"`}
+commentMode: detected_contributors_only
+checkRunMode: enabled
+checkRunDetailLevel: standard
+badgeEnabled: true
+
+# Optional path holds. Omitted or [] means no path guardrails.
+
+# hardGuardrailGlobs:
+
+# - "src/selfhost/\*\*"`}
 
 />
 

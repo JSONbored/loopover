@@ -13,6 +13,7 @@
 //     bounded, public-safe {status, rationale} (or null). The caller (src/queue/processors.ts) decides.
 import type { LinkedIssueSatisfactionResult } from "./linked-issue-satisfaction";
 import { SATISFACTION_SYSTEM_PROMPT, buildLinkedIssueSatisfactionPrompt, buildLinkedIssueSatisfactionResult } from "./linked-issue-satisfaction";
+import { getSatisfactionFloorOverride } from "./satisfaction-floor-loosening-run";
 import { countByokAiEventsForRepoSince, recordAiUsageEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
 import {
   type AiReviewActualUsage,
@@ -43,6 +44,10 @@ export type LinkedIssueSatisfactionRunInput = {
   /** Optional BYOK: when present, the maintainer's frontier model writes the assessment (billed to their
    *  account, counted against the shared per-repo/day BYOK cap) instead of the free/default reviewer. */
   providerKey?: AiReviewProviderKey | null | undefined;
+  /** #8121: optional explicit confidence floor. Absent ⇒ the run resolves the live backtest-gated override
+   *  itself (getSatisfactionFloorOverride; null when the autotune flag is off), falling back to the pure
+   *  module's shipped constant — so every caller gets the loosened floor with zero threading. */
+  confidenceFloor?: number | undefined;
 };
 
 export type LinkedIssueSatisfactionRunResult =
@@ -72,6 +77,7 @@ async function runWorkersSatisfactionOpinion(
   system: string,
   user: string,
   maxTokens: number,
+  confidenceFloor?: number,
 ): Promise<WorkersSatisfactionOpinionResult> {
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { result: null };
@@ -86,7 +92,7 @@ async function runWorkersSatisfactionOpinion(
           extra,
         );
         const text = coerceAiText(raw);
-        const result = buildLinkedIssueSatisfactionResult(issueText, text);
+        const result = buildLinkedIssueSatisfactionResult(issueText, text, confidenceFloor);
         if (result) return { result, usage: coerceAiUsage(raw), rawText: text };
       } catch (error) {
         if (isRateLimitError(error)) break;
@@ -108,6 +114,11 @@ export async function runLoopOverLinkedIssueSatisfaction(env: Env, input: Linked
   // Fail-safe (mirrors buildLinkedIssueSatisfactionResult's own contract): no issue text means there is
   // nothing to assess, so short-circuit before spending any budget or making a model call.
   if (!(input.issueText ?? "").trim()) return { status: "ok", result: null, estimatedNeurons: 0 };
+
+  // #8121: resolve the live backtest-gated floor override HERE (single resolution point for every caller)
+  // unless the caller supplied an explicit floor. Null (flag off / no valid override) keeps the pure
+  // module's shipped constant via the parameter default -- byte-identical to pre-#8121 behavior.
+  const confidenceFloor = input.confidenceFloor ?? (await getSatisfactionFloorOverride(env)) ?? undefined;
 
   const maxTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 256, 1024);
   const user = buildLinkedIssueSatisfactionPrompt({
@@ -146,11 +157,11 @@ export async function runLoopOverLinkedIssueSatisfaction(env: Env, input: Linked
   let rawModelText: string | undefined;
   if (input.providerKey) {
     const { text, usage: byokUsage } = await callAiProvider(input.providerKey, SATISFACTION_SYSTEM_PROMPT, user, maxTokens);
-    result = text ? buildLinkedIssueSatisfactionResult(input.issueText, text) : null;
+    result = text ? buildLinkedIssueSatisfactionResult(input.issueText, text, confidenceFloor) : null;
     usage = byokUsage;
     rawModelText = text || undefined;
   } else {
-    ({ result, usage, rawText: rawModelText } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens));
+    ({ result, usage, rawText: rawModelText } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens, confidenceFloor));
   }
   await record(env, input, "ok", estimatedNeurons, result ? `advisory finding (${result.status})` : "no usable output", { status: result?.status ?? null, surfaced: Boolean(result), byok: Boolean(input.providerKey) }, usage);
   return { status: "ok", result, estimatedNeurons, ...(rawModelText ? { rawModelText } : {}) };

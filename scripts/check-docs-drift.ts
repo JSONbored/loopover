@@ -240,6 +240,7 @@ export const GATE_MODE_MANIFEST: GateModeManifestRow[] = [
   { field: "selfAuthoredLinkedIssueGateMode", aliases: ["selfAuthoredLinkedIssueGateMode", "gate.selfAuthoredLinkedIssue"], pages: ["how-reviews-work.mdx", "tuning.mdx", "github-app.mdx"] },
   { field: "linkedIssueSatisfactionGateMode", aliases: ["linkedIssueSatisfactionGateMode", "gate.linkedIssueSatisfaction"], pages: ["how-reviews-work.mdx", "tuning.mdx", "github-app.mdx"] },
   { field: "contentLaneDeliverableGateMode", aliases: ["contentLaneDeliverableGateMode", "gate.contentLaneDeliverable"], pages: ["how-reviews-work.mdx", "tuning.mdx", "github-app.mdx"] },
+  { field: "backtestRegressionGateMode", aliases: ["backtestRegressionGateMode", "gate.backtestRegression"], pages: ["backtest-calibration.mdx", "tuning.mdx"] },
   { field: "moderationGateMode", aliases: ["moderationGateMode", "settings.moderationGateMode"], pages: ["how-reviews-work.mdx", "tuning.mdx", "github-app.mdx"] },
 ];
 

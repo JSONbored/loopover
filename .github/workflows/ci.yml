@@ -1028,7 +1028,21 @@ jobs:
             # ~2,900-file suite is 0% covered, polluting Codecov's project trend on every scoped PR. Real
             # coverage for files actually exercised is unaffected either way.
             SCOPE_ARGS+=(--changed=origin/main --coverage.all=false)
-            npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/3 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}"
+            # A scoped PR touching zero files any test imports (a pure docs/comment-only diff under a
+            # scoped path, e.g. packages/loopover-miner/docs/**) is a real, valid outcome here -- vitest
+            # itself prints "No test files found, exiting with code 0" and exits clean, writing no
+            # coverage/lcov.info at all (nothing was instrumented). Confirmed live: PR #8165, a pure
+            # packages/loopover-miner/docs + apps/loopover-ui/content/docs mdx change, matched zero test
+            # files and failed "Verify coverage report exists" even though nothing was actually broken.
+            # Capture vitest's own stdout (the same "No test files found" string this file's own comment
+            # above already documents relying on) rather than re-deriving the zero-files case from
+            # scratch, and record it as a step output so "Verify coverage report exists" below can tell
+            # this apart from a real crash that should still fail loudly.
+            set -o pipefail
+            npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/3 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}" 2>&1 | tee vitest-scoped-output.log
+            if grep -q "No test files found" vitest-scoped-output.log; then
+              echo "no_tests_matched=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             # Duration-aware sharding (#ci-duration-aware-sharding), full-suite case only: vitest's own
             # --shard splits by file COUNT alone, no duration awareness -- confirmed via real per-shard CI
@@ -1060,7 +1074,12 @@ jobs:
           echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from all shards' merged lcov."
           echo "Reproduce locally with: 'npm run test:coverage' (unsharded, runs the whole suite)."
       - name: Verify coverage report exists
-        if: ${{ success() }}
+        # Skipped when the scoped-selection branch above matched zero test files (steps.coverage.outputs.
+        # no_tests_matched) -- a legitimately test-free diff (e.g. docs-only under a scoped path) writes no
+        # coverage/lcov.info at all, and that is not a failure. A real failure (tests ran and either failed
+        # or the coverage step crashed before writing output) still fails this job via `success()` below,
+        # same as before.
+        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' }}
         run: |
           if [ ! -s coverage/lcov.info ]; then
             echo "::error title=Coverage::coverage/lcov.info is missing or empty"

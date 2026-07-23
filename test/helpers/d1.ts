@@ -87,6 +87,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
     GITTENSOR_UPSTREAM_REF: "test",
     GITTENSOR_REGISTRY_URL: "https://raw.githubusercontent.com/entrius/gittensor/test/gittensor/validator/weights/master_repositories.json",
     LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "false",
+    SATISFACTION_FLOOR_AUTOTUNE_ENABLED: "false",
     // Deliberately NOT "JSONbored/gittensory" (the old pre-rename repo name most test fixtures use as their
     // generic placeholder repoFullName) and NOT "JSONbored/loopover" (the real self-repo default) -- either
     // would make isLoopOverSelfRepo() accidentally match a fixture that has no intent to exercise self-repo

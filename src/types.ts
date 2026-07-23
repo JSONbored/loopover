@@ -976,6 +976,14 @@ export type RepositorySettings = {
    *  exactly like every other `gate:` field overrides its `RepositorySettings` counterpart. Default `off` —
    *  opt-in. */
   contentLaneDeliverableGateMode: GateRuleMode;
+  /** Backtest-regression gate (#8105, epic #8082). Governs what a REGRESSED verdict from the pre-merge
+   *  backtest (#8138 threshold / #8139 logic) does: `advisory` (default — today's shipped behavior) renders
+   *  the comparison but never blocks; `block` additionally pushes a `backtest_regression` finding that
+   *  isConfiguredGateBlocker treats as a hard blocker; `off` skips the backtest advisory entirely. Default
+   *  deliberately stays `advisory` until the persisted track record (#8140) supports flipping — see #8105's
+   *  own do-not-gate-before-data boundary. `.loopover.yml gate.backtestRegression` overrides it exactly like
+   *  every other `gate:` field. */
+  backtestRegressionGateMode: GateRuleMode;
   /** Slop-risk threshold (0-100) at/above which `slopGateMode: block` blocks. Default 60 (the `high` band). */
   slopGateMinScore?: number | null | undefined;
   /** AI-assisted slop advisory (the `slopAiAdvisory` capability). When true AND `slopGateMode != off`, a

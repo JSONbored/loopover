@@ -99,6 +99,10 @@ export type GateCheckPolicy = {
    *  on this mode; see runContentLaneDeliverableCheckForAdvisory, src/queue/processors.ts on the host side),
    *  so this branch only matters once a repo has explicitly opted into `advisory`/`block`. */
   contentLaneDeliverableGateMode?: GateRuleMode | undefined;
+  /** Backtest-regression gate (#8105): `block` turns a `backtest_regression` finding into a hard blocker.
+   *  Default `advisory` — the finding only exists in block mode (the host resolver pushes it there), so
+   *  this branch is defense-in-depth, mirroring content_lane_deliverable_missing's above. */
+  backtestRegressionGateMode?: GateRuleMode | undefined;
   /** CLA / license-compatibility gate (#2564). When `block`, a `cla_consent_missing` finding — raised when
    *  neither configured detection method (a consent phrase in the PR body, or a named CLA-bot check-run
    *  conclusion) confirms consent — becomes a hard blocker. `off` (default) = no finding at all; `advisory` =
@@ -636,6 +640,9 @@ function isConfiguredGateBlocker(finding: AdvisoryFinding, policy: GateCheckPoli
   // opts in with `block`. Fully deterministic (no AI judgment involved), so it is exempt from the
   // close-precision circuit breaker on the host side.
   if (code === "content_lane_deliverable_missing") return gatePolicyBlocks(policy.contentLaneDeliverableGateMode, "off");
+  // Backtest-regression gate (#8105): blocks only under an explicit opt-in; default advisory (the shipped
+  // pre-#8105 behavior). The finding itself only exists in block mode -- see the host-side resolver.
+  if (code === "backtest_regression") return gatePolicyBlocks(policy.backtestRegressionGateMode, "advisory");
   // Lockfile-tamper-risk gate (#2563): blocks only when the maintainer opts in with `block`. Defaults to `off`
   // (the finding is never even produced — see maybeAddLockfileTamperFinding's mode gate in queue/processors.ts),
   // so this branch only matters once a repo has explicitly turned the scan on.

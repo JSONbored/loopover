@@ -2116,6 +2116,7 @@ describe("v2 signal builders", () => {
         selfAuthoredLinkedIssueGateMode: "advisory",
         linkedIssueSatisfactionGateMode: "off",
         contentLaneDeliverableGateMode: "off",
+        backtestRegressionGateMode: "advisory",
         slopAiAdvisory: false,
         qualityGateMinScore: null,
         autoLabelEnabled: true,

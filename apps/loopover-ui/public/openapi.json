@@ -9761,6 +9761,14 @@
               "advisory",
               "block"
             ]
+          },
+          "backtestRegressionGateMode": {
+            "type": "string",
+            "enum": [
+              "off",
+              "advisory",
+              "block"
+            ]
           }
         },
         "required": [
@@ -9782,6 +9790,7 @@
           "selfAuthoredLinkedIssueGateMode",
           "linkedIssueSatisfactionGateMode",
           "contentLaneDeliverableGateMode",
+          "backtestRegressionGateMode",
           "slopAiAdvisory",
           "aiReviewMode",
           "aiReviewByok",
@@ -10492,6 +10501,14 @@
                   "advisory",
                   "block"
                 ]
+              },
+              "backtestRegressionGateMode": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "advisory",
+                  "block"
+                ]
               }
             },
             "required": [
@@ -10513,6 +10530,7 @@
               "selfAuthoredLinkedIssueGateMode",
               "linkedIssueSatisfactionGateMode",
               "contentLaneDeliverableGateMode",
+              "backtestRegressionGateMode",
               "autoLabelEnabled",
               "typeLabelsEnabled",
               "gittensorLabel",

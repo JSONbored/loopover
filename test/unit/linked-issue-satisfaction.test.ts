@@ -162,3 +162,26 @@ describe("buildLinkedIssueSatisfactionResult", () => {
     expect(buildLinkedIssueSatisfactionResult("Fix the crash", null as unknown as string)).toBeNull();
   });
 });
+
+describe("confidence-floor parameter (#8121)", () => {
+  const borderline = JSON.stringify({ status: "unaddressed", rationale: "The diff never touches the asked-for surface.", confidence: 0.42 });
+
+  it("parse: the default floor drops a 0.42-confidence unaddressed call; an explicitly loosened floor publishes it", () => {
+    expect(parseLinkedIssueSatisfactionOpinion(borderline)).toBeNull();
+    const loosened = parseLinkedIssueSatisfactionOpinion(borderline, 0.4);
+    expect(loosened).toMatchObject({ status: "unaddressed", confidence: 0.42 });
+    // A floor param can also be HIGHER when a caller passes one explicitly -- the parse applies whatever it
+    // is given; direction policy lives in the loosening loop's own guards, not here.
+    expect(parseLinkedIssueSatisfactionOpinion(JSON.stringify({ status: "unaddressed", rationale: "r", confidence: 0.6 }), 0.7)).toBeNull();
+  });
+
+  it("build: threads the floor through to the parse (default drops, loosened publishes)", () => {
+    expect(buildLinkedIssueSatisfactionResult("real issue text", borderline)).toBeNull();
+    expect(buildLinkedIssueSatisfactionResult("real issue text", borderline, 0.4)).toMatchObject({ status: "unaddressed" });
+  });
+
+  it("the floor never gates addressed/partial verdicts, with or without an override", () => {
+    const partial = JSON.stringify({ status: "partial", rationale: "Half of the ask is delivered.", confidence: 0.1 });
+    expect(parseLinkedIssueSatisfactionOpinion(partial, 0.9)).toMatchObject({ status: "partial" });
+  });
+});

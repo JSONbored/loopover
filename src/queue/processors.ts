@@ -7401,12 +7401,35 @@ export async function resolveThresholdBacktestAdvisory(
   repoFullName: string,
   pr: { number: number },
   files: Awaited<ReturnType<typeof listPullRequestFiles>>,
+  // #8105: what a REGRESSED verdict does. Optional + defaulted so every existing caller/test keeps the
+  // shipped advisory-only behavior; the live gate call site threads settings.backtestRegressionGateMode.
+  options: { mode?: GateRuleMode; advisory?: { findings: AdvisoryFinding[] } } = {},
 ): Promise<string> {
+  const mode = options.mode ?? "advisory";
+  // `off` silences the whole advisory (no D1 read, no persist, no comment section) -- the same short-circuit
+  // shape contentLaneDeliverableGateMode's "off" uses. advisory/block both still render the section.
+  if (mode === "off") return "";
   if (!files.some((file) => THRESHOLD_BACKTEST_WATCHED_PATHS.has(file.path))) return "";
   try {
     const { changed, comparisons } = await runThresholdBacktestAdvisory(env, buildSecretScanDiff(files));
     if (comparisons.length === 0) return "";
     await persistThresholdBacktestRuns(env, repoFullName, pr.number, changed, comparisons);
+    // #8105 block mode: a REGRESSED verdict becomes a configured gate blocker. The finding only exists in
+    // block mode (advisory keeps today's comment-only behavior byte-identically), and
+    // isConfiguredGateBlocker's own `backtest_regression` branch is the defense-in-depth mirror of this
+    // push -- same split as linked_issue_scope_mismatch's block-mode wiring above.
+    const regressed = comparisons.filter((comparison) => comparison.verdict === "regressed");
+    if (mode === "block" && regressed.length > 0 && options.advisory) {
+      const ruleIds = regressed.map((comparison) => comparison.ruleId).join(", ");
+      options.advisory.findings.push({
+        code: "backtest_regression",
+        severity: "warning",
+        title: "Backtest regression against recorded history",
+        detail: `Backtesting this PR's threshold change against real recorded history REGRESSED ${ruleIds} on at least one axis (see the Threshold backtest section).`,
+        action: "Revisit the changed threshold so no backtest axis regresses, or ask a maintainer to override.",
+        publicText: `Backtest: this change scores worse than the current value against recorded review history (${ruleIds}). See the Threshold backtest section for the comparison.`,
+      });
+    }
     return thresholdBacktestBlock(comparisons);
   } catch (error) {
     console.error(JSON.stringify({ level: "error", event: "threshold_backtest_failed", repoFullName, pullNumber: pr.number, error: errorMessage(error) }));
@@ -9485,8 +9508,13 @@ async function maybePublishPrPublicSurface(
       }
     }
     // Threshold-only backtest advisory (#8138, epic #8082): independent of linkedIssueSatisfactionGateMode
-    // above -- see resolveThresholdBacktestAdvisory's own doc comment for why.
-    thresholdBacktest = await resolveThresholdBacktestAdvisory(env, repoFullName, pr, await getReviewFiles());
+    // above -- see resolveThresholdBacktestAdvisory's own doc comment for why. #8105 threads the repo's
+    // backtestRegressionGateMode: advisory (default) keeps the shipped comment-only behavior; block lets a
+    // REGRESSED verdict push a configured gate blocker; off silences the section.
+    thresholdBacktest = await resolveThresholdBacktestAdvisory(env, repoFullName, pr, await getReviewFiles(), {
+      mode: settings.backtestRegressionGateMode,
+      advisory,
+    });
     // Content-lane linked-issue deliverable check (#content-lane-deliverable, opt-in via
     // contentLaneDeliverableGateMode). Independent gate mode from the AI-based satisfaction assessment above --
     // `off` (default) short-circuits before any fetch, so this is byte-identical to before this feature existed

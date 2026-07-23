@@ -5,6 +5,43 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.5.0](https://github.com/JSONbored/loopover/compare/mcp-v3.4.0...mcp-v3.5.0) (2026-07-23)
+
+
+### Features
+
+* **api:** REST + CLI mirror for loopover_watch_issues ([#7153](https://github.com/JSONbored/loopover/issues/7153)) ([13cb8a3](https://github.com/JSONbored/loopover/commit/13cb8a3909d31e2f1b95963e734073ae985646b7)), closes [#6746](https://github.com/JSONbored/loopover/issues/6746)
+* **engine:** represent idea targetRepo as an existing-vs-provision union ([#7710](https://github.com/JSONbored/loopover/issues/7710)) ([d7042ef](https://github.com/JSONbored/loopover/commit/d7042efdee08029c91e37995db34f83bb4d604fe)), closes [#7635](https://github.com/JSONbored/loopover/issues/7635)
+* **mcp:** add remote + stdio + CLI surfaces for the selftune override audit ([#7997](https://github.com/JSONbored/loopover/issues/7997)) ([050f8cb](https://github.com/JSONbored/loopover/commit/050f8cb3ae7df3850147375b288e4b9762929c21))
+* **mcp:** add remote + stdio MCP tool surfaces for loopover_get_activation_preview ([#7887](https://github.com/JSONbored/loopover/issues/7887)) ([e8e5d89](https://github.com/JSONbored/loopover/commit/e8e5d893a82cba53ac6b7a328bc7842d9942f863)), closes [#7799](https://github.com/JSONbored/loopover/issues/7799)
+* **mcp:** add remote + stdio surfaces for loopover_get_ams_miner_cohort ([#7935](https://github.com/JSONbored/loopover/issues/7935)) ([4f87f1a](https://github.com/JSONbored/loopover/commit/4f87f1a5296069fb72b9a96d3255268cd9879218))
+* **mcp:** add remote + stdio surfaces for loopover_get_gate_config_effective ([#7928](https://github.com/JSONbored/loopover/issues/7928)) ([03f9d9c](https://github.com/JSONbored/loopover/commit/03f9d9cbe124ab95883ea6f5d375aa29f4fdcfde)), closes [#7800](https://github.com/JSONbored/loopover/issues/7800)
+* **mcp:** add remote + stdio surfaces for loopover_get_live_gate_thresholds ([#7924](https://github.com/JSONbored/loopover/issues/7924)) ([510d25b](https://github.com/JSONbored/loopover/commit/510d25bc268ca07c01f698b7723321c3a8ba7276)), closes [#7801](https://github.com/JSONbored/loopover/issues/7801)
+* **mcp:** add remote + stdio surfaces for loopover_get_pr_maintainer_packet ([#7926](https://github.com/JSONbored/loopover/issues/7926)) ([1257c20](https://github.com/JSONbored/loopover/commit/1257c204f8314042205fdbbc1e0bb5641f9d0452)), closes [#7802](https://github.com/JSONbored/loopover/issues/7802)
+* **mcp:** add remote + stdio surfaces for loopover_get_registry_snapshot ([#7917](https://github.com/JSONbored/loopover/issues/7917)) ([f27b9f0](https://github.com/JSONbored/loopover/commit/f27b9f0cf197cdc4eb45c527c266a60903343994))
+* **mcp:** add remote + stdio surfaces for loopover_get_repo_focus_manifest ([#7943](https://github.com/JSONbored/loopover/issues/7943)) ([bc042ed](https://github.com/JSONbored/loopover/commit/bc042edc30d2418382e8b717c7e07518ac879027))
+* **mcp:** add remote + stdio surfaces for loopover_get_upstream_ruleset ([#7921](https://github.com/JSONbored/loopover/issues/7921)) ([a97dd18](https://github.com/JSONbored/loopover/commit/a97dd18b6d11e390befb15441537909bf663f96c)), closes [#7807](https://github.com/JSONbored/loopover/issues/7807)
+* **mcp:** add REST route, CLI command, and stdio tool for loopover_plan_repo_issues ([#7890](https://github.com/JSONbored/loopover/issues/7890)) ([b3e1bc3](https://github.com/JSONbored/loopover/commit/b3e1bc359c10802eb22b86e69a443e2e70828b4a)), closes [#7764](https://github.com/JSONbored/loopover/issues/7764)
+* **mcp:** register loopover_check_improvement_potential stdio tool ([#7963](https://github.com/JSONbored/loopover/issues/7963)) ([a4c15d6](https://github.com/JSONbored/loopover/commit/a4c15d6484a778d9bc86c0fee92f2e5f4fbb09b1))
+* **mcp:** register loopover_generate_contributor_issue_drafts as a local stdio tool ([#7989](https://github.com/JSONbored/loopover/issues/7989)) ([6a55b8d](https://github.com/JSONbored/loopover/commit/6a55b8d324a24279a42b8adde3314a45ce2a4d88))
+* **mcp:** register loopover_get_agent_audit_feed as a local stdio tool ([#7971](https://github.com/JSONbored/loopover/issues/7971)) ([84a7878](https://github.com/JSONbored/loopover/commit/84a7878c67e1c79dbec92a702617a65e54b6f6c9))
+* **mcp:** register loopover_get_automation_state as a local stdio tool ([#7966](https://github.com/JSONbored/loopover/issues/7966)) ([ca738de](https://github.com/JSONbored/loopover/commit/ca738dec7ce840cc9b1ae03a61c0067c58bcb450))
+* **mcp:** register loopover_get_contributor_profile as a local stdio tool ([#7760](https://github.com/JSONbored/loopover/issues/7760)) ([#7958](https://github.com/JSONbored/loopover/issues/7958)) ([3790ecd](https://github.com/JSONbored/loopover/commit/3790ecde79469af12309183ae22b04656e27d3c5))
+* **mcp:** register loopover_get_outcome_calibration as a local stdio tool ([#7877](https://github.com/JSONbored/loopover/issues/7877)) ([0af9f49](https://github.com/JSONbored/loopover/commit/0af9f49186a38526a99324dfd2fcceeece2b1295))
+* **mcp:** register loopover_get_repo_onboarding_pack as a local  ([#7977](https://github.com/JSONbored/loopover/issues/7977)) ([b9aa25f](https://github.com/JSONbored/loopover/commit/b9aa25f60d2cc63ba889dd2ef1ea619e1cb1ec81))
+* **mcp:** register loopover_list_notifications as a local stdio tool ([#7761](https://github.com/JSONbored/loopover/issues/7761)) ([#7965](https://github.com/JSONbored/loopover/issues/7965)) ([8c2950c](https://github.com/JSONbored/loopover/commit/8c2950c3f063785d6896030cc4dcf3d08697801c))
+* **mcp:** register loopover_mark_notifications_read as a local stdio tool ([#7950](https://github.com/JSONbored/loopover/issues/7950)) ([fa3581d](https://github.com/JSONbored/loopover/commit/fa3581dec91dddb9b6c94f5814a8ef354cd2b92e)), closes [#7762](https://github.com/JSONbored/loopover/issues/7762)
+* **mcp:** register loopover_propose_action as a local stdio tool ([#7991](https://github.com/JSONbored/loopover/issues/7991)) ([7c1a21e](https://github.com/JSONbored/loopover/commit/7c1a21effb2e5725ec4d4ecdec41d42f990162f4))
+* **mcp:** register loopover_refresh_repo_docs as a local stdio tool ([#7974](https://github.com/JSONbored/loopover/issues/7974)) ([4dccaa6](https://github.com/JSONbored/loopover/commit/4dccaa6dde04064ea0a87583380ea6ef3de4fd92)), closes [#7754](https://github.com/JSONbored/loopover/issues/7754)
+* **mcp:** register loopover_watch_issues as a local stdio tool ([#7961](https://github.com/JSONbored/loopover/issues/7961)) ([43099df](https://github.com/JSONbored/loopover/commit/43099df099a044db30d402601c7ffa84f72a55f5)), closes [#7763](https://github.com/JSONbored/loopover/issues/7763)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.4.0 to ^3.5.0
+
 ## [3.4.0](https://github.com/JSONbored/loopover/compare/mcp-v3.3.0...mcp-v3.4.0) (2026-07-18)
 
 

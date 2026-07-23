@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.6.0](https://github.com/JSONbored/loopover/compare/engine-v3.5.0...engine-v3.6.0) (2026-07-23)
+
+
+### Features
+
+* **gate:** config-driven backtest-regression gate mode, default advisory ([#8105](https://github.com/JSONbored/loopover/issues/8105)) ([#8162](https://github.com/JSONbored/loopover/issues/8162)) ([9c303a6](https://github.com/JSONbored/loopover/commit/9c303a6c9c23f2dafefdeed2a477d52ff72f0a0c))
+
 ## [3.5.0](https://github.com/JSONbored/loopover/compare/engine-v3.4.1...engine-v3.5.0) (2026-07-23)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.6.0](https://github.com/JSONbored/loopover/compare/miner-v3.5.0...miner-v3.6.0) (2026-07-23)
+
+
+### Chores
+
+* **miner:** Synchronize engine-and-dependents versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.5.0 to ^3.6.0
+
 ## [3.5.0](https://github.com/JSONbored/loopover/compare/miner-v3.4.0...miner-v3.5.0) (2026-07-23)
 
 

@@ -101,3 +101,35 @@ export async function runSatisfactionFloorLoosening(env: Env, nowMs: number = Da
 
   return { applied: true, proposal };
 }
+
+/**
+ * The cron-tick wrapper (#8158): one loosening evaluation, failing SAFE (a thrown evaluation is logged and
+ * swallowed — the queue consumer must never poison-pill on telemetry work). An APPLIED loosening emits ONE
+ * structured error-level alert — the same Workers-Logs + Sentry notify path runOpsAlerts documents (the
+ * `ev` sub-field keeps distinct rules from collapsing into one Sentry issue) — and by construction cannot
+ * re-alert on later ticks: the next evaluation starts from the already-loosened floor and returns
+ * no_proposal until the corpus justifies another step.
+ */
+export async function runScheduledSatisfactionFloorLoosening(env: Env): Promise<SatisfactionFloorLooseningRunResult | null> {
+  try {
+    const result = await runSatisfactionFloorLoosening(env);
+    if (result.applied) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "satisfaction_floor_loosened",
+          ev: SATISFACTION_FLOOR_RULE_ID,
+          at: new Date().toISOString(),
+          currentFloor: result.proposal.currentFloor,
+          proposedFloor: result.proposal.proposedFloor,
+          visibleCases: result.proposal.visibleCases,
+          heldOutCases: result.proposal.heldOutCases,
+        }),
+      );
+    }
+    return result;
+  } catch (error) {
+    console.warn(JSON.stringify({ level: "warn", event: "satisfaction_floor_loosening_tick_failed", error: error instanceof Error ? error.message : "unknown error" }));
+    return null;
+  }
+}

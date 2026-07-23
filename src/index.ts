@@ -15,6 +15,7 @@ import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride } fr
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride } from "./review/active-review-reconciliation";
 import { isRagEnabled } from "./review/rag-wire";
 import { isSelfTuneEnabled } from "./review/selftune-wire";
+import { isSatisfactionFloorAutotuneEnabled } from "./services/satisfaction-floor-loosening-run";
 import {
   githubRateLimitAdmissionKeyForJob,
   isGitHubBudgetBackgroundJob,
@@ -274,6 +275,12 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
     // Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does
     // ZERO new tuning work and the enqueued set is byte-identical to today.
     if (selfHostedReviews && isSelfTuneEnabled(env)) jobs.push({ type: "selftune", requestedBy: "schedule" });
+    // Backtest-gated satisfaction-floor loosening (#8158/#8121, flag SATISFACTION_FLOOR_AUTOTUNE_ENABLED).
+    // Hourly evaluation of the one approved loosenable knob; applies at most one candidate step per tick and
+    // alerts once on apply. Same runtime gate as its selftune sibling (the acting-autonomy surface). Enqueued
+    // ONLY when the flag is ON — flag-OFF (default) this job is never created, so the cron tick does ZERO new
+    // work and the enqueued set is byte-identical to today.
+    if (selfHostedReviews && isSatisfactionFloorAutotuneEnabled(env)) jobs.push({ type: "satisfaction-floor-loosening", requestedBy: "schedule" });
     // APR repo-transfer acceptance/expiry detection (#7741, flag LOOPOVER_APR_TRANSFER_POLL). Hourly poll that
     // resolves each pending APR transfer (accepted / accepted-and-departed / expired at 7 days) and reconciles
     // the per-repo AMS pause. Enqueued ONLY when the flag is ON — flag-OFF (default) this job is never created,

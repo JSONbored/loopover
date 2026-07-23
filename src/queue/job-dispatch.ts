@@ -30,6 +30,7 @@ import { isLoopEscalationSweepEnabled, resolveLoopEscalationManifestOverride, ru
 import { isPrReconciliationEnabled, resolvePrReconciliationManifestOverride, runOpenPrReconciliation } from "../review/pr-reconciliation";
 import { isActiveReviewReconciliationEnabled, resolveActiveReviewReconciliationManifestOverride, runActiveReviewReconciliation } from "../review/active-review-reconciliation";
 import { isSelfTuneEnabled, runSelfTune } from "../review/selftune-wire";
+import { isSatisfactionFloorAutotuneEnabled, runScheduledSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { runSelfTuneBreaker } from "../review/outcomes-wire";
 import { isRagEnabled } from "../review/rag-wire";
 import { processSubmitDraft } from "../services/draft";
@@ -341,6 +342,12 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         const activeReviewReconciliationManifestOverride = await resolveActiveReviewReconciliationManifestOverride(env);
         if (isActiveReviewReconciliationEnabled(env, activeReviewReconciliationManifestOverride)) await runActiveReviewReconciliation(env);
       }
+      return;
+    case "satisfaction-floor-loosening":
+      // #8158: defense-in-depth mirror of the selftune case below — the cron only ENQUEUES this when the
+      // flag is ON, but a stale in-flight job landing after a flag-flip must still no-op. Never throws into
+      // the queue (the scheduled wrapper fails safe).
+      if (isSatisfactionFloorAutotuneEnabled(env)) await runScheduledSatisfactionFloorLoosening(env);
       return;
     case "selftune":
       // Convergence (self-improve / auto-tune, flag LOOPOVER_REVIEW_SELFTUNE). Defense-in-depth: the cron only

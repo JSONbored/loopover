@@ -1036,6 +1036,40 @@ describe("worker entrypoint", () => {
     ]);
   });
 
+  it("enqueues the satisfaction-floor-loosening tick hourly only when SATISFACTION_FLOOR_AUTOTUNE_ENABLED is ON (#8158)", async () => {
+    const sentFor = async (flag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+      const sent: Array<import("../../src/types").JobMessage> = [];
+      const env = createTestEnv({
+        ...(flag === undefined ? {} : ({ SATISFACTION_FLOOR_AUTOTUNE_ENABLED: flag } as Partial<Env>)),
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      const waitUntil: Promise<unknown>[] = [];
+      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await Promise.all(waitUntil);
+      return sent;
+    };
+
+    // createTestEnv defaults the flag to "false" — the undefined case exercises exactly that shipped default.
+    expect((await sentFor()).some((m) => m.type === "satisfaction-floor-loosening")).toBe(false);
+    expect((await sentFor("true")).filter((m) => m.type === "satisfaction-floor-loosening")).toEqual([
+      { type: "satisfaction-floor-loosening", requestedBy: "schedule" },
+    ]);
+    // Off the hourly boundary, flag-ON still enqueues nothing.
+    const sent: Array<import("../../src/types").JobMessage> = [];
+    const env = createTestEnv({
+      SATISFACTION_FLOOR_AUTOTUNE_ENABLED: "true" as never,
+      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+    });
+    const waitUntil: Promise<unknown>[] = [];
+    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await Promise.all(waitUntil);
+    expect(sent.some((m) => m.type === "satisfaction-floor-loosening")).toBe(false);
+  });
+
   it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when LOOPOVER_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
     const sentFor = async (ragFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];

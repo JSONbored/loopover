@@ -250,6 +250,15 @@ export type JobMessage =
       requestedBy: "schedule" | "api" | "test";
     }
   | {
+      // Backtest-gated satisfaction-floor loosening tick (#8158/#8121, flag
+      // SATISFACTION_FLOOR_AUTOTUNE_ENABLED). One evaluation of the approved loosenable knob per hour:
+      // proposes/applies at most one candidate step when the backtest clears both splits, alerts once on
+      // apply. Enqueued hourly by the cron ONLY when the flag is ON (index.ts), so flag-OFF this job
+      // never exists.
+      type: "satisfaction-floor-loosening";
+      requestedBy: "schedule" | "api" | "test";
+    }
+  | {
       // Convergence (RAG / codebase index — Layer C, flag-gated by LOOPOVER_REVIEW_RAG). Populate + maintain the
       // vector index that retrieval reads.
       //   - No `repoFullName` (the cron fan-out) → enqueue one per-repo FULL re-index job for every

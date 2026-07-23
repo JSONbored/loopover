@@ -34,6 +34,11 @@ const MAX_RATIONALE_LENGTH = 400;
 export const MAX_ISSUE_TEXT_CHARS = 6000;
 export const MAX_DIFF_CHARS = 60000;
 export const MAX_BODY_CHARS = 2000;
+// #8139: bound for the model's own raw response text, captured alongside the other raw-context fields so a
+// future logic backtest can replay parseLinkedIssueSatisfactionOpinion/buildLinkedIssueSatisfactionResult
+// against the SAME text the original assessment actually parsed -- the prompt inputs alone (issueText/
+// prTitle/prBody/diff) are not enough to backtest the parse/floor/sanitize step, only to rebuild the prompt.
+export const MAX_MODEL_RESPONSE_CHARS = 4000;
 
 export type LinkedIssueSatisfactionInput = {
   /** The already-fetched linked-issue title + body text (grounding already resolved this — see

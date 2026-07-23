@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runLoopOverLinkedIssueSatisfaction, type LinkedIssueSatisfactionRunInput } from "../../src/services/linked-issue-satisfaction-run";
-import { MAX_BODY_CHARS, MAX_DIFF_CHARS } from "../../src/services/linked-issue-satisfaction";
+import { MAX_BODY_CHARS, MAX_DIFF_CHARS, MAX_MODEL_RESPONSE_CHARS } from "../../src/services/linked-issue-satisfaction";
 import { BEST_REVIEW_MODELS, RELIABLE_FALLBACK_MODELS } from "../../src/services/ai-review";
 import { buildAiReviewDiff, processJob, runLinkedIssueSatisfactionForAdvisory } from "../../src/queue/processors";
 import { evaluateGateCheck } from "../../src/rules/advisory";
@@ -138,6 +138,24 @@ describe("runLoopOverLinkedIssueSatisfaction gating + fail-safe", () => {
     if (result.status !== "ok") throw new Error("unreachable");
     expect(result.result).toMatchObject({ status: "addressed" });
     expect(result.estimatedNeurons).toBeGreaterThan(0);
+  });
+
+  it("also returns the model's own raw response text alongside the parsed result (#8139)", async () => {
+    const modelJson = satisfactionJson({ status: "addressed" });
+    const run = vi.fn(async () => ({ response: modelJson }));
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.rawModelText).toBe(modelJson);
+  });
+
+  it("omits rawModelText (never a stray empty string) when no attempt produces a usable result (#8139)", async () => {
+    const run = vi.fn(async () => ({ response: "not json" }));
+    const result = await runLoopOverLinkedIssueSatisfaction(enabledEnv(run), baseInput);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+    expect(result.result).toBeNull();
+    expect(result.rawModelText).toBeUndefined();
   });
 
   it("records the pre-budgeted retry/fallback estimate under the linked_issue_satisfaction feature", async () => {
@@ -482,9 +500,10 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       expect(history.overrides).toEqual([]); // firing alone is never an override
     });
 
-    it("captures the bounded raw context (issueText/prTitle/prBody/diff) on the fired signal, truncating an over-limit body (#8129)", async () => {
+    it("captures the bounded raw context (issueText/prTitle/prBody/diff/modelResponseText) on the fired signal, truncating an over-limit body (#8129)", async () => {
       stubIssueFetch();
-      const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
+      const modelJson = satisfactionJson({ status: "unaddressed", confidence: 0.9 });
+      const run = vi.fn(async () => ({ response: modelJson }));
       const env = enabledEnv(run);
       const longBody = "x".repeat(MAX_BODY_CHARS + 500);
       const longBodyPr = { ...pr, body: longBody };
@@ -501,6 +520,24 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
       expect(metadata.prBody).toBe(longBody.slice(0, MAX_BODY_CHARS));
       expect(metadata.prBody).toHaveLength(MAX_BODY_CHARS);
       expect(metadata.diff).toBe(buildAiReviewDiff(files).slice(0, MAX_DIFF_CHARS));
+      // #8139: the model's own raw response is captured too, byte-identical to what was actually parsed —
+      // a future logic backtest replays parseLinkedIssueSatisfactionOpinion against exactly this text.
+      expect(metadata.modelResponseText).toBe(modelJson);
+    });
+
+    it("truncates an over-limit model response to MAX_MODEL_RESPONSE_CHARS on the fired signal (#8139)", async () => {
+      stubIssueFetch();
+      // Padding lives inside the rationale string (still valid JSON + still parses to "unaddressed" above the
+      // floor) so the raw response text itself grows past the bound without changing the parsed verdict.
+      const modelJson = satisfactionJson({ status: "unaddressed", confidence: 0.9, rationale: "x".repeat(MAX_MODEL_RESPONSE_CHARS + 500) });
+      const run = vi.fn(async () => ({ response: modelJson }));
+      const env = enabledEnv(run);
+      await runLinkedIssueSatisfactionForAdvisory(env, { mode: "live", settings: blockMode, advisory: advisory(), repoFullName: "acme/widgets", pr, author: "alice", files, confirmedContributor: true, installationId: 1 });
+
+      const history = await createSignalStore(env).queryRuleHistory("linked_issue_scope_mismatch", 0);
+      const metadata = history.fired[0]?.metadata as Record<string, string>;
+      expect(metadata.modelResponseText).toBe(modelJson.slice(0, MAX_MODEL_RESPONSE_CHARS));
+      expect(metadata.modelResponseText).toHaveLength(MAX_MODEL_RESPONSE_CHARS);
     });
 
     it("stores an empty prBody (not the string 'null'/'undefined') for a body-less PR (#8129)", async () => {

@@ -49,7 +49,7 @@ export type LinkedIssueSatisfactionRunResult =
   | { status: "disabled"; reason: string }
   | { status: "unavailable"; reason: string }
   | { status: "quota_exceeded"; estimatedNeurons: number; remainingBudget: number }
-  | { status: "ok"; result: LinkedIssueSatisfactionResult | null; estimatedNeurons: number };
+  | { status: "ok"; result: LinkedIssueSatisfactionResult | null; estimatedNeurons: number; rawModelText?: string };
 
 const LINKED_ISSUE_SATISFACTION_MODELS = [BEST_REVIEW_MODELS[0], RELIABLE_FALLBACK_MODELS[0]] as const;
 const LINKED_ISSUE_SATISFACTION_ATTEMPTS_PER_MODEL = 3;
@@ -58,7 +58,7 @@ const LINKED_ISSUE_SATISFACTION_MAX_CALLS = LINKED_ISSUE_SATISFACTION_MODELS.len
 type AiGatewayOptions = { gateway?: { id: string } };
 type AiRunner = { run?: (model: string, options: Record<string, unknown>, extra?: AiGatewayOptions) => Promise<unknown> };
 
-type WorkersSatisfactionOpinionResult = { result: LinkedIssueSatisfactionResult | null; usage?: AiReviewActualUsage | undefined };
+type WorkersSatisfactionOpinionResult = { result: LinkedIssueSatisfactionResult | null; usage?: AiReviewActualUsage | undefined; rawText?: string | undefined };
 
 /** One free/default-reviewer satisfaction opinion (whichever provider `env.AI` resolves to) with bounded
  *  retry/fallback attempts, all pre-budgeted. Each attempt's raw text is validated via the pure module's own
@@ -85,8 +85,9 @@ async function runWorkersSatisfactionOpinion(
           { max_tokens: maxTokens, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: user }] },
           extra,
         );
-        const result = buildLinkedIssueSatisfactionResult(issueText, coerceAiText(raw));
-        if (result) return { result, usage: coerceAiUsage(raw) };
+        const text = coerceAiText(raw);
+        const result = buildLinkedIssueSatisfactionResult(issueText, text);
+        if (result) return { result, usage: coerceAiUsage(raw), rawText: text };
       } catch (error) {
         if (isRateLimitError(error)) break;
         /* retry / fall through to fallback */
@@ -142,15 +143,17 @@ export async function runLoopOverLinkedIssueSatisfaction(env: Env, input: Linked
   // to null via buildLinkedIssueSatisfactionResult.
   let result: LinkedIssueSatisfactionResult | null;
   let usage: AiReviewActualUsage | undefined;
+  let rawModelText: string | undefined;
   if (input.providerKey) {
     const { text, usage: byokUsage } = await callAiProvider(input.providerKey, SATISFACTION_SYSTEM_PROMPT, user, maxTokens);
     result = text ? buildLinkedIssueSatisfactionResult(input.issueText, text) : null;
     usage = byokUsage;
+    rawModelText = text || undefined;
   } else {
-    ({ result, usage } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens));
+    ({ result, usage, rawText: rawModelText } = await runWorkersSatisfactionOpinion(env, input.issueText, SATISFACTION_SYSTEM_PROMPT, user, maxTokens));
   }
   await record(env, input, "ok", estimatedNeurons, result ? `advisory finding (${result.status})` : "no usable output", { status: result?.status ?? null, surfaced: Boolean(result), byok: Boolean(input.providerKey) }, usage);
-  return { status: "ok", result, estimatedNeurons };
+  return { status: "ok", result, estimatedNeurons, ...(rawModelText ? { rawModelText } : {}) };
 }
 
 async function record(

@@ -492,7 +492,7 @@ import { buildSlopAssessment, type SlopBand } from "../signals/slop";
 import { copycatWouldActOnPersistedScore } from "../signals/copycat";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { runLoopOverLinkedIssueSatisfaction } from "../services/linked-issue-satisfaction-run";
-import { MAX_BODY_CHARS, MAX_DIFF_CHARS, MAX_ISSUE_TEXT_CHARS } from "../services/linked-issue-satisfaction";
+import { MAX_BODY_CHARS, MAX_DIFF_CHARS, MAX_ISSUE_TEXT_CHARS, MAX_MODEL_RESPONSE_CHARS } from "../services/linked-issue-satisfaction";
 import { persistThresholdBacktestRuns, runThresholdBacktestAdvisory } from "../services/threshold-backtest-run";
 import { thresholdBacktestBlock } from "../services/threshold-backtest";
 import { decidePublicSurface } from "../signals/settings-preview";
@@ -7602,6 +7602,10 @@ export async function runLinkedIssueSatisfactionForAdvisory(
             prTitle: args.pr.title,
             prBody: (args.pr.body ?? "").trim().slice(0, MAX_BODY_CHARS),
             diff: diff.slice(0, MAX_DIFF_CHARS),
+            // #8139: the model's own raw response, so a future logic backtest can replay the deterministic
+            // parse/floor/sanitize step against the SAME text the original assessment actually saw -- the
+            // prompt-input fields above rebuild the prompt, but only this replays what came back from it.
+            ...(result.rawModelText ? { modelResponseText: result.rawModelText.trim().slice(0, MAX_MODEL_RESPONSE_CHARS) } : {}),
           },
         })
         .catch(() => undefined);

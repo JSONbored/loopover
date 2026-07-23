@@ -29,7 +29,21 @@ const REQUIRED = [
   "Dockerfile",
   "schema/miner-goal-spec.schema.json",
 ];
-const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
+// Exact-name dotfiles that are inherently credential-shaped regardless of extension.
+const FORBIDDEN_DOTFILE = /(^|\/)(\.dev\.vars|\.env|\.npmrc)$/i;
+// A filename merely SUGGESTING secret-shaped content -- a coarse heuristic that's meaningful for data/config
+// files (.json, .txt, .yml, .pem, etc.), where the filename is a fair proxy for what's likely inside, but not
+// for .js/.ts source (source files are exempted below): a descriptively-named source file that IMPLEMENTS
+// secret/credential-handling logic is normal and expected in this codebase, and a real leaked secret VALUE in
+// source is already caught unconditionally by FORBIDDEN_CONTENT below, regardless of the file's name.
+const FORBIDDEN_KEYWORD = /(^|\/)(.*\.pem|.*private.*key.*|.*secret.*)$/i;
+// .ts$ also matches .d.ts (which always ends in the literal characters ".ts").
+const SOURCE_FILE = /\.(js|ts)$/i;
+
+function isForbiddenPath(file: string): boolean {
+  return FORBIDDEN_DOTFILE.test(file) || (!SOURCE_FILE.test(file) && FORBIDDEN_KEYWORD.test(file));
+}
+
 // Stale public-package wording the published README must never ship with (#7013). The sibling
 // check-mcp-package.ts has always guarded its README against this; the miner-package check did not, so a
 // pre-release "private beta"/"preview URL" phrasing could ship in the public `@loopover/miner` README unnoticed.
@@ -41,7 +55,7 @@ type ReadContentFn = (file: string) => string;
 export function validateMinerPackFileList(files: readonly PackedFile[], readContent: ReadContentFn): string[] {
   const paths = files.map((file) => (typeof file === "string" ? file : file.path)).sort();
   for (const file of paths) {
-    if (FORBIDDEN_PATH.test(file)) throw new Error(`Forbidden file in miner package: ${file}`);
+    if (isForbiddenPath(file)) throw new Error(`Forbidden file in miner package: ${file}`);
     if (!ALLOWED.some((pattern) => pattern.test(file))) throw new Error(`Unexpected file in miner package: ${file}`);
     const content = readContent(file);
     if (FORBIDDEN_CONTENT.test(content)) throw new Error(`Secret-like content found in miner package file: ${file}`);

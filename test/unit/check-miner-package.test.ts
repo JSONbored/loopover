@@ -34,6 +34,47 @@ describe("check-miner-package script", () => {
     expect(result.out).toContain("Forbidden file in miner package: .env");
   });
 
+  describe("the secret-filename heuristic only applies to non-source files", () => {
+    it("accepts a source file whose name merely mentions 'secret' or 'private key' (no leaked value inside)", () => {
+      const result = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
+          "package.json",
+          "bin/loopover-miner.js",
+          "lib/secret-helper.js",
+          "lib/secret-helper.d.ts",
+          "lib/private-key-rotation.js",
+          "DEPLOYMENT.md",
+          "Dockerfile",
+          "docs/coding-agent-driver.md",
+          "schema/miner-goal-spec.schema.json",
+        ]),
+        CHECK_MINER_PACK_TEST_CONTENT: "console.log('this file discusses secrets but holds no secret value');",
+      });
+      expect(result.status).toBe(0);
+      expect(result.out).toMatch(/^Miner package dry-run ok:/);
+      expect(result.out).toContain("lib/secret-helper.js");
+      expect(result.out).toContain("lib/private-key-rotation.js");
+    });
+
+    it("still rejects a non-code file whose name suggests it IS a secret (.pem, secrets.json)", () => {
+      const pem = runChecker({ CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["my-private-key.pem"]) });
+      expect(pem.status).toBe(1);
+      expect(pem.out).toContain("Forbidden file in miner package: my-private-key.pem");
+
+      const json = runChecker({ CHECK_MINER_PACK_TEST_FILES: JSON.stringify(["config/secrets.json"]) });
+      expect(json.status).toBe(1);
+      expect(json.out).toContain("Forbidden file in miner package: config/secrets.json");
+    });
+
+    it("still rejects the exact-name dotfiles (.env/.npmrc/.dev.vars) regardless of this change", () => {
+      for (const dotfile of [".env", ".npmrc", ".dev.vars"]) {
+        const result = runChecker({ CHECK_MINER_PACK_TEST_FILES: JSON.stringify([dotfile]) });
+        expect(result.status).toBe(1);
+        expect(result.out).toContain(`Forbidden file in miner package: ${dotfile}`);
+      }
+    });
+  });
+
   it("rejects a README carrying stale public-package wording (#7013)", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([

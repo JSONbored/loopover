@@ -3,6 +3,7 @@ import { splitBacktestCorpus } from "@loopover/engine";
 import {
   getSatisfactionFloorOverride,
   isSatisfactionFloorAutotuneEnabled,
+  loadSatisfactionFloorRecState,
   runSatisfactionFloorLoosening,
   runScheduledSatisfactionFloorLoosening,
   SATISFACTION_FLOOR_LOOSENING_EVENT_TYPE,
@@ -223,5 +224,46 @@ describe("runScheduledSatisfactionFloorLoosening + queue wiring (#8158)", () => 
     await seedLooseningFriendlyHistory(onEnv);
     await processJob(onEnv, { type: "satisfaction-floor-loosening", requestedBy: "schedule" });
     expect(await getSatisfactionFloorOverride(onEnv)).toBe(core.SATISFACTION_FLOOR_LOOSENING_CANDIDATES[0]);
+  });
+});
+
+describe("loadSatisfactionFloorRecState (#8160)", () => {
+  it("reports flag state, a live proposal from the current corpus, and null lastAppliedAt on a fresh deployment", async () => {
+    const env = enabledEnv();
+    await seedLooseningFriendlyHistory(env);
+    const state = await loadSatisfactionFloorRecState(env);
+    expect(state.flagEnabled).toBe(true);
+    expect(state.proposal?.proposedFloor).toBe(core.SATISFACTION_FLOOR_LOOSENING_CANDIDATES[0]);
+    expect(state.lastAppliedAt).toBeNull();
+  });
+
+  it("evaluates from the OVERRIDDEN floor when one is live, and reads the newest applied timestamp", async () => {
+    const env = enabledEnv();
+    await seedLooseningFriendlyHistory(env);
+    // Apply once for real: the next state read must evaluate from 0.45 (no further proposal on this corpus)
+    // and report the applied event's timestamp.
+    expect((await runSatisfactionFloorLoosening(env)).applied).toBe(true);
+    const state = await loadSatisfactionFloorRecState(env);
+    expect(state.proposal).toBeNull();
+    expect(state.lastAppliedAt).not.toBeNull();
+  });
+
+  it("stays proposal-null on an empty corpus and fails safe to nulls on a broken DB", async () => {
+    const fresh = await loadSatisfactionFloorRecState(enabledEnv());
+    expect(fresh.proposal).toBeNull();
+    expect(fresh.lastAppliedAt).toBeNull();
+
+    const env = enabledEnv();
+    env.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    const broken = await loadSatisfactionFloorRecState(env);
+    expect(broken).toEqual({ flagEnabled: true, proposal: null, lastAppliedAt: null });
+  });
+
+  it("flag off: reports flagEnabled false while still evaluating from the shipped floor (advice can precede the opt-in)", async () => {
+    const env = createTestEnv();
+    await seedLooseningFriendlyHistory(env);
+    const state = await loadSatisfactionFloorRecState(env);
+    expect(state.flagEnabled).toBe(false);
+    expect(state.proposal?.currentFloor).toBe(0.5);
   });
 });

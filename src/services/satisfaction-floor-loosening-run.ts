@@ -133,3 +133,42 @@ export async function runScheduledSatisfactionFloorLoosening(env: Env): Promise<
     return null;
   }
 }
+
+/** The loop state the tuning advisor surfaces (#8160). Structurally what
+ *  src/review/loosening-recs.ts's builder consumes — kept here so the advisor wire needs one read. */
+export type SatisfactionFloorRecState = {
+  flagEnabled: boolean;
+  proposal: import("./satisfaction-floor-loosening").SatisfactionFloorLooseningProposal | null;
+  lastAppliedAt: string | null;
+};
+
+/**
+ * Evaluate-ONLY state read for the advisor (#8160): the current proposal (from the same corpus + current
+ * floor the applying tick would use — but never writing anything) plus the newest applied-loosening
+ * timestamp. Fail-safe on every read: a corpus/history error degrades to a null section rather than
+ * breaking the advisor surface that embeds this.
+ */
+export async function loadSatisfactionFloorRecState(env: Env, nowMs: number = Date.now()): Promise<SatisfactionFloorRecState> {
+  const flagEnabled = isSatisfactionFloorAutotuneEnabled(env);
+
+  let proposal: SatisfactionFloorRecState["proposal"] = null;
+  try {
+    const currentFloor = (await getSatisfactionFloorOverride(env)) ?? LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR;
+    const { fired, overrides } = await createSignalStore(env).queryRuleHistory(SATISFACTION_FLOOR_RULE_ID, nowMs - CORPUS_LOOKBACK_MS);
+    proposal = evaluateSatisfactionFloorLoosening(buildBacktestCorpus(SATISFACTION_FLOOR_RULE_ID, fired, overrides), currentFloor);
+  } catch {
+    proposal = null;
+  }
+
+  let lastAppliedAt: string | null = null;
+  try {
+    const row = await env.DB.prepare("SELECT created_at FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT 1")
+      .bind(SATISFACTION_FLOOR_LOOSENING_EVENT_TYPE)
+      .first<{ created_at: string }>();
+    lastAppliedAt = row?.created_at ?? null;
+  } catch {
+    lastAppliedAt = null;
+  }
+
+  return { flagEnabled, proposal, lastAppliedAt };
+}

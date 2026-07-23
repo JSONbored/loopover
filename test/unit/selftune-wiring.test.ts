@@ -45,7 +45,7 @@ async function seedRegisteredRepo(env: Env, fullName: string, autonomyJson: stri
 // Seed N resolved recommendation outcomes for a repo: `negative` rejected/closed (the dangerous error a
 // tightening fixes) + `positive` accepted. Inserted directly (FKs off) — buildRepoOutcomeCalibration reads
 // the outcome_state split, which is all the eval mapping needs.
-async function seedRecommendationOutcomes(env: Env, repoFullName: string, positive: number, negative: number, maintainerLane = true): Promise<void> {
+async function seedRecommendationOutcomes(env: Env, repoFullName: string, positive: number, negative: number, maintainerLane = true, idPrefix = ""): Promise<void> {
   await env.DB.prepare("PRAGMA foreign_keys=OFF").run();
   let i = 0;
   const insert = async (state: string) => {
@@ -56,7 +56,7 @@ async function seedRecommendationOutcomes(env: Env, repoFullName: string, positi
          maintainer_lane, confidence, reason, source, updated_at)
        VALUES (?, ?, ?, ?, 'review', ?, 'pull_request', ?, ?, 'medium', 'seed', 'inferred', CURRENT_TIMESTAMP)`,
     )
-      .bind(`o${i}`, `a${i}`, `r${i}`, "bot", state, repoFullName, maintainerLane ? 1 : 0)
+      .bind(`${idPrefix}o${i}`, `${idPrefix}a${i}`, `${idPrefix}r${i}`, "bot", state, repoFullName, maintainerLane ? 1 : 0)
       .run();
   };
   for (let n = 0; n < positive; n += 1) await insert("accepted");
@@ -232,6 +232,22 @@ describe("runSelfTune — shadow-soak over loopover's own outcome data", () => {
     expect(await loadShadowOverride(env as never, "owner/repo")).toBeNull();
     expect(await loadOverride(env as never, "owner/repo")).toBeNull();
     expect((await listOverrideAudit(env as never, "owner/repo")).length).toBe(0);
+  });
+
+  it("appends the loosening-loop recs exactly once per pass, on the first repo only (#8160)", async () => {
+    const state = await import("../../src/services/satisfaction-floor-loosening-run");
+    const spy = vi.spyOn(state, "loadSatisfactionFloorRecState");
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
+    await seedRegisteredRepo(env, "owner/repo", ACTING_AUTONOMY);
+    await seedRegisteredRepo(env, "owner/other", ACTING_AUTONOMY);
+    await seedRecommendationOutcomes(env, "owner/repo", 5, 10);
+    await seedRecommendationOutcomes(env, "owner/other", 5, 10, true, "b-");
+
+    await processJob(env, { type: "selftune", requestedBy: "schedule" });
+
+    // Two repos in the pass, ONE deployment-global loosening-state read: the recs are appended on the
+    // first repo's iteration only, never once per repo.
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it("FLAG-ON via the processor: a stale in-flight selftune job runs the tick (defense-in-depth gate)", async () => {

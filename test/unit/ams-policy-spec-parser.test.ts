@@ -55,6 +55,7 @@ describe("AmsPolicySpec parser (#5132)", () => {
       maxTurnsPerIteration: 10,
       selfLoopAutonomy: "observe",
       networkAllowlist: { ecosystems: ["npm", "pypi"], extraHosts: ["api.example.com"] },
+      minRankAutotuneEnabled: false,
     });
     expect(parsed.warnings).toEqual([]);
   });
@@ -378,5 +379,18 @@ describe("AmsPolicySpec parser (#5132)", () => {
     const withMultiByteChars = parseAmsPolicySpecContent("# café €5 😀\nsubmissionMode: enforce\n");
     expect(withMultiByteChars.present).toBe(true);
     expect(withMultiByteChars.spec.submissionMode).toBe("enforce");
+  });
+});
+
+describe("minRankAutotuneEnabled (#8187 gate one)", () => {
+  it("defaults OFF, accepts booleans, and warns + falls back on non-boolean values", () => {
+    expect(DEFAULT_AMS_POLICY_SPEC.minRankAutotuneEnabled).toBe(false);
+    expect(parseAmsPolicySpec({}).spec.minRankAutotuneEnabled).toBe(false);
+    const on = parseAmsPolicySpec({ minRankAutotuneEnabled: true });
+    expect(on.spec.minRankAutotuneEnabled).toBe(true);
+    expect(on.present).toBe(true); // a non-default flag counts as configured
+    const bad = parseAmsPolicySpec({ minRankAutotuneEnabled: "yes" });
+    expect(bad.spec.minRankAutotuneEnabled).toBe(false);
+    expect(bad.warnings.some((w) => w.includes("minRankAutotuneEnabled"))).toBe(true);
   });
 });

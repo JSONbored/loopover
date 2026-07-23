@@ -23,6 +23,8 @@ import type { PolicyDocCacheStore } from "./policy-doc-cache.js";
 import { initPolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
+import { AMS_MIN_RANK_SHIPPED, readMinRankAutotuneEnabled, readMinRankOverride } from "./ams-calibration.js";
+import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
 import type { EnqueueRankedDiscoverySummary } from "./portfolio-discovery.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 import type { PortfolioQueueStore } from "./portfolio-queue.js";
@@ -426,6 +428,25 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
   const searchTargets = options.searchCandidateIssuesWithSummary ?? searchCandidateIssuesWithSummary;
   const rankIssues = options.rankCandidateIssuesWithSummary ?? rankCandidateIssuesWithSummary;
   const enqueue = options.enqueueRankedDiscovery ?? enqueueRankedDiscovery;
+  // #8187: THE single consumption point for the earned min-rank override -- resolved fresh per run through
+  // readMinRankOverride (which re-validates the hard bounds and gates on the config flag at every read), so
+  // flipping minRankAutotuneEnabled off restores the shipped default on the very next discover. Fail-open to
+  // shipped on any read error: a broken ledger must never change what discover enqueues. Resolved once and
+  // passed to BOTH the real enqueue and the dry-run preview, so a dry run shows the exact skip set a real
+  // run would produce.
+  let minRankScore: number = AMS_MIN_RANK_SHIPPED;
+  {
+    let overrideLedger = null;
+    try {
+      const ledgerEnv = options.env ?? process.env;
+      overrideLedger = initEventLedger(resolveEventLedgerDbPath(ledgerEnv));
+      minRankScore = readMinRankOverride(overrideLedger, { enabled: readMinRankAutotuneEnabled(ledgerEnv) }) ?? AMS_MIN_RANK_SHIPPED;
+    } catch {
+      minRankScore = AMS_MIN_RANK_SHIPPED;
+    } finally {
+      overrideLedger?.close();
+    }
+  }
   // Eligibility filtering (#6798): resolve each candidate repo's ContributionProfile and drop candidates the
   // repo's own conventions would reject, BEFORE ranking. Safe by default -- see resolveContributionProfilesForDiscover.
   const resolveProfiles = options.resolveContributionProfiles ?? resolveContributionProfilesForDiscover;
@@ -477,7 +498,7 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
           : {}),
       });
       const noopQueueStore = { enqueue: () => {} } as unknown as PortfolioQueueStore;
-      const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: noopQueueStore });
+      const enqueueSummary = enqueue(rankedSummary.issues, { queueStore: noopQueueStore, minRankScore });
       const result = {
         outcome: "dry_run",
         fanOutCount: fanOut.issues.length,
@@ -605,6 +626,7 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
     });
     const enqueueSummary = enqueue(rankedSummary.issues, {
       queueStore: portfolioQueue,
+      minRankScore,
       ...(apiBaseUrl !== undefined ? { apiBaseUrl } : {}),
     });
 

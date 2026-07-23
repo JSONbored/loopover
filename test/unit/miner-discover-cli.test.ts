@@ -2124,3 +2124,57 @@ describe("discovery-index supplementation (#7168)", () => {
     expect(payload.fanOutCount).toBe(1);
   });
 });
+
+describe("min-rank override consumption at discover's enqueue (#8187)", () => {
+  it("threads shipped 0 by default, the earned override when the flag + applied event exist, and fails open on a broken ledger", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger.js");
+    const { resolveAmsPolicyConfigPath } = await import("../../packages/loopover-miner/lib/ams-policy.js");
+    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration.js");
+
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "candidate" })],
+      warnings: [],
+      rateLimitRemaining: 5000,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    async function minRankSeenBy(env: Record<string, string | undefined>): Promise<number | undefined> {
+      const enqueueSpy = vi.fn(() => ({ enqueued: 1, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 }));
+      const exitCode = await runDiscover(["acme/widgets", "--json"], {
+        nowMs: NOW,
+        env,
+        initPortfolioQueue: () => tempQueueStore(),
+        initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+        fetchCandidateIssuesWithSummary,
+        searchCandidateIssuesWithSummary: vi.fn(),
+        enqueueRankedDiscovery: enqueueSpy as never,
+      });
+      expect(exitCode).toBe(0);
+      return ((enqueueSpy.mock.calls[0] as unknown[] | undefined)?.[1] as { minRankScore?: number } | undefined)?.minRankScore;
+    }
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-minrank-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      expect(await minRankSeenBy(env)).toBe(0); // shipped default: no policy, no override
+
+      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      ledger.appendEvent({ type: MINER_AMS_MIN_RANK_APPLIED_EVENT, payload: { value: 0.2 } });
+      ledger.close();
+      expect(await minRankSeenBy(env)).toBe(0); // applied row alone is inert: gate one still off
+
+      writeFileSync(resolveAmsPolicyConfigPath(env), "minRankAutotuneEnabled: true\n");
+      expect(await minRankSeenBy(env)).toBe(0.2); // both present: the earned override is consumed
+
+      expect(await minRankSeenBy({ ...env, LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" })).toBe(0); // fail open
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

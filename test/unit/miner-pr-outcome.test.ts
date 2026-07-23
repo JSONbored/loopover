@@ -38,6 +38,7 @@ describe("normalizePrOutcomePayload (#4274)", () => {
       decision: "closed",
       closedAt: "2026-07-09T00:00:00Z",
       reason: "gate_close",
+      issueNumber: null,
     });
     // unrecognized reason → dropped
     expect(normalizePrOutcomePayload({ prNumber: 7, decision: "closed", reason: "because" })?.reason).toBeNull();
@@ -47,7 +48,7 @@ describe("normalizePrOutcomePayload (#4274)", () => {
 
   it("drops any reason on a merged decision (a merged PR has no rejection reason)", () => {
     const merged = normalizePrOutcomePayload({ prNumber: 9, decision: "merged", reason: "gate_close" });
-    expect(merged).toEqual({ prNumber: 9, decision: "merged", closedAt: null, reason: null });
+    expect(merged).toEqual({ prNumber: 9, decision: "merged", closedAt: null, reason: null, issueNumber: null });
   });
 
   it("coerces a null / non-string / whitespace closedAt to null", () => {
@@ -76,7 +77,7 @@ describe("recordPrOutcomeSnapshot (#4274)", () => {
     const entry = recordPrOutcomeSnapshot({ repoFullName: "  acme/widgets  ", prNumber: 12, decision: "closed", reason: "superseded_by_duplicate", closedAt: "t" }, { eventLedger: ledger }) as Record<string, unknown>;
     expect(entry.type).toBe(MINER_PR_OUTCOME_EVENT);
     expect(entry.repoFullName).toBe("acme/widgets");
-    expect(entry.payload).toEqual({ prNumber: 12, decision: "closed", closedAt: "t", reason: "superseded_by_duplicate" });
+    expect(entry.payload).toEqual({ prNumber: 12, decision: "closed", closedAt: "t", reason: "superseded_by_duplicate", issueNumber: null });
     expect(MINER_PR_OUTCOME_DECISIONS).toEqual(["merged", "closed"]);
   });
 
@@ -128,7 +129,7 @@ describe("readPrOutcomes (#4274)", () => {
     recordPrOutcomeSnapshot({ repoFullName: "acme/widgets", prNumber: 1, decision: "merged" }, { eventLedger: ledger }); // supersedes
     recordPrOutcomeSnapshot({ repoFullName: "acme/other", prNumber: 2, decision: "closed" }, { eventLedger: ledger });
     const latest = readPrOutcomes(ledger, { repoFullName: "acme/widgets" });
-    expect(latest.get("acme/widgets:1")).toEqual({ repoFullName: "acme/widgets", prNumber: 1, decision: "merged", closedAt: null, reason: null });
+    expect(latest.get("acme/widgets:1")).toEqual({ repoFullName: "acme/widgets", prNumber: 1, decision: "merged", closedAt: null, reason: null, issueNumber: null });
     expect(latest.has("acme/other:2")).toBe(false); // filtered out by the repo filter
   });
 
@@ -155,5 +156,18 @@ describe("readPrOutcomes (#4274)", () => {
       { type: MINER_PR_OUTCOME_EVENT, repoFullName: "acme/widgets", payload: { prNumber: 8, decision: "merged" } },
     );
     expect([...readPrOutcomes(ledger).keys()]).toEqual(["acme/widgets:8"]);
+  });
+});
+
+describe("pr_outcome issueNumber pairing (#8184)", () => {
+  it("carries a valid claimed-issue number through; malformed values degrade to null without rejecting the row", () => {
+    const base = { prNumber: 5, decision: "merged", closedAt: null, reason: null };
+    expect(normalizePrOutcomePayload({ ...base, issueNumber: 7 })?.issueNumber).toBe(7);
+    expect(normalizePrOutcomePayload(base)?.issueNumber).toBeNull();
+    for (const bad of [0, -3, 1.5, "7", null]) {
+      const normalized = normalizePrOutcomePayload({ ...base, issueNumber: bad });
+      expect(normalized).not.toBeNull(); // the outcome itself is still real
+      expect(normalized?.issueNumber).toBeNull();
+    }
   });
 });

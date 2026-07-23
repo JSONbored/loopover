@@ -592,6 +592,8 @@ describe("runLoop (#5135)", () => {
     const prOutcomeEvents = after.eventLedger.readEvents({}).filter((e) => e.type === "pr_outcome");
     expect(prOutcomeEvents).toHaveLength(1);
     expect(prOutcomeEvents[0]?.payload).toMatchObject({ prNumber: 123, decision: "merged" });
+    // #8184: the outcome row carries the claimed issue so the AMS min-rank corpus can join it.
+    expect(prOutcomeEvents[0]?.payload).toMatchObject({ issueNumber: 7 });
 
     // REGRESSION (#5394): the real CI-status observation was recorded in the loop's own event ledger.
     const ciStatusEvents = after.eventLedger.readEvents({}).filter((e) => e.type === "ci_status_observed");

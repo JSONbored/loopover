@@ -566,6 +566,9 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
                 prNumber,
                 decision: prDisposition.merged ? "merged" : "closed",
                 closedAt: prDisposition.closedAt,
+                // #8184: pair the outcome with the claimed issue so the AMS min-rank corpus can join it
+                // to the discovery-time rank record. Null when the identifier isn't issue-shaped.
+                issueNumber: parseIssueNumberFromIdentifier(claimedEntry.identifier),
               },
               { eventLedger, recipientLogin: parsed.minerLogin },
             );

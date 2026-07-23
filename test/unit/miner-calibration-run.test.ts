@@ -62,6 +62,7 @@ function validPayload(overrides: Record<string, unknown> = {}): Record<string, u
     replayRunId: "run-1",
     observedAt: "2026-07-09T00:00:00.000Z",
     replaySampleSize: 3,
+    backtestTrackRecord: null,
     ...overrides,
   };
 }
@@ -173,6 +174,7 @@ describe("snapshotPayloadFromResult (#4248)", () => {
       replayRunId: "run-1",
       observedAt: "2026-07-09T00:00:00.000Z",
       replaySampleSize: 4,
+      backtestTrackRecord: null,
     });
   });
 
@@ -394,5 +396,50 @@ describe("runHistoricalReplayCalibrationCycle (#4248)", () => {
     expect(noReplay.snapshot.observedAt).toBeNull();
     expect(noReplay.snapshot.replayRunId).toBeNull();
     expect(noReplay.sampleSize).toBe(0);
+  });
+});
+
+describe("backtestTrackRecord snapshot section (#8185)", () => {
+  const baseResult = {
+    enabled: true,
+    combinedAccuracy: 0.8,
+    baselineAccuracy: 0.62,
+    deltaFromBaseline: 0.18,
+    autonomyIncreasePermitted: false,
+    replayHarnessHold: false,
+    replayHarnessStatus: "healthy",
+    replayRunDue: false,
+    holdReasons: [],
+    audit: { contributingSources: ["pr_outcome"] },
+  } as unknown as Parameters<typeof snapshotPayloadFromResult>[0];
+
+  it("threads a valid track record through the payload and round-trips the normalizer; absence stays null", () => {
+    const record = { totalRuns: 4, regressedRuns: 1, regressedRate: 0.25 };
+    const payload = snapshotPayloadFromResult(baseResult, { backtestTrackRecord: record });
+    expect(payload.backtestTrackRecord).toEqual(record);
+    expect(normalizeCalibrationSnapshotPayload(payload)?.backtestTrackRecord).toEqual(record);
+    expect(snapshotPayloadFromResult(baseResult).backtestTrackRecord).toBeNull();
+    // A zero-run record keeps its null rate.
+    const empty = snapshotPayloadFromResult(baseResult, { backtestTrackRecord: { totalRuns: 0, regressedRuns: 0, regressedRate: null } });
+    expect(empty.backtestTrackRecord).toEqual({ totalRuns: 0, regressedRuns: 0, regressedRate: null });
+  });
+
+  it("a malformed section degrades to null WITHOUT rejecting the snapshot (every invalid arm)", () => {
+    for (const bad of [
+      "not-an-object",
+      { totalRuns: -1, regressedRuns: 0, regressedRate: null },
+      { totalRuns: 1.5, regressedRuns: 0, regressedRate: null },
+      { totalRuns: 2, regressedRuns: -2, regressedRate: null },
+      { totalRuns: 2, regressedRuns: 1, regressedRate: "half" },
+      { totalRuns: 2, regressedRuns: 1, regressedRate: Number.NaN },
+    ]) {
+      const payload = snapshotPayloadFromResult(baseResult, { backtestTrackRecord: bad as never });
+      expect(payload.backtestTrackRecord).toBeNull();
+      expect(normalizeCalibrationSnapshotPayload(payload)).not.toBeNull();
+    }
+    // Read-side tolerance: an old persisted row without the field normalizes with null.
+    const legacy = snapshotPayloadFromResult(baseResult) as unknown as Record<string, unknown>;
+    delete legacy.backtestTrackRecord;
+    expect(normalizeCalibrationSnapshotPayload(legacy)?.backtestTrackRecord).toBeNull();
   });
 });

@@ -105,6 +105,10 @@ export type AmsPolicySpec = {
    *  -- no additions beyond the always-on OS-registry/git-remote defaults. INERT until #7857's OS-level
    *  enforcement mechanism is built; see {@link AmsNetworkAllowlist}'s own doc comment. */
   networkAllowlist: AmsNetworkAllowlist;
+  /** Whether the min-rank skip threshold may self-adjust from backtest evidence (#8187, epic #8172). The
+   *  FIRST of the double gates: with this OFF (the default) the apply/revert commands refuse and any
+   *  previously-applied override reads as absent; the second gate is the per-apply `--approve` flag. */
+  minRankAutotuneEnabled: boolean;
 };
 
 /** The tolerant parser result for `.loopover-ams.yml`. Mirrors `ParsedMinerGoalSpec`'s present/warnings shape. */
@@ -127,6 +131,7 @@ export const DEFAULT_AMS_POLICY_SPEC: Readonly<AmsPolicySpec> = Object.freeze({
   maxTurnsPerIteration: 6,
   selfLoopAutonomy: "auto",
   networkAllowlist: Object.freeze({ ecosystems: [], extraHosts: [] }),
+  minRankAutotuneEnabled: false,
 });
 
 const MAX_AMS_POLICY_SPEC_BYTES = 8_192;
@@ -144,11 +149,19 @@ function cloneDefaultAmsPolicySpec(): AmsPolicySpec {
       ecosystems: [...DEFAULT_AMS_POLICY_SPEC.networkAllowlist.ecosystems],
       extraHosts: [...DEFAULT_AMS_POLICY_SPEC.networkAllowlist.extraHosts],
     },
+    minRankAutotuneEnabled: DEFAULT_AMS_POLICY_SPEC.minRankAutotuneEnabled,
   };
 }
 
 function emptyAmsPolicySpec(warnings: string[] = []): ParsedAmsPolicySpec {
   return { present: false, spec: cloneDefaultAmsPolicySpec(), warnings };
+}
+
+function normalizeBooleanFlag(value: unknown, field: string, fallback: boolean, warnings: string[]): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  warnings.push(`AmsPolicySpec field "${field}" must be a boolean; falling back to ${fallback}.`);
+  return fallback;
 }
 
 function normalizeSubmissionMode(value: unknown, fallback: AmsSubmissionMode, warnings: string[]): AmsSubmissionMode {
@@ -307,7 +320,8 @@ function hasConfiguredPolicyFields(spec: AmsPolicySpec): boolean {
     // means the operator configured something, so length alone is the right "differs from default" check;
     // no need to compare contents.
     spec.networkAllowlist.ecosystems.length > 0 ||
-    spec.networkAllowlist.extraHosts.length > 0
+    spec.networkAllowlist.extraHosts.length > 0 ||
+    spec.minRankAutotuneEnabled !== DEFAULT_AMS_POLICY_SPEC.minRankAutotuneEnabled
   );
 }
 
@@ -356,6 +370,12 @@ export function parseAmsPolicySpec(raw: unknown): ParsedAmsPolicySpec {
       warnings,
     ),
     networkAllowlist: normalizeNetworkAllowlist(record.networkAllowlist, DEFAULT_AMS_POLICY_SPEC.networkAllowlist, warnings),
+    minRankAutotuneEnabled: normalizeBooleanFlag(
+      record.minRankAutotuneEnabled,
+      "minRankAutotuneEnabled",
+      DEFAULT_AMS_POLICY_SPEC.minRankAutotuneEnabled,
+      warnings,
+    ),
   };
   if (!hasConfiguredPolicyFields(spec)) {
     warnings.push("AmsPolicySpec contained no recognized non-default policy fields; falling back to safe defaults.");

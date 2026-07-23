@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -182,5 +182,148 @@ describe("loopover-miner calibration CLI (#4849)", () => {
       error: "corrupt_prediction_ledger",
     });
     expect(err).not.toHaveBeenCalled();
+  });
+});
+
+// ── #8184/#8185/#8186/#8187: the calibration subcommands + report sections ─────────────────────────────────
+
+import { resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy.js";
+import {
+  MINER_AMS_THRESHOLD_BACKTEST_EVENT,
+  readMinRankOverride,
+} from "../../packages/loopover-miner/lib/ams-calibration.js";
+
+function seedTakenHistory(env: Record<string, string | undefined>): void {
+  const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+  for (let i = 1; i <= 60; i += 1) {
+    ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: i, rankScore: 0.15, title: "t", labels: [] } });
+    ledger.appendEvent({
+      type: "pr_outcome",
+      repoFullName: "acme/widgets",
+      payload: { prNumber: 1000 + i, decision: "closed", closedAt: "2026-07-10T00:00:00Z", reason: null, issueNumber: i },
+    });
+  }
+  for (const i of [101, 102]) {
+    ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: i, rankScore: 0.4, title: "t", labels: [] } });
+    ledger.appendEvent({ type: "pr_outcome", repoFullName: "acme/widgets", payload: { prNumber: 1000 + i, decision: "merged", closedAt: null, reason: null, issueNumber: i } });
+  }
+  ledger.close();
+}
+
+function enableAutotune(env: Record<string, string | undefined>): void {
+  writeFileSync(resolveAmsPolicyConfigPath(env), "minRankAutotuneEnabled: true\n");
+}
+
+describe("calibration backtest-threshold (#8184)", () => {
+  it("replays, prints both split reports via the shared renderer, persists the run event, exits 0", () => {
+    const env = envForTempStores();
+    seedTakenHistory(env);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(0);
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("current 0 -> candidate 0.2");
+    expect(output).toContain("visible split");
+    expect(output).toContain("held-out split");
+    expect(output).toContain("advisory only");
+    expect(output).toContain("Verdict");
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    const runs = ledger.readEvents().filter((e) => e.type === MINER_AMS_THRESHOLD_BACKTEST_EVENT);
+    ledger.close();
+    expect(runs).toHaveLength(1);
+  });
+
+  it("an under-floored corpus prints the explicit line, persists NOTHING, and still exits 0 (never on verdict)", () => {
+    const env = envForTempStores();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(0);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("not enough labeled taken opportunities");
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2", "--json"], env)).toBe(0);
+    const jsonLine = logSpy.mock.calls.map((call) => String(call[0])).find((line) => line.includes("insufficient_corpus"));
+    expect(jsonLine).toBeDefined();
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(ledger.readEvents().filter((e) => e.type === MINER_AMS_THRESHOLD_BACKTEST_EVENT)).toHaveLength(0);
+    ledger.close();
+  });
+
+  it("JSON mode dumps the full result; a missing/invalid --candidate is a usage error (exit 1)", () => {
+    const env = envForTempStores();
+    seedTakenHistory(env);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2", "--json"], env)).toBe(0);
+    const parsed = JSON.parse(logSpy.mock.calls.map((call) => String(call[0])).find((line) => line.trimStart().startsWith("{"))!) as { ran: boolean; visible: { verdict: string } };
+    expect(parsed.ran).toBe(true);
+    expect(parsed.visible.verdict).toBe("improved");
+    expect(runCalibrationCli(["backtest-threshold"], env)).toBe(1);
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "banana"], env)).toBe(1);
+  });
+
+  it("fails operationally (exit 1) when the ledger store cannot open", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = { LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" };
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(2);
+  });
+});
+
+describe("calibration apply-min-rank / revert-min-rank (#8187)", () => {
+  it("walks the full double-gated path: flag_off -> not_approved -> no_supporting_run -> applied -> reverted", () => {
+    const env = envForTempStores();
+    seedTakenHistory(env);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(runCalibrationCli(["apply-min-rank", "--candidate", "0.2", "--approve"], env)).toBe(1); // gate one off
+    enableAutotune(env);
+    expect(runCalibrationCli(["apply-min-rank", "--candidate", "0.2"], env)).toBe(1); // gate two missing
+    expect(runCalibrationCli(["apply-min-rank", "--candidate", "0.2", "--approve"], env)).toBe(1); // no evidence yet
+    expect(runCalibrationCli(["apply-min-rank", "--approve"], env)).toBe(1); // usage: no candidate
+
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(0); // earn the evidence
+    expect(runCalibrationCli(["apply-min-rank", "--candidate", "0.2", "--approve"], env)).toBe(0);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("min-rank override 0.2 applied");
+
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(readMinRankOverride(ledger, { enabled: true })).toBe(0.2);
+    ledger.close();
+
+    expect(runCalibrationCli(["revert-min-rank"], env)).toBe(1); // revert also needs approval
+    expect(runCalibrationCli(["revert-min-rank", "--approve", "--json"], env)).toBe(0);
+    const after = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(readMinRankOverride(after, { enabled: true })).toBeNull();
+    after.close();
+  });
+
+  it("fails operationally (exit 1) when the ledger store cannot open", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = { LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" };
+    expect(runCalibrationCli(["apply-min-rank", "--candidate", "0.2", "--approve"], env)).toBe(2);
+    expect(runCalibrationCli(["revert-min-rank", "--approve"], env)).toBe(2);
+  });
+});
+
+describe("calibration report sections (#8185/#8186)", () => {
+  it("prints the explicit no-runs line on an empty history, and the track record + proposals + no-autonomy line once runs exist", () => {
+    const env = envForTempStores();
+    seedTakenHistory(env);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli([], env)).toBe(0);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("backtest track record: no backtest runs recorded.");
+
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(0);
+    logSpy.mockClear();
+    expect(runCalibrationCli([], env)).toBe(0);
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("backtest track record: 2 comparison(s) | REGRESSED 0 (rate 0.000)");
+    expect(output).toContain("backtest-cleared proposal: min-rank 0 -> 0.2");
+    expect(output).toContain("nothing applies automatically");
+
+    logSpy.mockClear();
+    expect(runCalibrationCli(["--json"], env)).toBe(0);
+    const parsed = JSON.parse(logSpy.mock.calls.map((call) => String(call[0])).find((line) => line.trimStart().startsWith("{"))!) as {
+      backtestTrackRecord: { totalRuns: number; regressedRuns: number };
+      backtestProposals: Array<{ candidateThreshold: number }>;
+    };
+    expect(parsed.backtestTrackRecord).toMatchObject({ totalRuns: 2, regressedRuns: 0 });
+    expect(parsed.backtestProposals[0]?.candidateThreshold).toBe(0.2);
   });
 });

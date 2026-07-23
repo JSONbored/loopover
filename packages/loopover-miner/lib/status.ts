@@ -13,7 +13,8 @@ import {
 } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 import { checkStoreIntegrity, describeError } from "./store-maintenance.js";
-import { resolveEventLedgerDbPath } from "./event-ledger.js";
+import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
+import { buildAmsBacktestProposals, readAmsThresholdBacktestRuns } from "./ams-calibration.js";
 import { resolveGovernorLedgerDbPath } from "./governor-ledger.js";
 import { hasGitHubTokenSource } from "./github-token-resolution.js";
 import { resolvePredictionLedgerDbPath } from "./prediction-ledger.js";
@@ -486,6 +487,31 @@ export function checkCodingAgentCredential(
 
 /** Run the doctor checks. Returns an array of { name, ok, detail }; only writes a transient probe in the state dir,
  *  never touches the network. */
+/** #8186: current backtest-cleared min-rank proposals, mirrored from the ORB advisor's posture -- full
+ *  evidence per line and an explicit nothing-applies-automatically stance baked into the detail. Always
+ *  ok:true (informational -- a proposal is an opportunity, not a fault) and fail-open on a ledger blip
+ *  (doctor must keep working on a box whose ledger is broken; store integrity has its own check). */
+export function checkAmsBacktestProposals(env: Record<string, string | undefined> = process.env, nowMs: number = Date.now()): DoctorCheck {
+  try {
+    const eventLedger = initEventLedger(resolveEventLedgerDbPath(env));
+    try {
+      const proposals = buildAmsBacktestProposals(readAmsThresholdBacktestRuns(eventLedger), nowMs);
+      if (proposals.length === 0) {
+        return { name: "ams-backtest-proposals", ok: true, detail: "no backtest-cleared min-rank proposals (nothing applies automatically)" };
+      }
+      const lines = proposals.map(
+        (proposal) =>
+          `min-rank ${proposal.currentThreshold} -> ${proposal.candidateThreshold} (visible ${proposal.visibleVerdict}/${proposal.visibleCases}, held-out ${proposal.heldOutVerdict}/${proposal.heldOutCases})`,
+      );
+      return { name: "ams-backtest-proposals", ok: true, detail: `${lines.join("; ")} -- nothing applies automatically (apply-min-rank needs the config flag AND --approve)` };
+    } finally {
+      eventLedger.close();
+    }
+  } catch {
+    return { name: "ams-backtest-proposals", ok: true, detail: "event ledger unreadable; proposals unavailable" };
+  }
+}
+
 export function runDoctorChecks(
   env: Record<string, string | undefined> = process.env,
   cwd: string = process.cwd(),
@@ -514,6 +540,7 @@ export function runDoctorChecks(
     checkGitHubTokenPresent(env),
     checkCodingAgentCredential(env),
     checkConfigContent(cwd),
+    checkAmsBacktestProposals(env),
     ...storeIntegrityChecks(env),
   ];
 }

@@ -92,8 +92,8 @@ describe("buildAnonymizedOrbBatch", () => {
 
   it("anonymizes a readPrOutcomes-shaped map, buckets a null reason to 'none', and sorts deterministically", () => {
     const outcomes = new Map<string, OrbExportOutcome>([
-      ["owner/repo:2", { repoFullName: "owner/repo", prNumber: 2, decision: "closed", closedAt: "2026-01-02T00:00:00Z", reason: "gate_close" }],
-      ["owner/repo:1", { repoFullName: "owner/repo", prNumber: 1, decision: "merged", closedAt: null, reason: null }],
+      ["owner/repo:2", { repoFullName: "owner/repo", prNumber: 2, decision: "closed", closedAt: "2026-01-02T00:00:00Z", reason: "gate_close", issueNumber: null }],
+      ["owner/repo:1", { repoFullName: "owner/repo", prNumber: 1, decision: "merged", closedAt: null, reason: null, issueNumber: null }],
     ]);
     const batch = buildAnonymizedOrbBatch(outcomes, anonKey);
     expect(batch).toHaveLength(2);
@@ -127,7 +127,7 @@ describe("buildAnonymizedOrbBatch", () => {
     // A generator's returned iterator has [Symbol.iterator] but no .values() -- unlike arrays and Maps, both
     // of which have .values() too, so this is the only realistic way to exercise the non-Map iterable path.
     function* outcomes(): Generator<OrbExportOutcome> {
-      yield { repoFullName: "owner/repo", prNumber: 3, decision: "merged", closedAt: "2026-01-03T00:00:00Z", reason: null };
+      yield { repoFullName: "owner/repo", prNumber: 3, decision: "merged", closedAt: "2026-01-03T00:00:00Z", reason: null, issueNumber: null };
     }
     const batch = buildAnonymizedOrbBatch(outcomes(), anonKey);
     expect(batch).toHaveLength(1);

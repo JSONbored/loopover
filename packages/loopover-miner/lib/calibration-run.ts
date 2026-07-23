@@ -82,12 +82,17 @@ export interface CalibrationSnapshotPayload {
   replayRunId: string | null;
   observedAt: string | null;
   replaySampleSize: number;
+  /** #8185: the AMS backtest loop's REGRESSED-verdict track record at snapshot time (aggregated from the
+   *  persisted ams_threshold_backtest_run events), so authority-earning history is queryable from the
+   *  ledger alone. Null when the writer had no track record to attach (including every pre-#8185 row). */
+  backtestTrackRecord: { totalRuns: number; regressedRuns: number; regressedRate: number | null } | null;
 }
 
 export interface SnapshotMeta {
   replayRunId?: string | null;
   observedAt?: string | null;
   sampleSize?: number;
+  backtestTrackRecord?: { totalRuns: number; regressedRuns: number; regressedRate: number | null } | null;
 }
 
 export interface RecordCalibrationSnapshotOptions {
@@ -236,7 +241,20 @@ export function snapshotPayloadFromResult(result: Phase7CalibrationLoopResult, m
     replayRunId: optionalString(meta.replayRunId),
     observedAt: optionalString(meta.observedAt),
     replaySampleSize: Number.isInteger(meta.sampleSize) && (meta.sampleSize as number) >= 0 ? (meta.sampleSize as number) : 0,
+    backtestTrackRecord: normalizeBacktestTrackRecord(meta.backtestTrackRecord),
   };
+}
+
+/** Tolerant #8185 section normalizer: a malformed shape degrades to null (the pre-#8185 reading), never
+ *  rejecting the whole snapshot -- the Phase 7 metric is still real without the AMS track record. */
+function normalizeBacktestTrackRecord(value: unknown): CalibrationSnapshotPayload["backtestTrackRecord"] {
+  const record = value as Record<string, unknown> | null | undefined;
+  if (!record || typeof record !== "object") return null;
+  if (!Number.isInteger(record.totalRuns) || (record.totalRuns as number) < 0) return null;
+  if (!Number.isInteger(record.regressedRuns) || (record.regressedRuns as number) < 0) return null;
+  const rate = record.regressedRate;
+  if (rate !== null && !(typeof rate === "number" && Number.isFinite(rate))) return null;
+  return { totalRuns: record.totalRuns as number, regressedRuns: record.regressedRuns as number, regressedRate: rate as number | null };
 }
 
 /**
@@ -274,6 +292,7 @@ export function normalizeCalibrationSnapshotPayload(payload: unknown): Calibrati
     observedAt: optionalString(record.observedAt),
     replaySampleSize:
       Number.isInteger(record.replaySampleSize) && (record.replaySampleSize as number) >= 0 ? (record.replaySampleSize as number) : 0,
+    backtestTrackRecord: normalizeBacktestTrackRecord(record.backtestTrackRecord),
   };
 }
 

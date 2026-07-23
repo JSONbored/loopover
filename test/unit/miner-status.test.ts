@@ -128,6 +128,7 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "github-token",
       "coding-agent-credential",
       "config-content",
+      "ams-backtest-proposals",
       "store-integrity:event-ledger",
       "store-integrity:governor-ledger",
       "store-integrity:prediction-ledger",
@@ -499,5 +500,44 @@ describe("loopover-miner status/doctor (#2288)", () => {
         expect(typeof parsed.driver.cliPresent === "boolean" || parsed.driver.cliPresent === null).toBe(true);
       }
     });
+  });
+});
+
+describe("checkAmsBacktestProposals (#8186)", () => {
+  it("is informational (always ok): explicit none-line empty, evidence + no-autonomy line with proposals, fail-open on a broken ledger", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger.js");
+    const { backtestMinRankCandidate, recordAmsThresholdBacktestRun } = await import("../../packages/loopover-miner/lib/ams-calibration.js");
+    const { checkAmsBacktestProposals } = await import("../../packages/loopover-miner/lib/status.js");
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-status-ams-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const empty = checkAmsBacktestProposals(env);
+      expect(empty.ok).toBe(true);
+      expect(empty.detail).toContain("no backtest-cleared min-rank proposals");
+
+      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      for (let i = 1; i <= 60; i += 1) {
+        ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: i, rankScore: 0.15, title: "t", labels: [] } });
+        ledger.appendEvent({ type: "pr_outcome", repoFullName: "acme/widgets", payload: { prNumber: 1000 + i, decision: "closed", closedAt: "2026-07-10T00:00:00Z", reason: null, issueNumber: i } });
+      }
+      const result = backtestMinRankCandidate(ledger.readEvents(), 0, 0.2)!;
+      recordAmsThresholdBacktestRun(result, { eventLedger: ledger });
+      ledger.close();
+
+      const withProposal = checkAmsBacktestProposals(env);
+      expect(withProposal.ok).toBe(true);
+      expect(withProposal.detail).toContain("min-rank 0 -> 0.2");
+      expect(withProposal.detail).toContain("nothing applies automatically");
+
+      const broken = checkAmsBacktestProposals({ LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" });
+      expect(broken.ok).toBe(true);
+      expect(broken.detail).toContain("unavailable");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

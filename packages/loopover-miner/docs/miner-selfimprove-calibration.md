@@ -110,6 +110,30 @@ From any contributor-safe tool in this batch:
   auto-tune hold-only flag, or any autonomy configuration.
 - **No de-anonymizing or write-capable telemetry** — local-only or HMAC-anonymized, read-only.
 
+## The min-rank calibration loop (#8172: #8184-#8187)
+
+The first knob to graduate past measure-only: the **min-rank skip threshold** (portfolio-discovery's
+`minRankScore`, shipped default 0). The loop is the ORB backtest discipline transposed onto the miner's own
+event ledger, end to end:
+
+1. **Corpus** — `discovered_issue` rank records joined to the miner's own `pr_outcome` events by
+   `(repo, issueNumber)` (the pairing rides on outcome rows written since #8184; older rows never join). A
+   MERGED take labels `confirmed`, a CLOSED take labels `reversed` — "skipping it would have been right".
+2. **Advisory backtest** — `loopover-miner calibration backtest-threshold --candidate <x>`: fixed-seed
+   held-out split, Pareto floor via `compareBacktestScores`, rendered with the shared comparison renderer,
+   persisted as an `ams_threshold_backtest_run` ledger event. Exit code never reflects the verdict.
+3. **Track record + proposals** — the calibration report prints the REGRESSED-verdict track record over
+   every persisted run (`computeRegressedVerdictTrackRecord`, the same aggregation ORB uses) and any
+   backtest-cleared proposals; `doctor` mirrors the proposals line. Display only.
+4. **Double-gated self-adjustment (#8187)** — `calibration apply-min-rank --candidate <x> --approve`
+   moves the knob ONLY when: `.loopover-ams.yml` sets `minRankAutotuneEnabled: true` (gate one, default
+   OFF), the per-apply `--approve` is passed (gate two), the candidate sits inside the hard bounds
+   `(0, 0.5]` declared next to the shipped constant, AND a recent persisted run actually cleared that exact
+   candidate — evidence is not optional. Every apply/revert is a typed ledger event carrying the evidence;
+   `calibration revert-min-rank --approve` is the one-command revert. Consumption happens at exactly one
+   point (discover's enqueue), re-validating bounds and the flag on every read, so flipping the flag off
+   restores the shipped default on the very next run.
+
 ## The neighborhood
 
 - Contributor-safe (this batch): drift detector, calibration dashboard + extension panel, prediction ledger, metrics

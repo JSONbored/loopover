@@ -30,6 +30,9 @@ export type NormalizedPrOutcomePayload = {
   decision: MinerPrOutcomeDecision;
   closedAt: string | null;
   reason: string | null;
+  /** The claimed issue this PR addressed (#8184) -- the pairing key the AMS min-rank corpus joins on.
+   *  Null on rows written before the pairing existed (those simply never join; nothing is fabricated). */
+  issueNumber: number | null;
 };
 
 export type PrOutcomeInput = {
@@ -38,6 +41,7 @@ export type PrOutcomeInput = {
   decision?: unknown;
   closedAt?: unknown;
   reason?: unknown;
+  issueNumber?: unknown;
 };
 
 export type RecordPrOutcomeOptions = {
@@ -87,6 +91,9 @@ export function normalizePrOutcomePayload(payload: unknown): NormalizedPrOutcome
     decision: decision as MinerPrOutcomeDecision,
     closedAt: optionalString(record.closedAt),
     reason,
+    // Tolerant, not gating (#8184): a malformed issueNumber degrades to null rather than rejecting the
+    // whole outcome row -- the outcome itself is still real even when the pairing is unusable.
+    issueNumber: Number.isInteger(record.issueNumber) && (record.issueNumber as number) > 0 ? (record.issueNumber as number) : null,
   };
 }
 
@@ -107,6 +114,7 @@ export function recordPrOutcomeSnapshot(input: PrOutcomeInput, options: RecordPr
     decision: input.decision,
     closedAt: input.closedAt,
     reason: input.reason,
+    issueNumber: input.issueNumber,
   });
   if (!payload) return null;
   const entry = eventLedger.appendEvent({ type: MINER_PR_OUTCOME_EVENT, repoFullName, payload });

@@ -2214,3 +2214,226 @@ describe("runAttempt: hosted soft-claim submission (#7168)", () => {
     expect(exitCode).toBe(7);
   });
 });
+
+describe("runAttempt: Neon branch-per-attempt DB fork (#7858)", () => {
+  const fakeDbForkConfig = { apiKey: "neon-test-key", projectId: "proj-1", parentBranchId: "br-parent" };
+
+  it("is a complete no-op when resolveAttemptDbForkConfig resolves null (default -- no Neon env vars configured)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const createSpy = vi.fn();
+    const discardSpy = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => null,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(discardSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates the fork after the worktree slot is acquired, and discards it in finally on a submitted attempt", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const worktreeResult = fakeWorktreeResult();
+    const createSpy = vi.fn().mockResolvedValue({ branchId: "br-attempt-1", connectionString: "postgres://fake" });
+    const discardSpy = vi.fn().mockResolvedValue(undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => fakeDbForkConfig,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () => ({
+          outcome: "submitted",
+          spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
+          execResult: { code: 0 },
+          loopResult: fakeLoopResult(),
+        }),
+      }),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(createSpy).toHaveBeenCalledExactlyOnceWith(fakeDbForkConfig, "fixed-attempt-id");
+    expect(discardSpy).toHaveBeenCalledExactlyOnceWith(fakeDbForkConfig, "fixed-attempt-id");
+    // Created before discarded, not the other way around.
+    expect(createSpy.mock.invocationCallOrder[0]).toBeLessThan(discardSpy.mock.invocationCallOrder[0]!);
+  });
+
+  it("also discards the fork on a non-submitted (abandoned) outcome -- cleanup isn't conditional on success", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const createSpy = vi.fn().mockResolvedValue({ branchId: "br-attempt-1", connectionString: "postgres://fake" });
+    const discardSpy = vi.fn().mockResolvedValue(undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => fakeDbForkConfig,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(discardSpy).toHaveBeenCalledExactlyOnceWith(fakeDbForkConfig, "fixed-attempt-id");
+  });
+
+  it("aborts the attempt with a clear reason when fork creation fails, and never calls discard (nothing was created)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const createSpy = vi.fn().mockRejectedValue(new Error("Neon API POST /branches failed (500): internal error"));
+    const discardSpy = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => fakeDbForkConfig,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions(),
+    });
+
+    expect(exitCode).toBe(3);
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("could not create the disposable DB fork"))).toBe(true);
+    expect(discardSpy).not.toHaveBeenCalled();
+  });
+
+  it("still discards a successfully-created fork even when worktree preparation subsequently fails -- no leaked branch on an early abort", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const createSpy = vi.fn().mockResolvedValue({ branchId: "br-attempt-1", connectionString: "postgres://fake" });
+    const discardSpy = vi.fn().mockResolvedValue(undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => fakeDbForkConfig,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions({ prepareAttemptWorktree: async () => ({ ok: false, error: "clone failed: repository not found" }) }),
+    });
+
+    expect(exitCode).toBe(6); // blocked_worktree_preparation_failed
+    expect(createSpy).toHaveBeenCalledOnce();
+    expect(discardSpy).toHaveBeenCalledExactlyOnceWith(fakeDbForkConfig, "fixed-attempt-id");
+  });
+
+  it("REGRESSION: a discard failure is captured to Sentry but never prevents the rest of cleanup (claim release still runs)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const captureSpy = vi.spyOn(minerSentryModule, "captureMinerError").mockImplementation(() => undefined);
+    const createSpy = vi.fn().mockResolvedValue({ branchId: "br-attempt-1", connectionString: "postgres://fake" });
+    const discardSpy = vi.fn().mockRejectedValue(new Error("Neon API DELETE /branches/br-attempt-1 failed (503): unavailable"));
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      attemptId: "fixed-attempt-id",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      resolveAttemptDbForkConfig: () => fakeDbForkConfig,
+      createAttemptDbFork: createSpy,
+      discardAttemptDbFork: discardSpy,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+    });
+
+    // The attempt's own outcome is unaffected by the discard failure -- it already returned before `finally` ran.
+    expect(exitCode).toBe(7);
+    expect(discardSpy).toHaveBeenCalledOnce();
+    expect(captureSpy).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Error),
+      expect.objectContaining({ kind: "attempt_db_fork_discard_failed", repoFullName: "acme/widgets", attemptId: "fixed-attempt-id", branchId: "br-attempt-1" }),
+    );
+  });
+
+  it("falls back to the REAL createAttemptDbFork/discardAttemptDbFork (not just resolveAttemptDbForkConfig) when only those two are omitted -- exercises the actual @loopover/engine functions against a mocked Neon API", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const originalFetch = globalThis.fetch;
+    const responses: unknown[] = [
+      { branches: [] }, // create: list -> not found
+      { databases: [{ name: "tenant-db" }] }, // create: parent database name
+      { branch: { id: "br-real-1", name: "attempt-real-fallback-attempt" }, endpoints: [{ host: "ep.neon.tech" }], operations: [] }, // create: branch
+      { role: { name: "attempt-real-fallback-attempt", password: "pw" }, operations: [] }, // create: role
+      { branches: [{ id: "br-real-1", name: "attempt-real-fallback-attempt" }] }, // discard: list -> found
+      { operations: [] }, // discard: delete
+    ];
+    globalThis.fetch = (async () => new Response(JSON.stringify(responses.shift()), { status: 200 })) as unknown as typeof fetch;
+
+    try {
+      const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        attemptId: "real-fallback-attempt",
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        // Only the config resolver is overridden -- createAttemptDbFork/discardAttemptDbFork are deliberately
+        // left at their real @loopover/engine defaults, exercising the options.X ?? realX fallback itself.
+        resolveAttemptDbForkConfig: () => ({ apiKey: "k", projectId: "p", parentBranchId: "br-parent" }),
+        ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+      });
+
+      expect(exitCode).toBe(7);
+      expect(responses).toHaveLength(0); // every queued response was consumed -- the real create+discard round-trip ran
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("falls back to the real resolveAttemptDbForkConfig/createAttemptDbFork/discardAttemptDbFork when no override is injected (still a no-op without configured env vars)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      // Deliberately no resolveAttemptDbForkConfig/createAttemptDbFork/discardAttemptDbFork override, and no
+      // LOOPOVER_MINER_NEON_* vars in env -- proves the real default resolver correctly disables the feature
+      // for every existing operator/test that has never heard of it, matching every OTHER test in this file.
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+    });
+
+    expect(exitCode).toBe(7);
+  });
+});

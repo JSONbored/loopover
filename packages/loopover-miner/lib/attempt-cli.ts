@@ -13,9 +13,16 @@
 // that as "skip that stage entirely"). governor.convergenceInput is now a real per-issue portfolio-queue.js read
 // (#5654) and governor.reputationHistory a real per-repo governor-state.js read (#5675), not placeholders.
 
-import { fingerprintFromChangedFiles, resolveCodingAgentModeFromConfig, resolveFirstConfiguredCodingAgentDriverName } from "@loopover/engine";
-import type { CodingAgentExecutionMode, FeasibilityVerdict, LocalWriteActionSpec } from "@loopover/engine";
+import {
+  createAttemptDbFork,
+  discardAttemptDbFork,
+  fingerprintFromChangedFiles,
+  resolveCodingAgentModeFromConfig,
+  resolveFirstConfiguredCodingAgentDriverName,
+} from "@loopover/engine";
+import type { AttemptDbFork, AttemptDbForkConfig, CodingAgentExecutionMode, FeasibilityVerdict, LocalWriteActionSpec } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { resolveAttemptDbForkConfig } from "./attempt-db-fork-config.js";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
 import { runSlopAssessment } from "./slop-assessment.js";
 import { fetchLiveIssueSnapshot } from "./live-issue-snapshot.js";
@@ -138,6 +145,13 @@ export type RunAttemptOptions = {
   fetchSelfReviewContext?: typeof FetchSelfReviewContextFn;
   buildCodingTaskSpec?: typeof BuildCodingTaskSpecFn;
   resolveAmsPolicy?: typeof ResolveAmsPolicyFn;
+  /** Neon branch-per-attempt disposable DB fork (#7858). Defaults to reading LOOPOVER_MINER_NEON_* env vars
+   *  (attempt-db-fork-config.js) and, only when all three are set, the real @loopover/engine fork functions.
+   *  An operator who hasn't configured Neon sees zero behavior change -- resolveAttemptDbForkConfig returns
+   *  null and neither fork function is ever called. */
+  resolveAttemptDbForkConfig?: typeof resolveAttemptDbForkConfig;
+  createAttemptDbFork?: typeof createAttemptDbFork;
+  discardAttemptDbFork?: typeof discardAttemptDbFork;
   checkMinerKillSwitch?: typeof CheckMinerKillSwitchFn;
   resolveMinerGoalSpec?: typeof ResolveMinerGoalSpecFn;
   runMinerAttempt?: typeof RunMinerAttemptFn;
@@ -340,6 +354,10 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
   let worktreeResult: (PrepareAttemptWorktreeResult & { attemptOk?: boolean }) | null = null;
   let claimedIssue = false;
   let claimRecord: ClaimEntry | null = null;
+  // #7858: resolved once so create/discard always agree on the same config, even if env somehow changed
+  // mid-attempt (it never does in practice -- this just avoids re-reading env twice for the same answer).
+  const dbForkConfig: AttemptDbForkConfig | null = (options.resolveAttemptDbForkConfig ?? resolveAttemptDbForkConfig)(env);
+  let dbFork: AttemptDbFork | null = null;
 
   try {
     allocator = (options.openWorktreeAllocator ?? openWorktreeAllocator)();
@@ -397,6 +415,24 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
     }
 
     allocation = allocator.acquire(attemptId, parsed.repoFullName);
+
+    // #7858: only when the operator has configured Neon (dbForkConfig !== null) -- otherwise a complete
+    // no-op, zero behavior change. A failure here ABORTS the attempt rather than proceeding without
+    // isolation: this feature exists specifically so the coding agent's writes never reach the tenant's real
+    // database, so silently continuing on a fork failure would defeat the entire safety property it provides.
+    if (dbForkConfig) {
+      try {
+        const createFork = options.createAttemptDbFork ?? createAttemptDbFork;
+        dbFork = await createFork(dbForkConfig, attemptId);
+      } catch (error) {
+        const reason = describeCliError(error);
+        return reportCliFailure(
+          parsed.json,
+          `Attempt for ${parsed.repoFullName}#${parsed.issueNumber} is blocked: could not create the disposable DB fork: ${reason}`,
+          3,
+        );
+      }
+    }
 
     let deps;
     try {
@@ -907,6 +943,19 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
       await submitClaim({ ...claimRecord, status: "released" } as Parameters<typeof SubmitSoftClaimFn>[0], { env });
     }
     if (allocation && allocator) allocator.release(attemptId);
+    // #7858: discard the disposable DB fork on every terminal outcome, mirroring the worktree release above.
+    // Never merged back into the parent -- a hard requirement #7649 ratified explicitly. A discard failure
+    // must never crash the rest of this cleanup sequence (same discipline as the kill-switch ledger append
+    // above) -- it leaks one Neon branch rather than losing the claim/ledger release that follows it, and is
+    // still surfaced to Sentry so an operator can clean it up by hand.
+    if (dbFork && dbForkConfig) {
+      try {
+        const discardFork = options.discardAttemptDbFork ?? discardAttemptDbFork;
+        await discardFork(dbForkConfig, attemptId);
+      } catch (error) {
+        captureMinerError(error, { kind: "attempt_db_fork_discard_failed", repoFullName: parsed.repoFullName, attemptId, branchId: dbFork.branchId });
+      }
+    }
     allocator?.close();
     claimLedger?.close();
     eventLedger?.close();

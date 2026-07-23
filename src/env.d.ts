@@ -227,6 +227,8 @@ declare global {
      *  fetch (cloud, or a self-host without the dir, is byte-identical to before). */
     LOOPOVER_REPO_CONFIG_DIR?: string;
     LOOPOVER_AUTO_FILE_DRIFT_ISSUES?: string;
+    // #8121: backtest-gated satisfaction-floor autotune go-live switch (wrangler var, "false" by default).
+    SATISFACTION_FLOOR_AUTOTUNE_ENABLED?: string;
     LOOPOVER_DRIFT_ISSUE_REPO?: string;
     LOOPOVER_DRIFT_ISSUE_TOKEN?: string;
     /** Comma-separated GitHub logins assigned to filed upstream-drift issues (default: the loopover

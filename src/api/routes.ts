@@ -320,6 +320,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
+import { isSatisfactionFloorAutotuneEnabled, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
@@ -4813,6 +4814,17 @@ export function createApp() {
   // of /v1/internal/calibration above, same INTERNAL_JOB_TOKEN gate via the /v1/internal/* middleware.
   // Aggregate counts and rule ids only — no PR content, no raw context.
   app.get("/v1/internal/calibration-trend", async (c) => c.json(await loadCalibrationTrend(c.env)));
+
+  // #8121 (approved narrow start): manually trigger one backtest-gated loosening evaluation of the
+  // linked-issue satisfaction confidence floor. 404 when the autotune flag is off (the endpoint doesn't
+  // exist on a deploy that hasn't opted in, mirroring the rag-index route's flag-gate). Bearer-gated by the
+  // /v1/internal/* middleware (INTERNAL_JOB_TOKEN). Applying is idempotent per candidate step: repeat calls
+  // re-evaluate from the CURRENT (possibly already-loosened) floor and step at most one candidate at a time.
+  app.post("/v1/internal/calibration/loosen-satisfaction-floor", async (c) => {
+    if (!isSatisfactionFloorAutotuneEnabled(c.env)) return c.json({ error: "not_found" }, 404);
+    const result = await runSatisfactionFloorLoosening(c.env);
+    return c.json(result);
+  });
 
   app.post("/v1/internal/jobs/refresh-registry", async (c) => {
     const message: JobMessage = { type: "refresh-registry", requestedBy: "api" };

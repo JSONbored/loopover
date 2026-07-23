@@ -1159,15 +1159,20 @@ export async function recordGateScoreSignals(
   repoFullName: string,
   prNumber: number,
 ): Promise<void> {
+  // The SAME policy transform evaluateGateCheckCore applies before its pure evaluations: the #551
+  // merge-readiness composite can promote slopGateMode to block, and buildSlopGateBlocker only ever sees
+  // the PROMOTED policy — reading the raw one here would silently drop corpus evidence for exactly the
+  // composite-gated case this capture exists for (mirrors recordConfiguredGateBlockerSignals above).
+  const effective = applyMergeReadinessGate(policy);
   const store = createSignalStore(env);
   const targetKey = `${repoFullName}#${prNumber}`;
   const occurredAt = nowIso();
   const writes: Promise<void>[] = [];
 
-  const slopMode = gateMode(policy.slopGateMode);
-  const slopRisk = normalizeScore(policy.slopRisk);
+  const slopMode = gateMode(effective.slopGateMode);
+  const slopRisk = normalizeScore(effective.slopRisk);
   if (slopMode === "block" && slopRisk !== null) {
-    const slopMin = normalizeScore(policy.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
+    const slopMin = normalizeScore(effective.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
     writes.push(
       store
         .recordRuleFired({
@@ -1184,9 +1189,9 @@ export async function recordGateScoreSignals(
     );
   }
 
-  const qualityMode = gateMode(policy.qualityGateMode);
-  const readinessScore = normalizeScore(policy.readinessScore);
-  const qualityMin = normalizeScore(policy.qualityGateMinScore);
+  const qualityMode = gateMode(effective.qualityGateMode);
+  const readinessScore = normalizeScore(effective.readinessScore);
+  const qualityMin = normalizeScore(effective.qualityGateMinScore);
   if (qualityMode !== "off" && readinessScore !== null && qualityMin !== null) {
     writes.push(
       store

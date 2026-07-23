@@ -267,6 +267,16 @@ describe("recordGateScoreSignals (#8223)", () => {
     expect(history.fired[0]).toMatchObject({ outcome: "below_threshold", metadata: { confidence: 0.3 } });
   });
 
+  it("fires slop under the merge-readiness composite promotion even when slopGateMode itself is unset (#551 parity)", async () => {
+    // mergeReadinessGateMode: block promotes the slop sub-gate to block exactly as evaluateGateCheckCore's
+    // own applyMergeReadinessGate does — the raw slopGateMode stays unset, and the write must still happen.
+    const env = createTestEnv();
+    await recordGateScoreSignals(env, { mergeReadinessGateMode: "block", slopRisk: 72, slopGateMinScore: 60 }, "owner/repo", 7);
+    const history = await createSignalStore(env).queryRuleHistory("slop_gate_score", 0);
+    expect(history.fired).toHaveLength(1);
+    expect(history.fired[0]).toMatchObject({ outcome: "above_threshold", metadata: { confidence: 0.72 } });
+  });
+
   it("records NOTHING for slop outside block mode or with a null risk — the gate never evaluated the score", async () => {
     const env = createTestEnv();
     await recordGateScoreSignals(env, { slopGateMode: "advisory", slopRisk: 72 }, "owner/repo", 7);

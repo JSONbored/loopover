@@ -502,7 +502,7 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     // transient error — a contributor citing a fabricated issue number must not silently satisfy the hard rule
     // the same way a genuine fetch outage fails open.
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
-    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", linkedIssues: [1, 2] }));
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", body: "closes #1 closes #2", linkedIssues: [1, 2] }));
     expect(r?.violated).toBe(true);
     expect(r?.reason).toMatch(/could not be found/i);
   });
@@ -513,20 +513,20 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     // repo access — closing the PR here would risk punishing a contributor for a real linked issue our token
     // just can't see.
     vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
-    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, linkedIssues: [1, 2] }));
+    const r = await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: undefined, body: "closes #1 closes #2", linkedIssues: [1, 2] }));
     expect(r).toBeUndefined();
   });
 
   it("still fails open (undefined) when a linked-issue fetch fails transiently (5xx), not confirmed-nonexistent", async () => {
     vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));
-    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", linkedIssues: [1, 2] }))).toBeUndefined();
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "closes #1 closes #2", linkedIssues: [1, 2] }))).toBeUndefined();
   });
 
   it("fails open when the linked issues are a MIX of confirmed-not-found and a transient fetch error", async () => {
     // Cannot rule out a real, rule-violating issue behind the transient failure — must not treat this the same
     // as an all-confirmed-not-found set.
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => (input.toString().endsWith("/issues/1") ? new Response("missing", { status: 404 }) : new Response("server error", { status: 500 })));
-    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", linkedIssues: [1, 2] }))).toBeUndefined();
+    expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "closes #1 closes #2", linkedIssues: [1, 2] }))).toBeUndefined();
   });
 
   it("fetches with the CI token and runs the deterministic evaluator over the facts", async () => {
@@ -563,12 +563,31 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
   it("derives the installation admission key from the ci token + installation id so installation reads attribute to the installation bucket, not 'unknown' (#1951 blocker)", async () => {
     const spy = vi.spyOn(backfillModule, "fetchLinkedIssueFacts").mockResolvedValue({ status: "fetch_error" });
     await resolveLinkedIssueHardRule(
-      args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", installationId: 143010787, linkedIssues: [7] }),
+      args({ config: config({ ownerAssignedClose: "block" }), ciToken: "installation-token", installationId: 143010787, body: "closes #7", linkedIssues: [7] }),
     );
     // The key is DERIVED from the token it will actually read with (so it can never drift): a non-public token +
     // finite installation id ⇒ the installation bucket, NOT undefined (which the metrics record as "unknown").
     expect(spy).toHaveBeenCalledWith(expect.anything(), "owner/repo", 7, "installation-token", "installation:143010787");
     spy.mockRestore();
+  });
+
+  it("REGRESSION (#8354): evaluates an issue linked in the FRESH body even when it is absent from a stale linkedIssues array — the overflow check and fact-fetch can no longer disagree", async () => {
+    // The body links #9 (e.g. a just-edited description), but the caller's last-synced `linkedIssues` still says
+    // [1]. Before the fix, the fact-fetch loop trusted the stale [1] and never evaluated #9 (it would have fetched
+    // #1, 404'd, and reported a "could not be found" violation for the WRONG issue); now the fetch list is derived
+    // from the same fresh body parse the overflow check uses, so #9's real ineligibility IS detected.
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+      input.toString().includes("/issues/9")
+        ? Response.json({ number: 9, state: "open", labels: [], assignees: [{ login: "claimed-dev" }] })
+        : new Response("missing", { status: 404 }),
+    );
+    const result = await resolveLinkedIssueHardRule(
+      args({ config: config({ assignedIssueClose: "block" }), ciToken: "tok", body: "closes #9", linkedIssues: [1], prAuthorLogin: "drive-by" }),
+    );
+    expect(result).toEqual({
+      violated: true,
+      reason: "Linked issue #9 is already assigned to @claimed-dev — only the assignee or a maintainer can submit that work.",
+    });
   });
 
   it("REGRESSION: an ineligible (owner-assigned) linked issue still violates the hard rule regardless of linkedIssueGateMode -- the two are fully independent (#selfhost-linked-issue-gate-drift)", () => {

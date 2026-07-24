@@ -1642,7 +1642,7 @@ function stdioToolDescription(name: any) {
 
 /* v8 ignore next 8 -- the CLI dispatch runs only in the launched process (runAsCliEntrypoint); an in-process
    unit importer keeps it false and drives runCli/maintainCli directly instead (mcp-cli-plan-issues.test.ts). */
-if (runAsCliEntrypoint && cliArgs[0] && cliArgs[0] !== "--stdio") {
+if (runAsCliEntrypoint && cliArgs[0] !== "--stdio") {
   try {
     const exitCode = await runCli(cliArgs);
     process.exit(typeof exitCode === "number" ? exitCode : 0);
@@ -4102,7 +4102,7 @@ export async function maintainCli(args: any) {
 
 async function runCli(args: any) {
   const command = args[0];
-  if (command === "--help" || command === "help") return printHelp();
+  if (command === undefined || command === "--help" || command === "help") return printHelp();
   if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
   if (command === "completion") return completionCommand(args.slice(1));
   if (command === "tools") return toolsCommand(args.slice(1));
@@ -4969,6 +4969,11 @@ async function runAgentCli(args: any) {
 // unit test can call it directly for v8/Codecov coverage of the `agent start` branch -- a subprocess-spawned
 // CLI run is invisible to coverage. Same rationale as maintainCli's own export. (#8314)
 export { runAgentCli };
+
+// #8313: exported (as a separate statement, same rationale as runAgentCli/maintainCli above) so an in-process
+// unit test can drive runCli([]) directly for v8/Codecov coverage of the new `command === undefined` help branch
+// -- a bare (zero-arg) invocation is otherwise only reachable via subprocess spawn, which coverage can't see.
+export { runCli };
 
 function outputAgentPayload(payload: any, options: any, summary: any) {
   if (options.json) {

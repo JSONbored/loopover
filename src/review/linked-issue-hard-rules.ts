@@ -193,6 +193,10 @@ export async function resolveLinkedIssueHardRule(args: {
   repoOwner: string;
   config: LinkedIssueHardRulesConfig;
   body: string | null | undefined;
+  // Retained for call-site compatibility, but NO LONGER the fetch source of truth (#8354): the set of issues
+  // whose facts are fetched is re-derived from a fresh parse of `body` (via extractLinkedIssueNumbersWithOverflow)
+  // so it can never disagree with the overflow check above. A caller may still pass its last-synced list; it is
+  // intentionally not read here.
   linkedIssues: number[];
   ciToken: string | undefined;
   prAuthorLogin?: string | null | undefined;
@@ -202,16 +206,22 @@ export async function resolveLinkedIssueHardRule(args: {
   installationId?: number | null | undefined;
 }): Promise<LinkedIssueHardRuleResult | undefined> {
   if (!anyLinkedIssueHardRuleOn(args.config)) return undefined;
-  if (extractLinkedIssueNumbersWithOverflow(args.body ?? "", args.repoFullName).overflow) {
+  // Parse the PR's CURRENT body ONCE and drive BOTH the overflow check and the per-issue fact-fetch loop from
+  // that single result, so the two can never disagree about which issues are "currently linked" (#8354). The
+  // caller still passes `args.linkedIssues` (a possibly-stale field synced by an earlier body parse), but it is
+  // deliberately no longer the source of truth here: a body edit that adds a new closing reference between the
+  // last `pr.linkedIssues` sync and this evaluation must be seen by the fact-fetch loop, not silently skipped.
+  const linkedIssuesFromBody = extractLinkedIssueNumbersWithOverflow(args.body ?? "", args.repoFullName);
+  if (linkedIssuesFromBody.overflow) {
     return {
       violated: true,
       reason: "PR body links more issues than LoopOver can safely verify automatically; please reduce linked closing references or request maintainer review.",
     };
   }
-  if (args.linkedIssues.length === 0) return undefined;
+  if (linkedIssuesFromBody.numbers.length === 0) return undefined;
   const token = args.ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
-  const fetchResults = await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
+  const fetchResults = await Promise.all(linkedIssuesFromBody.numbers.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
   const issueFacts = fetchResults.flatMap((result) => (result.status === "found" ? [result.facts] : []));
   if (issueFacts.length === 0) {
     // Every reference resolved to a CONFIRMED 404 — never a transient fetch_error (#2136). Mirrors the overflow

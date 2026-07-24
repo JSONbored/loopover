@@ -949,6 +949,26 @@ jobs:
         with:
           path: .turbo/cache
           key: turbo-tests-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
+      # The miner/MCP packages compile IN PLACE (tsconfig outDir "." -- lib/foo.ts emits lib/foo.js next to
+      # its source, gitignored). The two --force builds above therefore leave compiled .js siblings for every
+      # .ts under packages/loopover-{miner,mcp}/{lib,bin} -- and once those exist, Vite resolves the packages'
+      # NodeNext .js-suffixed import specifiers to the REAL compiled files instead of falling back to the .ts
+      # source (the fallback vitest.config.ts's coverage globs document depending on). That breaks the
+      # coverage run twice over: vitest --changed's import-graph tracing can't relate a changed .ts to the
+      # tests importing it (the module graph holds the .js identity), and executed-module coverage is
+      # attributed to the .js ids, flatlining every changed .ts to 0% -- the 2026-07-24 "(0%/99%)
+      # codecov/patch on every packages/** PR" incident, introduced when the 3-shard consolidation moved
+      # these builds into the same job as the coverage run (the shards never built these packages).
+      # Reproduced/bisected locally on vitest 4.1.9: with lib/*.js present the scoped run selected 1 test
+      # file and reported the changed attempt-cli.ts at 0%; after this clean it selected 4 and reported 100%.
+      # Nothing in the coverage run needs the built output at runtime: both CLI harnesses spawn the .ts
+      # entrypoints via --experimental-strip-types (test/unit/support/{mcp,miner}-cli-harness.ts), and the
+      # one artifact-dependent test (check-miner-package.test.ts's npm-pack dry-run) is excluded from the
+      # coverage run below and re-run after a rebuild in "Pack-integrity test" at the end of this job.
+      # -fdX removes ONLY gitignored files, so tracked sources are untouchable by construction; the binary
+      # verification above already ran, and "Save Turborepo cache" already captured the build outputs.
+      - name: Remove in-place package build output before coverage
+        run: git clean -fdX packages/loopover-miner packages/loopover-mcp
       - name: Prepare test reports dir
         run: mkdir -p reports/junit
       - name: Test with coverage
@@ -1012,10 +1032,16 @@ jobs:
               --exclude "test/unit/mcp-discovery.test.ts"
             )
           fi
+          # check-miner-package.test.ts is ALWAYS excluded from the coverage run -- its npm-pack dry-run
+          # needs the in-place build output that "Remove in-place package build output before coverage"
+          # just deleted (see that step's comment for why the emit must not exist here). It runs in
+          # "Pack-integrity test" at the end of this job instead, after a rebuild, with coverage disabled --
+          # it only spawns scripts/check-miner-package.ts as a subprocess, so it never contributed
+          # v8-visible coverage in this run anyway.
+          EXCLUDE_ARGS+=(--exclude "test/unit/check-miner-package.test.ts")
           if [ "$SKIP_MINER_TEST_HARNESS" = "true" ]; then
             echo "Skipping the self-contained miner-package tests (no packages/loopover-miner-relevant paths changed)."
             EXCLUDE_ARGS+=(
-              --exclude "test/unit/check-miner-package.test.ts"
               --exclude "test/unit/miner-calibration-types.test.ts"
             )
           fi
@@ -1150,6 +1176,18 @@ jobs:
           override_commit: ${{ github.event.pull_request.head.sha }}
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
+      # Rebuild the in-place emit (deleted before the coverage run -- see "Remove in-place package build
+      # output before coverage") and run the one test that genuinely needs it: check-miner-package.test.ts's
+      # npm-pack dry-run over the built package layout. Coverage stays disabled -- the test only spawns
+      # scripts/check-miner-package.ts as a subprocess, so excluding it from the coverage run loses nothing.
+      # Gated exactly like its old in-suite inclusion: every push, or a PR whose changed paths matched the
+      # minerTestHarness filter (the same condition SKIP_MINER_TEST_HARNESS negates above). The implicit
+      # success() on this if means it never runs after a failed suite, matching the old in-suite behavior.
+      - name: Pack-integrity test (rebuilds in-place emit)
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.minerTestHarness == 'true' }}
+        run: |
+          npx turbo run build:tsc build:verify --filter=@loopover/miner --force
+          npx vitest run --coverage.enabled=false test/unit/check-miner-package.test.ts
 
   # Single required status check. Branch protection points at "validate"; this
   # aggregates the path-aware jobs (the PR-only dependency review gate lives inside

@@ -1,7 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as backfillModule from "../../src/github/backfill";
-import { cachedLiveCiAggregate } from "../../src/queue/ci-resolution";
+import {
+  cachedLiveCiAggregate,
+  cachedRequiredStatusContexts,
+  observeRequiredContextsLookup,
+  REQUIRED_CONTEXTS_UNRESOLVED_METRIC,
+} from "../../src/queue/ci-resolution";
 import type { LiveGithubFacts } from "../../src/queue/processors";
+import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 import { createTestEnv } from "../helpers/d1";
 
 function emptyFacts(): LiveGithubFacts {
@@ -77,5 +83,79 @@ describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
     await cachedLiveCiAggregate(env, { ...base, advisoryCheckRuns: twoEntry });
     await cachedLiveCiAggregate(env, { ...base, advisoryCheckRuns: [...twoEntry].reverse() });
     expect(liveCiSpy).toHaveBeenCalledTimes(3); // +1 only, the reversed list reused the key
+  });
+});
+
+describe("cachedRequiredStatusContexts resolved flag (#8358)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sets resolved:false when the live branch-protection read fails (onFetchFailure fires) and keeps the expectedCiContexts config fallback", async () => {
+    const env = createTestEnv();
+    vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockImplementation(
+      async (_env, _repo, _base, _token, _admission, onFetchFailure) => {
+        // Real callers always pass onFetchFailure; the parameter is optional on the type, so call via ?.
+        onFetchFailure?.(new Error("branch protection forbidden"));
+        return null;
+      },
+    );
+    const lookup = await cachedRequiredStatusContexts(env, "owner/repo", emptyFacts(), "main", "tok", ["lint"]);
+    expect(lookup.resolved).toBe(false);
+    expect(lookup.requiredContexts).toEqual(new Set(["lint"]));
+  });
+
+  it("sets resolved:true when the live branch-protection read succeeds", async () => {
+    const env = createTestEnv();
+    vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(new Set(["ci"]));
+    const lookup = await cachedRequiredStatusContexts(env, "owner/repo", emptyFacts(), "main", "tok", null);
+    expect(lookup.resolved).toBe(true);
+    expect(lookup.requiredContexts).toEqual(new Set(["ci"]));
+  });
+});
+
+describe("observeRequiredContextsLookup (#8358)", () => {
+  beforeEach(() => {
+    resetMetrics();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("emits a structured warn and increments the unresolved metric when resolved is false", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    observeRequiredContextsLookup(
+      { requiredContexts: new Set(["lint"]), resolved: false },
+      { repoFullName: "owner/repo", pullNumber: 9, baseRef: "main" },
+    );
+    expect(counterValue(REQUIRED_CONTEXTS_UNRESOLVED_METRIC)).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+      level: "warn",
+      event: "required_contexts_branch_protection_unresolved",
+      repoFullName: "owner/repo",
+      pullNumber: 9,
+      baseRef: "main",
+    });
+  });
+
+  it("coalesces a nullish baseRef to null in the warn payload", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    observeRequiredContextsLookup(
+      { requiredContexts: null, resolved: false },
+      { repoFullName: "owner/repo", pullNumber: 3, baseRef: undefined },
+    );
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({ baseRef: null });
+  });
+
+  it("is a no-op when resolved is true (no metric, no warn)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    observeRequiredContextsLookup(
+      { requiredContexts: new Set(["ci"]), resolved: true },
+      { repoFullName: "owner/repo", pullNumber: 9, baseRef: "main" },
+    );
+    expect(counterValue(REQUIRED_CONTEXTS_UNRESOLVED_METRIC)).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

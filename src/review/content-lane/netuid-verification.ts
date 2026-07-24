@@ -37,6 +37,14 @@ const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+let netuidRetryBaseDelayMsOverride: number | null = null;
+
+/** Test-only: collapses fetchWithRetry's exponential backoff to near-zero so a retry/exhaustion test
+ *  doesn't pay real wall-clock time (the DEFAULT_BASE_DELAY_MS constant and production default are unchanged). */
+export function setNetuidRetryBaseDelayMsForTest(value: number | null): void {
+  netuidRetryBaseDelayMsOverride = value;
+}
+
 /** Minimal fetch-with-retry (inlined from reviewbot core/fetch-retry.ts defaults). Retries on a
  *  thrown error or a retryable status, with exponential backoff + a per-attempt timeout. */
 async function fetchWithRetry(
@@ -46,7 +54,7 @@ async function fetchWithRetry(
   opts: { retries?: number; baseDelayMs?: number; timeoutMs?: number } = {},
 ): Promise<Response> {
   const retries = opts.retries ?? DEFAULT_RETRIES;
-  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const baseDelayMs = opts.baseDelayMs ?? netuidRetryBaseDelayMsOverride ?? DEFAULT_BASE_DELAY_MS;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {

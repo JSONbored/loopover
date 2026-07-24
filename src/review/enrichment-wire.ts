@@ -73,6 +73,18 @@ function sharedSecretWasNormalized(
 const REES_PING_NOT_READY_RETRIES = 2;
 const REES_PING_NOT_READY_RETRY_DELAY_MS = 500;
 
+let reesPingNotReadyRetryDelayMsOverride: number | null = null;
+
+/** Test-only: collapses the real inter-retry wait so probeReesSecretAtStartup's retry tests don't pay
+ *  REES_PING_NOT_READY_RETRIES * REES_PING_NOT_READY_RETRY_DELAY_MS of real wall-clock time. */
+export function setReesPingNotReadyRetryDelayMsForTest(value: number | null): void {
+  reesPingNotReadyRetryDelayMsOverride = value;
+}
+
+function reesPingNotReadyRetryDelayMs(): number {
+  return reesPingNotReadyRetryDelayMsOverride ?? REES_PING_NOT_READY_RETRY_DELAY_MS;
+}
+
 async function fetchReesPingWithRetry(url: string, secret: string): Promise<Response> {
   const request = () =>
     fetch(url, {
@@ -85,7 +97,7 @@ async function fetchReesPingWithRetry(url: string, secret: string): Promise<Resp
     });
   let response = await request();
   for (let attempt = 0; attempt < REES_PING_NOT_READY_RETRIES && response.status === 503; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, REES_PING_NOT_READY_RETRY_DELAY_MS));
+    await new Promise((resolve) => setTimeout(resolve, reesPingNotReadyRetryDelayMs()));
     response = await request();
   }
   return response;

@@ -9,7 +9,11 @@
 import { setReviewFilesEmptyRetryDelayMsForTest } from "../../src/github/backfill";
 import { setGithubRateLimitRetrySleepCapMsForTest } from "../../src/github/client";
 import { setMergeStateUnknownRetryDelayMsForTest } from "../../src/queue/ci-resolution";
+import { setReesPingNotReadyRetryDelayMsForTest } from "../../src/review/enrichment-wire";
+import { setNetuidRetryBaseDelayMsForTest } from "../../src/review/content-lane/netuid-verification";
 
 setReviewFilesEmptyRetryDelayMsForTest(0);
 setGithubRateLimitRetrySleepCapMsForTest(0);
 setMergeStateUnknownRetryDelayMsForTest(0);
+setReesPingNotReadyRetryDelayMsForTest(0);
+setNetuidRetryBaseDelayMsForTest(0);

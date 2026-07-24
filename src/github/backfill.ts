@@ -1828,7 +1828,7 @@ async function supplementOpenIssuesFromGraphQl(env: Env, repo: RepositoryRecord,
       existingNumbers.add(issue.number);
       supplemented += 1;
     }
-    if (!issues?.pageInfo?.hasNextPage) break;
+    if (!issues?.pageInfo?.hasNextPage || !issues.pageInfo.endCursor) break;
     after = `, after: ${JSON.stringify(issues.pageInfo.endCursor)}`;
   }
   return supplemented;

@@ -476,9 +476,14 @@ export function buildCheckRunAnnotations(
     level: CheckRunAnnotation["annotation_level"],
     title: string,
     message: string,
+    // `alreadyPublicSafe` (#7981, extended to annotations by #8321): same contract formatCheckRunOutput's
+    // `text` already honors -- a fixed, engineer-authored message with no interpolated contributor/AI content
+    // must not be scrubbed, or a deliberately-worded string gets mangled. The title keeps its sanitizer:
+    // there is no per-title safety flag on a finding, so nothing licenses skipping it.
+    alreadyPublicSafe = false,
   ) => {
     const safeTitle = sanitizeForCheckRun(title).slice(0, 255);
-    const safeMessage = sanitizeForCheckRun(message).slice(0, 65535);
+    const safeMessage = (alreadyPublicSafe ? message : sanitizeForCheckRun(message)).slice(0, 65535);
     if (!path || !safeTitle || !safeMessage) return;
     const key = `${path}:${safeTitle}:${safeMessage}`;
     if (seen.has(key)) return;
@@ -532,6 +537,7 @@ export function buildCheckRunAnnotations(
         severityToAnnotationLevel(finding.severity),
         finding.title,
         finding.publicText,
+        finding.alreadyPublicSafe ?? false,
       );
     }
   }

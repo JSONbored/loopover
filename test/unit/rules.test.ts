@@ -936,6 +936,54 @@ describe("advisory rules", () => {
     expect(out.text).not.toContain("[context]");
   });
 
+  // #8321: the SAME finding is also rendered as an inline annotation, and buildCheckRunAnnotations used to
+  // scrub it unconditionally -- so one PR showed the message verbatim in the check-run text but mangled in the
+  // annotation. These two pin both arms of the flag on the annotation path.
+  describe("buildCheckRunAnnotations honors alreadyPublicSafe (#8321)", () => {
+    const SAFE_TEXT = "Subnet document appears to include secret, wallet, PAT, or private-key material.";
+    const annotationsFor = (alreadyPublicSafe: boolean) => {
+      const advisory = buildPullRequestAdvisory(repo, {
+        repoFullName: repo.fullName, number: 31, title: "Add lane doc", state: "open",
+        authorLogin: "contributor", authorAssociation: "NONE", labels: [], linkedIssues: [],
+      });
+      const files: PullRequestFileRecord[] = [
+        { repoFullName: repo.fullName, pullNumber: 31, path: "src/lane/doc.ts", additions: 5, deletions: 0, changes: 5, payload: {} },
+      ];
+      const collisions: CollisionReport = {
+        repoFullName: repo.fullName, generatedAt: "2026-06-10T00:00:00.000Z",
+        summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [],
+      };
+      const withFinding = {
+        ...advisory,
+        findings: [
+          {
+            code: "surface_lane_reject",
+            title: "Registry surface review",
+            severity: "critical" as const,
+            detail: SAFE_TEXT,
+            publicText: SAFE_TEXT,
+            ...(alreadyPublicSafe ? { alreadyPublicSafe: true } : {}),
+          },
+        ],
+      };
+      return buildCheckRunAnnotations(withFinding, { files, collisions, pullNumber: 31 }, "standard").annotations;
+    };
+
+    it("renders an alreadyPublicSafe message verbatim, matching formatCheckRunOutput", () => {
+      const entry = annotationsFor(true).find((a) => a.title === "Registry surface review");
+      expect(entry, "expected an annotation for the finding").toBeTruthy();
+      expect(entry!.message).toBe(SAFE_TEXT);
+      expect(entry!.message).not.toContain("[context]");
+    });
+
+    it("still sanitizes the message when alreadyPublicSafe is absent (unchanged behavior)", () => {
+      const entry = annotationsFor(false).find((a) => a.title === "Registry surface review");
+      expect(entry, "expected an annotation for the finding").toBeTruthy();
+      expect(entry!.message).toContain("[context]");
+      expect(entry!.message).not.toBe(SAFE_TEXT);
+    });
+  });
+
   it("formatCheckRunOutput publishes only explicit public finding text", () => {
     const advisory = buildPullRequestAdvisory(repo, null);
     const output = formatCheckRunOutput(

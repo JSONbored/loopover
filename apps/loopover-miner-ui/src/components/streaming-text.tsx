@@ -32,7 +32,7 @@ export function StreamingText({ source, className }: { source: ChunkSource | nul
     <p className={className} data-status={status} aria-busy={status === "streaming"}>
       {text}
       {status === "streaming" && !reducedMotion ? (
-        <span aria-hidden="true" className="ml-0.5 inline-block animate-pulse">
+        <span aria-hidden="true" className="ml-0.5 inline-block animate-pulse motion-reduce:animate-none">
           ▍
         </span>
       ) : null}

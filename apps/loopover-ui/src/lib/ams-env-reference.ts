@@ -67,6 +67,11 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     defaultValue: "",
   },
   {
+    name: "LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL",
+    firstReference: "lib/generate-egress-firewall-config.ts",
+    defaultValue: null,
+  },
+  {
     name: "LOOPOVER_MINER_DISCOVERY_INDEX_URL",
     firstReference: "lib/discovery-index-client.ts",
     defaultValue: "",
@@ -105,6 +110,21 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     name: "LOOPOVER_MINER_LOG_LEVEL",
     firstReference: "lib/logger.ts",
     defaultValue: "",
+  },
+  {
+    name: "LOOPOVER_MINER_NEON_API_KEY",
+    firstReference: "lib/egress-allowlist.ts",
+    defaultValue: null,
+  },
+  {
+    name: "LOOPOVER_MINER_NEON_PARENT_BRANCH_ID",
+    firstReference: "lib/egress-allowlist.ts",
+    defaultValue: null,
+  },
+  {
+    name: "LOOPOVER_MINER_NEON_PROJECT_ID",
+    firstReference: "lib/egress-allowlist.ts",
+    defaultValue: null,
   },
   {
     name: "LOOPOVER_MINER_NO_UPDATE_CHECK",
@@ -158,7 +178,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   },
   {
     name: "LOOPOVER_MINER_SENTRY_DSN",
-    firstReference: "lib/sentry.ts",
+    firstReference: "lib/egress-allowlist.ts",
     defaultValue: null,
   },
   {
@@ -227,6 +247,7 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   '| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.ts` | `""` |',
   '| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `lib/tenant-client.ts` | `""` |',
   '| `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` | `lib/deny-hook-synthesis.ts` | `""` |',
+  "| `LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL` | `lib/generate-egress-firewall-config.ts` | (none) |",
   '| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `lib/discovery-index-client.ts` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_PLANE` | `lib/discovery-index-client.ts` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `lib/discovery-index-client.ts` | `""` |',
@@ -235,6 +256,9 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_GOVERNOR_LEDGER_DB` | `lib/governor-ledger.ts` | (none) |",
   "| `LOOPOVER_MINER_GOVERNOR_STATE_DB` | `lib/governor-state.ts` | (none) |",
   '| `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.ts` | `""` |',
+  "| `LOOPOVER_MINER_NEON_API_KEY` | `lib/egress-allowlist.ts` | (none) |",
+  "| `LOOPOVER_MINER_NEON_PARENT_BRANCH_ID` | `lib/egress-allowlist.ts` | (none) |",
+  "| `LOOPOVER_MINER_NEON_PROJECT_ID` | `lib/egress-allowlist.ts` | (none) |",
   '| `LOOPOVER_MINER_NO_UPDATE_CHECK` | `lib/update-check.ts` | `""` |',
   '| `LOOPOVER_MINER_ORB_EXPORT_DB` | `lib/orb-export.ts` | `""` |',
   "| `LOOPOVER_MINER_PLAN_STORE_DB` | `lib/plan-store.ts` | (none) |",
@@ -245,7 +269,7 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_RANKED_CANDIDATES_DB` | `lib/ranked-candidates.ts` | (none) |",
   "| `LOOPOVER_MINER_REPLAY_SNAPSHOT_DB` | `lib/replay-snapshot.ts` | (none) |",
   "| `LOOPOVER_MINER_RUN_STATE_DB` | `lib/run-state.ts` | (none) |",
-  "| `LOOPOVER_MINER_SENTRY_DSN` | `lib/sentry.ts` | (none) |",
+  "| `LOOPOVER_MINER_SENTRY_DSN` | `lib/egress-allowlist.ts` | (none) |",
   '| `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `lib/sentry.ts` | `"production"` |',
   '| `LOOPOVER_MINER_VERSION` | `lib/version.ts` | `""` |',
   "| `LOOPOVER_MINER_WORKTREE_ALLOCATOR_DB` | `lib/worktree-allocator.ts` | (none) |",

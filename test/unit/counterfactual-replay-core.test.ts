@@ -3,6 +3,7 @@ import type { BacktestCase, CounterfactualVerdict } from "@loopover/engine";
 import { REVIEW_PROMPT_VERSION, buildCanonicalJudgePrompt } from "../../src/services/ai-review";
 import {
   artifactKey,
+  extractWorkersAiResponse,
   buildCounterfactualAuditInsertSql,
   compareReplays,
   COUNTERFACTUAL_BACKTEST_EVENT_TYPE,
@@ -182,5 +183,15 @@ describe("#8222: prompt version + CI comment/persist helpers", () => {
       promptVersionHead: "review-prompt-v2",
       scored: 1,
     });
+  });
+});
+
+describe("extractWorkersAiResponse (#8279)", () => {
+  it("extracts result.response; every malformed envelope yields \"\" so the parser abstains rather than throwing", () => {
+    expect(extractWorkersAiResponse({ result: { response: '{"blockers": []}' } })).toBe('{"blockers": []}');
+    for (const bad of [null, undefined, {}, { result: {} }, { result: { response: 42 } }, "text"]) {
+      expect(extractWorkersAiResponse(bad)).toBe("");
+    }
+    expect(parseVariantVerdict(extractWorkersAiResponse({ result: {} }))).toBe("abstained"); // the composed fail-safe
   });
 });

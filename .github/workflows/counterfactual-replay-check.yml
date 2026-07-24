@@ -36,18 +36,22 @@ jobs:
     timeout-minutes: 20
     steps:
       # The budget gate comes FIRST so an unconfigured deployment pays one echo, not an npm ci.
+      # #8279: the default provider is Workers AI (the CLOUDFLARE_* secrets this workflow already holds for
+      # the corpus export double as its credentials — the token needs Workers AI run perms); an explicit
+      # COUNTERFACTUAL_OLLAMA_URL secret switches to a reachable ollama instead.
       - name: Check replay budget configuration
         id: budget
         env:
           REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
           REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
-          REPLAY_PROVIDER_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+          REPLAY_OLLAMA_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
         run: |
-          if [ -n "$REPLAY_BUDGET" ] && [ -n "$REPLAY_MODEL" ] && [ -n "$REPLAY_PROVIDER_URL" ]; then
+          if [ -n "$REPLAY_BUDGET" ] && [ -n "$REPLAY_MODEL" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$REPLAY_OLLAMA_URL" ]; then echo "provider=ollama" >> "$GITHUB_OUTPUT"; else echo "provider=workers-ai" >> "$GITHUB_OUTPUT"; fi
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Counterfactual replay skipped: no replay budget configured (set the COUNTERFACTUAL_REPLAY_BUDGET + COUNTERFACTUAL_REPLAY_MODEL repo variables and the COUNTERFACTUAL_OLLAMA_URL secret to enable). Advisory only, never fails the PR."
+            echo "::notice::Counterfactual replay skipped: no replay budget configured (set the COUNTERFACTUAL_REPLAY_BUDGET + COUNTERFACTUAL_REPLAY_MODEL repo variables; Workers AI runs on the existing CLOUDFLARE_* secrets, or set COUNTERFACTUAL_OLLAMA_URL to use a reachable ollama). Advisory only, never fails the PR."
           fi
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -123,7 +127,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
           REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
-          REPLAY_PROVIDER_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+          REPLAY_OLLAMA_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+          REPLAY_PROVIDER: ${{ steps.budget.outputs.provider }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -136,7 +141,8 @@ jobs:
               --prompt-file base-prompt.txt \
               --budget "$REPLAY_BUDGET" \
               --seed-suffix "$HEAD_SHA" \
-              --ollama-url "$REPLAY_PROVIDER_URL" \
+              --provider "$REPLAY_PROVIDER" \
+              --ollama-url "${REPLAY_OLLAMA_URL:-http://localhost:11434}" \
               --out base-scores.json \
             && npx tsx scripts/counterfactual-replay.ts \
               --fixtures replay-corpus.json \
@@ -144,7 +150,8 @@ jobs:
               --prompt-file head-prompt.txt \
               --budget "$REPLAY_BUDGET" \
               --seed-suffix "$HEAD_SHA" \
-              --ollama-url "$REPLAY_PROVIDER_URL" \
+              --provider "$REPLAY_PROVIDER" \
+              --ollama-url "${REPLAY_OLLAMA_URL:-http://localhost:11434}" \
               --baseline base-scores.json \
               --base-variant-label "$BASE_VERSION" \
               --comment-out replay-comment.md \

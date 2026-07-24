@@ -5,8 +5,9 @@
 // prints the Pareto-floored comparison via the shared renderer. All mapping/aggregation logic lives in
 // counterfactual-replay-core.ts (unit-tested); this wrapper owns provider IO, the artifacts cache, and
 // file reads. OFFLINE-ONLY guarantees (#8219 contract point 2): never posts anywhere, never touches live
-// reviews; local ollama is the smoke path and the ONLY provider wired here — BYOK providers are a later,
-// explicitly-flagged addition, refused loudly today rather than silently attempted.
+// reviews. Local ollama is the smoke path; `--provider workers-ai` (#8279) is the explicitly-flagged
+// hosted option for CI — credentials from CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN, refused loudly when
+// absent. Every other provider remains unwired by design.
 //
 //   tsx scripts/counterfactual-replay.ts --fixtures corpus.json --variant <promptVersion@modelSpec>
 //        [--budget N] [--max-fixtures N] [--seed-suffix s] [--baseline scores.json] [--out scores.json]
@@ -30,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import {
   artifactKey,
   buildCounterfactualAuditInsertSql,
+  extractWorkersAiResponse,
   compareReplays,
   estimateFixtureNeurons,
   isRunAccountingValid,
@@ -48,6 +50,7 @@ type Args = {
   out: string | undefined;
   artifacts: string;
   ollamaUrl: string;
+  provider: "ollama" | "workers-ai";
   promptFile: string | undefined;
   // #8222 CI mode: emit the marker comment and/or persist the run event (wrangler d1, like #8139).
   commentOut: string | undefined;
@@ -72,6 +75,7 @@ function parseArgs(argv: string[]): Args {
     out: undefined,
     artifacts: ".counterfactual-artifacts",
     ollamaUrl: "http://localhost:11434",
+    provider: "ollama",
     promptFile: undefined,
     commentOut: undefined,
     baseVariantLabel: undefined,
@@ -94,6 +98,7 @@ function parseArgs(argv: string[]): Args {
     else if (flag === "--out") args.out = argv[++i];
     else if (flag === "--artifacts") args.artifacts = argv[++i] ?? args.artifacts;
     else if (flag === "--ollama-url") args.ollamaUrl = argv[++i] ?? args.ollamaUrl;
+    else if (flag === "--provider") args.provider = (argv[++i] as "ollama" | "workers-ai") ?? "ollama";
     else if (flag === "--prompt-file") args.promptFile = argv[++i];
     else if (flag === "--comment-out") args.commentOut = argv[++i];
     else if (flag === "--base-variant-label") args.baseVariantLabel = argv[++i];
@@ -116,6 +121,18 @@ const DEFAULT_JUDGE_PROMPT = [
   "previously judged. Decide whether the diff contains a defect serious enough to block a merge.",
   'Respond with ONLY a JSON object: {"blockers": [..strings, empty if none..], "confidence": 0..1}.',
 ].join("\n");
+
+// Workers AI REST (#8279): the same account already running production reviews. Non-streaming text run;
+// a non-OK status throws (operational failure — the campaign stops loudly, never silently mis-scores).
+async function judgeWithWorkersAi(accountId: string, token: string, model: string, prompt: string, diff: string): Promise<string> {
+  const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ messages: [{ role: "user", content: `${prompt}\n\n--- DIFF ---\n${diff}` }], temperature: 0 }),
+  });
+  if (!response.ok) throw new Error(`workers-ai ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  return extractWorkersAiResponse(await response.json());
+}
 
 async function judgeWithOllama(ollamaUrl: string, model: string, prompt: string, diff: string): Promise<string> {
   const response = await fetch(`${ollamaUrl}/api/generate`, {
@@ -157,6 +174,18 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  // #8279: hosted-provider credentials resolve ONCE, loudly, before any spend.
+  let workersAi: { accountId: string; token: string } | null = null;
+  if (args.provider === "workers-ai") {
+    const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+    const token = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    if (!accountId || !token) {
+      console.error("--provider workers-ai requires CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (a token with Workers AI read/run).");
+      return 1;
+    }
+    workersAi = { accountId, token };
+  }
+
   mkdirSync(args.artifacts, { recursive: true });
   const prompt = args.promptFile ? readFileSync(args.promptFile, "utf8") : DEFAULT_JUDGE_PROMPT;
   writeFileSync(join(args.artifacts, `prompt-${variant.promptVersion}.txt`), prompt);
@@ -172,7 +201,9 @@ async function main(): Promise<number> {
     if (existsSync(cachePath)) {
       raw = readFileSync(cachePath, "utf8"); // cached raw output: re-scoring is free
     } else {
-      raw = await judgeWithOllama(args.ollamaUrl, variant.modelSpec, prompt, fixture.boundedInputs.diff);
+      raw = workersAi
+        ? await judgeWithWorkersAi(workersAi.accountId, workersAi.token, variant.modelSpec, prompt, fixture.boundedInputs.diff)
+        : await judgeWithOllama(args.ollamaUrl, variant.modelSpec, prompt, fixture.boundedInputs.diff);
       writeFileSync(cachePath, raw);
       neuronsSpent += cost; // cache hits spend nothing — only real provider calls count
     }

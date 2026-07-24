@@ -193,8 +193,12 @@ base and head checkouts, replays both over the identical seeded sample (seed = h
 per push are deterministic), posts the comparison as an update-in-place PR comment, and persists a
 `calibration.counterfactual_backtest_run` event feeding the same REGRESSED-verdict track record as the
 threshold and logic backtests. The check spends nothing unless the deployment explicitly configures a
-replay budget (repo variables `COUNTERFACTUAL_REPLAY_BUDGET`/`COUNTERFACTUAL_REPLAY_MODEL` plus the
-provider endpoint secret) — otherwise it posts a visible "skipped: no replay budget configured" notice.
+replay budget (repo variables `COUNTERFACTUAL_REPLAY_BUDGET`/`COUNTERFACTUAL_REPLAY_MODEL`) — otherwise
+it posts a visible "skipped: no replay budget configured" notice. Provider selection: with a
+`COUNTERFACTUAL_OLLAMA_URL` secret set, the check uses that ollama endpoint (a self-hosted runner
+reaching its own local model is the zero-marginal-cost shape); without it, the default is the flag-gated
+Workers AI fallback on the deployment's existing Cloudflare credentials — OSS models, usage-priced,
+dormant until the budget variables exist.
 Advisory forever until a separate, explicit authority decision, exactly like every other backtest gate.
 
 ## Self-hosting

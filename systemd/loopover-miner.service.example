@@ -25,6 +25,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# #7857's network-egress firewall (deny-by-default, ratified allowlist) is NOT enforced on this bare-host
+# path yet -- a systemd-native equivalent (ExecStartPre=+, which runs as root regardless of User= below) is
+# tracked in #8282.
 Type=simple
 # REQUIRED: run as a dedicated non-root user that owns the state directory below.
 User=loopover

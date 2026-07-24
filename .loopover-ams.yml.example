@@ -58,3 +58,16 @@ maxIterations: 3
 # Per-iteration turn budget passed to the coding-agent driver.
 # A non-integer is floored. Default: 6.
 maxTurnsPerIteration: 6
+
+# Network-egress allowlist additions (#7857) for the sandboxed coding-agent
+# execution environment, on top of the always-on defaults (OS package
+# registries, GitHub -- the target repo's own git remote). Enforced deny-by-
+# default: an attempt can reach exactly these hosts plus the always-on
+# defaults, nothing else. `ecosystems` picks whole registry categories (their
+# real hostnames are resolved internally, e.g. `npm` -> registry.npmjs.org);
+# `extraHosts` allows specific additional hostnames (e.g. a project's own
+# third-party API). Values for ecosystems: npm | pypi | crates | go |
+# rubygems | packagist | maven | nuget. Default: { ecosystems: [], extraHosts: [] }.
+networkAllowlist:
+  ecosystems: []
+  extraHosts: []

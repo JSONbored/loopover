@@ -61,6 +61,9 @@ describe("StreamingText (#6516)", () => {
     await src.push("typing…");
     await waitFor(() => expect(screen.getByText(/typing…/)).toBeTruthy());
     expect(caret()).not.toBeNull(); // still streaming → caret present under full motion
+    // #8303: the caret's animate-pulse is also paired with motion-reduce:animate-none as a CSS-level
+    // fallback, complementing the JS usePrefersReducedMotion guard that already omits it entirely.
+    expect(caret()?.className).toContain("motion-reduce:animate-none");
   });
 
   it("suppresses the caret under prefers-reduced-motion but still reaches the full text and done", async () => {

@@ -30,6 +30,21 @@ const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
+/** Whether a keyboard event originates from a text field or contenteditable element, in which case a global
+ *  shortcut handler must not act (Cmd/Ctrl+B is the browser-native Bold inside editable text). Mirrors exactly
+ *  the `isTyping` guard apps/loopover-ui's keyboard-shortcuts.tsx and app-shell.tsx already apply to their own
+ *  global keydown handlers (#8305). */
+function isTyping(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
 type SidebarContextProps = {
   state: "expanded" | "collapsed";
   open: boolean;
@@ -107,6 +122,10 @@ const SidebarProvider = React.forwardRef<
           event.key === SIDEBAR_KEYBOARD_SHORTCUT &&
           (event.metaKey || event.ctrlKey)
         ) {
+          // #8305: don't hijack the browser-native Cmd/Ctrl+B (Bold) while the user is typing in a text field
+          // or contenteditable element — return before preventDefault()/toggle, matching the other two global
+          // keydown handlers in this repo (keyboard-shortcuts.tsx, app-shell.tsx).
+          if (isTyping(event.target)) return;
           event.preventDefault();
           toggleSidebar();
         }

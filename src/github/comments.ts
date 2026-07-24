@@ -86,8 +86,11 @@ async function createOrUpdateIssueCommentWithMarker(
   const repo = parts[1];
   // Reject anything that is not exactly two non-empty segments -- "owner/repo/extra" would otherwise pass
   // (the destructure silently drops the extra segment), issuing a call against a repo the caller never
-  // specified. Matches the segment-count guard in parseRepoFullName (assignees.ts / labels.ts).
-  if (parts.length !== 2 || !owner || !repo) throw new Error(`Invalid repository full name: ${repoFullName}`);
+  // specified -- and additionally reject whitespace (`owner/ repo`, ` owner/repo`) so a padded slug can never
+  // reach a GitHub call. Matches the full segment-count + whitespace guard in parseRepoFullName
+  // (assignees.ts / labels.ts, #6613).
+  if (parts.length !== 2 || !owner || !repo || /\s/.test(repoFullName))
+    throw new Error(`Invalid repository full name: ${repoFullName}`);
 
   return await withInstallationTokenRetry(env, installationId, async (token) => {
     // Non-live mode suppresses the comment create/update writes; the GET marker-search probe below still runs.

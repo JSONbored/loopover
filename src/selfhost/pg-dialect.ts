@@ -12,6 +12,16 @@ const REPLACE_CONFLICT_KEYS: Record<string, string[]> = {
   tunables_overrides_shadow: ["project"],
   orb_export_cursor: ["instance_hash"],
   orb_signals: ["instance_id", "repo_hash", "pr_hash"],
+  // ams_signals (#8382): TWO columns here, deliberately — this must name the table's REAL unique constraint
+  // (`UNIQUE (instance_id, pr_hash)`, migrations/0148_ams_signals.sql), or Postgres rejects the generated
+  // `ON CONFLICT` with "no unique or exclusion constraint matching". The 3-column shape orb_signals needed
+  // (migrations/0060) buys nothing here: both tables are fed by the same exporter
+  // (packages/loopover-miner/lib/orb-export.ts), which derives `prHash` from
+  // `hmac(`${repoFullName}:${prNumber}`)` — the repo is INSIDE the pr_hash input, so within one instance a
+  // pr_hash already identifies (repo, PR) and repo_hash is functionally determined by it. Two repos can
+  // therefore never collide on (instance_id, pr_hash), and widening the key would need a table recreate for
+  // zero uniqueness gain. Revisit only if pr_hash ever stops being repo-scoped at the producer.
+  ams_signals: ["instance_id", "pr_hash"],
 };
 
 /** Replace `?` placeholders with `$1,$2,…`, skipping any `?` inside single-quoted string literals. A `?`

@@ -46,6 +46,20 @@ describe("createPgAdapter (#977 self-host D1-over-Postgres)", () => {
     expect(await db.prepare("SELECT name FROM t").first("name")).toBe("a");
   });
 
+  it("first(colName) returns null when the row exists but the column value is NULL (#8361 D1 parity)", async () => {
+    // pg represents a SQL NULL as null; the adapter must surface null, never undefined, per its
+    // documented Promise<T | null> contract -- the same guarantee d1-adapter.ts's first() already makes.
+    const db = createPgAdapter(makeMockPool([{ name: null }]));
+    expect(await db.prepare("SELECT name FROM t").first("name")).toBeNull();
+  });
+
+  it("first(colName) returns null when the column is absent from the row entirely (#8361 D1 parity)", async () => {
+    // A driver/query shape that omits the key would previously return `undefined` cast as T, breaking the
+    // contract for callers that treat the Postgres and D1 backends interchangeably.
+    const db = createPgAdapter(makeMockPool([{ other: "a" }]));
+    expect(await db.prepare("SELECT name FROM t").first("name")).toBeNull();
+  });
+
   it("run() reports success:true and a meta object carrying the row count", async () => {
     const db = createPgAdapter(makeMockPool([]));
     const result = await db.prepare("INSERT INTO t (name) VALUES (?)").bind("x").run();

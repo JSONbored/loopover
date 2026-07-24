@@ -4266,6 +4266,49 @@ describe("GitHub backfill", () => {
     expect(await listPullRequests(env, "JSONbored/gittensory")).toEqual(expect.arrayContaining([expect.objectContaining({ number: 301, title: "Pull request #301", labels: ["bug"] })]));
   });
 
+  it("stops the open-issues supplement when GitHub reports hasNextPage with no endCursor, keeping the pages already fetched (#8312)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") {
+        const query = JSON.parse(String(init?.body ?? "{}")).query as string;
+        if (query.includes("LoopOverRepoTotals")) {
+          return githubTotalsResponse({ openIssues: 2, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+        }
+        // With the endCursor guard this follow-up page is never requested. Without it, the null cursor is
+        // serialized into a malformed `after:` argument; GitHub rejects the query, supplementOpenIssuesFromGraphQl
+        // throws, and supplementUnderCountIfNeeded's catch discards the WHOLE supplement -- losing issue 201 below.
+        if (query.includes("LoopOverOpenIssuesSupplement") && query.includes("after:")) {
+          return new Response("malformed cursor", { status: 502 });
+        }
+        if (query.includes("LoopOverOpenIssuesSupplement")) {
+          return Response.json({
+            data: {
+              repository: {
+                issues: {
+                  // The anomaly: more pages claimed, but no cursor to fetch them with.
+                  pageInfo: { hasNextPage: true, endCursor: null },
+                  nodes: [{ number: 201, labels: { nodes: [{ name: "bug" }] } }],
+                },
+              },
+            },
+          });
+        }
+      }
+      if (url.includes("/issues?")) return Response.json([]);
+      return Response.json([]);
+    });
+
+    const issuesResult = await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "open_issues", mode: "full", force: true });
+
+    // Graceful partial stop: the page already fetched is kept rather than thrown away.
+    expect(issuesResult).toMatchObject({ status: "partial", fetchedCount: 1, expectedCount: 2 });
+    expect(await listIssues(env, "JSONbored/gittensory")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ number: 201, labels: ["bug"] })]),
+    );
+  });
+
   it("keeps unauthenticated open-data undercounts partial when GraphQL supplements are unavailable", async () => {
     const env = createTestEnv();
     await seedRegisteredRepo(env);

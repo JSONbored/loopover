@@ -39,11 +39,12 @@ describe("handleOrbIngest()", () => {
     expect(await ingest(makeDb(), [ev({ outcome: "opened" })])).toEqual({ accepted: 0 });
   });
 
-  it("stores gate_verdict string vs null", async () => {
+  it("stores gate_verdict string vs null, coercing an oversized value to null", async () => {
     const db = makeDb();
-    await ingest(db, [ev({ pr_hash: "v1", gate_verdict: "merge" }), ev({ pr_hash: "v2" })]);
+    await ingest(db, [ev({ pr_hash: "v1", gate_verdict: "merge" }), ev({ pr_hash: "v2" }), ev({ pr_hash: "v3", gate_verdict: "v".repeat(33) })]);
     expect(await col(db, "v1", "gate_verdict")).toBe("merge");
     expect(await col(db, "v2", "gate_verdict")).toBeNull();
+    expect(await col(db, "v3", "gate_verdict")).toBeNull();
   });
 
   it("whitelists reversal_flag: valid kept, invalid + absent → 'none'", async () => {

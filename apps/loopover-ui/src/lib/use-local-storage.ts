@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * Tiny SSR-safe localStorage hook. Reads once on mount; writes are persisted
@@ -12,6 +12,10 @@ import { useCallback, useEffect, useState } from "react";
 export function useLocalStorage<T>(key: string, initial: T, legacyKey?: string) {
   const [value, setValue] = useState<T>(initial);
   const [hydrated, setHydrated] = useState(false);
+  // Call sites often pass a fresh `[]` / `{...}` literal each render; keep the
+  // listener keyed only on `key`/`legacyKey` and read the latest initial via ref.
+  const initialRef = useRef(initial);
+  initialRef.current = initial;
 
   useEffect(() => {
     try {
@@ -29,6 +33,23 @@ export function useLocalStorage<T>(key: string, initial: T, legacyKey?: string) 
       /* ignore */
     }
     setHydrated(true);
+
+    // Cross-tab sync: the browser fires `storage` only in *other* same-origin tabs
+    // (never the tab that wrote). Same-tab writes already update state via `update()`.
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== key && (!legacyKey || event.key !== legacyKey)) return;
+      if (event.newValue === null) {
+        setValue(initialRef.current);
+        return;
+      }
+      try {
+        setValue(JSON.parse(event.newValue) as T);
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, [key, legacyKey]);
 
   const update = useCallback(

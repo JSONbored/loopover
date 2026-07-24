@@ -83,11 +83,18 @@ export async function pollGitHubDeviceFlow(env: Env, deviceCode: string) {
   });
   const tokenPayload = (await tokenResponse.json().catch(() => ({}))) as GitHubAccessTokenResponse;
   if ("error" in tokenPayload) {
-    await recordAuditEvent(env, {
-      eventType: "auth.github_device_poll",
-      outcome: tokenPayload.error === "authorization_pending" || tokenPayload.error === "slow_down" ? "denied" : "error",
-      detail: tokenPayload.error,
-    });
+    // #8378: `authorization_pending`/`slow_down` are RFC 8628's routine "still waiting on the browser step"
+    // responses — a single successful login polls this dozens of times — so they are not audit-worthy at all
+    // (auditing them as `denied` buried the one row that matters under ~180 rows of in-progress noise).
+    // `access_denied` IS the genuine user rejection and is the only `denied` here, matching how the sibling
+    // web-OAuth callback (routes.ts) treats an OAuth `error` param; every other terminal code stays `error`.
+    if (tokenPayload.error !== "authorization_pending" && tokenPayload.error !== "slow_down") {
+      await recordAuditEvent(env, {
+        eventType: "auth.github_device_poll",
+        outcome: tokenPayload.error === "access_denied" ? "denied" : "error",
+        detail: tokenPayload.error,
+      });
+    }
     return {
       status: tokenPayload.error,
       message: tokenPayload.error_description,

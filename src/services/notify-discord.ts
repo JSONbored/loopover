@@ -54,6 +54,26 @@ function repoWebhookMap(env: Env): Record<string, unknown> {
   }
 }
 
+// Parse a `{repoFullName: value}` JSON map off `envName`, lower-casing repo keys. Malformed/absent → `{}`.
+// The generic sibling of {@link repoWebhookMap} (which is hard-wired to DISCORD_REPO_WEBHOOKS), reused by
+// {@link resolveSlackWebhook} for SLACK_REPO_WEBHOOKS (#8371) — the SAME shape as notify-pagerduty.ts's
+// repoJsonMap, so Discord/Slack/PagerDuty all parse their per-repo maps identically.
+function repoJsonMap(env: Env, envName: string): Record<string, unknown> {
+  const raw = envString(env, envName);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, unknown> = {};
+    for (const [repo, value] of Object.entries(parsed)) {
+      out[repo.toLowerCase()] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export type DiscordWebhookResolution =
   | { status: "configured"; url: string; source: "repo_map" | "legacy_repo_secret" | "global" }
   | { status: "disabled"; reason: "missing_repo_webhook" | "invalid_repo_webhook" | "missing_global_webhook" | "invalid_global_webhook" };
@@ -78,6 +98,33 @@ export function resolveDiscordWebhook(env: Env, repoFullName: string): DiscordWe
   // undefined → no-notify, byte-identical to today.
   const fallback = envString(env, "DISCORD_WEBHOOK_URL");
   return fallback && isValidDiscordWebhook(fallback) ? { status: "configured", url: fallback, source: "global" } : { status: "disabled", reason: fallback ? "invalid_global_webhook" : "missing_global_webhook" };
+}
+
+export type SlackWebhookResolution =
+  | { status: "configured"; url: string; source: "repo_map" | "global" }
+  | { status: "disabled"; reason: "missing_repo_webhook" | "invalid_repo_webhook" | "missing_global_webhook" | "invalid_global_webhook" };
+
+// Resolve the Slack webhook for `repoFullName` (#8371): a SLACK_REPO_WEBHOOKS per-repo map entry takes priority
+// over the single global SLACK_WEBHOOK_URL fallback — exactly like {@link resolveDiscordWebhook}, minus Discord's
+// legacy first-party secret map (Slack is self-host-only, so there is no built-in per-repo secret tier). A repo
+// WITH a per-repo entry must never fall back to the global channel: falling back posts repo A's disposition into
+// repo B's channel. The `missing_repo_webhook` reason literal is carried in the union to mirror
+// {@link DiscordWebhookResolution}'s shape even though Slack's two-source logic never produces it (a
+// hasOwnProperty entry is always present, only ever missing/invalid → invalid_repo_webhook).
+export function resolveSlackWebhook(env: Env, repoFullName: string): SlackWebhookResolution {
+  const repoKey = repoFullName.toLowerCase();
+  const map = repoJsonMap(env, "SLACK_REPO_WEBHOOKS");
+  if (Object.prototype.hasOwnProperty.call(map, repoKey)) {
+    const mapped = map[repoKey];
+    const url = typeof mapped === "string" ? mapped.trim() : "";
+    return url && isValidSlackWebhook(url) ? { status: "configured", url, source: "repo_map" } : { status: "disabled", reason: "invalid_repo_webhook" };
+  }
+
+  // Modular self-host default: ANY repo not in the per-repo map falls back to a single SLACK_WEBHOOK_URL, so a
+  // self-host operator gets per-action notifications for THEIR repos without editing a source map. Unset →
+  // undefined → no-notify, byte-identical to the pre-#8371 global-only behavior.
+  const fallback = envString(env, "SLACK_WEBHOOK_URL");
+  return fallback && isValidSlackWebhook(fallback) ? { status: "configured", url: fallback, source: "global" } : { status: "disabled", reason: fallback ? "invalid_global_webhook" : "missing_global_webhook" };
 }
 
 async function postWebhook(url: string, init: RequestInit, provider: "discord" | "slack"): Promise<void> {
@@ -257,16 +304,17 @@ export function escapeSlackMrkdwnText(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Post a per-action Slack message (merged/closed/manual) to `SLACK_WEBHOOK_URL` as a Block Kit section. Best-effort:
- *  never throws. The modular self-host default — ANY repo notifies the operator's single Slack channel when
- *  `SLACK_WEBHOOK_URL` is set; unset → no-op, byte-identical to today. Sibling of {@link notifyActionToDiscord}. */
+/** Post a per-action Slack message (merged/closed/manual) to the repo's channel as a Block Kit section. Best-effort:
+ *  never throws. Routes per-repo via {@link resolveSlackWebhook} (#8371) — a SLACK_REPO_WEBHOOKS entry, else the
+ *  single SLACK_WEBHOOK_URL fallback; unset → no-op, byte-identical to today. Sibling of {@link notifyActionToDiscord},
+ *  which threads `source` into its audits the same way. */
 export async function notifyActionToSlack(
   env: Env,
   params: { repoFullName: string; pullNumber: number; outcome: NotifyOutcome; summary: string; submitter?: string | null | undefined },
 ): Promise<void> {
-  const webhookUrl = (env as unknown as Record<string, unknown>).SLACK_WEBHOOK_URL;
-  if (typeof webhookUrl !== "string" || !isValidSlackWebhook(webhookUrl)) {
-    await auditExternalNotification(env, params, "slack", "denied", typeof webhookUrl === "string" ? "invalid_webhook" : "missing_webhook");
+  const resolved = resolveSlackWebhook(env, params.repoFullName);
+  if (resolved.status !== "configured") {
+    await auditExternalNotification(env, params, "slack", "denied", resolved.reason);
     return;
   }
   const meta = OUTCOME_META[params.outcome];
@@ -279,10 +327,10 @@ export async function notifyActionToSlack(
     blocks: [{ type: "section", text: { type: "mrkdwn", text: lines.join("\n") } }],
   };
   try {
-    await postWebhook(webhookUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "slack");
-    await auditExternalNotification(env, params, "slack", "completed", "sent");
+    await postWebhook(resolved.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }, "slack");
+    await auditExternalNotification(env, params, "slack", "completed", "sent", { source: resolved.source });
   } catch (error) {
     console.warn(JSON.stringify({ event: "slack_notify_failed", repo: params.repoFullName, pull: params.pullNumber, message: errorMessage(error).slice(0, 120) }));
-    await auditExternalNotification(env, params, "slack", "error", errorMessage(error).slice(0, 160));
+    await auditExternalNotification(env, params, "slack", "error", errorMessage(error).slice(0, 160), { source: resolved.source });
   }
 }

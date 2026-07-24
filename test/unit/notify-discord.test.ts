@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deliverRecapToDiscord, deliverRecapToSlack, notifyActionToDiscord, notifyActionToSlack, resolveDiscordWebhook } from "../../src/services/notify-discord";
+import { deliverRecapToDiscord, deliverRecapToSlack, notifyActionToDiscord, notifyActionToSlack, resolveDiscordWebhook, resolveSlackWebhook } from "../../src/services/notify-discord";
 import { createTestEnv } from "../helpers/d1";
 import type { RecapReport } from "../../src/types";
 
 const HOOK = "https://discord.com/api/webhooks/123/abc";
 const SLACK_HOOK = "https://hooks.slack.com/services/T00/B00/xxxyyyzzz";
+const SLACK_FALLBACK = "https://hooks.slack.com/services/T99/B99/globalzzz";
 const FALLBACK = "https://discord.com/api/webhooks/999/zzz";
 const ORIG_DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
@@ -179,7 +180,46 @@ describe("notify-discord resolveWebhook (modular self-host fallback)", () => {
   });
 });
 
-describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => {
+describe("resolveSlackWebhook (#8371 — per-repo Slack routing)", () => {
+  it("resolves a repo-specific SLACK_REPO_WEBHOOKS entry case-insensitively (hasOwnProperty true, url valid)", () => {
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "acme/widgets": SLACK_HOOK }), SLACK_WEBHOOK_URL: SLACK_FALLBACK });
+    expect(resolveSlackWebhook(env, "ACME/Widgets")).toEqual({ status: "configured", url: SLACK_HOOK, source: "repo_map" });
+  });
+
+  it("REGRESSION: an invalid per-repo entry fails closed and does NOT fall back to the global channel (isValidSlackWebhook false side)", () => {
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "acme/widgets": "https://evil.example/services/x" }), SLACK_WEBHOOK_URL: SLACK_FALLBACK });
+    expect(resolveSlackWebhook(env, "acme/widgets")).toEqual({ status: "disabled", reason: "invalid_repo_webhook" });
+    // the global fallback still resolves for an UNmapped repo (proves the invalid entry didn't taint global routing)
+    expect(resolveSlackWebhook(env, "acme/other")).toEqual({ status: "configured", url: SLACK_FALLBACK, source: "global" });
+  });
+
+  it("treats a non-string or blank per-repo entry as invalid (typeof-string false side / url-falsy short-circuit)", () => {
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "acme/num": 123, "acme/blank": "   " }), SLACK_WEBHOOK_URL: SLACK_FALLBACK });
+    expect(resolveSlackWebhook(env, "acme/num")).toEqual({ status: "disabled", reason: "invalid_repo_webhook" });
+    expect(resolveSlackWebhook(env, "acme/blank")).toEqual({ status: "disabled", reason: "invalid_repo_webhook" });
+  });
+
+  it("falls back to the global SLACK_WEBHOOK_URL for a repo with no map entry (hasOwnProperty false, fallback valid)", () => {
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "other/repo": SLACK_HOOK }), SLACK_WEBHOOK_URL: SLACK_FALLBACK });
+    expect(resolveSlackWebhook(env, "acme/widgets")).toEqual({ status: "configured", url: SLACK_FALLBACK, source: "global" });
+  });
+
+  it("reports invalid_global_webhook when the global fallback is set but invalid (fallback truthy, isValid false)", () => {
+    expect(resolveSlackWebhook(withEnv({ SLACK_WEBHOOK_URL: "https://evil.example/services/x" }), "acme/widgets")).toEqual({ status: "disabled", reason: "invalid_global_webhook" });
+  });
+
+  it("reports missing_global_webhook when neither a map entry nor the global fallback is set (fallback falsy side)", () => {
+    expect(resolveSlackWebhook(createTestEnv(), "acme/widgets")).toEqual({ status: "disabled", reason: "missing_global_webhook" });
+  });
+
+  it("ignores malformed or non-object SLACK_REPO_WEBHOOKS and still resolves the global fallback (JSON.parse catch + non-object guard)", () => {
+    expect(resolveSlackWebhook(withEnv({ SLACK_REPO_WEBHOOKS: "{not json", SLACK_WEBHOOK_URL: SLACK_FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: SLACK_FALLBACK, source: "global" });
+    expect(resolveSlackWebhook(withEnv({ SLACK_REPO_WEBHOOKS: "123", SLACK_WEBHOOK_URL: SLACK_FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: SLACK_FALLBACK, source: "global" });
+    expect(resolveSlackWebhook(withEnv({ SLACK_REPO_WEBHOOKS: "[]", SLACK_WEBHOOK_URL: SLACK_FALLBACK }), "acme/widgets")).toEqual({ status: "configured", url: SLACK_FALLBACK, source: "global" });
+  });
+});
+
+describe("notifyActionToSlack (#8371 — per-repo Slack routing)", () => {
   const SLACK = "https://hooks.slack.com/services/T0/B0/xyz";
   const slackStub = (status = 200) => {
     const calls: { url: string; body: { text: string; blocks: Array<{ text: { text: string } }> } }[] = [];
@@ -190,7 +230,7 @@ describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => 
     return calls;
   };
 
-  it("posts a Block Kit message to SLACK_WEBHOOK_URL for any repo, including the submitter", async () => {
+  it("posts a Block Kit message to the global SLACK_WEBHOOK_URL for an unmapped repo, including the submitter", async () => {
     const calls = slackStub();
     const env = withEnv({ SLACK_WEBHOOK_URL: SLACK });
     await notifyActionToSlack(env, { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged", summary: "looks good", submitter: "octocat" });
@@ -199,7 +239,28 @@ describe("notifyActionToSlack (#11 — modular self-host Slack channel)", () => 
     expect(calls[0]?.body.text).toContain("acme/widgets#7");
     expect(calls[0]?.body.blocks[0]?.text.text).toContain("looks good");
     expect(calls[0]?.body.blocks[0]?.text.text).toContain("Submitter: @octocat");
-    expect(await externalNotificationAudit(env, "slack")).toEqual([expect.objectContaining({ outcome: "completed", detail: "sent" })]);
+    const rows = await externalNotificationAudit(env, "slack");
+    expect(rows).toEqual([expect.objectContaining({ outcome: "completed", detail: "sent" })]);
+    expect(JSON.parse(rows[0]?.metadata_json ?? "{}")).toMatchObject({ source: "global" });
+  });
+
+  it("REGRESSION: a per-repo SLACK_REPO_WEBHOOKS entry posts to THAT channel, not the global fallback", async () => {
+    const calls = slackStub();
+    const REPO_HOOK = "https://hooks.slack.com/services/T5/B5/repo";
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "acme/widgets": REPO_HOOK }), SLACK_WEBHOOK_URL: SLACK });
+    await notifyActionToSlack(env, { repoFullName: "ACME/Widgets", pullNumber: 7, outcome: "merged", summary: "ok" });
+    expect(calls.map((c) => c.url)).toEqual([REPO_HOOK]);
+    const rows = await externalNotificationAudit(env, "slack");
+    expect(JSON.parse(rows[0]?.metadata_json ?? "{}")).toMatchObject({ source: "repo_map" });
+    expect(rows[0]?.metadata_json).not.toContain(SLACK);
+  });
+
+  it("REGRESSION: an invalid per-repo entry is DENIED (no post, no silent global fallback)", async () => {
+    const calls = slackStub();
+    const env = withEnv({ SLACK_REPO_WEBHOOKS: JSON.stringify({ "acme/widgets": "https://evil.example/services/x" }), SLACK_WEBHOOK_URL: SLACK });
+    await notifyActionToSlack(env, { repoFullName: "acme/widgets", pullNumber: 7, outcome: "merged", summary: "ok" });
+    expect(calls).toEqual([]);
+    expect(await externalNotificationAudit(env, "slack")).toEqual([expect.objectContaining({ outcome: "denied", detail: "invalid_repo_webhook" })]);
   });
 
   it("escapes untrusted Slack mrkdwn in the summary and submitter", async () => {

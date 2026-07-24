@@ -87,6 +87,17 @@ function fakeLoopResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A no-op SignalStore double (#8543), for tests that reach the infeasible branch but don't themselves assert
+ *  on signal capture -- keeps them off the real on-disk event-ledger fallback under ~/.config, the same leak
+ *  class discover-cli.ts's own initDefaultSignalTrackingStore comment already documents. */
+function fakeSignalStore() {
+  return {
+    recordRuleFired: vi.fn(async (_event: { ruleId: string; targetKey: string; outcome: string; occurredAt: string }) => undefined),
+    recordHumanOverride: vi.fn(async () => undefined),
+    queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+  };
+}
+
 /** The default set of injected options a test needs to reach past every real dependency and into (or
  *  through) the final runMinerAttempt call, without doing any real network/git/subprocess work. */
 function readyPipelineOptions(overrides: Record<string, unknown> = {}) {
@@ -1192,6 +1203,7 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
+      initSignalTrackingStore: () => fakeSignalStore(),
       ...readyPipelineOptions({
         buildCodingTaskSpec: () => ({
           ready: false,
@@ -1225,6 +1237,157 @@ describe("runAttempt (#5132)", () => {
     expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), true);
   });
 
+  describe("feasibility-verdict signal capture (#8543)", () => {
+    it("records one rule-fired signal per avoid AND raise reason, with the exact ruleId/outcome/targetKey shape", async () => {
+      const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const store = fakeSignalStore();
+
+      await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        initSignalTrackingStore: () => store,
+        ...readyPipelineOptions({
+          buildCodingTaskSpec: () => ({
+            ready: false,
+            verdict: "avoid",
+            feasibility: {
+              verdict: "avoid",
+              avoidReasons: ["claim_status_solved", "issue_quality_do_not_use"],
+              raiseReasons: ["duplicate_cluster_high"],
+              summary: "not feasible",
+            },
+          }),
+        }),
+      });
+
+      expect(store.recordRuleFired).toHaveBeenCalledTimes(3);
+      expect(store.recordRuleFired).toHaveBeenCalledWith(
+        expect.objectContaining({ ruleId: "claim_status_solved", outcome: "avoid", targetKey: "acme/widgets#issue-7" }),
+      );
+      expect(store.recordRuleFired).toHaveBeenCalledWith(
+        expect.objectContaining({ ruleId: "issue_quality_do_not_use", outcome: "avoid", targetKey: "acme/widgets#issue-7" }),
+      );
+      expect(store.recordRuleFired).toHaveBeenCalledWith(
+        expect.objectContaining({ ruleId: "duplicate_cluster_high", outcome: "raise", targetKey: "acme/widgets#issue-7" }),
+      );
+      // No metadata (raw-context capture is a separate issue -- not this one) and a well-formed ISO timestamp.
+      for (const [event] of store.recordRuleFired.mock.calls) {
+        expect(event).not.toHaveProperty("metadata");
+        expect(new Date(event.occurredAt).toISOString()).toBe(event.occurredAt);
+      }
+    });
+
+    it("records zero fired events on the ready:true path", async () => {
+      const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const store = fakeSignalStore();
+
+      await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        initSignalTrackingStore: () => store,
+        ...readyPipelineOptions({ runMinerAttempt: vi.fn(async () => ({ outcome: "submitted", loopResult: fakeLoopResult() }) as never) }),
+      });
+
+      expect(store.recordRuleFired).not.toHaveBeenCalled();
+    });
+
+    it("a throwing initSignalTrackingStore never changes the exit code, console output, or JSON result", async () => {
+      const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+      const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        attemptId: "infeasible-attempt",
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        initSignalTrackingStore: () => {
+          throw new Error("store unavailable");
+        },
+        ...readyPipelineOptions({
+          buildCodingTaskSpec: () => ({
+            ready: false,
+            verdict: "raise",
+            feasibility: { verdict: "raise", avoidReasons: [], raiseReasons: ["target_not_found"], summary: "issue not found" },
+          }),
+        }),
+      });
+
+      expect(exitCode).toBe(4);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        outcome: "blocked_infeasible",
+        reason: "infeasible_raise",
+        verdict: "raise",
+        avoidReasons: [],
+        raiseReasons: ["target_not_found"],
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "infeasible-attempt",
+      });
+    });
+
+    it("a store whose recordRuleFired rejects never changes the exit code, console output, or JSON result", async () => {
+      const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const rejectingStore = {
+        recordRuleFired: vi.fn(async () => {
+          throw new Error("write failed");
+        }),
+        recordHumanOverride: vi.fn(async () => undefined),
+        queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+      };
+
+      const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        attemptId: "infeasible-attempt",
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        initSignalTrackingStore: () => rejectingStore,
+        ...readyPipelineOptions({
+          buildCodingTaskSpec: () => ({
+            ready: false,
+            verdict: "raise",
+            feasibility: { verdict: "raise", avoidReasons: [], raiseReasons: ["target_not_found"], summary: "issue not found" },
+          }),
+        }),
+      });
+
+      expect(exitCode).toBe(4);
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+        outcome: "blocked_infeasible",
+        reason: "infeasible_raise",
+        verdict: "raise",
+        avoidReasons: [],
+        raiseReasons: ["target_not_found"],
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "infeasible-attempt",
+      });
+      expect(rejectingStore.recordRuleFired).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("REGRESSION: infeasible WITHOUT --json prints the feasibility verdict on stderr and exits 4", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1236,6 +1399,7 @@ describe("runAttempt (#5132)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
+      initSignalTrackingStore: () => fakeSignalStore(),
       ...readyPipelineOptions({
         buildCodingTaskSpec: () => ({
           ready: false,
@@ -1879,6 +2043,7 @@ describe("runAttempt: real claim-ledger wiring (#5393)", () => {
       initEventLedger: () => eventLedger,
       initAttemptLog: () => attemptLog,
       initGovernorLedger: () => governorLedger,
+      initSignalTrackingStore: () => fakeSignalStore(),
       ...readyPipelineOptions({
         buildCodingTaskSpec: () => ({
           ready: false,

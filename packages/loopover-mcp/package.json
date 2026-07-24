@@ -28,6 +28,10 @@
   "bin": {
     "loopover-mcp": "dist/bin/loopover-mcp.js"
   },
+  "exports": {
+    "./package.json": "./package.json",
+    "./CHANGELOG.md": "./CHANGELOG.md"
+  },
   "files": [
     "dist",
     "scripts",

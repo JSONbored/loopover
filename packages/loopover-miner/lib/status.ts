@@ -132,7 +132,7 @@ export function buildEngineVersionDisplay(readInstalled: () => string | null = r
   if (installed) return installed;
   try {
     /* v8 ignore next -- package.json declares @loopover/engine in every supported miner build */
-    return (requireFromHere()("../package.json") as PackageJsonShape).dependencies?.[ENGINE_PACKAGE] ?? null;
+    return (requireFromHere()("@loopover/miner/package.json") as PackageJsonShape).dependencies?.[ENGINE_PACKAGE] ?? null;
   } catch {
     /* v8 ignore next -- import metadata/package resolution failure is bundler-only; normal Node tests resolve it */
     return null;
@@ -275,7 +275,7 @@ function checkEngineVersionSkew(): DoctorCheck {
 
 /** The minimum Node major version from the package's `engines.node` floor (e.g. ">=22.13.0" → 22). */
 function requiredNodeMajor(): number {
-  const engines = (requireFromHere()("../package.json") as PackageJsonShape).engines;
+  const engines = (requireFromHere()("@loopover/miner/package.json") as PackageJsonShape).engines;
   /* v8 ignore next -- package.json's required engines.node is a build-time invariant */
   const match = typeof engines?.node === "string" ? engines.node.match(/(\d+)/) : null;
   /* v8 ignore next -- a matching engines.node floor always includes the captured major */

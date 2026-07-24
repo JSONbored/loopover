@@ -211,11 +211,13 @@ describe("loopover-miner calibration CLI (#4849)", () => {
 // ── #8184/#8185/#8186/#8187: the calibration subcommands + report sections ─────────────────────────────────
 
 import { resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy.js";
-import {
+
+const AMS_CALIBRATION_MODULE = "../../packages/loopover-miner/lib/ams-calibration.ts";
+const {
   MINER_AMS_ELIGIBILITY_BACKTEST_EVENT,
   MINER_AMS_THRESHOLD_BACKTEST_EVENT,
   readMinRankOverride,
-} from "../../packages/loopover-miner/lib/ams-calibration.js";
+} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration.js");
 
 function seedTakenHistory(env: Record<string, string | undefined>): void {
   const ledger = initEventLedger(resolveEventLedgerDbPath(env));

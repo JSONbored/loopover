@@ -5,7 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
 import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
 import { filterCandidatesByProfiles } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
+import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
 import {
+  SIGNAL_HUMAN_OVERRIDE_EVENT,
+  SIGNAL_RULE_FIRED_EVENT,
+} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
+
+const AMS_CALIBRATION_MODULE = "../../packages/loopover-miner/lib/ams-calibration.ts";
+const AMS_ELIGIBILITY_MODULE = "../../packages/loopover-miner/lib/ams-eligibility-backtest.ts";
+const {
   AMS_MIN_RANK_SHIPPED,
   MINER_AMS_ELIGIBILITY_BACKTEST_EVENT,
   backtestMinRankCandidate,
@@ -14,14 +22,7 @@ import {
   readAmsThresholdBacktestRuns,
   recordAmsEligibilityBacktestRun,
   recordAmsThresholdBacktestRun,
-} from "../../packages/loopover-miner/lib/ams-calibration.js";
-import { initEventLedger, resolveEventLedgerDbPath, type EventLedger } from "../../packages/loopover-miner/lib/event-ledger.js";
-import {
-  SIGNAL_HUMAN_OVERRIDE_EVENT,
-  SIGNAL_RULE_FIRED_EVENT,
-} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
-
-const AMS_ELIGIBILITY_MODULE = "../../packages/loopover-miner/lib/ams-eligibility-backtest.ts";
+} = (await import(AMS_CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/ams-calibration.js");
 const {
   AMS_ELIGIBILITY_RULE_ID,
   backtestEligibilityCandidate,

@@ -8,6 +8,8 @@
 // behavior (attempt count, precedence) still exercises the identical code path, just without the sleep.
 import { setReviewFilesEmptyRetryDelayMsForTest } from "../../src/github/backfill";
 import { setGithubRateLimitRetrySleepCapMsForTest } from "../../src/github/client";
+import { setMergeStateUnknownRetryDelayMsForTest } from "../../src/queue/ci-resolution";
 
 setReviewFilesEmptyRetryDelayMsForTest(0);
 setGithubRateLimitRetrySleepCapMsForTest(0);
+setMergeStateUnknownRetryDelayMsForTest(0);

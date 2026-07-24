@@ -4,7 +4,9 @@ import {
   cachedLiveCiAggregate,
   cachedRequiredStatusContexts,
   observeRequiredContextsLookup,
+  refreshLiveMergeState,
   REQUIRED_CONTEXTS_UNRESOLVED_METRIC,
+  setMergeStateUnknownRetryDelayMsForTest,
 } from "../../src/queue/ci-resolution";
 import type { LiveGithubFacts } from "../../src/queue/processors";
 import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
@@ -19,6 +21,53 @@ function emptyFacts(): LiveGithubFacts {
     forcedMergeStateKeys: new Set(),
   };
 }
+
+describe("refreshLiveMergeState retries a transient \"unknown\" read (#merge-race)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setMergeStateUnknownRetryDelayMsForTest(0);
+  });
+
+  it("REGRESSION: retries once and resolves to \"clean\" within the SAME pass when GitHub's first read is still computing", async () => {
+    // metagraphed#8037 (live incident): an approved, gate-passing PR sat unmerged for ~6 minutes because the
+    // one live mergeable_state read taken right after posting the review came back "unknown" (GitHub still
+    // computing) and the disposition deferred to the next scheduled sweep. This proves the retry converts that
+    // into an immediate same-pass resolution instead.
+    const fetchSpy = vi
+      .spyOn(backfillModule, "fetchLivePullRequestMergeState")
+      .mockResolvedValueOnce("unknown")
+      .mockResolvedValueOnce("clean");
+    const facts = emptyFacts();
+    const result = await refreshLiveMergeState(createTestEnv(), "owner/repo", facts, 7, "tok");
+    expect(result).toBe("clean");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after the retry cap and still returns \"unknown\" (falls through to the next scheduled sweep, unchanged prior behavior)", async () => {
+    const fetchSpy = vi.spyOn(backfillModule, "fetchLivePullRequestMergeState").mockResolvedValue("unknown");
+    const facts = emptyFacts();
+    const result = await refreshLiveMergeState(createTestEnv(), "owner/repo", facts, 7, "tok");
+    expect(result).toBe("unknown");
+    // 1 original + MAX_RETRIES(2) = 3 total attempts, never unbounded.
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry a real, stable non-clean state (dirty) — only the transient 'still computing' value", async () => {
+    const fetchSpy = vi.spyOn(backfillModule, "fetchLivePullRequestMergeState").mockResolvedValueOnce("dirty");
+    const facts = emptyFacts();
+    const result = await refreshLiveMergeState(createTestEnv(), "owner/repo", facts, 7, "tok");
+    expect(result).toBe("dirty");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry an outright fetch failure (undefined) — best-effort, same as a stable state", async () => {
+    const fetchSpy = vi.spyOn(backfillModule, "fetchLivePullRequestMergeState").mockResolvedValueOnce(undefined);
+    const facts = emptyFacts();
+    const result = await refreshLiveMergeState(createTestEnv(), "owner/repo", facts, 7, "tok");
+    expect(result).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
   afterEach(() => {

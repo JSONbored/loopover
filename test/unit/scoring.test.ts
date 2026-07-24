@@ -500,6 +500,26 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.payload.upstreamSourceSha).toBeUndefined();
     expect(refreshed.constants.MERGED_PR_BASE_SCORE).toBe(25);
     expect(refreshed.sourceKind).toBe("raw-github");
+    // The unpinned fall-back is surfaced as an operator-facing warning — the sole signal that
+    // scoring is currently running against a mutable ref rather than a pinned commit SHA.
+    expect(refreshed.warnings).toContainEqual(expect.stringMatching(/unpinned/i));
+  });
+
+  it("warns and falls back to an empty programmingLanguages map when the language-weights fetch fails after constants succeed", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response(VALID_CONSTANTS_PY + "MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return new Response("not found", { status: 404 });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    // Constants still refresh normally — only the languages fetch degraded.
+    expect(refreshed.sourceKind).toBe("raw-github");
+    expect(refreshed.programmingLanguages).toEqual({});
+    expect(refreshed.warnings).toContainEqual(expect.stringMatching(/Programming language weights fetch failed/));
   });
 
   it("pins the constants fetch to the resolved upstream SHA (immutable) when it can be resolved", async () => {

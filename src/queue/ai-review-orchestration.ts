@@ -21,6 +21,7 @@ import {
 } from "./transient-locks";
 import { buildPullRequestAdvisory } from "../rules/advisory";
 import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheckSummaries, listPullRequestFiles } from "../db/repositories";
+import { recordRoutingShadow } from "../services/reviewer-routing";
 import { createInstallationToken } from "../github/app";
 import type { AgentActionMode } from "../settings/agent-execution";
 import { buildAiReviewDiff } from "../review/review-diff";
@@ -733,6 +734,16 @@ export async function runAiReviewForAdvisory(
         detail: vote.votedFail ? "flagged a blocking defect" : "did not flag a blocking defect",
         metadata: { repoFullName: args.repoFullName, vote: vote.votedFail ? "fail" : "non_fail" },
       }).catch(() => undefined);
+    }
+    // #8229 stage 1: the report-only routing shadow — records what evidence-weighted routing WOULD have
+    // preferred for this repo (audit metadata only; the recap aggregates it). Same best-effort discipline
+    // as the votes above: internally fail-safe, zero AI spend, and a no-signal review records nothing.
+    if (result.reviewerVotes.length >= 2) {
+      await recordRoutingShadow(env, {
+        repoFullName: args.repoFullName,
+        prNumber: args.pr.number,
+        actualProviders: result.reviewerVotes.map((vote) => vote.reviewer),
+      });
     }
     const findings: AdvisoryFinding[] = [];
     if (result.consensusDefect) {

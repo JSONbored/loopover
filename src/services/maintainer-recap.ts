@@ -14,6 +14,8 @@ import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signa
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { DriftRecapSection } from "./maintainer-recap-drift";
+import { buildRoutingRecapSection } from "./maintainer-recap-routing";
+import { REVIEWER_ROUTING_SHADOW_EVENT_TYPE, type RoutingShadowDecision } from "./reviewer-routing";
 import type { OutcomeCalibration } from "./outcome-calibration";
 import type { MaintainerRecapCohortCounts, MaintainerRecapRepo, RecapReport } from "../types";
 import { nowIso } from "../utils/json";
@@ -162,7 +164,7 @@ function recapSectionLines(items: string[], fallback: string): string[] {
  *  (Summary, Totals, Per-repo), mirroring formatWeeklyValueReportMarkdown at weekly-value-report.ts. PURE
  *  string function — no delivery, no I/O. Every free-text value is routed through {@link redactRecapLine} so no
  *  reward/trust/score/path term can leak into the digest even if the input report was hand-built. (#2240) */
-export function formatMaintainerRecap(report: RecapReport, options: { configDrift?: DriftRecapSection } = {}): string {
+export function formatMaintainerRecap(report: RecapReport, options: { configDrift?: DriftRecapSection; routingShadow?: { title: string; lines: string[] } } = {}): string {
   const { totals } = report;
   const rate = totals.gateFalsePositiveRate !== null ? `${Math.round(totals.gateFalsePositiveRate * 100)}%` : "n/a";
   const perRepoLines = report.repos.map(
@@ -194,6 +196,9 @@ export function formatMaintainerRecap(report: RecapReport, options: { configDrif
     ...(options.configDrift
       ? ["", `## ${redactRecapLine(options.configDrift.title)}`, ...recapSectionLines(options.configDrift.lines, "_No drift lines for this window._")]
       : []),
+    ...(options.routingShadow
+      ? ["", `## ${redactRecapLine(options.routingShadow.title)}`, ...recapSectionLines(options.routingShadow.lines, "_No routing-shadow lines for this window._")]
+      : []),
   ];
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
 }
@@ -217,6 +222,31 @@ export type RunMaintainerRecapResult =
  * never throws, so a single-channel outage does not abort the other. When `enabled === false`, short-circuits
  * before any I/O (the flag-OFF arm mirrored by the cron/job processor).
  */
+/** Read the window's reviewer_routing_shadow decisions back off the audit trail and build the recap
+ *  section. Null — the section is simply absent — on any read error (fail-safe, like every recap input). */
+async function loadRoutingRecapSection(env: Env, windowDays: number, generatedAt: string): Promise<{ title: string; lines: string[] } | null> {
+  try {
+    const sinceIso = new Date(Date.parse(generatedAt) - windowDays * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await env.DB.prepare("SELECT metadata_json FROM audit_events WHERE event_type = ? AND created_at >= ?")
+      .bind(REVIEWER_ROUTING_SHADOW_EVENT_TYPE, sinceIso)
+      .all<{ metadata_json: string }>();
+    const decisions: RoutingShadowDecision[] = [];
+    /* v8 ignore next -- defined-results guard, the loadKnobStatus convention */
+    for (const row of rows.results ?? []) {
+      try {
+        const metadata = JSON.parse(row.metadata_json) as Partial<RoutingShadowDecision>;
+        if (typeof metadata.repoFullName !== "string" || typeof metadata.preferredProvider !== "string" || !Array.isArray(metadata.basis)) continue;
+        decisions.push(metadata as RoutingShadowDecision);
+      } catch {
+        /* a corrupt shadow row is not evidence */
+      }
+    }
+    return buildRoutingRecapSection({ decisions, windowDays });
+  } catch {
+    return null;
+  }
+}
+
 export async function runMaintainerRecap(
   env: Env,
   options: {
@@ -238,7 +268,10 @@ export async function runMaintainerRecap(
       windowDays: options.windowDays,
       repos: options.repos ?? [],
     });
-  const formatted = formatMaintainerRecap(report);
+  // #8229 stage 1: the routing-shadow section reads the window's recorded decisions straight from the
+  // audit trail — fail-safe to an absent section (the recap must never break on a read blip).
+  const routingShadow = await loadRoutingRecapSection(env, report.windowDays, options.generatedAt ?? nowIso());
+  const formatted = formatMaintainerRecap(report, routingShadow ? { routingShadow } : {});
   const [discord, slack] = await Promise.all([
     deliverRecapToDiscord(env, report, formatted),
     deliverRecapToSlack(env, report, formatted),

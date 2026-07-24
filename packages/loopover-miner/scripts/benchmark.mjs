@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { performance } from "node:perf_hooks";
-import { rankCandidateIssues } from "../lib/opportunity-ranker.js";
-import { initPortfolioQueueStore } from "../lib/portfolio-queue.js";
+import { rankCandidateIssues } from "../dist/lib/opportunity-ranker.js";
+import { initPortfolioQueueStore } from "../dist/lib/portfolio-queue.js";
 
 // Committed micro-benchmark for the two hot local paths that have no other way to notice a regression: the
 // discovery fan-out ranking pass (opportunity-ranker.js, run once per repo per discovery cycle over every open

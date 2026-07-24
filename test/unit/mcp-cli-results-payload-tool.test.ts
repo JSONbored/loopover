@@ -10,7 +10,7 @@ import { buildResultsPayload, type IterationResult } from "../../src/results-pay
 // it composes IN-PROCESS from @loopover/engine — no API round-trip — so results composition works fully offline.
 // The point of these tests is cross-surface PARITY: the stdio tool must return exactly what the pure
 // buildResultsPayload returns for identical input (the same function /v1/loop/results-payload delegates to).
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

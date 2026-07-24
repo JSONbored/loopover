@@ -11,7 +11,7 @@ import { closeFixtureServer, startFixtureServer } from "./support/mcp-cli-harnes
 // (src/signals/boundary-test-generation.ts depends on the app's AdvisoryFinding type), not in @loopover/engine.
 // The route therefore stays the single source of truth; these tests pin the request the tool composes and its
 // zod shape, and routes-boundary-tests.test.ts pins the verdict itself.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 let client: Client;
 let transport: StdioClientTransport;
 let configDir: string;

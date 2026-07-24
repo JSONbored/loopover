@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // builder (buildFocusManifestValidation) instead of POSTing to /v1/validate/focus-manifest. These tests drive
 // the real local stdio server with a DELIBERATELY UNREACHABLE API URL to prove the tool validates fully offline
 // -- if it still round-tripped to the API, every call here would fail/time out.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

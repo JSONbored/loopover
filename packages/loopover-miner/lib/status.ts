@@ -50,6 +50,21 @@ function moduleDir(): string {
   return (cachedModuleDir ??= import.meta.dirname);
 }
 
+// Monorepo-sibling fallback path (packages/loopover-engine, packages/loopover-miner's own
+// expected-engine.version pin) computed relative to THIS module's own on-disk location -- which
+// differs by one directory level depending on how this file is currently running: in-process test
+// imports resolve moduleDir() to the real source lib/ (2 levels above packages/loopover-miner/),
+// while a real CLI invocation resolves it to the compiled dist/lib/ (3 levels above, since the
+// 2026-07-24 dist/ migration added one more level of nesting; see tsconfig.json's outDir comment). A
+// single hardcoded relative depth can only ever be correct for one of those two contexts, so this
+// tries both, preferring whichever the current on-disk layout actually has -- robust to either
+// execution mode without needing to detect which one is active.
+function resolveMonorepoSiblingPath(...segments: string[]): string {
+  const fromLib = join(moduleDir(), "..", ...segments);
+  if (existsSync(fromLib)) return fromLib;
+  return join(moduleDir(), "..", "..", ...segments);
+}
+
 const PACKAGE_NAME = "@loopover/miner";
 const ENGINE_PACKAGE = "@loopover/engine";
 // Config-file discovery order (mirrors the `.loopover-miner.yml` precedence the goal-spec parser documents).
@@ -117,7 +132,7 @@ export function buildEngineVersionDisplay(readInstalled: () => string | null = r
   if (installed) return installed;
   try {
     /* v8 ignore next -- package.json declares @loopover/engine in every supported miner build */
-    return (requireFromHere()("../package.json") as PackageJsonShape).dependencies?.[ENGINE_PACKAGE] ?? null;
+    return (requireFromHere()("@loopover/miner/package.json") as PackageJsonShape).dependencies?.[ENGINE_PACKAGE] ?? null;
   } catch {
     /* v8 ignore next -- import metadata/package resolution failure is bundler-only; normal Node tests resolve it */
     return null;
@@ -162,7 +177,7 @@ export function readInstalledEnginePackageVersion(): string | null {
   try {
     return readInstalledEnginePackageVersionFromPaths(
       requireFromHere().resolve(ENGINE_PACKAGE),
-      join(moduleDir(), "../../loopover-engine/package.json"),
+      resolveMonorepoSiblingPath("..", "loopover-engine", "package.json"),
     );
   } catch {
     /* v8 ignore next 9 -- only reaches when Node cannot resolve the installed package at all */
@@ -205,7 +220,7 @@ export function readExpectedEnginePackageVersionFromPaths(
 export function readExpectedEnginePackageVersion(): string | null {
   return readExpectedEnginePackageVersionFromPaths(
     join(moduleDir(), "../../loopover-engine/package.json"),
-    join(moduleDir(), "../expected-engine.version"),
+    resolveMonorepoSiblingPath("expected-engine.version"),
   );
 }
 
@@ -260,7 +275,7 @@ function checkEngineVersionSkew(): DoctorCheck {
 
 /** The minimum Node major version from the package's `engines.node` floor (e.g. ">=22.13.0" → 22). */
 function requiredNodeMajor(): number {
-  const engines = (requireFromHere()("../package.json") as PackageJsonShape).engines;
+  const engines = (requireFromHere()("@loopover/miner/package.json") as PackageJsonShape).engines;
   /* v8 ignore next -- package.json's required engines.node is a build-time invariant */
   const match = typeof engines?.node === "string" ? engines.node.match(/(\d+)/) : null;
   /* v8 ignore next -- a matching engines.node floor always includes the captured major */

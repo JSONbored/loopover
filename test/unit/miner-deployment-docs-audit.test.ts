@@ -12,14 +12,17 @@ import {
   scanEnvVarTokens,
   scanRegisteredCommands,
 } from "../../packages/loopover-miner/lib/deployment-docs-audit.js";
-import type { DeploymentDocsReality } from "../../packages/loopover-miner/lib/deployment-docs-audit.d.ts";
+import type { DeploymentDocsReality } from "../../packages/loopover-miner/lib/deployment-docs-audit.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");
 const DEPLOYMENT_MD = resolve(MINER_DIR, "DEPLOYMENT.md");
-const BIN_DIR = resolve(MINER_DIR, "bin");
+// dist/ (2026-07-24 migration; see tsconfig.json's outDir comment) -- this scan needs a prior
+// `npm run build:miner`, same precondition it already had pre-migration (lib/bin's compiled .js was
+// always gitignored build output, never committed either way).
+const BIN_DIR = resolve(MINER_DIR, "dist/bin");
 const BIN_ENTRY = resolve(BIN_DIR, "loopover-miner.js");
-const LIB_DIR = resolve(MINER_DIR, "lib");
+const LIB_DIR = resolve(MINER_DIR, "dist/lib");
 // loopover-miner's coding-agent driver construction (MINER_CODING_AGENT_*) is implemented in the
 // loopover-engine package it depends on, not under packages/loopover-miner/** -- an env var read only
 // there would otherwise false-positive as undocumented-in-code. Source (not dist/, which is gitignored and

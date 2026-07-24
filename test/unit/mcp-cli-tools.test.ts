@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeFixtureServer, run, startFixtureServer } from "./support/mcp-cli-harness";
 
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 describe("loopover-mcp CLI — tools", () => {
   let configDir: string | null = null;

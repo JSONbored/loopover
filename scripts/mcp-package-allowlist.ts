@@ -3,12 +3,12 @@
 // cannot drift (the previous duplicated lists already missed shipped lib/*.js files).
 
 export const MCP_PACKAGE_ALLOWED_FILE_PATTERNS: RegExp[] = [
-  /^bin\/loopover-mcp\.js$/,
-  /^lib\/cli-error\.js$/,
-  /^lib\/local-branch\.js$/,
-  /^lib\/format-table\.js$/,
-  /^lib\/redact-local-path\.js$/,
-  /^lib\/telemetry\.js$/,
+  /^dist\/bin\/loopover-mcp\.js$/,
+  /^dist\/lib\/cli-error\.js$/,
+  /^dist\/lib\/local-branch\.js$/,
+  /^dist\/lib\/format-table\.js$/,
+  /^dist\/lib\/redact-local-path\.js$/,
+  /^dist\/lib\/telemetry\.js$/,
   /^scripts\/gittensor-score-preview\.(mjs|py)$/,
   /^package\.json$/,
   /^README\.md$/,

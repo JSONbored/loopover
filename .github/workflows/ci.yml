@@ -544,11 +544,11 @@ jobs:
         run: npm run test:mcp-pack
       # Same "ships .ts only, this build is for the published npm tarball + the pack-check below, not for
       # tests" story as MCP's own "Build MCP" step above. Invokes turbo.json's @loopover/miner#build:tsc
-      # (cache: false -- historically to avoid a cache restore stomping this package's hand-written .js
-      # files while the #7290 migration was still in-flight; now that #7317 closed it out, every bin/lib
-      # file is compiler-owned and that original risk no longer applies, but re-enabling caching here is a
-      # separate change this PR doesn't make) and @loopover/miner#build:verify (real caching win: skips
-      # re-`node --check`-ing all 121 bin/lib files when neither changed) DIRECTLY as their own task names,
+      # (real caching win since the 2026-07-24 dist/ migration -- previously cache: false, historically to
+      # avoid a cache restore stomping this package's hand-written .js files while the #7290 migration was
+      # still in-flight; #7317 closed that out, and the dist/ split removed the original in-place-emit
+      # hazard entirely, so caching was finally enabled) and @loopover/miner#build:verify (real caching
+      # win: skips re-`node --check`-ing all bin/lib files when neither changed) DIRECTLY as their own task names,
       # deliberately NOT via the aggregate `@loopover/miner#build` task (which exists for standalone/local
       # `npm run build` callers) -- that aggregate's own script is `npm run build:tsc && npm run
       # build:verify`, i.e. it re-invokes both of these exact scripts a second time even when turbo already
@@ -900,18 +900,17 @@ jobs:
       - name: Build engine package
         run: npx turbo run build --filter=@loopover/engine
       # packages/loopover-mcp and packages/loopover-miner both ship .ts source only (no compiled .js
-      # committed -- gitignored, same as @loopover/engine's dist/), but this job's own SKIP_MCP_CLI_HARNESS/
-      # SKIP_MINER_TEST_HARNESS env below (see "Test with coverage") can both be false, which spawns the
-      # REAL built CLI binary (packages/loopover-mcp/bin/loopover-mcp.js / packages/loopover-miner/bin/
-      # loopover-miner.js) as a subprocess -- AND, separately, every mcp-cli-*/miner-mcp-* test that instead
-      # runs the .ts entry directly via `node --experimental-strip-types` (test/unit/support/mcp-cli-harness.ts
-      # et al.) still needs this: that flag only strips types from the directly-executed entry file, it does
-      # NOT make plain Node resolve a `.js`-suffixed relative import to a sibling .ts the way Vite/esbuild do
-      # (confirmed live: `node --experimental-strip-types packages/loopover-mcp/bin/loopover-mcp.ts doctor`
-      # with no compiled lib/ present fails ERR_MODULE_NOT_FOUND on lib/local-branch.js, the CLI's own first
-      # local import) -- so bin/lib's compiled .js has to physically exist on disk either way. Before the
-      # compiled output stopped being committed, this job's checkout already had it for free; now it needs
-      # building here too, same as validate-code's own "Build MCP"/"Build miner CLI" steps.
+      # committed -- gitignored, and since the 2026-07-24 dist/ migration built out-of-place into dist/,
+      # same as @loopover/engine's own dist/; see each package's tsconfig.json outDir comment). Every
+      # mcp-cli-*/miner-*/mcp-feasibility-gate-style test spawning a real CLI subprocess -- whether via
+      # the shared test/unit/support/{mcp,miner}-cli-harness.ts or its own hand-rolled StdioClientTransport
+      # -- runs the real compiled dist/bin/*.js directly via plain `node` now (no `--experimental-strip-
+      # types`; that was only ever viable while the compiled .js sat in-place next to the .ts source for
+      # Node's own resolver to find its internal lib/*.js imports, which stopped being true once dist/
+      # physically separated them -- see the harness files' own comments). So bin/lib's compiled output has
+      # to physically exist on disk before any of those tests run. Before the compiled output stopped being
+      # committed, this job's checkout already had it for free; now it needs building here too, same as
+      # validate-code's own "Build MCP"/"Build miner CLI" steps.
       #
       # --force on both: turbo.json's @loopover/mcp#build task now declares real `outputs` (see its own
       # comment) so a cache HIT restores the actual files instead of only the log, but this job's 3 parallel
@@ -937,7 +936,7 @@ jobs:
       - name: Verify MCP/miner CLI binaries were actually built
         run: |
           set -euo pipefail
-          for f in packages/loopover-mcp/bin/loopover-mcp.js packages/loopover-miner/bin/loopover-miner.js; do
+          for f in packages/loopover-mcp/dist/bin/loopover-mcp.js packages/loopover-miner/dist/bin/loopover-miner.js; do
             if [ ! -f "$f" ]; then
               echo "::error::$f is missing after Build MCP/Build miner CLI both ran with --force. Every mcp-cli-*/miner-* test below will fail with a confusing MODULE_NOT_FOUND/ENOENT instead of this message -- something deeper changed (e.g. the build script itself stopped writing to this path); this is not a cache/timing issue, --force rules that out."
               exit 1

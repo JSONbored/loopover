@@ -13,7 +13,7 @@ WORKDIR /app
 # (workspaces: apps/*, packages/*), and `npm ci` only symlinks node_modules/<pkg> to a workspace whose
 # directory already exists on disk. Copying just the root package*.json first (the usual dependency-layer
 # caching trick) left every workspace package.json missing at `npm ci` time, so npm silently skipped every
-# internal symlink -- @loopover/engine (a workspace dependency of loopover-miner's checked-in
+# internal symlink -- @loopover/engine (a workspace dependency of loopover-miner's built
 # lib/*.js artifacts, #2281) then couldn't be resolved by esbuild no matter how/when its own dist/ was built.
 COPY . .
 # --ignore-scripts: no native builds are needed (SQLite is the built-in node:sqlite; @hono/node-server is

@@ -34,17 +34,17 @@ describe("loopover-miner package skeleton (#2287)", () => {
     expect(miner.license).toBe("AGPL-3.0-only");
     expect(miner.type).toBe("module");
     expect(miner.bin).toEqual({
-      "loopover-miner": "bin/loopover-miner.js",
-      "loopover-miner-mcp": "bin/loopover-miner-mcp.js",
-      "loopover-miner-hosted": "bin/loopover-miner-hosted.js",
+      "loopover-miner": "dist/bin/loopover-miner.js",
+      "loopover-miner-mcp": "dist/bin/loopover-miner-mcp.js",
+      "loopover-miner-hosted": "dist/bin/loopover-miner-hosted.js",
     });
     expect(miner.publishConfig).toEqual(mcp.publishConfig);
     expect(miner.dependencies["@loopover/engine"]).toBeDefined();
     // Upper-bounded (#7613): a floor of >=22.x with an explicit <23.0.0 ceiling excluding the next major.
     expect(miner.engines.node).toMatch(/^>=22(?:\.\d+){0,2} <23\.0\.0$/);
-    expect(miner.files).toEqual(expect.arrayContaining(["bin", "lib"]));
-    // build is split into build:tsc (the real tsc compile; output is committed alongside sources as the
-    // package's published in-place emit) and
+    expect(miner.files).toEqual(expect.arrayContaining(["dist"]));
+    // build is split into build:tsc (the real tsc compile; output lands out-of-place in dist/, gitignored,
+    // built fresh at publish time -- see tsconfig.json's outDir comment) and
     // build:verify (a glob-driven node --check pass over every bin/lib .js file, replacing a previously
     // hand-listed ~119-file chain here that had to be kept in sync by hand).
     expect(miner.scripts.build).toBe("npm run build:tsc && npm run build:verify");
@@ -54,15 +54,17 @@ describe("loopover-miner package skeleton (#2287)", () => {
 
   it("build:verify's syntax check actually covers the CLI bin entry points, not just lib/", () => {
     // The pre-split build script explicitly node --check'd bin/loopover-miner.js and
-    // bin/loopover-miner-mcp.js by name; the glob-driven replacement must still reach them.
+    // bin/loopover-miner-mcp.js by name; the glob-driven replacement must still reach them. Requires a
+    // prior build (dist/bin, dist/lib populated) -- same precondition as every other test in this file
+    // that reads real compiled output, and as the package's own real `npm run build`.
     const result = spawnSync("node", ["scripts/check-syntax.mjs"], { cwd: minerRoot, encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("node --check passed for all");
-    expect(result.stdout).toMatch(/passed for all \d+ files in bin\/ and lib\//);
+    expect(result.stdout).toMatch(/passed for all \d+ files in dist\/bin\/ and dist\/lib\//);
   });
 
   it("starts the CLI bin with a node shebang", () => {
-    const bin = readFileSync(join(minerRoot, "bin/loopover-miner.js"), "utf8");
+    const bin = readFileSync(join(minerRoot, "dist/bin/loopover-miner.js"), "utf8");
     expect(bin.startsWith("#!/usr/bin/env node\n")).toBe(true);
   });
 

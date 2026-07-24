@@ -10,22 +10,23 @@
     // v8 coverage provider still remaps through it fine, attributing coverage to the .ts source.
     "inlineSourceMap": true,
     "noEmit": false,
-    // Overrides the root config's "dist" so each converted file compiles in place next to its .ts
-    // source (e.g. lib/foo.ts -> lib/foo.js) -- the package's published bin/lib layout never changes
-    // as more files convert, so no consumer (in this repo or published) ever needs a different import
-    // path depending on a given file's migration status.
+    // Out-of-place emit, matching packages/loopover-engine's src/ -> dist/ split: lib/foo.ts -> dist/lib/foo.js,
+    // bin/foo.ts -> dist/bin/foo.js. Was in-place (outDir ".") until the 2026-07-24 migration -- a compiled
+    // .js sitting next to its .ts source in the same directory Vite/vitest also reads caused a real
+    // codecov/patch (0%/99%) incident (Vite resolved the literal .js over the .ts sibling, misattributing
+    // coverage and breaking --changed's import-graph tracing) and required a resolver-plugin workaround
+    // before this proper fix landed. rootDir "." (not "bin"/"lib") preserves the bin/ vs lib/ nesting inside
+    // dist/, so internal relative imports (e.g. bin/foo.ts's "../lib/bar.js") keep resolving correctly.
     "rootDir": ".",
-    "outDir": ".",
+    "outDir": "dist",
     // Without this, the inherited root value ("./.tsbuildinfo") resolves relative to the ROOT config's
     // location, not this one -- both packages would then read/write the exact same cache file at the
     // repo root and corrupt each other's incremental state.
     "tsBuildInfoFile": "./.tsbuildinfo"
   },
-  // Every bin/lib runtime module is real TypeScript (#7290 / #7317): tsc owns the in-place .js + .d.ts
-  // emit, which is gitignored -- contributors and tests never touch it (see .gitignore's comment on
-  // these paths). The glob stays the include surface as the package's only source of truth.
+  // Every bin/lib runtime module is real TypeScript (#7290 / #7317): tsc owns the dist/ .js + .d.ts emit,
+  // which is gitignored -- contributors and tests never touch it. The glob stays the include surface as
+  // the package's only source of truth.
   "include": ["bin/**/*.ts", "lib/**/*.ts"],
-  // Without this, tsc's default exclude list (which always adds outDir) resolves to "." -- the whole
-  // package root -- and silently excludes every include match, since outDir is "." for in-place emit.
   "exclude": []
 }

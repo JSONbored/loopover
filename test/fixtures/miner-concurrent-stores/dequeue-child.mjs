@@ -2,7 +2,7 @@
 // Cross-process helper for portfolio-queue concurrent-race tests (#4867).
 // Opens the shared queue, waits for a stdin "go" signal, then calls dequeueNext() so multiple Node
 // processes contend on the same atomic UPDATE...RETURNING claim via the same dbPath.
-import { initPortfolioQueueStore } from "../../../packages/loopover-miner/lib/portfolio-queue.js";
+import { initPortfolioQueueStore } from "../../../packages/loopover-miner/dist/lib/portfolio-queue.js";
 
 const [dbPath] = process.argv.slice(2);
 if (!dbPath) {

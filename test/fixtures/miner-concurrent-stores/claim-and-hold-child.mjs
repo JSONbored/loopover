@@ -4,7 +4,7 @@
 // claimed entry, then idles forever without ever marking it done -- simulating a process that claims work
 // and then crashes mid-attempt. The test kills this process (SIGKILL) and asserts the item is left
 // genuinely stuck 'in_progress' until swept, then reclaimable.
-import { initPortfolioQueueStore } from "../../../packages/loopover-miner/lib/portfolio-queue.js";
+import { initPortfolioQueueStore } from "../../../packages/loopover-miner/dist/lib/portfolio-queue.js";
 
 const [dbPath] = process.argv.slice(2);
 if (!dbPath) {

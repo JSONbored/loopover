@@ -208,37 +208,37 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 
 | Variable | Read by | Purpose |
 | --- | --- | --- |
-| `LOOPOVER_MINER_AMS_POLICY_PATH` | `lib/ams-policy.js` | Path to the operator's `.loopover-ams.yml` policy spec. |
-| `LOOPOVER_MINER_AMS_COLLECTOR_URL`, `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `lib/orb-export.js` | Endpoint + bearer for pushing fleet state to an AMS/Orb collector. |
-| `LOOPOVER_MINER_CHAT_ACTIONS` | `lib/chat-action-dispatch.js` | Truthy string enables the chat-action-dispatch flag (off by default). |
-| `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` | `lib/store-maintenance.js` | Opt-in ledger retention window / row cap. |
-| `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.js` | Log verbosity override. |
-| `LOOPOVER_MINER_NEON_API_KEY`, `LOOPOVER_MINER_NEON_PROJECT_ID`, `LOOPOVER_MINER_NEON_PARENT_BRANCH_ID` | `lib/attempt-db-fork-config.js` | Neon branch-per-attempt disposable DB fork ([#7858](https://github.com/JSONbored/loopover/issues/7858)). All three required together — any one missing disables the feature entirely (no branch is ever created). |
-| `LOOPOVER_MINER_NO_UPDATE_CHECK` | `lib/update-check.js` | Truthy string disables the background update check. |
-| `LOOPOVER_MINER_REPO_CLONE_DIR` | `lib/repo-clone.js` | Base directory for cloned target repos. |
-| `LOOPOVER_MINER_WORKTREE_DIR` | `lib/worktree-allocator.js` | Base directory for per-attempt git worktrees. |
-| `LOOPOVER_MINER_SENTRY_DSN`, `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `lib/sentry.js` | Optional Sentry error reporting (DSN + environment tag). |
-| `LOOPOVER_MINER_VERSION` | `lib/version.js` | Overrides the reported release id (e.g. for a custom build). |
+| `LOOPOVER_MINER_AMS_POLICY_PATH` | `dist/lib/ams-policy.js` | Path to the operator's `.loopover-ams.yml` policy spec. |
+| `LOOPOVER_MINER_AMS_COLLECTOR_URL`, `LOOPOVER_MINER_AMS_COLLECTOR_TOKEN` | `dist/lib/orb-export.js` | Endpoint + bearer for pushing fleet state to an AMS/Orb collector. |
+| `LOOPOVER_MINER_CHAT_ACTIONS` | `dist/lib/chat-action-dispatch.js` | Truthy string enables the chat-action-dispatch flag (off by default). |
+| `LOOPOVER_MINER_LEDGER_RETENTION_DAYS`, `LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS` | `dist/lib/store-maintenance.js` | Opt-in ledger retention window / row cap. |
+| `LOOPOVER_MINER_LOG_LEVEL` | `dist/lib/logger.js` | Log verbosity override. |
+| `LOOPOVER_MINER_NEON_API_KEY`, `LOOPOVER_MINER_NEON_PROJECT_ID`, `LOOPOVER_MINER_NEON_PARENT_BRANCH_ID` | `dist/lib/attempt-db-fork-config.js` | Neon branch-per-attempt disposable DB fork ([#7858](https://github.com/JSONbored/loopover/issues/7858)). All three required together — any one missing disables the feature entirely (no branch is ever created). |
+| `LOOPOVER_MINER_NO_UPDATE_CHECK` | `dist/lib/update-check.js` | Truthy string disables the background update check. |
+| `LOOPOVER_MINER_REPO_CLONE_DIR` | `dist/lib/repo-clone.js` | Base directory for cloned target repos. |
+| `LOOPOVER_MINER_WORKTREE_DIR` | `dist/lib/worktree-allocator.js` | Base directory for per-attempt git worktrees. |
+| `LOOPOVER_MINER_SENTRY_DSN`, `LOOPOVER_MINER_SENTRY_ENVIRONMENT` | `dist/lib/sentry.js` | Optional Sentry error reporting (DSN + environment tag). |
+| `LOOPOVER_MINER_VERSION` | `dist/lib/version.js` | Overrides the reported release id (e.g. for a custom build). |
 
 ## Optional hosted discovery plane (opt-in)
 
-The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly, via `lib/discovery-index-client.js` ([#7168](https://github.com/JSONbored/loopover/issues/7168), wired against the hosted server from [#7164](https://github.com/JSONbored/loopover/issues/7164)/[#7166](https://github.com/JSONbored/loopover/issues/7166)):
+The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly, via `dist/lib/discovery-index-client.js` ([#7168](https://github.com/JSONbored/loopover/issues/7168), wired against the hosted server from [#7164](https://github.com/JSONbored/loopover/issues/7164)/[#7166](https://github.com/JSONbored/loopover/issues/7166)):
 
 | Variable | Read by | Purpose |
 | --- | --- | --- |
-| `LOOPOVER_MINER_DISCOVERY_PLANE` | `lib/discovery-index-client.js` | Master opt-in (truthy string, off by default). No hosted discovery-index traffic or telemetry unless set. |
-| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `lib/discovery-index-client.js` | Base URL of the hosted discovery-index service. Required for the plane to do anything once enabled. |
-| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `lib/discovery-index-client.js` | Optional bearer secret for the hosted endpoint, if it requires one. |
-| `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `lib/discovery-index-client.js` | Second, independent opt-in for anonymized operational telemetry — can stay off while the plane itself is queried/claimed against. |
+| `LOOPOVER_MINER_DISCOVERY_PLANE` | `dist/lib/discovery-index-client.js` | Master opt-in (truthy string, off by default). No hosted discovery-index traffic or telemetry unless set. |
+| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `dist/lib/discovery-index-client.js` | Base URL of the hosted discovery-index service. Required for the plane to do anything once enabled. |
+| `LOOPOVER_MINER_DISCOVERY_SHARED_SECRET` | `dist/lib/discovery-index-client.js` | Optional bearer secret for the hosted endpoint, if it requires one. |
+| `LOOPOVER_MINER_DISCOVERY_TELEMETRY` | `dist/lib/discovery-index-client.js` | Second, independent opt-in for anonymized operational telemetry — can stay off while the plane itself is queried/claimed against. |
 
 See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the full invariant list (metadata-only, no compensation signals, credentials stay local).
 
 ## Optional hosted control plane — tenant admin (opt-in)
 
-The `loopover-miner tenant` command group (create/list/destroy) provisions hosted tenant instances against the ORB+AMS hosting control-plane's provisioning API ([#7275](https://github.com/JSONbored/loopover/issues/7275)). It is **off by default** and completely inert unless opted in; unlike the discovery plane, these are deliberate **admin actions that fail loud** (a disabled/unconfigured/unreachable/error condition exits non-zero rather than degrading silently), via `lib/tenant-client.js`:
+The `loopover-miner tenant` command group (create/list/destroy) provisions hosted tenant instances against the ORB+AMS hosting control-plane's provisioning API ([#7275](https://github.com/JSONbored/loopover/issues/7275)). It is **off by default** and completely inert unless opted in; unlike the discovery plane, these are deliberate **admin actions that fail loud** (a disabled/unconfigured/unreachable/error condition exits non-zero rather than degrading silently), via `dist/lib/tenant-client.js`:
 
 | Variable | Read by | Purpose |
 | --- | --- | --- |
-| `LOOPOVER_MINER_CONTROL_PLANE` | `lib/tenant-client.js` | Master opt-in (truthy string, off by default). No tenant admin traffic is possible unless set. |
-| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `lib/tenant-client.js` | Base URL of the hosted control-plane provisioning API. Required once the plane is enabled. |
-| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.js` | Bearer admin credential for the provisioning API — distinct from any tenant's own per-instance secrets. Required once the plane is enabled. |
+| `LOOPOVER_MINER_CONTROL_PLANE` | `dist/lib/tenant-client.js` | Master opt-in (truthy string, off by default). No tenant admin traffic is possible unless set. |
+| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `dist/lib/tenant-client.js` | Base URL of the hosted control-plane provisioning API. Required once the plane is enabled. |
+| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `dist/lib/tenant-client.js` | Bearer admin credential for the provisioning API — distinct from any tenant's own per-instance secrets. Required once the plane is enabled. |

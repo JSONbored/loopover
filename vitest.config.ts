@@ -1,38 +1,8 @@
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
 import { defineConfig } from "vitest/config";
 
 const junitPath = process.env.VITEST_JUNIT_PATH;
 
-// In-process imports must resolve the miner/mcp packages' NodeNext ".js"-suffixed specifiers to the
-// .ts SOURCE even when the in-place compiled .js exists on disk (both packages emit next to their
-// sources -- tsconfig outDir "."; CI builds them before the coverage run, and local checkouts
-// accumulate the same gitignored emit). Without this, Vite resolves the literal .js file, v8
-// coverage attributes every hit to the built-file identity (flatlining the .ts to 0% -- the
-// 2026-07-24 codecov/patch (0%/99%) incident), and --changed's import-graph tracing can't relate a
-// changed .ts to the tests importing it. Deleting the emit before the coverage run instead (the
-// first attempt at fixing that incident) broke the OTHER class of tests: subprocess-spawning ones
-// (the CLI harnesses and the MCP stdio tests) run under plain Node outside Vite's resolver and
-// genuinely need the built .js at spawn time. This plugin serves both: in-process resolution always
-// lands on the .ts (correct identity for coverage + tracing), while spawned subprocesses keep the
-// built artifacts on disk. Scoped to exactly the two in-place-emit packages -- engine emits to
-// dist/ and must keep resolving through its package boundary unchanged.
-const IN_PLACE_EMIT_RE = /packages\/loopover-(?:miner|mcp)\/(?:lib|bin)\/.*\.js$/;
-const preferTsSourceForInPlaceEmit = {
-  name: "loopover:prefer-ts-source-for-in-place-emit",
-  enforce: "pre" as const,
-  resolveId(source: string, importer: string | undefined) {
-    if (!importer || !source.endsWith(".js")) return null;
-    if (!source.startsWith("./") && !source.startsWith("../") && !isAbsolute(source)) return null;
-    const candidate = isAbsolute(source) ? source : resolvePath(dirname(importer), source);
-    if (!IN_PLACE_EMIT_RE.test(candidate)) return null;
-    const tsSibling = `${candidate.slice(0, -3)}.ts`;
-    return existsSync(tsSibling) ? tsSibling : null;
-  },
-};
-
 export default defineConfig({
-  plugins: [preferTsSourceForInPlaceEmit],
   ssr: {
     noExternal: ["agents", "partyserver"],
   },
@@ -66,45 +36,39 @@ export default defineConfig({
       include: [
         "src/**/*.ts",
         "packages/loopover-engine/src/**/*.ts",
-        // packages/loopover-{miner,mcp} ship .ts source only (no committed compiled output). Their own
-        // internal cross-imports and every root test importing into them write NodeNext-style .js-suffixed
-        // specifiers (required so tsc's real build -- still the actual published npm artifact -- resolves
-        // correctly) -- Vite/esbuild already resolves those to the sibling .ts when no literal .js exists
-        // on disk, the same default behavior packages/loopover-engine/src/**'s own .js-suffixed imports
-        // have always relied on. BUT @vitest/coverage-v8 still tracks each executed module under the id
-        // Vite resolved it FROM (the requested .js specifier), not the .ts file actually read off disk --
-        // confirmed by removing the .js glob entry once and watching every one of these files (genuinely
-        // executed, genuinely tested) report a flat 0% because coverage.include no longer matched their
-        // reported id. So both extensions stay listed for the same file: the .js entry is what makes the
-        // v8 coverage provider find the module AT ALL, and the .ts entry is what makes it display against
-        // real TypeScript source instead of a phantom .js path that was never written to disk.
-        "packages/loopover-miner/lib/**/*.js",
+        // packages/loopover-{miner,mcp} compile out-of-place into dist/ (lib/foo.ts -> dist/lib/foo.js,
+        // matching packages/loopover-engine's src/ -> dist/ split since the 2026-07-24 migration -- see
+        // each package's tsconfig.json outDir comment). Only .ts is listed: dist/ is gitignored, never
+        // scanned by coverage, and holds no .ts of its own, so there's no id-mismatch to work around --
+        // Vite/esbuild resolve these packages' NodeNext .js-suffixed import specifiers straight to the
+        // sibling .ts by ordinary default fallback (nothing lives at the .js path inside lib/bin/ to
+        // resolve to instead), the same behavior packages/loopover-engine/src/**'s own .js-suffixed
+        // imports have always relied on. (Before the migration, an in-place compiled .js sitting next to
+        // its .ts source caused Vite to resolve the literal .js instead, misattributing coverage to the
+        // built-file identity -- the 2026-07-24 codecov/patch (0%/99%) incident, temporarily worked around
+        // with a custom resolver plugin before this directory split made the workaround unnecessary.)
         "packages/loopover-miner/lib/**/*.ts",
         // bin/loopover-miner-mcp.ts exports createMinerMcpServer, imported in-process by
         // test/unit/miner-mcp-*.test.ts -- genuinely unit-coverable, same as lib/ above. Its sibling
         // bin/loopover-miner.ts (the plain CLI dispatcher: no exports, subprocess-only tested via
-        // test/unit/support/miner-cli-harness.ts, now spawned via Node's own --experimental-strip-types
-        // rather than a prior `tsc` build) is NOT ignore-listed in codecov.yml -- test/unit/
-        // codecov-policy.test.ts (#4864) forbids a blanket exemption for packages/loopover-miner, so it
-        // stays included and genuinely graded (near-0% today) until it either gains real in-process tests
-        // or is refactored into a testable export the way bin/loopover-miner-mcp.ts already was.
-        "packages/loopover-miner/bin/**/*.js",
+        // test/unit/support/miner-cli-harness.ts, spawned via Node's own --experimental-strip-types)
+        // is NOT ignore-listed in codecov.yml -- test/unit/codecov-policy.test.ts (#4864) forbids a
+        // blanket exemption for packages/loopover-miner, so it stays included and genuinely graded
+        // (near-0% today) until it either gains real in-process tests or is refactored into a testable
+        // export the way bin/loopover-miner-mcp.ts already was.
         "packages/loopover-miner/bin/**/*.ts",
         "packages/discovery-index/src/**/*.ts",
         // All 5 packages/loopover-mcp/lib/*.ts files (format-table/local-branch/redact-local-path/
         // telemetry/cli-error) are imported in-process by test/unit/*.test.ts (cli-error's own
         // test/unit/mcp-cli-error.test.ts landed in #7409), so a PR touching any of them is covered by
         // codecov/patch -- that's intended enforcement, not a bug.
-        "packages/loopover-mcp/lib/**/*.js",
         "packages/loopover-mcp/lib/**/*.ts",
         // packages/loopover-mcp/bin/loopover-mcp.ts (~6,600 of ~7,400 lines in the package) is tested
-        // exclusively via subprocess spawn (test/unit/mcp-cli-*.test.ts, mcp-discovery.test.ts et al,
-        // through test/unit/support/mcp-cli-harness.ts's execFileSync/StdioClientTransport, now spawned
-        // via Node's own --experimental-strip-types). Same shape as packages/loopover-miner/bin/
-        // loopover-miner.ts above -- and, consistent with that file not getting a codecov.yml exemption
-        // either (#4864), this isn't ignore-listed: it stays included and genuinely graded until it
-        // either gains real in-process tests or is refactored into a testable export.
-        "packages/loopover-mcp/bin/**/*.js",
+        // exclusively via subprocess spawn (test/unit/mcp-cli-*.test.ts, mcp-discovery.test.ts et al) --
+        // same shape as packages/loopover-miner/bin/loopover-miner.ts above -- and, consistent with that
+        // file not getting a codecov.yml exemption either (#4864), this isn't ignore-listed: it stays
+        // included and genuinely graded until it either gains real in-process tests or is refactored
+        // into a testable export.
         "packages/loopover-mcp/bin/**/*.ts",
         // review-enrichment is a standalone (non-workspace) package with its own node:test suite; its
         // coverage is collected separately via `npm run rees:coverage` (c8 over the built dist, remapped
@@ -126,11 +90,10 @@ export default defineConfig({
       // statements, matches src/env.d.ts's own exclusion above). worker-configuration.d.ts is
       // wrangler-generated.
       //
-      // packages/loopover-miner/lib/**/*.ts (above) also glob-matches its own emitted *.d.ts siblings
-      // (a ".d.ts" path ends in ".ts" too) -- those aren't real modules and can't be
-      // parsed as coverage source, so they're excluded the same way src/env.d.ts already is. Same story
-      // for the *.ts entries under packages/loopover-miner/bin/** and packages/loopover-mcp/{lib,bin}/**
-      // added above -- each glob-matches its own *.d.ts siblings too.
+      // packages/loopover-{miner,mcp}'s *.ts include globs above need no *.d.ts exclusion: since the
+      // 2026-07-24 dist/ migration, tsc emits declarations into dist/lib/ and dist/bin/ (gitignored,
+      // never scanned by coverage), so lib/** and bin/** now contain only hand-written .ts source -- no
+      // emitted .d.ts sibling for a ".ts"-ending glob to accidentally sweep in.
       exclude: [
         "src/env.d.ts",
         "apps/**",
@@ -138,10 +101,6 @@ export default defineConfig({
         "packages/discovery-index/src/worker.ts",
         "packages/discovery-index/src/env.d.ts",
         "packages/discovery-index/worker-configuration.d.ts",
-        "packages/loopover-miner/lib/**/*.d.ts",
-        "packages/loopover-miner/bin/**/*.d.ts",
-        "packages/loopover-mcp/lib/**/*.d.ts",
-        "packages/loopover-mcp/bin/**/*.d.ts",
       ],
       // Emit lcov for Codecov to compute patch (changed-lines) coverage.
       reporter: ["text", "lcov"],

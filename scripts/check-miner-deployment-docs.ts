@@ -17,9 +17,13 @@ import {
 const REPO_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const MINER_DIR = resolve(REPO_ROOT, "packages/loopover-miner");
 const DEPLOYMENT_MD = resolve(MINER_DIR, "DEPLOYMENT.md");
-const BIN_DIR = resolve(MINER_DIR, "bin");
+// Scans the compiled dist/ output (2026-07-24 migration; see tsconfig.json's outDir comment) --
+// this audit needs a prior `npm run build:miner`, same precondition as everything else that reads
+// real compiled artifacts (ci.yml's own "MCP/Miner package check" steps already run after "Build
+// miner CLI").
+const BIN_DIR = resolve(MINER_DIR, "dist/bin");
 const BIN_ENTRY = resolve(BIN_DIR, "loopover-miner.js");
-const LIB_DIR = resolve(MINER_DIR, "lib");
+const LIB_DIR = resolve(MINER_DIR, "dist/lib");
 const ENGINE_MINER_DIR = resolve(REPO_ROOT, "packages/loopover-engine/src/miner");
 
 function readFilesWithExtension(dir: string, extension: string): string[] {

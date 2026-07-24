@@ -18,11 +18,11 @@ const FORBIDDEN_PUBLIC_LANGUAGE = /\b(wallet|hotkey|coldkey|raw trust|trust scor
 
 // Mirrors the allowlisted shape of the published tarball (must stay aligned with MCP_PACKAGE_ALLOWED_FILE_PATTERNS).
 const ALLOWED_FILES = [
-  "bin/loopover-mcp.js",
-  "lib/cli-error.js",
-  "lib/local-branch.js",
-  "lib/format-table.js",
-  "lib/redact-local-path.js",
+  "dist/bin/loopover-mcp.js",
+  "dist/lib/cli-error.js",
+  "dist/lib/local-branch.js",
+  "dist/lib/format-table.js",
+  "dist/lib/redact-local-path.js",
   "scripts/gittensor-score-preview.mjs",
   "package.json",
   "README.md",
@@ -89,7 +89,7 @@ describe("checkChangelog", () => {
 
 describe("checkTarball", () => {
   it("accepts every shipped MCP lib file previously missing from the RC allowlist (#6291)", () => {
-    for (const file of ["lib/cli-error.js", "lib/format-table.js", "lib/redact-local-path.js"]) {
+    for (const file of ["dist/lib/cli-error.js", "dist/lib/format-table.js", "dist/lib/redact-local-path.js"]) {
       expect(unexpectedTarballFiles([file])).toEqual([]);
       expect(MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((pattern) => pattern.test(file))).toBe(true);
     }

@@ -10,7 +10,7 @@ import { buildTaskGraph, validateIdeaSubmission } from "../../src/idea-intake";
 // computes IN-PROCESS from @loopover/engine — no API round-trip — so idea intake works fully offline. The point
 // of these tests is cross-surface PARITY: the stdio tool must return exactly what the pure bridge returns for
 // identical input (the same functions /v1/loop/intake-idea delegates to), including the actionable error list.
-const bin = join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js");
+const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
 
 let client: Client;
 let transport: StdioClientTransport;

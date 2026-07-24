@@ -10,10 +10,11 @@
 // false-positive" subset). They are NOT imported directly: this file is a plain `.mjs` run via `node`
 // (test:miner-pack / test:mcp-pack), and secret-patterns.ts is TypeScript with no runtime `.js` sibling on this
 // path — a runtime `import` of it from node would fail, so the exact bodies are copied per the issue's stated
-// fallback. `jwt`, `seed_or_mnemonic`, and `bittensor_key` are deliberately NOT included: jwt is out of scope
-// for #7433, and seed_or_mnemonic/bittensor_key are documented in secret-patterns.ts as weak, false-positive-
-// prone heuristics intentionally excluded from HARD_SECRET_KINDS (an ordinary `coldkey:` / `hotkey =` line or
-// the word "mnemonic" in Bittensor docs is not a leaked credential).
+// fallback. `seed_or_mnemonic` and `bittensor_key` are deliberately NOT included: they are documented in
+// secret-patterns.ts as weak, false-positive-prone heuristics intentionally excluded from HARD_SECRET_KINDS
+// (an ordinary `coldkey:` / `hotkey =` line or the word "mnemonic" in Bittensor docs is not a leaked
+// credential). `jwt` IS in HARD_SECRET_KINDS today and is included here so packaged tarballs get the same
+// hard-block coverage as PR-diff / content-lane scanners (#8396).
 export const FORBIDDEN_CONTENT: RegExp = new RegExp(
   [
     // Already covered before #7433 (unchanged shapes):
@@ -35,5 +36,6 @@ export const FORBIDDEN_CONTENT: RegExp = new RegExp(
     "\\bfc-[A-Za-z0-9]{16,}(?![A-Za-z0-9_-])", // firecrawl_api_key
     "\\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}\\b", // openai_api_key
     "\\bsk-ant-api03-[A-Za-z0-9_-]{93}AA\\b", // anthropic_api_key
+    "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b", // jwt (#8396)
   ].join("|"),
 );

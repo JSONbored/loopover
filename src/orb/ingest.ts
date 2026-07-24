@@ -7,6 +7,7 @@ const MAX_BATCH = 500;
 const MAX_INSTANCE_ID_CHARS = 64;
 const MAX_HASH_CHARS = 128;
 const MAX_BUCKET_CHARS = 64;
+const MAX_VERDICT_CHARS = 32;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
 const VALID_REVERSALS = new Set(["none", "reopened", "reverted"]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
@@ -166,7 +167,7 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
           instance_id,
           event.repo_hash,
           event.pr_hash,
-          typeof event.gate_verdict === "string" ? event.gate_verdict : null,
+          typeof event.gate_verdict === "string" && event.gate_verdict.length <= MAX_VERDICT_CHARS ? event.gate_verdict : null,
           event.outcome,
           reversal,
           typeof event.gate_reasoncode_bucket === "string" && event.gate_reasoncode_bucket.length <= MAX_BUCKET_CHARS ? event.gate_reasoncode_bucket : null,

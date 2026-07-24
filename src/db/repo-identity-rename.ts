@@ -28,15 +28,19 @@ import { getDb } from "./client";
 import {
   activeReviewTracking,
   advisories,
+  agentPendingActions,
   auditEvents,
+  bounties,
   burdenForecasts,
   checkSummaries,
   collisionEdges,
   contributorRepoStats,
   gateOutcomes,
   githubAgentCommandAnswers,
+  githubAgentCommandFeedback,
   githubRateLimitObservations,
   issues,
+  issueWatchSubscriptions,
   notificationDeliveries,
   productUsageEvents,
   pullRequestDetailSyncState,
@@ -48,8 +52,11 @@ import {
   repoLabels,
   repoQueueTrendSnapshots,
   repositories,
+  repositoryAiKeys,
+  repositoryLinearKeys,
   repositorySettings,
   repoSnapshots,
+  reviewSuppression,
   repoSyncSegments,
   repoSyncState,
   signalSnapshots,
@@ -356,6 +363,86 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
   // carry no repo at all) and there is no index of any kind on this table. Plain rename.
   await db.update(signalSnapshots).set({ repoFullName: newFullName }).where(eq(signalSnapshots.repoFullName, oldFullName));
 
+  // Seven more Drizzle-schema tables carrying a repo_full_name identity column with live writers (#8379),
+  // each folded by its REAL constraint (verified in schema.ts), following the shapes already used above:
+
+  // repositoryAiKeys / repositoryLinearKeys: `repo_full_name` is itself the PRIMARY KEY -- same
+  // fold-then-rename anchor shape as repositories/repositorySettings above. Only the identity column moves;
+  // the encrypted key material rides along untouched.
+  await db.delete(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, newFullName));
+  await db.update(repositoryAiKeys).set({ repoFullName: newFullName }).where(eq(repositoryAiKeys.repoFullName, oldFullName));
+
+  await db.delete(repositoryLinearKeys).where(eq(repositoryLinearKeys.repoFullName, newFullName));
+  await db.update(repositoryLinearKeys).set({ repoFullName: newFullName }).where(eq(repositoryLinearKeys.repoFullName, oldFullName));
+
+  // bounties: unique (repo_full_name, issue_number) -- fold on the other half, issue_number. `id` is an
+  // EXTERNAL bounty id (String(issue.id) from the Gitt snapshot, src/bounties/ingest.ts), never derived from
+  // the repo name, so unlike pullRequests/issues there is no id substring to rewrite.
+  const collidingBountyIssues = (
+    await db.select({ issueNumber: bounties.issueNumber }).from(bounties).where(eq(bounties.repoFullName, oldFullName))
+  ).map((row) => row.issueNumber);
+  if (collidingBountyIssues.length > 0) {
+    await db.delete(bounties).where(and(eq(bounties.repoFullName, newFullName), inArray(bounties.issueNumber, collidingBountyIssues)));
+  }
+  await db.update(bounties).set({ repoFullName: newFullName }).where(eq(bounties.repoFullName, oldFullName));
+
+  // reviewSuppression: unique (repo_full_name, category, path_glob, pattern_hash) -- per-tuple fold like
+  // checkSummaries above, but every fold column is NOT NULL (schema.ts), so a plain eq() per column suffices
+  // with no isNull branching.
+  const collidingSuppressionKeys = await db
+    .select({ category: reviewSuppression.category, pathGlob: reviewSuppression.pathGlob, patternHash: reviewSuppression.patternHash })
+    .from(reviewSuppression)
+    .where(eq(reviewSuppression.repoFullName, oldFullName));
+  for (const key of collidingSuppressionKeys) {
+    await db
+      .delete(reviewSuppression)
+      .where(
+        and(
+          eq(reviewSuppression.repoFullName, newFullName),
+          eq(reviewSuppression.category, key.category),
+          eq(reviewSuppression.pathGlob, key.pathGlob),
+          eq(reviewSuppression.patternHash, key.patternHash),
+        ),
+      );
+  }
+  await db.update(reviewSuppression).set({ repoFullName: newFullName }).where(eq(reviewSuppression.repoFullName, oldFullName));
+
+  // agentPendingActions: unique (repo_full_name, pull_number, action_class) -- same per-tuple fold, both
+  // fold columns NOT NULL. A decided row is sticky, so folding in favor of the pre-existing oldFullName row
+  // preserves the maintainer's actual accept/reject decision rather than a fresh post-rename `pending`.
+  const collidingPendingActionKeys = await db
+    .select({ pullNumber: agentPendingActions.pullNumber, actionClass: agentPendingActions.actionClass })
+    .from(agentPendingActions)
+    .where(eq(agentPendingActions.repoFullName, oldFullName));
+  for (const key of collidingPendingActionKeys) {
+    await db
+      .delete(agentPendingActions)
+      .where(
+        and(
+          eq(agentPendingActions.repoFullName, newFullName),
+          eq(agentPendingActions.pullNumber, key.pullNumber),
+          eq(agentPendingActions.actionClass, key.actionClass),
+        ),
+      );
+  }
+  await db.update(agentPendingActions).set({ repoFullName: newFullName }).where(eq(agentPendingActions.repoFullName, oldFullName));
+
+  // issueWatchSubscriptions: unique (login, repo_full_name) -- fold on the single `login` column, the same
+  // shape as contributorRepoStats above. `id` is a random UUID, so no id rewrite.
+  const collidingWatchLogins = (
+    await db.select({ login: issueWatchSubscriptions.login }).from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, oldFullName))
+  ).map((row) => row.login);
+  if (collidingWatchLogins.length > 0) {
+    await db
+      .delete(issueWatchSubscriptions)
+      .where(and(eq(issueWatchSubscriptions.repoFullName, newFullName), inArray(issueWatchSubscriptions.login, collidingWatchLogins)));
+  }
+  await db.update(issueWatchSubscriptions).set({ repoFullName: newFullName }).where(eq(issueWatchSubscriptions.repoFullName, oldFullName));
+
+  // githubAgentCommandFeedback: its only unique index is (answer_id, actor_hash) -- repo_full_name appears
+  // solely in a NON-unique index, so nothing can collide. Plain rename, same as repoSnapshots above.
+  await db.update(githubAgentCommandFeedback).set({ repoFullName: newFullName }).where(eq(githubAgentCommandFeedback.repoFullName, oldFullName));
+
   // REES/parity tables below (review_audit, contributor_gate_history, submitter_stats) are raw-SQL-only --
   // deliberately NOT added to the Drizzle schema (see each table's own migration header) -- so these three
   // blocks use env.DB.prepare() directly instead of the query builder, matching how every other writer of
@@ -413,6 +500,81 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
       .run();
   }
   await env.DB.prepare("UPDATE submitter_stats SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
+
+  // Seven more raw-SQL-only identity-bearing tables (#8380), each with a confirmed live writer. Same three
+  // fold shapes already used above, chosen per table by its REAL constraint (verified against each table's
+  // own migration), not by column name:
+
+  // orbPrOutcomes: PRIMARY KEY (repository_full_name, pr_number) (src/orb/outcomes.ts's recordOrbPrOutcome
+  // upserts on exactly that). Fold on the OTHER half of the composite key, pr_number -- same shape as
+  // submitterStats above.
+  const collidingOrbPrNumbers = (
+    await env.DB.prepare("SELECT pr_number FROM orb_pr_outcomes WHERE repository_full_name = ?").bind(oldFullName).all<{ pr_number: number }>()
+  ).results.map((row) => row.pr_number);
+  if (collidingOrbPrNumbers.length > 0) {
+    const placeholders = collidingOrbPrNumbers.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM orb_pr_outcomes WHERE repository_full_name = ? AND pr_number IN (${placeholders})`)
+      .bind(newFullName, ...collidingOrbPrNumbers)
+      .run();
+  }
+  await env.DB.prepare("UPDATE orb_pr_outcomes SET repository_full_name = ? WHERE repository_full_name = ?")
+    .bind(newFullName, oldFullName)
+    .run();
+
+  // orbWebhookEvents: PK is delivery_id; repository_full_name is NULLABLE with no unique constraint on it
+  // (src/orb/webhook.ts). Nothing can collide -- plain rename, same as signalSnapshots above.
+  await env.DB.prepare("UPDATE orb_webhook_events SET repository_full_name = ? WHERE repository_full_name = ?")
+    .bind(newFullName, oldFullName)
+    .run();
+
+  // overrideAudit: PK `id` is a random, NON-project-derived string (`ova_<ts36>_<random>`, newAuditId() in
+  // src/review/auto-apply.ts), and the only index on `project` is non-unique. Unlike reviewAudit's id, it
+  // never embeds the project, so no substring rewrite and no collision fold -- plain rename.
+  await env.DB.prepare("UPDATE override_audit SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
+
+  // tunablesOverrides / tunablesOverridesShadow: `project` is itself the PRIMARY KEY (src/review/
+  // auto-apply.ts's writeLiveOverride). The new name's own row is the collision -- delete it first, then
+  // rename, the same anchor-row fold shape used for repositories/burdenForecasts above.
+  for (const table of ["tunables_overrides", "tunables_overrides_shadow"] as const) {
+    await env.DB.prepare(`DELETE FROM ${table} WHERE project = ?`).bind(newFullName).run();
+    await env.DB.prepare(`UPDATE ${table} SET project = ? WHERE project = ?`).bind(newFullName, oldFullName).run();
+  }
+
+  // predictedGateCalibrationLedger / predictedGateCalls: the sharpest instance of this module's own dominant
+  // shape -- `project` plus an `id` (and, for the ledger, a `target_id`) that embed the project as a
+  // substring, exactly like reviewAudit/contributorGateHistory above. Identical substring-replace + PK-
+  // collision fold. The ledger's id is `calibration:${login}:${project}:${pull}@${sha}` and its target_id is
+  // `${project}#${pull}`; predicted_gate_calls' id is `predicted:${login}:${project}:${ts}:${random}` and it
+  // has NO target_id column, so only id/project are rewritten there.
+  const oldCalibrationLedgerIds = (
+    await env.DB.prepare("SELECT id FROM predicted_gate_calibration_ledger WHERE project = ?").bind(oldFullName).all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const renamedCalibrationLedgerIds = oldCalibrationLedgerIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedCalibrationLedgerIds.length > 0) {
+    const placeholders = renamedCalibrationLedgerIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM predicted_gate_calibration_ledger WHERE id IN (${placeholders})`)
+      .bind(...renamedCalibrationLedgerIds)
+      .run();
+  }
+  await env.DB.prepare(
+    "UPDATE predicted_gate_calibration_ledger SET id = replace(id, ?, ?), project = ?, target_id = replace(target_id, ?, ?) WHERE project = ?",
+  )
+    .bind(oldFullName, newFullName, newFullName, oldFullName, newFullName, oldFullName)
+    .run();
+
+  const oldPredictedGateCallIds = (
+    await env.DB.prepare("SELECT id FROM predicted_gate_calls WHERE project = ?").bind(oldFullName).all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const renamedPredictedGateCallIds = oldPredictedGateCallIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedPredictedGateCallIds.length > 0) {
+    const placeholders = renamedPredictedGateCallIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM predicted_gate_calls WHERE id IN (${placeholders})`)
+      .bind(...renamedPredictedGateCallIds)
+      .run();
+  }
+  await env.DB.prepare("UPDATE predicted_gate_calls SET id = replace(id, ?, ?), project = ? WHERE project = ?")
+    .bind(oldFullName, newFullName, newFullName, oldFullName)
+    .run();
 
   // Deliberately OUT OF SCOPE:
   //   - The request-scoped AI/LLM result caches (ai_review_cache, ai_slop_cache,

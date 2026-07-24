@@ -488,6 +488,21 @@ export type AiReviewActualUsage = {
   costUsd?: number | undefined;
 };
 
+/** Render diagnostics as compact `model#attempt:status[:error]` strings for Sentry capture context. Passing the
+ *  raw objects loses everything: Sentry's normalizeDepth flattens each nested entry to the literal string
+ *  "[Object]", which erased exactly the model/attempt/status/error detail these entries exist to carry (the
+ *  2026-07-23 outage, LOOPOVER-2B, was diagnosable only from separate provider-failure events because of this).
+ *  Strings survive normalization verbatim. The `error` field is errorMessage() output, never raw provider text,
+ *  so including it here keeps the "withholds unsafe provider text" boundary intact. */
+export function formatReviewDiagnosticsForCapture(
+  diagnostics: readonly AiReviewDiagnostic[],
+): string[] {
+  return diagnostics.map(
+    (diagnostic) =>
+      `${diagnostic.model}#${diagnostic.attempt}:${diagnostic.status}${diagnostic.error ? `:${diagnostic.error}` : ""}`,
+  );
+}
+
 type ReviewerOpinionOutcome = {
   review: ModelReview | null;
   fallbackNote?: string | undefined;
@@ -1142,6 +1157,10 @@ async function runWorkersOpinion(
   // Track the last provider error so we can fail-LOUD once ALL models × attempts are exhausted (below). Per-attempt
   // logs are warn (noisy retries, skipped by the central Sentry forwarder); the exhausted summary is error (#26).
   let lastError: unknown;
+  // ALSO track each model's own terminal error: `lastError` alone lets the fallback's failure MASK the primary's
+  // distinct one in the exhausted summary -- during the 2026-07-23 outage (LOOPOVER-2A) the fallback's
+  // circuit_open hid the primary's rate-limit 429, so the single Sentry event pointed at the wrong provider.
+  const errorsByModel: Record<string, string> = {};
   let lastUnparseable:
     | { model: string; attempt: number; responseChars: number; hasJsonObject: boolean; responseSnippet: string }
     | undefined;
@@ -1257,6 +1276,7 @@ async function runWorkersOpinion(
           }),
         );
         lastError = error;
+        errorsByModel[model] = errorMessage(error);
         // A CLI timeout is not transient -- the same model retrying the same oversized/complex diff will almost
         // certainly time out again. Stop retrying THIS model (the fallback below still gets its own full retry
         // budget, since a different model/config may not share the same timeout) instead of burning up to 3x
@@ -1284,6 +1304,7 @@ async function runWorkersOpinion(
         primary,
         fallback,
         error: errorMessage(lastError),
+        errorsByModel,
       }),
     );
   }

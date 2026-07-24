@@ -4,6 +4,7 @@ import {
   BEST_REVIEW_MODELS,
   buildTestEvidencePromptSection,
   callAiProvider,
+  formatReviewDiagnosticsForCapture,
   INCOHERENT_DIFF_ASSESSMENT,
   isIncoherentDiffBail,
   isStructuralProviderConfigError,
@@ -3364,6 +3365,47 @@ describe("pure helpers", () => {
     });
     logSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("REGRESSION (LOOPOVER-2A): the exhausted log carries each model's OWN terminal error, so the fallback's failure cannot mask the primary's", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The 2026-07-23 outage shape: the primary rate-limits (429 → no same-model retry), the fallback fails
+    // structurally (circuit_open). `error` alone reported only the fallback's message, hiding the 429.
+    const run = vi.fn(async (model: string) => {
+      throw new Error(model === "primary-model" ? "claude_code_error_429" : "circuit_open: provider down");
+    });
+    const env = createTestEnv({ AI: { run } as unknown as Ai });
+    const result = await runWorkersOpinion(env, "primary-model", "fallback-model", "sys", "user", 256);
+    expect(result).toEqual({ review: null });
+    const exhausted = logSpy.mock.calls
+      .map((c) => c[0])
+      .find((l) => typeof l === "string" && l.includes("ai_review_provider_exhausted"));
+    expect(exhausted).toBeDefined();
+    expect(JSON.parse(exhausted as string)).toMatchObject({
+      event: "ai_review_provider_exhausted",
+      // Still the last error overall (unchanged Sentry grouping)…
+      error: expect.stringContaining("circuit_open"),
+      // …but now ALSO each model's own terminal failure, keyed by model.
+      errorsByModel: {
+        "primary-model": "claude_code_error_429",
+        "fallback-model": "circuit_open: provider down",
+      },
+    });
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("formatReviewDiagnosticsForCapture renders compact model#attempt:status[:error] strings (raw objects flatten to \"[Object]\" in Sentry context — LOOPOVER-2B)", () => {
+    const diagnostics: AiReviewDiagnostic[] = [
+      { model: "claude-code", attempt: 0, status: "provider_error", error: "claude_code_error_429" },
+      { model: "codex", attempt: 1, status: "unparseable_output", responseChars: 12, hasJsonObject: false },
+    ];
+    expect(formatReviewDiagnosticsForCapture(diagnostics)).toEqual([
+      "claude-code#0:provider_error:claude_code_error_429",
+      "codex#1:unparseable_output",
+    ]);
+    expect(formatReviewDiagnosticsForCapture([])).toEqual([]);
   });
 
   it("logs unparseable exhaustion separately when the model runs but returns unparseable output, including a response snippet for diagnosis (#observability-unparseable)", async () => {

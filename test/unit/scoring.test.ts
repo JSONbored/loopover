@@ -502,6 +502,46 @@ NOVELTY_BONUS_SCALAR = 3
     expect(refreshed.sourceKind).toBe("raw-github");
   });
 
+  // #8327: the fail-open SHA test above proves scoring still refreshes unpinned, but never asserted the sole
+  // operator-facing signal that it IS unpinned. Pin the warning string so a future refactor can't silently
+  // drop it.
+  it("surfaces the unpinned-fallback warning when the upstream SHA can't be resolved", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response(VALID_CONSTANTS_PY + "MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return Response.json({});
+      if (url.includes("api.github.com") && url.includes("/commits/")) throw new Error("network error");
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    expect(refreshed.payload.upstreamSourceSha).toBeUndefined();
+    expect(refreshed.warnings.some((w) => /immutable commit SHA/.test(w) && /unpinned/.test(w))).toBe(true);
+  });
+
+  // #8327: the languages-fetch-failed warning was unreachable by existing tests -- every constants-succeed test
+  // stubbed programming_languages.json to succeed, and every languages-fail test also failed constants first
+  // (short-circuiting into the earlier fallback). This combines constants-succeed with languages-fail.
+  it("warns when the programming-language weights fetch fails while constants still succeed", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "token" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("constants.py")) return new Response(VALID_CONSTANTS_PY + "MERGED_PR_BASE_SCORE = 25\n");
+      if (url.includes("programming_languages.json")) return new Response("upstream down", { status: 500 });
+      if (url.includes("api.github.com") && url.includes("/commits/")) return Response.json({ sha: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2" });
+      return new Response("not found", { status: 404 });
+    });
+
+    const refreshed = await refreshScoringModelSnapshot(env);
+
+    // Constants still applied (not the fallback path), and the languages failure is surfaced as its own warning.
+    expect(refreshed.constants.MERGED_PR_BASE_SCORE).toBe(25);
+    expect(refreshed.sourceKind).toBe("raw-github");
+    expect(refreshed.warnings.some((w) => /Programming language weights fetch failed/.test(w))).toBe(true);
+  });
+
   it("pins the constants fetch to the resolved upstream SHA (immutable) when it can be resolved", async () => {
     const env = createTestEnv({ GITTENSOR_UPSTREAM_REPO: "custom/upstream", GITTENSOR_UPSTREAM_REF: "test" });
     const SHA = "0123456789abcdef0123456789abcdef01234567";

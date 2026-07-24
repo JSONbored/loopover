@@ -20,7 +20,7 @@ import {
   resolveCodingAgentModeFromConfig,
   resolveFirstConfiguredCodingAgentDriverName,
 } from "@loopover/engine";
-import type { AttemptDbFork, AttemptDbForkConfig, CodingAgentExecutionMode, FeasibilityVerdict, LocalWriteActionSpec } from "@loopover/engine";
+import type { AttemptDbFork, AttemptDbForkConfig, CodingAgentExecutionMode, FeasibilityVerdict, LocalWriteActionSpec, SignalStore } from "@loopover/engine";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { resolveAttemptDbForkConfig } from "./attempt-db-fork-config.js";
 import { constructProductionCodingAgentDriver } from "./coding-agent-construction.js";
@@ -33,8 +33,9 @@ import { resolveMinerGoalSpec } from "./miner-goal-spec.js";
 import { resolveClaimConflict } from "./claim-conflict-resolver.js";
 import type { ClaimConflictResult, resolveClaimConflict as ResolveClaimConflictFn } from "./claim-conflict-resolver.js";
 import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
-import { initEventLedger } from "./event-ledger.js";
+import { appendEvent, initEventLedger, readEvents } from "./event-ledger.js";
 import type { EventLedger } from "./event-ledger.js";
+import { createSignalTrackingStore } from "./signal-tracking-store.js";
 import { initAttemptLog } from "./attempt-log.js";
 import type { AttemptLog } from "./attempt-log.js";
 import { initGovernorLedger } from "./governor-ledger.js";
@@ -137,6 +138,7 @@ export type RunAttemptOptions = {
   initEventLedger?: () => EventLedger;
   initAttemptLog?: () => AttemptLog;
   initGovernorLedger?: () => GovernorLedger;
+  initSignalTrackingStore?: () => SignalStore;
   buildAttemptDeps?: typeof buildAttemptDeps;
   resolveRejectionSignaled?: typeof ResolveRejectionSignaledFn;
   fetchImpl?: SelfReviewContextFetch;
@@ -299,6 +301,40 @@ export function buildAttemptDeps(
  * runMinerAttempt for real. The worktree is cleaned up (or retained, per the real outcome) in `finally`.
  * See this file's header for the documented gaps (real convergence history).
  */
+// #8543: the default SignalStore, backed by the miner's own shared local event ledger -- identical to
+// discover-cli.ts's initDefaultSignalTrackingStore (same appendEvent/readEvents singleton).
+function initDefaultSignalTrackingStore(): SignalStore {
+  return createSignalTrackingStore({ appendEvent, readEvents });
+}
+
+// #8543: record one RuleFiredEvent per feasibility avoid/raise reason on the infeasible attempt path, in the
+// canonical signal_rule_fired shape. Best-effort discipline mirrored verbatim from discover-cli.ts's
+// recordEligibilityExclusionSignals: store-init failure and each individual write failure are swallowed so
+// the caller's console output, JSON result, and exit code are unaffected. targetKey is byte-identical to
+// that sibling's `${repoFullName}#issue-${issueNumber}` format.
+async function recordFeasibilityVerdictSignals(
+  verdict: { repoFullName: string; issueNumber: number; avoidReasons: readonly string[]; raiseReasons: readonly string[] },
+  options: Pick<RunAttemptOptions, "initSignalTrackingStore" | "nowMs">,
+): Promise<void> {
+  if (verdict.avoidReasons.length === 0 && verdict.raiseReasons.length === 0) return;
+  let store: SignalStore | null = null;
+  try {
+    store = (options.initSignalTrackingStore ?? initDefaultSignalTrackingStore)();
+  } catch {
+    store = null;
+  }
+  if (!store) return;
+  const occurredAt = new Date(options.nowMs ?? Date.now()).toISOString();
+  const targetKey = `${verdict.repoFullName}#issue-${verdict.issueNumber}`;
+  const fired = [
+    ...verdict.avoidReasons.map((reason) => ({ reason, outcome: "avoid" as const })),
+    ...verdict.raiseReasons.map((reason) => ({ reason, outcome: "raise" as const })),
+  ];
+  for (const entry of fired) {
+    await store.recordRuleFired({ ruleId: entry.reason, targetKey, outcome: entry.outcome, occurredAt }).catch(() => undefined);
+  }
+}
+
 export async function runAttempt(args: string[], options: RunAttemptOptions = {}): Promise<number> {
   const parsed = parseAttemptArgs(args);
   if ("error" in parsed) {
@@ -533,6 +569,21 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
         repoFullName: parsed.repoFullName,
         payload: { issueNumber: parsed.issueNumber, reason },
       });
+      // #8543: capture the feasibility verdict's reasons as rule-fired signals so feasibility rules can be
+      // precision-scored the same way discovery's eligibility exclusions already are (#8107). Best-effort:
+      // never changes this branch's console output, JSON result, or exit code.
+      await recordFeasibilityVerdictSignals(
+        {
+          repoFullName: parsed.repoFullName,
+          issueNumber: parsed.issueNumber,
+          avoidReasons: codingTaskSpec.feasibility.avoidReasons,
+          raiseReasons: codingTaskSpec.feasibility.raiseReasons,
+        },
+        {
+          ...(options.initSignalTrackingStore ? { initSignalTrackingStore: options.initSignalTrackingStore } : {}),
+          ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+        },
+      );
       const infeasibleResult = {
         outcome: "blocked_infeasible",
         reason,

@@ -16,6 +16,8 @@ import { closeDefaultWorktreeAllocator, openWorktreeAllocator } from "../../pack
 import { closeDefaultPortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue.js";
 import { closeDefaultGovernorState } from "../../packages/loopover-miner/lib/governor-state.js";
 import { buildAttemptDeps, parseAttemptArgs, runAttempt } from "../../packages/loopover-miner/lib/attempt-cli.js";
+import type { RunAttemptOptions } from "../../packages/loopover-miner/lib/attempt-cli.js";
+import type { RuleFiredEvent, SignalStore } from "../../packages/loopover-engine/src/calibration/signal-tracking.js";
 import * as minerSentryModule from "../../packages/loopover-miner/lib/sentry.js";
 import * as liveIssueSnapshotModule from "../../packages/loopover-miner/lib/live-issue-snapshot.js";
 import * as githubTokenResolutionModule from "../../packages/loopover-miner/lib/github-token-resolution.js";
@@ -1223,6 +1225,140 @@ describe("runAttempt (#5132)", () => {
     );
     // Nothing ran against this worktree -- cleaned up like every other pre-execution block.
     expect(cleanupAttemptWorktreeSpy).toHaveBeenCalledWith(expect.any(String), expect.any(String), true);
+  });
+
+  // #8543: a fake SignalStore that records every recordRuleFired call, so the capture on the infeasible
+  // path can be asserted event-for-event. queryRuleHistory/recordHumanOverride are unused here.
+  function fakeSignalStore(overrides: { recordRuleFired?: (event: RuleFiredEvent) => Promise<void> } = {}) {
+    const fired: RuleFiredEvent[] = [];
+    const store = {
+      recordRuleFired: overrides.recordRuleFired ?? (async (event: RuleFiredEvent) => void fired.push(event)),
+      recordHumanOverride: async () => undefined,
+      queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+    } as unknown as SignalStore;
+    return { store, fired };
+  }
+
+  const infeasibleArgs = ["acme/widgets", "7", "--miner-login", "alice", "--json"] as const;
+  function infeasibleOptions(extra: Partial<RunAttemptOptions>, feasibility: { avoidReasons: string[]; raiseReasons: string[] }) {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    return {
+      ledgers: { allocator, claimLedger, eventLedger, attemptLog, governorLedger },
+      options: {
+        env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+        attemptId: "infeasible-attempt",
+        openWorktreeAllocator: () => allocator,
+        openClaimLedger: () => claimLedger,
+        initEventLedger: () => eventLedger,
+        initAttemptLog: () => attemptLog,
+        initGovernorLedger: () => governorLedger,
+        ...readyPipelineOptions({
+          buildCodingTaskSpec: () => ({
+            ready: false,
+            verdict: "raise",
+            feasibility: { verdict: "raise", ...feasibility, summary: "infeasible" },
+          }),
+          runMinerAttempt: vi.fn(),
+          cleanupAttemptWorktree: vi.fn().mockResolvedValue({ ok: true, removed: true }),
+        }),
+        ...extra,
+      } as RunAttemptOptions,
+    };
+  }
+
+  it("#8543: records one avoid/raise rule-fired signal per feasibility reason on the infeasible path", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { store, fired } = fakeSignalStore();
+    const { options } = infeasibleOptions(
+      { initSignalTrackingStore: () => store, nowMs: 1_700_000_000_000 },
+      { avoidReasons: ["claim_status_solved", "issue_quality_do_not_use"], raiseReasons: ["duplicate_cluster_high"] },
+    );
+
+    const exitCode = await runAttempt([...infeasibleArgs], options);
+
+    expect(exitCode).toBe(4);
+    expect(fired).toEqual([
+      { ruleId: "claim_status_solved", targetKey: "acme/widgets#issue-7", outcome: "avoid", occurredAt: "2023-11-14T22:13:20.000Z" },
+      { ruleId: "issue_quality_do_not_use", targetKey: "acme/widgets#issue-7", outcome: "avoid", occurredAt: "2023-11-14T22:13:20.000Z" },
+      { ruleId: "duplicate_cluster_high", targetKey: "acme/widgets#issue-7", outcome: "raise", occurredAt: "2023-11-14T22:13:20.000Z" },
+    ]);
+  });
+
+  it("#8543: records NOTHING when the coding-task-spec is ready (capture is scoped to the infeasible branch)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { store, fired } = fakeSignalStore();
+    const worktreeResult = fakeWorktreeResult();
+    const runMinerAttemptSpy = vi.fn().mockResolvedValue({
+      outcome: "submitted",
+      spec: { command: "gh pr create", cwd: worktreeResult.worktreePath, timeoutMs: 1000 },
+      execResult: { code: 0 },
+      loopResult: fakeLoopResult({ outcome: "handoff", totalTurnsUsed: 3, totalCostUsd: 0.42, iterationsUsed: 2, finalMeterTotals: { tokens: 1234, turns: 3, wallClockMs: 500, costUsd: 0.42 } }),
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      nowMs: 999,
+      attemptId: "ready-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      initSignalTrackingStore: () => store,
+      ...readyPipelineOptions({ cleanupAttemptWorktree: vi.fn().mockResolvedValue({ ok: true, removed: true }), runMinerAttempt: runMinerAttemptSpy }),
+    });
+
+    // fakeCodingTaskSpec() is ready: true, so the attempt runs to a real submitted outcome and the
+    // feasibility capture -- gated on !codingTaskSpec.ready -- never fires.
+    expect(exitCode).toBe(0);
+    expect(fired).toEqual([]);
+  });
+
+  it("#8543: falls back to the default signal store (no seam) and to Date.now for the timestamp", async () => {
+    // No initSignalTrackingStore and no nowMs injected: exercises initDefaultSignalTrackingStore() and the
+    // `?? Date.now()` / `: {}` default arms. Best-effort discipline means the real default-ledger write is
+    // swallowed either way, so the only observable is the unchanged exit code.
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { options } = infeasibleOptions({}, { avoidReasons: ["claim_status_solved"], raiseReasons: [] });
+    const exitCode = await runAttempt([...infeasibleArgs], options);
+    expect(exitCode).toBe(4);
+  });
+
+  it("#8543: records nothing when the verdict has no avoid or raise reasons (early return)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { store, fired } = fakeSignalStore();
+    const { options } = infeasibleOptions({ initSignalTrackingStore: () => store }, { avoidReasons: [], raiseReasons: [] });
+    const exitCode = await runAttempt([...infeasibleArgs], options);
+    expect(exitCode).toBe(4);
+    expect(fired).toEqual([]);
+  });
+
+  it("#8543: a throwing initSignalTrackingStore does not change exit code, JSON result, or console output", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { options } = infeasibleOptions(
+      { initSignalTrackingStore: () => { throw new Error("store init boom"); } },
+      { avoidReasons: ["claim_status_solved"], raiseReasons: [] },
+    );
+
+    const exitCode = await runAttempt([...infeasibleArgs], options);
+
+    expect(exitCode).toBe(4);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ outcome: "blocked_infeasible", reason: "infeasible_raise" });
+  });
+
+  it("#8543: a store whose recordRuleFired rejects is swallowed -- exit code and result unchanged", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const { store } = fakeSignalStore({ recordRuleFired: async () => { throw new Error("write boom"); } });
+    const { options } = infeasibleOptions(
+      { initSignalTrackingStore: () => store },
+      { avoidReasons: ["claim_status_solved"], raiseReasons: ["duplicate_cluster_high"] },
+    );
+
+    const exitCode = await runAttempt([...infeasibleArgs], options);
+
+    expect(exitCode).toBe(4);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ outcome: "blocked_infeasible" });
   });
 
   it("REGRESSION: infeasible WITHOUT --json prints the feasibility verdict on stderr and exits 4", async () => {

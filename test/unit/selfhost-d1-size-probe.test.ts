@@ -75,6 +75,7 @@ describe("resolveD1SizeProbeConfig / isD1SizeProbeEnabled", () => {
     expect(config?.databaseId).toBe("db-1");
     expect(config?.apiToken).toBe("token-1");
     expect(config?.tables.length).toBeGreaterThan(0);
+    expect(config?.tables).toContain("webhook_events"); // derives from RETENTION_POLICY (#8381)
     expect(isD1SizeProbeEnabled(FULL_ENV)).toBe(true);
   });
 

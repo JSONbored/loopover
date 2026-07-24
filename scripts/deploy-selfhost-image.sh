@@ -61,31 +61,6 @@ validate_inputs() {
   fi
 }
 
-wait_for_healthy() {
-  local deadline container_id status
-
-  deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
-  while [ "$SECONDS" -le "$deadline" ]; do
-    container_id="$(docker compose "${compose_args[@]}" ps -q "$SERVICE" 2>/dev/null || true)"
-    if [ -n "$container_id" ]; then
-      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
-      if [ "$status" = "healthy" ]; then
-        echo "selfhost image deploy: $SERVICE is healthy"
-        return 0
-      fi
-    fi
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      break
-    fi
-    sleep 2
-  done
-
-  echo "error: $SERVICE did not become healthy within ${HEALTH_TIMEOUT_SECONDS}s" >&2
-  docker compose "${compose_args[@]}" ps "$SERVICE" >&2 || true
-  docker compose "${compose_args[@]}" logs --tail=80 "$SERVICE" >&2 || true
-  exit 1
-}
-
 require_cmd docker
 docker compose version >/dev/null
 
@@ -126,7 +101,7 @@ docker compose "${compose_args[@]}" pull --policy always "$SERVICE"
 echo "selfhost image deploy: restarting $SERVICE"
 maybe_infisical_run docker compose "${compose_args[@]}" up -d --no-build --no-deps "$SERVICE"
 
-wait_for_healthy
+wait_for_healthy "$SERVICE" "$HEALTH_TIMEOUT_SECONDS" "selfhost image deploy" "${compose_args[@]}"
 env_put LOOPOVER_IMAGE "$IMAGE"
 
 echo "selfhost image deploy: complete ($IMAGE)"

@@ -28,15 +28,19 @@ import { getDb } from "./client";
 import {
   activeReviewTracking,
   advisories,
+  agentPendingActions,
   auditEvents,
+  bounties,
   burdenForecasts,
   checkSummaries,
   collisionEdges,
   contributorRepoStats,
   gateOutcomes,
   githubAgentCommandAnswers,
+  githubAgentCommandFeedback,
   githubRateLimitObservations,
   issues,
+  issueWatchSubscriptions,
   notificationDeliveries,
   productUsageEvents,
   pullRequestDetailSyncState,
@@ -48,8 +52,11 @@ import {
   repoLabels,
   repoQueueTrendSnapshots,
   repositories,
+  repositoryAiKeys,
+  repositoryLinearKeys,
   repositorySettings,
   repoSnapshots,
+  reviewSuppression,
   repoSyncSegments,
   repoSyncState,
   signalSnapshots,
@@ -355,6 +362,86 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
   // signalSnapshots: id is a random UUID; repo_full_name is NULLABLE (contributor/global-scoped signals
   // carry no repo at all) and there is no index of any kind on this table. Plain rename.
   await db.update(signalSnapshots).set({ repoFullName: newFullName }).where(eq(signalSnapshots.repoFullName, oldFullName));
+
+  // Seven more Drizzle-schema tables carrying a repo_full_name identity column with live writers (#8379),
+  // each folded by its REAL constraint (verified in schema.ts), following the shapes already used above:
+
+  // repositoryAiKeys / repositoryLinearKeys: `repo_full_name` is itself the PRIMARY KEY -- same
+  // fold-then-rename anchor shape as repositories/repositorySettings above. Only the identity column moves;
+  // the encrypted key material rides along untouched.
+  await db.delete(repositoryAiKeys).where(eq(repositoryAiKeys.repoFullName, newFullName));
+  await db.update(repositoryAiKeys).set({ repoFullName: newFullName }).where(eq(repositoryAiKeys.repoFullName, oldFullName));
+
+  await db.delete(repositoryLinearKeys).where(eq(repositoryLinearKeys.repoFullName, newFullName));
+  await db.update(repositoryLinearKeys).set({ repoFullName: newFullName }).where(eq(repositoryLinearKeys.repoFullName, oldFullName));
+
+  // bounties: unique (repo_full_name, issue_number) -- fold on the other half, issue_number. `id` is an
+  // EXTERNAL bounty id (String(issue.id) from the Gitt snapshot, src/bounties/ingest.ts), never derived from
+  // the repo name, so unlike pullRequests/issues there is no id substring to rewrite.
+  const collidingBountyIssues = (
+    await db.select({ issueNumber: bounties.issueNumber }).from(bounties).where(eq(bounties.repoFullName, oldFullName))
+  ).map((row) => row.issueNumber);
+  if (collidingBountyIssues.length > 0) {
+    await db.delete(bounties).where(and(eq(bounties.repoFullName, newFullName), inArray(bounties.issueNumber, collidingBountyIssues)));
+  }
+  await db.update(bounties).set({ repoFullName: newFullName }).where(eq(bounties.repoFullName, oldFullName));
+
+  // reviewSuppression: unique (repo_full_name, category, path_glob, pattern_hash) -- per-tuple fold like
+  // checkSummaries above, but every fold column is NOT NULL (schema.ts), so a plain eq() per column suffices
+  // with no isNull branching.
+  const collidingSuppressionKeys = await db
+    .select({ category: reviewSuppression.category, pathGlob: reviewSuppression.pathGlob, patternHash: reviewSuppression.patternHash })
+    .from(reviewSuppression)
+    .where(eq(reviewSuppression.repoFullName, oldFullName));
+  for (const key of collidingSuppressionKeys) {
+    await db
+      .delete(reviewSuppression)
+      .where(
+        and(
+          eq(reviewSuppression.repoFullName, newFullName),
+          eq(reviewSuppression.category, key.category),
+          eq(reviewSuppression.pathGlob, key.pathGlob),
+          eq(reviewSuppression.patternHash, key.patternHash),
+        ),
+      );
+  }
+  await db.update(reviewSuppression).set({ repoFullName: newFullName }).where(eq(reviewSuppression.repoFullName, oldFullName));
+
+  // agentPendingActions: unique (repo_full_name, pull_number, action_class) -- same per-tuple fold, both
+  // fold columns NOT NULL. A decided row is sticky, so folding in favor of the pre-existing oldFullName row
+  // preserves the maintainer's actual accept/reject decision rather than a fresh post-rename `pending`.
+  const collidingPendingActionKeys = await db
+    .select({ pullNumber: agentPendingActions.pullNumber, actionClass: agentPendingActions.actionClass })
+    .from(agentPendingActions)
+    .where(eq(agentPendingActions.repoFullName, oldFullName));
+  for (const key of collidingPendingActionKeys) {
+    await db
+      .delete(agentPendingActions)
+      .where(
+        and(
+          eq(agentPendingActions.repoFullName, newFullName),
+          eq(agentPendingActions.pullNumber, key.pullNumber),
+          eq(agentPendingActions.actionClass, key.actionClass),
+        ),
+      );
+  }
+  await db.update(agentPendingActions).set({ repoFullName: newFullName }).where(eq(agentPendingActions.repoFullName, oldFullName));
+
+  // issueWatchSubscriptions: unique (login, repo_full_name) -- fold on the single `login` column, the same
+  // shape as contributorRepoStats above. `id` is a random UUID, so no id rewrite.
+  const collidingWatchLogins = (
+    await db.select({ login: issueWatchSubscriptions.login }).from(issueWatchSubscriptions).where(eq(issueWatchSubscriptions.repoFullName, oldFullName))
+  ).map((row) => row.login);
+  if (collidingWatchLogins.length > 0) {
+    await db
+      .delete(issueWatchSubscriptions)
+      .where(and(eq(issueWatchSubscriptions.repoFullName, newFullName), inArray(issueWatchSubscriptions.login, collidingWatchLogins)));
+  }
+  await db.update(issueWatchSubscriptions).set({ repoFullName: newFullName }).where(eq(issueWatchSubscriptions.repoFullName, oldFullName));
+
+  // githubAgentCommandFeedback: its only unique index is (answer_id, actor_hash) -- repo_full_name appears
+  // solely in a NON-unique index, so nothing can collide. Plain rename, same as repoSnapshots above.
+  await db.update(githubAgentCommandFeedback).set({ repoFullName: newFullName }).where(eq(githubAgentCommandFeedback.repoFullName, oldFullName));
 
   // REES/parity tables below (review_audit, contributor_gate_history, submitter_stats) are raw-SQL-only --
   // deliberately NOT added to the Drizzle schema (see each table's own migration header) -- so these three

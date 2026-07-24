@@ -5,14 +5,14 @@
 // scripts/orb-release-core.ts's buildOrbStableReleaseReport for the underlying logic and rationale.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { buildOrbStableReleaseReport, type OrbReleaseCommit } from "./orb-release-core.js";
+import { buildOrbStableReleaseReport, latestStableOrbTag, type OrbReleaseCommit } from "./orb-release-core.js";
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const tags = git(["tag", "--list", "orb-v*"])
     .split("\n")
     .filter(Boolean);
-  const stableTagName = latestStableTagName(tags);
+  const stableTagName = latestStableOrbTag(tags)?.tag ?? null;
 
   const report = buildOrbStableReleaseReport({
     tags,
@@ -24,17 +24,6 @@ function main() {
   if (!args.json && !args.output) {
     process.stdout.write(report.due ? `ORB stable release due: orb-v${report.nextVersion}\n` : "No ORB stable release due.\n");
   }
-}
-
-// Same tag-selection concern as check-orb-release-due.ts's latestStableTagName -- kept here (not exported
-// from the core module) since it's a git-log concern, not a pure-logic one.
-function latestStableTagName(tags: readonly string[]): string | null {
-  const stable = tags.filter((tag) => /^orb-v\d+\.\d+\.\d+$/.test(tag));
-  return stable.sort(compareTagsDesc)[0] ?? null;
-}
-
-function compareTagsDesc(left: string, right: string): number {
-  return right.localeCompare(left, undefined, { numeric: true });
 }
 
 type ParsedArgs = { json: boolean; output: string | null };

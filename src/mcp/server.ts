@@ -172,7 +172,7 @@ import { buildTestEvidenceReport, classifyTestCoverage, hasLocalTestEvidence, is
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "../services/plan-dag";
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness } from "../settings/agent-execution";
-import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
+import { AUTONOMY_LEVELS } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";

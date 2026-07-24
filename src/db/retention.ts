@@ -2,10 +2,10 @@ import { nowIso } from "../utils/json";
 
 /**
  * Data-retention policy for the high-volume, append-only / log / superseded-snapshot tables. These hold
- * pure history (logs, usage metrics, ephemeral observations) or snapshots where only the latest matters,
- * so rows older than the window can be safely deleted. Current-state and reference tables (repositories,
- * repository_settings, pull_requests, issues, contributors, registry/scoring snapshots, repository_ai_keys,
- * focus manifests, webhook delivery idempotency records, etc.) are intentionally EXCLUDED — they are not append-only logs.
+ * pure history (logs, usage metrics, ephemeral observations, webhook delivery traces) or snapshots where
+ * only the latest matters, so rows older than the window can be safely deleted. Current-state and reference
+ * tables (repositories, repository_settings, pull_requests, issues, contributors, registry/scoring snapshots,
+ * repository_ai_keys, focus manifests, etc.) are intentionally EXCLUDED — they are not append-only logs.
  *
  * `column` is the row's primary timestamp (ISO-8601). Windows are deliberately conservative.
  */
@@ -24,6 +24,9 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // One payloadJson blob per agent run (#3896); a per-run diagnostic snapshot with no cross-run rollup
   // depending on it, so a shorter window than the audit/usage-log tables above is appropriate.
   { table: "agent_context_snapshots", column: "created_at", days: 30 },
+  // One row per inbound webhook delivery (#8381 / unfinished #3896); short-lived idempotency lookups,
+  // not durable history — same 90d window as audit/ai_usage logs.
+  { table: "webhook_events", column: "received_at", days: 90 },
 ];
 
 export type PruneResult = { table: string; column: string; cutoff: string; deleted: number };

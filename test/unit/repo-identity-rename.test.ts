@@ -17,6 +17,7 @@ import {
   listCollisionEdges,
   listContributorRepoStats,
   listProductUsageEvents,
+  listIssueWatchersForRepo,
   listPullRequests,
   listRecentMergedPullRequests,
   listRepoLabels,
@@ -36,6 +37,7 @@ import {
   upsertCheckSummary,
   upsertContributorRepoStat,
   upsertIssueFromGitHub,
+  upsertIssueWatchSubscription,
   upsertPullRequestDetailSyncState,
   upsertPullRequestFile,
   upsertPullRequestFromGitHub,
@@ -1055,6 +1057,150 @@ describe("renameRepositoryIdentity", () => {
 
       const rows = await env.DB.prepare("select count(*) as n from predicted_gate_calls where project = ?").bind(NEW).first<{ n: number }>();
       expect(rows?.n).toBe(1);
+    });
+  });
+
+  // #8379: seven more Drizzle-schema tables carrying a repo_full_name identity column with live writers.
+  describe("repository_ai_keys / repository_linear_keys (#8379)", () => {
+    const insertAiKey = (env: Env, repo: string, ciphertext: string) =>
+      env.DB.prepare("INSERT INTO repository_ai_keys (repo_full_name, provider, ciphertext, iv, last4) VALUES (?, 'openai', ?, 'iv', '1234')").bind(repo, ciphertext).run();
+    // repository_linear_keys is the one of the two whose timestamp columns carry no SQL default (Drizzle
+    // supplies them at runtime), so they are passed explicitly here.
+    const insertLinearKey = (env: Env, repo: string, ciphertext: string) =>
+      env.DB.prepare(
+        "INSERT INTO repository_linear_keys (repo_full_name, ciphertext, iv, last4, created_at, updated_at) VALUES (?, ?, 'iv', '5678', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
+      )
+        .bind(repo, ciphertext)
+        .run();
+
+    it("folds a stray new-name key row in both stores, carrying the old row's key material forward", async () => {
+      const env = createTestEnv();
+      await insertAiKey(env, OLD, "the-real-openai-key");
+      await insertAiKey(env, NEW, "stray-fragment"); // the collision on the repo_full_name PK
+      await insertLinearKey(env, OLD, "the-real-linear-key");
+      await insertLinearKey(env, NEW, "stray-fragment");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const ai = await env.DB.prepare("select ciphertext from repository_ai_keys where repo_full_name = ?").bind(NEW).all<{ ciphertext: string }>();
+      expect(ai.results).toEqual([{ ciphertext: "the-real-openai-key" }]);
+      const linear = await env.DB.prepare("select ciphertext from repository_linear_keys where repo_full_name = ?").bind(NEW).all<{ ciphertext: string }>();
+      expect(linear.results).toEqual([{ ciphertext: "the-real-linear-key" }]);
+      const staleAi = await env.DB.prepare("select count(*) as n from repository_ai_keys where repo_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(staleAi?.n).toBe(0);
+    });
+  });
+
+  describe("bounties (#8379)", () => {
+    const insert = (env: Env, id: string, repo: string, issueNumber: number, status: string) =>
+      env.DB.prepare("INSERT INTO bounties (id, repo_full_name, issue_number, status) VALUES (?, ?, ?, ?)").bind(id, repo, issueNumber, status).run();
+
+    it("moves bounties forward, folds a colliding issue_number, and leaves the external id untouched", async () => {
+      const env = createTestEnv();
+      await insert(env, "ext-1", OLD, 10, "open");
+      await insert(env, "ext-2", NEW, 10, "closed"); // collides on (repo, issue_number)
+      await insert(env, "ext-3", NEW, 11, "open"); // a different issue under the new name survives
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id, issue_number, status from bounties where repo_full_name = ? order by issue_number").bind(NEW).all<{ id: string; issue_number: number; status: string }>();
+      expect(rows.results).toEqual([
+        { id: "ext-1", issue_number: 10, status: "open" }, // the old row won the fold, id unchanged
+        { id: "ext-3", issue_number: 11, status: "open" },
+      ]);
+      const stale = await env.DB.prepare("select count(*) as n from bounties where repo_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(stale?.n).toBe(0);
+    });
+  });
+
+  describe("review_suppression (#8379)", () => {
+    const insert = (env: Env, id: string, repo: string, category: string, pathGlob: string, patternHash: string) =>
+      env.DB.prepare("INSERT INTO review_suppression (id, repo_full_name, category, path_glob, pattern_hash) VALUES (?, ?, ?, ?, ?)").bind(id, repo, category, pathGlob, patternHash).run();
+
+    it("folds only the exact colliding 4-column tuple, leaving other suppression rules intact", async () => {
+      const env = createTestEnv();
+      await insert(env, "s-old", OLD, "style", "src/**", "hash-a");
+      await insert(env, "s-collide", NEW, "style", "src/**", "hash-a"); // same tuple: folded away
+      await insert(env, "s-other-hash", NEW, "style", "src/**", "hash-b"); // differs only by hash: survives
+      await insert(env, "s-other-cat", NEW, "security", "src/**", "hash-a"); // differs only by category: survives
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id from review_suppression where repo_full_name = ? order by id").bind(NEW).all<{ id: string }>();
+      expect(rows.results.map((r) => r.id)).toEqual(["s-old", "s-other-cat", "s-other-hash"]);
+    });
+  });
+
+  describe("agent_pending_actions (#8379)", () => {
+    const insert = (env: Env, id: string, repo: string, pullNumber: number, actionClass: string, status: string) =>
+      env.DB.prepare(
+        "INSERT INTO agent_pending_actions (id, repo_full_name, pull_number, installation_id, action_class, autonomy_level, status) VALUES (?, ?, ?, 1, ?, 'auto_with_approval', ?)",
+      )
+        .bind(id, repo, pullNumber, actionClass, status)
+        .run();
+
+    it("folds only the colliding (pull_number, action_class) tuple, preserving the maintainer's decided row", async () => {
+      const env = createTestEnv();
+      await insert(env, "a-old", OLD, 3, "merge", "accepted"); // a real maintainer decision
+      await insert(env, "a-collide", NEW, 3, "merge", "pending"); // the post-rename fragment: folded away
+      await insert(env, "a-other-class", NEW, 3, "label", "pending"); // same pull, different class: survives
+      await insert(env, "a-other-pull", NEW, 4, "merge", "pending"); // different pull: survives
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id, status from agent_pending_actions where repo_full_name = ? order by id").bind(NEW).all<{ id: string; status: string }>();
+      expect(rows.results).toEqual([
+        { id: "a-old", status: "accepted" },
+        { id: "a-other-class", status: "pending" },
+        { id: "a-other-pull", status: "pending" },
+      ]);
+    });
+  });
+
+  describe("issue_watch_subscriptions (#8379)", () => {
+    it("folds a colliding login's stray row and keeps a different watcher's subscription", async () => {
+      const env = createTestEnv();
+      await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: OLD, labels: ["bug"] });
+      await upsertIssueWatchSubscription(env, { login: "alice", repoFullName: NEW }); // collides on (login, repo)
+      await upsertIssueWatchSubscription(env, { login: "bob", repoFullName: NEW });
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const watchers = await listIssueWatchersForRepo(env, NEW);
+      expect(watchers.map((w) => w.login).sort()).toEqual(["alice", "bob"]);
+      expect(watchers.find((w) => w.login === "alice")?.labels).toEqual(["bug"]); // the old row's labels won
+      expect(await listIssueWatchersForRepo(env, OLD)).toEqual([]);
+    });
+  });
+
+  describe("github_agent_command_feedback (#8379)", () => {
+    it("renames every feedback row (no unique index on repo_full_name, so nothing folds)", async () => {
+      const env = createTestEnv();
+      await upsertAgentCommandAnswer(env, {
+        id: "answer-fb",
+        repoFullName: OLD,
+        issueNumber: 12,
+        command: "preflight",
+        responseUrl: "https://github.com/owner/gittensory/issues/12",
+        actorKind: "author",
+        metadata: {},
+      });
+      const insert = (id: string, repo: string, actorHash: string) =>
+        env.DB.prepare(
+          "INSERT INTO github_agent_command_feedback (id, answer_id, repo_full_name, issue_number, command, actor_hash, vote, source, actor_kind) VALUES (?, 'answer-fb', ?, 12, 'preflight', ?, 'up', 'reaction', 'author')",
+        )
+          .bind(id, repo, actorHash)
+          .run();
+      await insert("fb-1", OLD, "hash-1");
+      await insert("fb-2", OLD, "hash-2");
+      await insert("fb-3", "some/other-repo", "hash-3");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const renamed = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where repo_full_name = ?").bind(NEW).first<{ n: number }>();
+      expect(renamed?.n).toBe(2); // both survive: no unique constraint on this column
+      const unrelated = await env.DB.prepare("select count(*) as n from github_agent_command_feedback where repo_full_name = ?").bind("some/other-repo").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
     });
   });
 

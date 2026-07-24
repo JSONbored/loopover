@@ -48,6 +48,15 @@ function npmPackageFromNodeModulesPath(path: string): string | null {
   return rest.split("/")[0] || null;
 }
 
+/** Recover a bare package name from an npm-registry `resolved` URL (e.g. context lines in a hunk whose
+ *  `"node_modules/<pkg>": {` header fell outside git's 3-line window). Used to key unattributed fallback
+ *  buckets so version + resolved/integrity signals for the SAME package can merge across hunk boundaries
+ *  (#8351) instead of each depth-0 `}` minting a fresh `#unattributed-N` sequence key. */
+function packageNameFromResolvedUrl(url: string): string | null {
+  const match = /^https:\/\/registry\.npmjs\.org\/((?:@[^/]+\/)?[^/]+)\//i.exec(url);
+  return match?.[1] ?? null;
+}
+
 /** True when `path`'s basename is `package-lock.json` — the only lockfile format this check parses today
  *  (npm/lockfileVersion 2-3 JSON shape). Matches ANY directory depth (root, `review-enrichment/`,
  *  `apps/loopover-ui/`, or a future workspace) rather than a hardcoded path list, so a new workspace package
@@ -130,8 +139,15 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
   // a change was silently dropped: `currentEntryKey` stayed null for the whole hunk, so the
   // `!currentEntryKey ... continue` guard below skipped it -- a tampered field could evade detection
   // entirely just by having enough unchanged sibling fields ahead of it in its entry.
+  //
+  // When a package name can be recovered from a nearby `resolved` URL (including unchanged context
+  // lines), the fallback key is `${path}#unattributed:<pkg>` so two hunks that each close with a
+  // depth-0 `}` (which clears `activeUnknownKey`) still merge into ONE candidate for that package
+  // (#8351). Without a recoverable name we keep the per-block `#unattributed-N` sequence — two
+  // genuinely different nameless blocks must never collapse into each other.
   let activeUnknownKey: string | null = null;
   let unknownEntrySeq = 0;
+  let inferredUnattributedPackage: string | null = null;
 
   const entryFor = (entryKey: string, packageName: string): MutableCandidate => {
     const existing = byEntry.get(entryKey);
@@ -149,6 +165,37 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
     return created;
   };
 
+  const clearBlockTracking = () => {
+    activeEntry = null;
+    insideRejectedBlock = false;
+    activeUnknownKey = null;
+    inferredUnattributedPackage = null;
+  };
+
+  /** When a sequence-keyed unattributed bucket later learns a package name, re-key (and merge into any
+   *  pre-existing package-keyed candidate) so cross-hunk / late-resolved correlation works (#8351). */
+  const promoteSequenceKeyToPackage = (packageName: string) => {
+    if (!activeUnknownKey?.includes("#unattributed-")) return;
+    const seqKey = activeUnknownKey;
+    const pkgKey = `${path}#unattributed:${packageName}`;
+    activeUnknownKey = pkgKey;
+    const seqEntry = byEntry.get(seqKey);
+    // Freshly minted sequence keys promote before their first field is recorded — no map entry yet.
+    if (!seqEntry) return;
+    const prior = byEntry.get(pkgKey);
+    if (!prior) {
+      byEntry.delete(seqKey);
+      byEntry.set(pkgKey, seqEntry);
+      return;
+    }
+    if (seqEntry.removedVersion !== undefined) prior.removedVersion = seqEntry.removedVersion;
+    if (seqEntry.addedVersion !== undefined) prior.addedVersion = seqEntry.addedVersion;
+    prior.versionChanged = versionChanged(prior.removedVersion, prior.addedVersion);
+    prior.resolvedOrIntegrityChanged = prior.resolvedOrIntegrityChanged || seqEntry.resolvedOrIntegrityChanged;
+    prior.offRegistryResolvedUrl = prior.offRegistryResolvedUrl ?? seqEntry.offRegistryResolvedUrl;
+    byEntry.delete(seqKey);
+  };
+
   for (const line of patchLines(patch)) {
     const body = line.content.trim();
     const objectHeader = /^"([^"]+)"\s*:\s*\{/.exec(body);
@@ -161,6 +208,7 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
         sawPackagesEntry = true;
         insideRejectedBlock = false;
         activeUnknownKey = null;
+        inferredUnattributedPackage = null;
       } else if (activeEntry) {
         innerObjectDepth++;
       } else if (!sawPackagesEntry && !CONTAINER_KEYS.has(key)) {
@@ -168,11 +216,13 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
         innerObjectDepth = 0;
         insideRejectedBlock = false;
         activeUnknownKey = null;
+        inferredUnattributedPackage = null;
       } else {
         activeEntry = null;
         innerObjectDepth = 0;
         insideRejectedBlock = true;
         activeUnknownKey = null;
+        inferredUnattributedPackage = null;
       }
       continue;
     }
@@ -180,9 +230,7 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
       if (innerObjectDepth > 0) {
         innerObjectDepth--;
       } else {
-        activeEntry = null;
-        insideRejectedBlock = false;
-        activeUnknownKey = null;
+        clearBlockTracking();
       }
     }
 
@@ -190,14 +238,33 @@ function scanPackageLockPatch(path: string, patch: string): LockfileTamperCandid
     const integrityMatch = /^"integrity"\s*:\s*"([^"]*)"/.exec(body);
     const versionMatch = /^"version"\s*:\s*"([^"]*)"/.exec(body);
 
+    // Learn package identity from ANY resolved URL in this block (context OR changed) before deciding
+    // the unattributed bucket key — a version-only hunk's leading context often still carries the
+    // registry URL even when the entry header itself is out of window (#8351 / #7778).
+    if (!activeEntry && !insideRejectedBlock && resolvedMatch?.[1]) {
+      const fromResolved = packageNameFromResolvedUrl(resolvedMatch[1]);
+      if (fromResolved) {
+        inferredUnattributedPackage = fromResolved;
+        // Context lines never reach the allocation branch below; still promote a live sequence key.
+        promoteSequenceKeyToPackage(fromResolved);
+      }
+    }
+
     let currentEntryKey = activeEntry?.entryKey ?? null;
     let currentPackageName = activeEntry?.packageName ?? null;
     if (!currentEntryKey && !insideRejectedBlock && line.sign !== " " && (resolvedMatch || integrityMatch || versionMatch)) {
+      // Always mint a sequence key first, then promote to `#unattributed:<pkg>` when a name is known
+      // (covers the empty-bucket promote path on first allocation, and late re-key once fields exist).
       if (!activeUnknownKey) {
         unknownEntrySeq += 1;
         activeUnknownKey = `${path}#unattributed-${unknownEntrySeq}`;
       }
+      if (inferredUnattributedPackage) {
+        promoteSequenceKeyToPackage(inferredUnattributedPackage);
+      }
       currentEntryKey = activeUnknownKey;
+      // Keep the anonymous display label even when the Map key is package-qualified — existing #7778
+      // assertions (and the public finding text for header-less hunks) key off this exact string.
       currentPackageName = "(unattributed lockfile entry)";
     }
     if (!currentEntryKey || !currentPackageName || line.sign === " ") continue;

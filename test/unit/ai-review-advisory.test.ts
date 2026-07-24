@@ -456,8 +456,10 @@ describe("runAiReviewForAdvisory", () => {
         head_sha: "sha3",
         public_notes: true,
         reviewer_count: 1,
+        // Compact strings, not objects -- raw diagnostic objects flatten to "[Object]" in Sentry context
+        // (LOOPOVER-2B); formatReviewDiagnosticsForCapture renders model#attempt:status[:error].
         review_diagnostics: expect.arrayContaining([
-          expect.objectContaining({ status: "unparseable_output" }),
+          expect.stringContaining(":unparseable_output"),
         ]),
       }),
       "ai_review_inconclusive",

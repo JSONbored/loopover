@@ -5,6 +5,25 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.12.0](https://github.com/JSONbored/loopover/compare/mcp-v3.11.0...mcp-v3.12.0) (2026-07-24)
+
+
+### Features
+
+* **mcp:** add loopover-mcp agent start CLI subcommand ([#8443](https://github.com/JSONbored/loopover/issues/8443)) ([c2190cd](https://github.com/JSONbored/loopover/commit/c2190cdd55e940d1184498d96818e7de4e52fb34))
+
+
+### Fixes
+
+* **mcp:** print usage help for bare loopover-mcp invocation instead of starting stdio server ([#8486](https://github.com/JSONbored/loopover/issues/8486)) ([c096106](https://github.com/JSONbored/loopover/commit/c096106120ea7e1106db0f9a9cf7893fe84b8930)), closes [#8313](https://github.com/JSONbored/loopover/issues/8313)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.11.0 to ^3.12.0
+
 ## [3.11.0](https://github.com/JSONbored/loopover/compare/mcp-v3.10.0...mcp-v3.11.0) (2026-07-23)
 
 

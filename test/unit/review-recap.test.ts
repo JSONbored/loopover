@@ -298,8 +298,8 @@ function envWithSlackWebhook(): Env {
   return Object.assign(createTestEnv(), { SLACK_WEBHOOK_URL: SLACK_HOOK }) as Env;
 }
 
-async function slackAuditRows(env: Env): Promise<Array<{ outcome: string; detail: string }>> {
-  const rows = await env.DB.prepare("select outcome, detail from audit_events where event_type = 'review_recap_notification.slack' order by created_at").all<{ outcome: string; detail: string }>();
+async function slackAuditRows(env: Env): Promise<Array<{ outcome: string; detail: string; metadata_json: string }>> {
+  const rows = await env.DB.prepare("select outcome, detail, metadata_json from audit_events where event_type = 'review_recap_notification.slack' order by created_at").all<{ outcome: string; detail: string; metadata_json: string }>();
   return rows.results ?? [];
 }
 
@@ -328,6 +328,8 @@ describe("deliverRecapToSlack (#2246, reuses isValidSlackWebhook/escapeSlackMrkd
     expect(body.blocks[0].text.text).toContain("JSONbored/gittensory");
     const rows = await slackAuditRows(env);
     expect(rows.some((r) => r.outcome === "completed")).toBe(true);
+    // the completed audit threads the resolved source (global fallback here), mirroring sendReviewRecapToDiscord
+    expect(JSON.parse(rows.find((r) => r.outcome === "completed")?.metadata_json ?? "{}")).toMatchObject({ source: "global" });
   });
 
   it("escapes &, <, and > in both the repo name and the summary text (mrkdwn escaping)", async () => {
@@ -352,22 +354,61 @@ describe("deliverRecapToSlack (#2246, reuses isValidSlackWebhook/escapeSlackMrkd
     expect(text).toContain("&amp;");
   });
 
-  it("denies delivery with missing_webhook and records it when SLACK_WEBHOOK_URL is unset (typeof webhookUrl !== string side)", async () => {
+  it("denies delivery with missing_global_webhook when neither a per-repo entry nor SLACK_WEBHOOK_URL is set (fallback falsy side)", async () => {
     const env = createTestEnv();
     const result = await deliverRecapToSlack(env, recap);
     expect(result.sent).toBe(false);
-    expect(result.reason).toBe("missing_webhook");
+    expect(result.reason).toBe("missing_global_webhook");
     const rows = await slackAuditRows(env);
-    expect(rows.some((r) => r.outcome === "denied" && r.detail === "missing_webhook")).toBe(true);
+    expect(rows.some((r) => r.outcome === "denied" && r.detail === "missing_global_webhook")).toBe(true);
   });
 
-  it("denies delivery with invalid_webhook when SLACK_WEBHOOK_URL is set but fails isValidSlackWebhook (isValidSlackWebhook false side)", async () => {
+  it("denies delivery with invalid_global_webhook when SLACK_WEBHOOK_URL is set but fails validation (isValidSlackWebhook false side)", async () => {
     const env = Object.assign(createTestEnv(), { SLACK_WEBHOOK_URL: "https://evil.example/services/x" }) as Env;
     const result = await deliverRecapToSlack(env, recap);
     expect(result.sent).toBe(false);
-    expect(result.reason).toBe("invalid_webhook");
+    expect(result.reason).toBe("invalid_global_webhook");
     const rows = await slackAuditRows(env);
-    expect(rows.some((r) => r.outcome === "denied" && r.detail === "invalid_webhook")).toBe(true);
+    expect(rows.some((r) => r.outcome === "denied" && r.detail === "invalid_global_webhook")).toBe(true);
+  });
+
+  it("REGRESSION (#8371): routes two different repos independently — a per-repo SLACK_REPO_WEBHOOKS entry vs the global fallback", async () => {
+    const REPO_HOOK = "https://hooks.slack.com/services/T7/B7/repo";
+    const calls: Array<{ url: string; body: string }> = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response(null, { status: 200 });
+    });
+    const env = Object.assign(createTestEnv(), {
+      SLACK_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/gittensory": REPO_HOOK }),
+      SLACK_WEBHOOK_URL: SLACK_HOOK,
+    }) as Env;
+    // recap.repoFullName is "JSONbored/gittensory" → hits the per-repo entry (case-insensitive), NOT the global.
+    expect((await deliverRecapToSlack(env, recap)).sent).toBe(true);
+    const otherRecap = buildReviewRecap({ repoFullName: "acme/widgets", generatedAt: NOW, windowDays: 7, pullRequests: [], gateMergePrecision: null, gateDecided: 0 });
+    // acme/widgets has no per-repo entry → falls back to the global SLACK_WEBHOOK_URL.
+    expect((await deliverRecapToSlack(env, otherRecap)).sent).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual([REPO_HOOK, SLACK_HOOK]);
+    const rows = await slackAuditRows(env);
+    expect(rows.filter((r) => r.outcome === "completed")).toHaveLength(2);
+  });
+
+  it("REGRESSION (#8371): an invalid per-repo entry is DENIED and does NOT fall back to the global channel", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL) => {
+      calls.push(String(url));
+      return new Response(null, { status: 200 });
+    });
+    const env = Object.assign(createTestEnv(), {
+      SLACK_REPO_WEBHOOKS: JSON.stringify({ "jsonbored/gittensory": "https://evil.example/services/x" }),
+      SLACK_WEBHOOK_URL: SLACK_HOOK,
+    }) as Env;
+    const result = await deliverRecapToSlack(env, recap);
+    expect(result.sent).toBe(false);
+    expect(result.reason).toBe("invalid_repo_webhook");
+    expect(calls).toEqual([]);
+    const rows = await slackAuditRows(env);
+    expect(rows.some((r) => r.outcome === "denied" && r.detail === "invalid_repo_webhook")).toBe(true);
   });
 
   it("degrades to a recorded error result when the webhook POST throws (fail-safe path, never throws)", async () => {

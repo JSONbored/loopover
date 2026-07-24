@@ -100,3 +100,26 @@ describe("reviewer-vote capture persistence (#8229 stage 0)", () => {
     vi.restoreAllMocks();
   });
 });
+
+describe("routing shadow orchestration hook (#8229 stage 1)", () => {
+  it("a dual ok review invokes the shadow (recording nothing on a sparse corpus); the review outcome is untouched", async () => {
+    const seen: string[] = [];
+    const env = voteEnv(seen);
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      repoFullName: REPO,
+      pr: { number: 21, title: "Add helper", body: "Adds a helper." },
+      author: "alice",
+      confirmedContributor: true,
+      advisory: advisory(21),
+    });
+    expect(result).toBeDefined();
+    // Sparse corpus ⇒ the shadow's no-signal arm: zero reviewer_routing_shadow rows, by design.
+    const shadows = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_events WHERE event_type = 'reviewer_routing_shadow'").first<{ n: number }>();
+    expect(shadows?.n).toBe(0);
+    // The votes themselves persisted — the hook runs strictly after and independently of them.
+    const votes = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_events WHERE event_type = 'reviewer_vote' AND target_key = ?").bind(`${REPO}#21`).first<{ n: number }>();
+    expect(votes?.n).toBe(2);
+  });
+});

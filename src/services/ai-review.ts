@@ -273,16 +273,21 @@ export type LoopOverAiReviewInput = {
    */
   securityFocus?: boolean | undefined;
   /**
-   * `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override), resolved by the caller from the
-   * (already-cached) manifest. Self-host only — overrides that repo's claude-code/codex model+effort for THIS
-   * review, taking priority over the operator's global CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/
-   * CODEX_AI_EFFORT env vars. A hosted (Workers-AI) `env.AI` ignores these fields entirely. Absent/null ⇒
-   * byte-identical to today (global env var, then the provider's own default).
+   * `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override, #8364), resolved by the caller from the
+   * (already-cached) manifest. Self-host only — overrides that repo's claude-code/codex model+effort+timeout for
+   * THIS review, taking priority over the operator's global CLAUDE_AI_MODEL/CLAUDE_AI_EFFORT/CODEX_AI_MODEL/
+   * CODEX_AI_EFFORT/CLAUDE_AI_TIMEOUT_MS/CODEX_AI_TIMEOUT_MS/CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS/
+   * CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS env vars. A hosted (Workers-AI) `env.AI` ignores these fields entirely.
+   * Absent/null ⇒ byte-identical to today (global env var, then the provider's own default).
    */
   claudeModel?: string | null | undefined;
   claudeEffort?: string | null | undefined;
   codexModel?: string | null | undefined;
   codexEffort?: string | null | undefined;
+  claudeTimeoutMs?: number | null | undefined;
+  codexTimeoutMs?: number | null | undefined;
+  claudeFirstOutputTimeoutMs?: number | null | undefined;
+  codexFirstOutputTimeoutMs?: number | null | undefined;
   /**
    * Same override mechanism, extended to the HTTP-API self-host providers (#3902): overrides
    * OLLAMA_AI_MODEL/OPENAI_AI_MODEL/OPENAI_COMPATIBLE_AI_MODEL/ANTHROPIC_AI_MODEL for THIS repo. A hosted
@@ -487,6 +492,21 @@ export type AiReviewActualUsage = {
   totalTokens?: number | undefined;
   costUsd?: number | undefined;
 };
+
+/** Render diagnostics as compact `model#attempt:status[:error]` strings for Sentry capture context. Passing the
+ *  raw objects loses everything: Sentry's normalizeDepth flattens each nested entry to the literal string
+ *  "[Object]", which erased exactly the model/attempt/status/error detail these entries exist to carry (the
+ *  2026-07-23 outage, LOOPOVER-2B, was diagnosable only from separate provider-failure events because of this).
+ *  Strings survive normalization verbatim. The `error` field is errorMessage() output, never raw provider text,
+ *  so including it here keeps the "withholds unsafe provider text" boundary intact. */
+export function formatReviewDiagnosticsForCapture(
+  diagnostics: readonly AiReviewDiagnostic[],
+): string[] {
+  return diagnostics.map(
+    (diagnostic) =>
+      `${diagnostic.model}#${diagnostic.attempt}:${diagnostic.status}${diagnostic.error ? `:${diagnostic.error}` : ""}`,
+  );
+}
 
 type ReviewerOpinionOutcome = {
   review: ModelReview | null;
@@ -1052,11 +1072,12 @@ function buildScreenshotEvidenceSystemAppend(screenshotEvidenceSummary: string |
 
 /** Correlation + per-repo override context forwarded to `env.AI.run`'s options. `jobId`/`repoFullName`/
  *  `pullNumber` (#codex-timeout-fields) are purely observational — a self-host provider-failure log, never read
- *  by any provider's own request logic. `claudeModel`/`claudeEffort`/`codexModel`/`codexEffort` and
- *  `ollamaModel`/`openaiModel`/`openaiCompatibleModel`/`anthropicModel` (#selfhost-ai-model-override, #3902) are
- *  the exception: the matching self-host provider DOES read its own field to pick the model (+ effort, for the
- *  CLI providers) for THIS repo, taking priority over that provider's global env var. All self-host-only; a
- *  hosted (Workers-AI) `env.AI` ignores every field here. */
+ *  by any provider's own request logic. `claudeModel`/`claudeEffort`/`codexModel`/`codexEffort`/
+ *  `claudeTimeoutMs`/`codexTimeoutMs`/`claudeFirstOutputTimeoutMs`/`codexFirstOutputTimeoutMs` and
+ *  `ollamaModel`/`openaiModel`/`openaiCompatibleModel`/`anthropicModel` (#selfhost-ai-model-override, #3902,
+ *  #8364) are the exception: the matching self-host provider DOES read its own fields to pick the model (+
+ *  effort/timeout, for the CLI providers) for THIS repo, taking priority over that provider's global env var.
+ *  All self-host-only; a hosted (Workers-AI) `env.AI` ignores every field here. */
 type AiRunCorrelation = {
   jobId?: string | undefined;
   repoFullName?: string | undefined;
@@ -1065,6 +1086,10 @@ type AiRunCorrelation = {
   claudeEffort?: string | undefined;
   codexModel?: string | undefined;
   codexEffort?: string | undefined;
+  claudeTimeoutMs?: number | undefined;
+  codexTimeoutMs?: number | undefined;
+  claudeFirstOutputTimeoutMs?: number | undefined;
+  codexFirstOutputTimeoutMs?: number | undefined;
   ollamaModel?: string | undefined;
   openaiModel?: string | undefined;
   openaiCompatibleModel?: string | undefined;
@@ -1142,6 +1167,10 @@ async function runWorkersOpinion(
   // Track the last provider error so we can fail-LOUD once ALL models × attempts are exhausted (below). Per-attempt
   // logs are warn (noisy retries, skipped by the central Sentry forwarder); the exhausted summary is error (#26).
   let lastError: unknown;
+  // ALSO track each model's own terminal error: `lastError` alone lets the fallback's failure MASK the primary's
+  // distinct one in the exhausted summary -- during the 2026-07-23 outage (LOOPOVER-2A) the fallback's
+  // circuit_open hid the primary's rate-limit 429, so the single Sentry event pointed at the wrong provider.
+  const errorsByModel: Record<string, string> = {};
   let lastUnparseable:
     | { model: string; attempt: number; responseChars: number; hasJsonObject: boolean; responseSnippet: string }
     | undefined;
@@ -1178,6 +1207,14 @@ async function runWorkersOpinion(
             ...(correlation?.claudeEffort !== undefined ? { claudeEffort: correlation.claudeEffort } : {}),
             ...(correlation?.codexModel !== undefined ? { codexModel: correlation.codexModel } : {}),
             ...(correlation?.codexEffort !== undefined ? { codexEffort: correlation.codexEffort } : {}),
+            ...(correlation?.claudeTimeoutMs !== undefined ? { claudeTimeoutMs: correlation.claudeTimeoutMs } : {}),
+            ...(correlation?.codexTimeoutMs !== undefined ? { codexTimeoutMs: correlation.codexTimeoutMs } : {}),
+            ...(correlation?.claudeFirstOutputTimeoutMs !== undefined
+              ? { claudeFirstOutputTimeoutMs: correlation.claudeFirstOutputTimeoutMs }
+              : {}),
+            ...(correlation?.codexFirstOutputTimeoutMs !== undefined
+              ? { codexFirstOutputTimeoutMs: correlation.codexFirstOutputTimeoutMs }
+              : {}),
             ...(correlation?.ollamaModel !== undefined ? { ollamaModel: correlation.ollamaModel } : {}),
             ...(correlation?.openaiModel !== undefined ? { openaiModel: correlation.openaiModel } : {}),
             ...(correlation?.openaiCompatibleModel !== undefined ? { openaiCompatibleModel: correlation.openaiCompatibleModel } : {}),
@@ -1257,6 +1294,7 @@ async function runWorkersOpinion(
           }),
         );
         lastError = error;
+        errorsByModel[model] = errorMessage(error);
         // A CLI timeout is not transient -- the same model retrying the same oversized/complex diff will almost
         // certainly time out again. Stop retrying THIS model (the fallback below still gets its own full retry
         // budget, since a different model/config may not share the same timeout) instead of burning up to 3x
@@ -1284,6 +1322,7 @@ async function runWorkersOpinion(
         primary,
         fallback,
         error: errorMessage(lastError),
+        errorsByModel,
       }),
     );
   }
@@ -2314,8 +2353,9 @@ export async function runLoopOverAiReview(
   const reviewDiagnostics: AiReviewDiagnostic[] = [];
   const fallbackNotes: string[] = [];
   // jobId/repoFullName/pullNumber: forwarded to a self-host provider's failure log (#codex-timeout-fields) —
-  // never anything BYOK-billed reads. claudeModel/claudeEffort/codexModel/codexEffort (#selfhost-ai-model-
-  // override): the per-repo manifest override, read by the matching self-host provider's own request logic.
+  // never anything BYOK-billed reads. claudeModel/claudeEffort/codexModel/codexEffort/claudeTimeoutMs/
+  // codexTimeoutMs/claudeFirstOutputTimeoutMs/codexFirstOutputTimeoutMs (#selfhost-ai-model-override, #8364):
+  // the per-repo manifest override, read by the matching self-host provider's own request logic.
   const aiRunCorrelation: AiRunCorrelation = {
     jobId: input.jobId,
     repoFullName: input.repoFullName,
@@ -2324,6 +2364,10 @@ export async function runLoopOverAiReview(
     claudeEffort: input.claudeEffort ?? undefined,
     codexModel: input.codexModel ?? undefined,
     codexEffort: input.codexEffort ?? undefined,
+    claudeTimeoutMs: input.claudeTimeoutMs ?? undefined,
+    codexTimeoutMs: input.codexTimeoutMs ?? undefined,
+    claudeFirstOutputTimeoutMs: input.claudeFirstOutputTimeoutMs ?? undefined,
+    codexFirstOutputTimeoutMs: input.codexFirstOutputTimeoutMs ?? undefined,
     ollamaModel: input.ollamaModel ?? undefined,
     openaiModel: input.openaiModel ?? undefined,
     openaiCompatibleModel: input.openaiCompatibleModel ?? undefined,

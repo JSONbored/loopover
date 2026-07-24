@@ -1299,10 +1299,10 @@ describe("queue processors", () => {
     // comment) -- this assertion only cares that a real, current-shape fingerprint was computed and threaded
     // through, not the exact version number, so it is updated to the new version rather than left pinned to
     // the pre-fix one.
-    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v5:/);
+    expect(cacheReadSpy.mock.calls[0]?.[5]).toMatch(/^ai-review-input:v6:/);
     expect(cacheWriteSpy).toHaveBeenCalled();
     expect(cacheWriteSpy.mock.calls[0]?.[5]).toMatchObject({
-      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v5:/) },
+      metadata: { inputFingerprint: expect.stringMatching(/^ai-review-input:v6:/) },
     });
     cacheReadSpy.mockRestore();
     cacheWriteSpy.mockRestore();

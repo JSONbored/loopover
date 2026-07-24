@@ -336,6 +336,19 @@ describe("probeAprRepoTransfer (#7741)", () => {
     stubFetch(() => new Response("", { status: 500 }));
     expect(await probeAprRepoTransfer(createTestEnv(), transfer)).toEqual({ state: "pending" });
   });
+
+  // #8331: "Never throws" must hold for token-mint and fetch rejections, not only HTTP status codes.
+  it("stays pending (does not throw) when createInstallationToken rejects", async () => {
+    mockedProbeToken.mockRejectedValue(new Error("token mint failed"));
+    await expect(probeAprRepoTransfer(createTestEnv(), transfer)).resolves.toEqual({ state: "pending" });
+  });
+
+  it("stays pending (does not throw) when the outbound fetch rejects", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    await expect(probeAprRepoTransfer(createTestEnv(), transfer)).resolves.toEqual({ state: "pending" });
+  });
 });
 
 describe("setAprRepoDispatchPaused (#7741 deliverable 2)", () => {
@@ -438,5 +451,70 @@ describe("pollPendingAprRepoTransfers (#7741 deliverables 1+2)", () => {
     expect(results).toEqual([{ repoFullName: "loopover-repos/stale", outcome: "expired" }]);
     expect(resolved).toEqual([{ repoFullName: "loopover-repos/stale", outcome: "expired" }]);
     expect(paused).toEqual([{ repoFullName: "loopover-repos/stale", paused: false }]);
+  });
+
+  // #8331: one rejecting probe must not starve the rest of the batch.
+  it("continues processing later transfers when one probe rejects", async () => {
+    const pending: PendingAprRepoTransfer[] = [
+      { ...base, repoFullName: "loopover-repos/broken", initiatedAt: now - 1000 },
+      { ...base, repoFullName: "loopover-repos/ok", initiatedAt: now - 1000 },
+    ];
+    const paused: Array<{ repoFullName: string; paused: boolean }> = [];
+    const resolved: Array<{ repoFullName: string; outcome: string }> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const deps: AprRepoTransferPollDeps = {
+      listPending: async () => pending,
+      probe: async (_env, t) => {
+        if (t.repoFullName === "loopover-repos/broken") throw new Error("probe boom");
+        return { state: "resolved_under_target" };
+      },
+      now: () => now,
+      markResolved: async (_env, t, outcome) => {
+        resolved.push({ repoFullName: t.repoFullName, outcome });
+      },
+      setDispatchPaused: async (_env, repoFullName, p) => {
+        paused.push({ repoFullName, paused: p });
+      },
+      expiryMs: 5000,
+    };
+
+    const results = await pollPendingAprRepoTransfers(createTestEnv(), deps);
+
+    expect(results).toEqual([{ repoFullName: "loopover-repos/ok", outcome: "accepted" }]);
+    expect(resolved).toEqual([{ repoFullName: "loopover-repos/ok", outcome: "accepted" }]);
+    expect(paused).toEqual([{ repoFullName: "loopover-repos/ok", paused: false }]);
+    expect(errorSpy).toHaveBeenCalled();
+    const logged = String(errorSpy.mock.calls[0]?.[0] ?? "");
+    expect(logged).toContain("apr_repo_transfer_poll_item_failed");
+    expect(logged).toContain("loopover-repos/broken");
+    errorSpy.mockRestore();
+  });
+
+  it("continues when a later dependency call (markResolved) rejects after a successful probe", async () => {
+    const pending: PendingAprRepoTransfer[] = [
+      { ...base, repoFullName: "loopover-repos/write-fail", initiatedAt: now - 1000 },
+      { ...base, repoFullName: "loopover-repos/ok", initiatedAt: now - 1000 },
+    ];
+    const paused: Array<{ repoFullName: string; paused: boolean }> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const deps: AprRepoTransferPollDeps = {
+      listPending: async () => pending,
+      probe: async () => ({ state: "resolved_under_target" }),
+      now: () => now,
+      markResolved: async (_env, t) => {
+        if (t.repoFullName === "loopover-repos/write-fail") throw new Error("persist failed");
+      },
+      setDispatchPaused: async (_env, repoFullName, p) => {
+        paused.push({ repoFullName, paused: p });
+      },
+      expiryMs: 5000,
+    };
+
+    const results = await pollPendingAprRepoTransfers(createTestEnv(), deps);
+
+    expect(results).toEqual([{ repoFullName: "loopover-repos/ok", outcome: "accepted" }]);
+    expect(paused).toEqual([{ repoFullName: "loopover-repos/ok", paused: false }]);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

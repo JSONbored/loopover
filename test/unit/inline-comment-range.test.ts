@@ -50,6 +50,7 @@ describe("resolveInlineCommentAnchor (#2141)", () => {
       start: 1,
       end: 3,
       multiLine: true,
+      anchorable: true,
     });
   });
 
@@ -59,14 +60,28 @@ describe("resolveInlineCommentAnchor (#2141)", () => {
       start: 2,
       end: 2,
       multiLine: false,
+      anchorable: true,
     });
   });
 
-  it("downgrades when the file path is missing from the RIGHT-side line map", () => {
+  it("reports NOT anchorable when the file path is missing from the RIGHT-side line map (#8352)", () => {
+    // Previously this returned start line 1 as a "safe" single-line anchor even though no line on this
+    // path was ever validated -- an un-postable anchor presented as postable (the 422 this guards).
     expect(resolveInlineCommentAnchor({ path: "src/missing.ts", line: 1, endLine: 3 }, new Map())).toEqual({
       start: 1,
       end: 1,
       multiLine: false,
+      anchorable: false,
+    });
+  });
+
+  it("reports NOT anchorable when the start line itself is not commentable though the path IS mapped (#8352)", () => {
+    const rightLines = new Map([["src/a.ts", new Set([20, 21, 22])]]);
+    expect(resolveInlineCommentAnchor({ path: "src/a.ts", line: 5, endLine: 10 }, rightLines)).toEqual({
+      start: 5,
+      end: 5,
+      multiLine: false,
+      anchorable: false,
     });
   });
 
@@ -76,6 +91,7 @@ describe("resolveInlineCommentAnchor (#2141)", () => {
       start: 2,
       end: 2,
       multiLine: false,
+      anchorable: true,
     });
   });
 });

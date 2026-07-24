@@ -4949,7 +4949,7 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
 });
 
 describe("review.ai_model (#selfhost-ai-model-override)", () => {
-  it("parses all eight knobs, marks present, and round-trips", () => {
+  it("parses all twelve knobs, marks present, and round-trips", () => {
     const m = parseFocusManifest({
       review: {
         ai_model: {
@@ -4957,6 +4957,10 @@ describe("review.ai_model (#selfhost-ai-model-override)", () => {
           claude_effort: "high",
           codex_model: "gpt-5.5-pro",
           codex_effort: "xhigh",
+          claude_timeout_ms: 240_000,
+          codex_timeout_ms: 300_000,
+          claude_first_output_timeout_ms: 60_000,
+          codex_first_output_timeout_ms: 15_000,
           ollama_model: "llama3.3",
           openai_model: "gpt-5.5",
           openai_compatible_model: "qwen2.5-coder",
@@ -4969,6 +4973,10 @@ describe("review.ai_model (#selfhost-ai-model-override)", () => {
       claudeEffort: "high",
       codexModel: "gpt-5.5-pro",
       codexEffort: "xhigh",
+      claudeTimeoutMs: 240_000,
+      codexTimeoutMs: 300_000,
+      claudeFirstOutputTimeoutMs: 60_000,
+      codexFirstOutputTimeoutMs: 15_000,
       ollamaModel: "llama3.3",
       openaiModel: "gpt-5.5",
       openaiCompatibleModel: "qwen2.5-coder",
@@ -4976,6 +4984,32 @@ describe("review.ai_model (#selfhost-ai-model-override)", () => {
     });
     expect(m.review.present).toBe(true);
     expect(parseFocusManifest({ review: reviewConfigToJson(m.review) }).review.aiModel).toEqual(m.review.aiModel);
+  });
+
+  it("parses each of the four CLI timeout knobs independently (#8364)", () => {
+    for (const [key, camelKey, value] of [
+      ["claude_timeout_ms", "claudeTimeoutMs", 120_000],
+      ["codex_timeout_ms", "codexTimeoutMs", 90_000],
+      ["claude_first_output_timeout_ms", "claudeFirstOutputTimeoutMs", 45_000],
+      ["codex_first_output_timeout_ms", "codexFirstOutputTimeoutMs", 12_000],
+    ] as const) {
+      const m = parseFocusManifest({ review: { ai_model: { [key]: value } } });
+      expect(m.review.aiModel).toEqual({ ...EMPTY_SELF_HOST_AI_MODEL_CONFIG, [camelKey]: value });
+      expect(m.review.present).toBe(true);
+      expect(reviewConfigToJson(m.review)).toEqual({ ai_model: { [key]: value } });
+    }
+  });
+
+  it("ignores a non-positive timeout_ms with a warning (#8364)", () => {
+    const m = parseFocusManifest({
+      review: { ai_model: { claude_timeout_ms: 0, codex_timeout_ms: -1, claude_first_output_timeout_ms: 1.5 } },
+    });
+    expect(m.review.aiModel.claudeTimeoutMs).toBeNull();
+    expect(m.review.aiModel.codexTimeoutMs).toBeNull();
+    expect(m.review.aiModel.claudeFirstOutputTimeoutMs).toBeNull();
+    expect(m.warnings.some((w) => /claude_timeout_ms.*positive whole number/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /codex_timeout_ms.*positive whole number/.test(w))).toBe(true);
+    expect(m.warnings.some((w) => /claude_first_output_timeout_ms.*positive whole number/.test(w))).toBe(true);
   });
 
   it("parses each of the four HTTP-API provider knobs independently (#3902)", () => {

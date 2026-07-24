@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.12.0](https://github.com/JSONbored/loopover/compare/miner-v3.11.0...miner-v3.12.0) (2026-07-24)
+
+
+### Features
+
+* **miner:** AMS min-rank calibration loop over the local event ledger ([#8184](https://github.com/JSONbored/loopover/issues/8184), [#8185](https://github.com/JSONbored/loopover/issues/8185), [#8186](https://github.com/JSONbored/loopover/issues/8186), [#8187](https://github.com/JSONbored/loopover/issues/8187)) ([#8270](https://github.com/JSONbored/loopover/issues/8270)) ([211f32d](https://github.com/JSONbored/loopover/commit/211f32db6dcf4fc94d120b2eb02f0e1de457a4a8))
+* **miner:** enforce AMS network-egress deny-by-default + allowlist ([#8284](https://github.com/JSONbored/loopover/issues/8284)) ([9f03459](https://github.com/JSONbored/loopover/commit/9f03459353393cd4d899e7e8e6f0bc3a33349f15))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.11.0 to ^3.12.0
+
 ## [3.11.0](https://github.com/JSONbored/loopover/compare/miner-v3.10.0...miner-v3.11.0) (2026-07-23)
 
 

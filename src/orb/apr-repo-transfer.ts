@@ -210,16 +210,22 @@ export async function probeAprRepoTransfer(
   env: Env,
   transfer: Pick<PendingAprRepoTransfer, "repoFullName" | "newOwner" | "installationId">,
 ): Promise<AprRepoTransferProbe> {
-  const token = await createInstallationToken(env, transfer.installationId);
-  const response = await timeoutFetch(`https://api.github.com/repos/${transfer.repoFullName}`, {
-    headers: githubHeaders({ token }),
-  });
-  if (response.status === 404) return { state: "access_departed" };
-  if (!response.ok) return { state: "pending" };
-  const body = (await response.json().catch(() => null)) as { owner?: { login?: string } } | null;
-  const owner = body?.owner?.login;
-  if (owner && owner.toLowerCase() === transfer.newOwner.toLowerCase()) return { state: "resolved_under_target" };
-  return { state: "pending" };
+  // #8331: token mint / network / AbortSignal failures must not escape — treat them as still-pending
+  // so the next poll retries, matching this function's documented "Never throws" contract.
+  try {
+    const token = await createInstallationToken(env, transfer.installationId);
+    const response = await timeoutFetch(`https://api.github.com/repos/${transfer.repoFullName}`, {
+      headers: githubHeaders({ token }),
+    });
+    if (response.status === 404) return { state: "access_departed" };
+    if (!response.ok) return { state: "pending" };
+    const body = (await response.json().catch(() => null)) as { owner?: { login?: string } } | null;
+    const owner = body?.owner?.login;
+    if (owner && owner.toLowerCase() === transfer.newOwner.toLowerCase()) return { state: "resolved_under_target" };
+    return { state: "pending" };
+  } catch {
+    return { state: "pending" };
+  }
 }
 
 /**
@@ -284,20 +290,33 @@ export async function pollPendingAprRepoTransfers(
   const now = deps.now();
   const results: AprRepoTransferPollResult[] = [];
   for (const transfer of pending) {
-    const probe = await deps.probe(env, transfer);
-    const outcome = classifyAprRepoTransferOutcome({
-      probe,
-      initiatedAt: transfer.initiatedAt,
-      now,
-      ...(deps.expiryMs !== undefined ? { expiryMs: deps.expiryMs } : {}),
-    });
-    if (outcome === "pending") {
-      await deps.setDispatchPaused(env, transfer.repoFullName, true);
-    } else {
-      await deps.markResolved(env, transfer, outcome);
-      if (outcome !== "accepted_departed") await deps.setDispatchPaused(env, transfer.repoFullName, false);
+    // #8331: isolate each transfer so one probe/dependency throw cannot abort the rest of the batch
+    // (mirrors retryFailedRelays' per-row independence — a bad row must never starve siblings).
+    try {
+      const probe = await deps.probe(env, transfer);
+      const outcome = classifyAprRepoTransferOutcome({
+        probe,
+        initiatedAt: transfer.initiatedAt,
+        now,
+        ...(deps.expiryMs !== undefined ? { expiryMs: deps.expiryMs } : {}),
+      });
+      if (outcome === "pending") {
+        await deps.setDispatchPaused(env, transfer.repoFullName, true);
+      } else {
+        await deps.markResolved(env, transfer, outcome);
+        if (outcome !== "accepted_departed") await deps.setDispatchPaused(env, transfer.repoFullName, false);
+      }
+      results.push({ repoFullName: transfer.repoFullName, outcome });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "apr_repo_transfer_poll_item_failed",
+          repoFullName: transfer.repoFullName,
+          message: String(error).slice(0, 200),
+        }),
+      );
     }
-    results.push({ repoFullName: transfer.repoFullName, outcome });
   }
   return results;
 }

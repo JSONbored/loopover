@@ -256,7 +256,7 @@ describe("queue processors", () => {
       gatePack: "oss-anti-slop",
       reviewerPlan: undefined,
       selfHostProviderConfig: null,
-      selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
+      selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, claudeTimeoutMs: null, codexTimeoutMs: null, claudeFirstOutputTimeoutMs: null, codexFirstOutputTimeoutMs: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null },
       reviewFiles: [{ path: "src/a.ts", status: "modified", patch: "@@\n+export const ok = value.length;", additions: 1, deletions: 0 }],
       profile: null,
       securityFocus: false,

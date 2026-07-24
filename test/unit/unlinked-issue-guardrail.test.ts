@@ -463,6 +463,60 @@ describe("resolveUnlinkedIssueMatchDisposition", () => {
       expect(usedAfter).toBe(usedBefore);
     });
 
+    // #8356: rate-ceiling attempts must not accumulate on no-op NO_MATCH paths when AI.run is absent —
+    // same gate already applied to recordUnlinkedIssueVerifyUsage above.
+    it("does not burn the per-actor rate ceiling when no AI binding is available, even across many candidate checks", async () => {
+      const env = createTestEnv({});
+      // Seed more candidate-quality issues than the rate ceiling (15) so a pre-fix path would exhaust it.
+      for (let i = 1; i <= 20; i++) {
+        await seedIssue(
+          env,
+          i,
+          `webhook retry duplicate bug variant ${i}`,
+          "retries duplicate events under load, needs a dedup key for webhook retry duplicate bug",
+        );
+      }
+
+      for (let pull = 101; pull <= 120; pull++) {
+        const result = await resolveUnlinkedIssueMatchDisposition(env, {
+          ...BASE_INPUT,
+          pullNumber: pull,
+          config: config(),
+        });
+        expect(result).toBeUndefined();
+      }
+
+      expect(
+        await countRecentAuditEventsForActor(env, "contributor-a", UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, "2000-01-01T00:00:00.000Z"),
+      ).toBe(0);
+
+      // Once a binding is present, a genuine verification attempt is recorded normally.
+      const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict({ matched: false, confidence: 0 })) }));
+      const envWithAi = createTestEnv({ AI: { run } as unknown as Ai });
+      await seedIssue(envWithAi, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+      await resolveUnlinkedIssueMatchDisposition(envWithAi, { ...BASE_INPUT, pullNumber: 201, config: config() });
+      expect(run).toHaveBeenCalled();
+      expect(
+        await countRecentAuditEventsForActor(
+          envWithAi,
+          "contributor-a",
+          UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE,
+          "2000-01-01T00:00:00.000Z",
+        ),
+      ).toBeGreaterThan(0);
+    });
+
+    it("does not record a rate-ceiling attempt when AI is present but not callable (non-function run)", async () => {
+      const env = createTestEnv({ AI: { run: "not-a-function" } as unknown as Ai });
+      await seedIssue(env, 7, "webhook retry duplicate bug", "retries duplicate events under load, needs a dedup key");
+
+      await resolveUnlinkedIssueMatchDisposition(env, { ...BASE_INPUT, config: config() });
+
+      expect(
+        await countRecentAuditEventsForActor(env, "contributor-a", UNLINKED_ISSUE_VERIFY_ATTEMPT_AUDIT_EVENT_TYPE, "2000-01-01T00:00:00.000Z"),
+      ).toBe(0);
+    });
+
     it("swallows a usage-recording write failure without affecting the verification result", async () => {
       const run = vi.fn(async () => ({ response: JSON.stringify(aiVerdict()) }));
       const env = createTestEnv({ AI: { run } as unknown as Ai });

@@ -1,6 +1,6 @@
 {
   "name": "@loopover/ui-kit",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Shared design-system tokens and component primitives for loopover-ui and loopover-miner-ui.",
@@ -86,6 +86,7 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.577.0",
     "react-day-picker": "^9.14.0",
+    "react-hook-form": "^7.80.0",
     "react-resizable-panels": "^4.12.0",
     "recharts": "^2.15.4",
     "sonner": "^2.0.7",

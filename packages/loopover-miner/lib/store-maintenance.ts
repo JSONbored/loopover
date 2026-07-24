@@ -27,7 +27,14 @@ export const EVENT_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = { table: "miner_
 export const GOVERNOR_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = { table: "governor_events", timestampColumn: "ts", orderColumn: "id" };
 export const PREDICTION_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = { table: "predictions", timestampColumn: "ts", orderColumn: "id" };
 
-export type LedgerPurgeSpec = { table: string; repoColumn: string };
+/** `extraWhereSql` is an optional, ANDed, internal-constant-only SQL condition for a store whose real purge
+ *  must not match every row a plain `repoColumn = ?` would — e.g. a fixed-pool slot table where only a `free`
+ *  row is safe to clear (#8320). Only `countStoreByRepo` (the read-only dry-run counter) honors it; the
+ *  real-delete path, `purgeStoreByRepo`, is never used for such a store (it does an unconditional `DELETE`,
+ *  wrong for a row that must be preserved and merely blanked) — its own custom `purgeByRepo` method is used
+ *  instead, and `--dry-run` must count using the identical condition so its preview never overstates what a
+ *  real purge would remove. */
+export type LedgerPurgeSpec = { table: string; repoColumn: string; extraWhereSql?: string };
 
 /** Fixed purge specs (#5564, #6599) for the six stores whose rows are directly scoped by a `repoColumn`. Same
  *  internal-constant-only discipline as the retention specs above. `attempt-log.js` is deliberately absent: its
@@ -69,6 +76,14 @@ export const POLICY_VERDICT_CACHE_PURGE_SPEC: LedgerPurgeSpec = { table: "policy
 export const RANKED_CANDIDATES_PURGE_SPEC: LedgerPurgeSpec = { table: "miner_ranked_candidates", repoColumn: "repo_full_name" };
 export const REPLAY_SNAPSHOT_PURGE_SPEC: LedgerPurgeSpec = { table: "replay_snapshots", repoColumn: "repo_full_name" };
 export const DENY_HOOK_SYNTHESIS_PURGE_SPEC: LedgerPurgeSpec = { table: "deny_rule_proposals", repoColumn: "repo_full_name" };
+
+/** worktree-allocator's `worktree_slots` (#8320), the last repo-scoped store the #5564/#7091/#6987/#8009 sweeps
+ *  missed. Unlike every spec above, this table is a fixed pool — `slot_index` is the primary key and every slot
+ *  0..maxConcurrency-1 always exists, so a purge must never delete a row, and must never touch a `status =
+ *  'active'` row (a live, in-flight attempt's real on-disk worktree checkout). `extraWhereSql` restricts even
+ *  the read-only dry-run count to the same `status = 'free'` condition the real purge (worktree-allocator.js's
+ *  own hand-written `purgeByRepo`, not this file's generic `purgeStoreByRepo`) enforces. */
+export const WORKTREE_ALLOCATOR_PURGE_SPEC: LedgerPurgeSpec = { table: "worktree_slots", repoColumn: "repo_full_name", extraWhereSql: "status = 'free'" };
 
 export type StoreIntegrityResult = { name: string; ok: boolean; detail: string };
 export type LedgerRetentionPolicy = { maxAgeMs?: number; maxRows?: number };
@@ -205,6 +220,9 @@ export function countStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFu
   for (const identifier of [spec.table, spec.repoColumn]) {
     if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
   }
-  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?`).get(repoFullName);
+  // extraWhereSql is only ever one of this file's own internal constants (never caller/user text), so it is
+  // ANDed in verbatim rather than parsed as an identifier — see LedgerPurgeSpec's doc comment (#8320).
+  const extraWhere = spec.extraWhereSql ? ` AND (${spec.extraWhereSql})` : "";
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} = ?${extraWhere}`).get(repoFullName);
   return Number(row?.count);
 }

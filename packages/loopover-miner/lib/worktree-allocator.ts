@@ -38,6 +38,7 @@ export type WorktreeAllocator = {
   acquire(attemptId: string, repoFullName: string): WorktreeAllocation;
   release(attemptId: string): WorktreeAllocation | null;
   listSlots(): WorktreeAllocation[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 
@@ -304,6 +305,18 @@ export function openWorktreeAllocator(options: {
   const listSlots = db.prepare(
     "SELECT slot_index, worktree_path, attempt_id, repo_full_name, status, owner_pid, owner_host, allocated_at FROM worktree_slots ORDER BY slot_index",
   );
+  // #8320: right-to-be-forgotten for a fixed-pool store. Never DELETE (every slot_index 0..maxConcurrency-1
+  // must always exist) and never touch an `active` row — its repo_full_name reflects a live, currently-running
+  // attempt's real on-disk worktree checkout, and force-clearing it while active would desync the allocator
+  // from that live checkout. Only a `free` row can ever carry a stale repo_full_name in practice (release()/
+  // reclaimOrphanedAllocations() already blank it on every path that frees a slot), so this is expected to
+  // affect 0 rows in the overwhelming majority of real calls — it exists as a defensive backstop for a row that
+  // predates this fix or was left stale by an unexpected crash path, not as the primary cleanup mechanism.
+  const purgeFreeSlotsByRepo = db.prepare(`
+    UPDATE worktree_slots
+    SET repo_full_name = NULL, attempt_id = NULL, owner_pid = NULL, owner_host = NULL, allocated_at = NULL
+    WHERE status = 'free' AND repo_full_name = ?
+  `);
 
   const allocator: WorktreeAllocator = {
     dbPath: resolvedPath,
@@ -357,6 +370,11 @@ export function openWorktreeAllocator(options: {
     },
     listSlots() {
       return (listSlots.all() as WorktreeSlotRow[]).map(rowToAllocation);
+    },
+    purgeByRepo(repoFullName) {
+      const normalized = normalizeRepoFullName(repoFullName);
+      const info = purgeFreeSlotsByRepo.run(normalized);
+      return Number(info.changes);
     },
     close() {
       db.close();

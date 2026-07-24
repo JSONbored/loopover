@@ -330,6 +330,7 @@ describe("calibration report sections (#8185/#8186)", () => {
 
 // ── #8317: calibration snapshot wires the Phase 7 runner into a real CLI caller ─────────────────────────────
 
+import * as calibrationRun from "../../packages/loopover-miner/lib/calibration-run.js";
 import { MINER_CALIBRATION_SNAPSHOT_EVENT } from "../../packages/loopover-miner/lib/calibration-run.js";
 
 function seedPredictionFor(
@@ -444,5 +445,103 @@ describe("calibration snapshot (#8317)", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(runCalibrationCli(["snapshot", "--bogus"], envForTempStores())).toBe(1);
     expect(String(err.mock.calls[0]?.[0])).toContain("Unknown option");
+  });
+
+  it("emits JSON when ledger open fails on snapshot with --json", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(predictionLedger, "initPredictionLedger").mockImplementation(() => {
+      throw new Error("corrupt_prediction_ledger");
+    });
+    expect(runCalibrationCli(["snapshot", "--json"], envForTempStores())).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "corrupt_prediction_ledger",
+    });
+    expect(err).not.toHaveBeenCalled();
+  });
+
+  it("forwards deps.nowMs into the Phase 7 cycle runner", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    const cycleSpy = vi.spyOn(calibrationRun, "runHistoricalReplayCalibrationCycle");
+    const nowMs = Date.parse("2026-07-09T12:00:00.000Z");
+
+    expect(runCalibrationCli(["snapshot"], env, { nowMs })).toBe(0);
+    expect(cycleSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ now: new Date(nowMs).toISOString() }),
+      expect.anything(),
+    );
+  });
+
+  it("renders n/a for null combinedAccuracy and deltaFromBaseline in text mode", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    vi.spyOn(calibrationRun, "runHistoricalReplayCalibrationCycle").mockReturnValue({
+      result: {} as never,
+      snapshot: {
+        enabled: false,
+        combinedAccuracy: null,
+        baselineAccuracy: 0,
+        deltaFromBaseline: null,
+        autonomyIncreasePermitted: false,
+        replayHarnessHold: false,
+        replayHarnessStatus: "missing",
+        replayRunDue: false,
+        holdReasons: [],
+        contributingSources: [],
+        replayRunId: null,
+        observedAt: null,
+        replaySampleSize: 0,
+        backtestTrackRecord: null,
+      },
+      recorded: null,
+      historicalReplay: null,
+      compositeScore: null,
+      sampleSize: 0,
+      scores: [],
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runCalibrationCli(["snapshot"], env)).toBe(0);
+    const output = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("calibration snapshot acme/widgets: enabled=false combined=n/a delta=n/a");
+  });
+
+  it("renders numeric combinedAccuracy and deltaFromBaseline in text mode", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    vi.spyOn(calibrationRun, "runHistoricalReplayCalibrationCycle").mockReturnValue({
+      result: {} as never,
+      snapshot: {
+        enabled: true,
+        combinedAccuracy: 0.856,
+        baselineAccuracy: 0.7,
+        deltaFromBaseline: 0.156,
+        autonomyIncreasePermitted: true,
+        replayHarnessHold: false,
+        replayHarnessStatus: "healthy",
+        replayRunDue: false,
+        holdReasons: [],
+        contributingSources: ["pr_outcome"],
+        replayRunId: null,
+        observedAt: null,
+        replaySampleSize: 0,
+        backtestTrackRecord: null,
+      },
+      recorded: null,
+      historicalReplay: null,
+      compositeScore: 0.856,
+      sampleSize: 1,
+      scores: [0.856],
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runCalibrationCli(["snapshot"], env)).toBe(0);
+    const output = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("calibration snapshot acme/widgets: enabled=true combined=86% delta=0.156 sources=pr_outcome");
   });
 });

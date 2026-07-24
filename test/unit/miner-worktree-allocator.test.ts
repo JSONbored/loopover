@@ -180,3 +180,51 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     expect(cleanupResourceCount()).toBe(0);
   });
 });
+
+describe("worktree allocator purgeByRepo (right-to-be-forgotten, #8320)", () => {
+  // A `free` slot never carries a real repo_full_name in normal operation (release()/reclaimOrphanedAllocations()
+  // blank it on every free), so seed the stale-row case directly through a second connection to exercise the
+  // defensive backstop purgeByRepo exists for.
+  function seedStaleFreeSlot(dbPath: string, slotIndex: number, repoFullName: string): void {
+    const raw = new DatabaseSync(dbPath);
+    try {
+      raw
+        .prepare("UPDATE worktree_slots SET repo_full_name = ? WHERE slot_index = ? AND status = 'free'")
+        .run(repoFullName, slotIndex);
+    } finally {
+      raw.close();
+    }
+  }
+
+  it("clears a free slot's stale repo_full_name and reports the count, never deleting the slot", () => {
+    const allocator = tempAllocator({ maxConcurrency: 2 });
+    seedStaleFreeSlot(allocator.dbPath, 0, "acme/widgets");
+
+    expect(allocator.purgeByRepo("acme/widgets")).toBe(1);
+
+    const slots = allocator.listSlots();
+    expect(slots).toHaveLength(2); // the fixed pool is intact — no row was deleted
+    const cleared = slots.find((slot) => slot.slotIndex === 0)!;
+    expect(cleared.status).toBe("free");
+    expect(cleared.repoFullName).toBeNull();
+  });
+
+  it("never touches or counts an ACTIVE slot for the target repo (a live in-flight attempt)", () => {
+    const allocator = tempAllocator({ maxConcurrency: 2 });
+    allocator.acquire("attempt-live", "acme/widgets");
+
+    expect(allocator.purgeByRepo("acme/widgets")).toBe(0); // the active slot is not purgeable
+
+    const active = allocator.listSlots().find((slot) => slot.attemptId === "attempt-live")!;
+    expect(active.status).toBe("active");
+    expect(active.repoFullName).toBe("acme/widgets"); // the live checkout's repo is left intact
+  });
+
+  it("returns 0 when no free slot carries the target repo, leaving other stale rows untouched", () => {
+    const allocator = tempAllocator({ maxConcurrency: 2 });
+    seedStaleFreeSlot(allocator.dbPath, 0, "acme/widgets");
+
+    expect(allocator.purgeByRepo("acme/other")).toBe(0);
+    expect(allocator.listSlots().find((slot) => slot.slotIndex === 0)!.repoFullName).toBe("acme/widgets");
+  });
+});

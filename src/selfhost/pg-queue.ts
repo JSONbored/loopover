@@ -86,9 +86,18 @@ function isPgSqlStateConnectionError(err: unknown): boolean {
   return hasErrorCode(err, PG_SQLSTATE_CONNECTION_CODES);
 }
 
+let pgRetryPoolQueryDelayMsOverride: number | null = null;
+
+/** Test-only: collapses retryPoolQuery's per-attempt backoff to near-zero so a connection-error retry
+ *  test doesn't pay real wall-clock time (the delayMs default and production behavior are unchanged). */
+export function setPgRetryPoolQueryDelayMsForTest(value: number | null): void {
+  pgRetryPoolQueryDelayMsOverride = value;
+}
+
 /** Retry a pool query up to `retries` times on transient connection errors, with a short delay
  *  between attempts. The pool will establish a new connection automatically. */
 async function retryPoolQuery<T>(fn: () => Promise<T>, retries = 3, delayMs = 500): Promise<T> {
+  const effectiveDelayMs = pgRetryPoolQueryDelayMsOverride ?? delayMs;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -96,7 +105,7 @@ async function retryPoolQuery<T>(fn: () => Promise<T>, retries = 3, delayMs = 50
     } catch (err) {
       lastErr = err;
       if (!isPgConnectionError(err) || attempt === retries) throw err;
-      await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, effectiveDelayMs * (attempt + 1)));
     }
   }
   throw lastErr;

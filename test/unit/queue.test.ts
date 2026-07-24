@@ -2080,6 +2080,83 @@ describe("queue processors", () => {
     }
   });
 
+  it("REGRESSION (LOOPOVER-2F): a release-please branch's stuck-CI signal logs at warn (not Sentry-forwarded); a regular branch still logs at error", async () => {
+    // loopover#8273 (the PAT-authored release-please PR, invisible to the bot-typed-actor skip) pinged
+    // Sentry daily for 7 days for a CI state that is expected for that branch pattern. The guard/defer
+    // behavior must stay byte-identical for both PRs here; only the log LEVEL may differ.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
+    await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
+    await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, gatePack: "oss-anti-slop" });
+    await upsertRepoFocusManifest(env, "owner/agent-repo", { settings: { checkRunMode: "off", commentMode: "off", publicSurface: "off", aiReviewMode: "off", reviewCheckMode: "required" } });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 7, title: "release: v1.2.3", state: "open", user: { login: "owner" }, head: { sha: "a7", ref: "release-please--branches--main" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    await upsertPullRequestFromGitHub(env, "owner/agent-repo", { number: 8, title: "Permanently stuck CI", state: "open", user: { login: "contributor" }, head: { sha: "a8", ref: "feature/stuck-ci" }, base: { ref: "main" }, labels: [], body: "Closes #1" });
+    vi.setSystemTime(new Date("2026-05-28T02:00:00.000Z"));
+    for (const [pr, sha] of [[7, "a7"], [8, "a8"]] as const) {
+      await env.SELFHOST_TRANSIENT_CACHE?.set(
+        `ci-pending-first-seen:owner/agent-repo#${pr}:${sha}`,
+        String(Date.now() - 31 * 60 * 1000),
+        7 * 24 * 3600,
+      );
+    }
+    const requiredContextsSpy = vi.spyOn(backfillModule, "fetchRequiredStatusContexts").mockResolvedValue(new Set(["trusted-required-ci"]));
+    const liveCiSpy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue({
+      ciState: "passed",
+      hasPending: true,
+      hasVisiblePending: false,
+      hasMissingRequiredContext: false,
+      failingDetails: [],
+      nonRequiredFailingDetails: [],
+      advisoryHoldDetails: [],
+      ciCompletenessWarning: null,
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (/\/pulls\/7(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 7, title: "release: v1.2.3", state: "open", user: { login: "owner" }, head: { sha: "a7", ref: "release-please--branches--main" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (/\/pulls\/8(?:\?|$)/.test(url) && method === "GET") return Response.json({ number: 8, title: "Permanently stuck CI", state: "open", user: { login: "contributor" }, head: { sha: "a8", ref: "feature/stuck-ci" }, mergeable_state: "clean", labels: [], body: "Closes #1" });
+      if (url.includes("/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) return Response.json({ id: 901 }, { status: method === "POST" ? 201 : 200 });
+      return Response.json({});
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warns = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      // Each PR: first evaluation finalizes; second (same head) hits the guard and emits the coalesced signal.
+      for (const pr of [7, 8]) {
+        await processJob(env, { type: "agent-regate-pr", deliveryId: `stuck-ci-${pr}-eval-1`, repoFullName: "owner/agent-repo", prNumber: pr, installationId: 9001 });
+        await processJob(env, { type: "agent-regate-pr", deliveryId: `stuck-ci-${pr}-eval-2`, repoFullName: "owner/agent-repo", prNumber: pr, installationId: 9001 });
+      }
+      const suppressedIn = (spy: typeof errors) => spy.mock.calls
+        .filter(([line]) => typeof line === "string" && line.includes("ci_stuck_review_repeat_suppressed"))
+        .map(([line]) => JSON.parse(line as string) as Record<string, unknown>);
+      const suppressedWarns = suppressedIn(warns);
+      const suppressedErrors = suppressedIn(errors);
+      // The release-automation branch's signal goes to the warn SINK with a warn LEVEL (sink matches
+      // level per #7806), so the structured-log forwarder never pages Sentry for it; the regular
+      // branch keeps the error-sink, error-level page exactly as before.
+      expect(suppressedWarns).toHaveLength(1);
+      expect(suppressedErrors).toHaveLength(1);
+      expect(suppressedWarns[0]).toMatchObject({ level: "warn", event: "ci_stuck_review_repeat_suppressed", pullNumber: 7, headSha: "a7" });
+      expect(suppressedErrors[0]).toMatchObject({ level: "error", event: "ci_stuck_review_repeat_suppressed", pullNumber: 8, headSha: "a8" });
+      // Guard/defer behavior is untouched for BOTH: one finalize each, one deferred re-evaluation each.
+      for (const pr of [7, 8]) {
+        const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ? and target_key = ?")
+          .bind("github_app.review_deferred_ci_pending", `owner/agent-repo#${pr}`)
+          .first<{ n: number }>();
+        expect(deferred?.n).toBe(1);
+      }
+    } finally {
+      errors.mockRestore();
+      warns.mockRestore();
+      liveCiSpy.mockRestore();
+      requiredContextsSpy.mockRestore();
+    }
+  });
+
   it("REGRESSION (#orb-ci-stuck-repeat, fail-open): a failed guard-audit write does not stop the first stuck-CI finalize from running its review", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });

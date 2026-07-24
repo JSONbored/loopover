@@ -3902,9 +3902,15 @@ async function prReadyForReview(
       // (repo, pr, headSha) per day (#4998) — the defer above still runs on every evaluation; only the log is
       // coalesced, so one permanently-stuck PR doesn't flood Sentry with hundreds of copies of the same signal.
       if (!(await ciStuckRepeatLogCoalesced(env, repoFullName, pr.number, pr.headSha))) {
-        console.error(
+        // LOOPOVER-2F: for a release-automation PR the "stuck" state is EXPECTED (see
+        // isReleaseAutomationHeadRef), so the once-a-day signal drops to warn — below the
+        // Sentry forwarder's error threshold, still in Workers Logs — while a real PR keeps
+        // paging at error. Sink matches the stamped level per #7806 (console.warn for warn,
+        // console.error for error), which is why the whole call is picked, not just the level.
+        const releaseAutomation = isReleaseAutomationHeadRef(pr.headRef);
+        (releaseAutomation ? console.warn : console.error)(
           JSON.stringify({
-            level: "error",
+            level: releaseAutomation ? "warn" : "error",
             event: "ci_stuck_review_repeat_suppressed",
             repo: repoFullName,
             pullNumber: pr.number,
@@ -3982,6 +3988,20 @@ async function putTransientKey(
   } catch {
     // best-effort coalescing only
   }
+}
+
+/** LOOPOVER-2F: release-please's PR branches ("release-please--branches--<target>") sit open with
+ *  never-settling CI BY DESIGN — the release PR is PAT-authored precisely so its CI can trigger
+ *  (a GITHUB_TOKEN-authored PR wouldn't), which also makes it invisible to the bot-typed-actor skip
+ *  in settings/automation-bot-skip.ts. The stuck-CI guard, audit trail, and defer behavior stay
+ *  IDENTICAL for these PRs; only the once-a-day operator signal drops from error (Sentry-forwarded)
+ *  to warn (Workers Logs only), because "this release PR's CI never settles" is expected state, not
+ *  an anomaly a human must investigate (confirmed live: loopover#8273 pinged Sentry daily for 7 days
+ *  and self-cleared the moment it merged). Branch-name matching is safe here because nothing
+ *  security-relevant hangs off it — a contributor naming their branch this way only quiets their own
+ *  PR's stuck-CI Sentry ping, never the guard or any review/trust decision. */
+function isReleaseAutomationHeadRef(headRef: string | null | undefined): boolean {
+  return typeof headRef === "string" && headRef.startsWith("release-please--");
 }
 
 /** True when the ci_stuck_review_repeat_suppressed log for this exact (repo, pr, headSha) already fired within

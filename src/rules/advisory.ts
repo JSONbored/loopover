@@ -379,7 +379,7 @@ export function buildIssueAdvisory(repo: RepositoryRecord | null, issue: IssueRe
 // for the same leak class (#7074) -- `raw\s+trust\s+scores?` stays ahead of bare `raw\s+trust` so the compound
 // still matches first.
 const CHECK_RUN_FORBIDDEN_TERMS =
-  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?)\b/gi;
+  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
 
 function sanitizeForCheckRun(text: string): string {
   return text.replace(CHECK_RUN_FORBIDDEN_TERMS, "[context]").replace(/\s+/g, " ").trim();

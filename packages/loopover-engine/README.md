@@ -681,6 +681,11 @@ These modules compute the *decisions*; the append-only record of what was decide
 in [Governor ledger](#governor-ledger) below (`allowed` / `denied` / `throttled` / `kill_switch`), which the
 chokepoint's returned ledger event feeds.
 
+`action-mode.ts`'s dry-run-by-default precedence (`resolveMinerActionMode` and siblings) has a Codecov-visible
+root mirror at `test/unit/miner-governor-action-mode.test.ts` (#8345) — `codecov/patch` only reads the root
+vitest suite (see [Test](#test)), so this safety-adjacent write-execution gate is gradeable there as well as by
+the package's own `node:test` suite, alongside the existing `test/unit/miner-governor-kill-switch.test.ts` mirror.
+
 ## Governor ledger
 
 `normalizeGovernorLedgerEvent` validates append-only governor decision rows before the local miner persists them.

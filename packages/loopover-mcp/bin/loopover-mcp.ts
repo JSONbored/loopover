@@ -578,11 +578,30 @@ const feasibilityGateShape = {
  * `releaseClaim`, or `expireClaim` -- it never gains any ability to block, cancel, or override a claim or
  * attempt; real claim-conflict authority stays entirely with #4848's maintainer-only path.
  */
+/** The narrow slice of @loopover/miner's claim-ledger module this file actually calls -- hand-shaped
+ *  rather than imported, so this optional cross-package integration carries no TYPE-level coupling to
+ *  miner's internals either, matching its own already-optional RUNTIME shape (this module may not be
+ *  installed alongside loopover-mcp at all). */
+type ClaimLedgerModule = {
+  resolveClaimLedgerDbPath: () => string;
+  openClaimLedgerReadOnly: (dbPath: string) => {
+    listActiveClaims: (repoFullName: string) => Array<{ issueNumber: number }>;
+    close: () => void;
+  };
+};
+
 async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
   if (!repoFullName || !issueNumber) return null;
-  let claimLedgerModule;
+  let claimLedgerModule: ClaimLedgerModule;
   try {
-    claimLedgerModule = await import("@loopover/miner/lib/claim-ledger.js");
+    // Specifier built from concatenated parts, not a literal, so tsc never attempts to statically
+    // resolve/typecheck the target module: this optional cross-package import must not create a
+    // BUILD-TIME dependency on @loopover/miner's own dist/ output existing yet (CI builds MCP before
+    // miner in validate-tests) or on @loopover/miner being installed/built at all -- both are real,
+    // already-supported states the try/catch below already handles at runtime. The `as unknown as`
+    // cast onto the hand-shaped type above is the only thing giving this call real types.
+    const specifier = "@loopover/miner" + "/lib/claim-ledger.js";
+    claimLedgerModule = (await import(specifier)) as unknown as ClaimLedgerModule;
   } catch {
     /* v8 ignore next -- loopover-miner genuinely unresolvable (not installed alongside loopover-mcp); not
        reproducible in this monorepo's workspace-hoisted test environment, where the sibling package always

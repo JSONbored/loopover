@@ -2424,6 +2424,20 @@ function toPullRequestFileRecordFromGitHub(repoFullName: string, pullNumber: num
 // manualReview alone — it might be a human's own hold, not just a stale bot one) — so a guardrail-configured
 // repo's PR could otherwise sit "held for manual review" indefinitely over nothing but a fetch timing gap.
 const REVIEW_FILES_EMPTY_RETRY_DELAY_MS = 500;
+// Test-only override (#test-hotspots): the dedicated retry tests (backfill-2.test.ts) pin retry BEHAVIOR
+// (attempt count, which response wins), never the wall-clock delay itself. Any OTHER test whose fetch stub
+// happens to return an empty files array (a common, often-incidental stub shape) pays this real 500ms sleep
+// unknowingly — confirmed as a major contributor to queue-lifecycle-guards.test.ts's slowest tests. Same
+// `...ForTest` convention as clearInstallationTokenCacheForTest / setMaxChunksPerRepoForTest; the whole
+// suite defaults it near-zero via test/helpers/vitest-setup.ts (vitest.config.ts's setupFiles), so this
+// fires for every current AND future test with this shape, not just ones an author remembers to opt in.
+let reviewFilesEmptyRetryDelayMsOverride: number | null = null;
+export function reviewFilesEmptyRetryDelayMs(): number {
+  return reviewFilesEmptyRetryDelayMsOverride ?? REVIEW_FILES_EMPTY_RETRY_DELAY_MS;
+}
+export function setReviewFilesEmptyRetryDelayMsForTest(value: number | null): void {
+  reviewFilesEmptyRetryDelayMsOverride = value;
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -2457,7 +2471,7 @@ export async function fetchAndStorePullRequestFilesForReview(
   const fetchOnce = () => fetchPullRequestFiles(env, repoFullName, pullNumber, token, warnings, admissionKey, "live_review").catch(() => [] as GitHubFilePayload[]);
   let files = await fetchOnce();
   if (files.length === 0) {
-    await sleep(REVIEW_FILES_EMPTY_RETRY_DELAY_MS);
+    await sleep(reviewFilesEmptyRetryDelayMs());
     files = await fetchOnce();
   }
   if (warnings.length > 0) {

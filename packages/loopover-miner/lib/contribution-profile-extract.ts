@@ -254,10 +254,37 @@ async function fetchContributing(
   return null;
 }
 
-/** Extract the PR-body linked-issue requirement from CONTRIBUTING.md. A very small file is a signpost, not the
- *  rules, so it yields `absent` rather than a false negative dressed as a real one. */
+/** #8316: the agent-facing equivalent of {@link fetchContributing}, probing `AGENTS.md` then `CLAUDE.md` at the
+ *  repo ROOT only — unlike CONTRIBUTING.md, neither follows the `.github/` convention in real repos. Same
+ *  getJson/decodeContents path, same first-hit-wins semantics. */
+async function fetchAgentDocs(
+  base: string,
+  target: { owner: string; repo: string },
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<string | null> {
+  for (const path of ["AGENTS.md", "CLAUDE.md"]) {
+    const payload = await getJson(
+      `${base}/repos/${target.owner}/${target.repo}/contents/${path}`,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    const text = decodeContents(payload);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/** Extract the PR-body linked-issue requirement from a contribution doc. A very small file is a signpost, not
+ *  the rules, so it yields `absent` rather than a false negative dressed as a real one. #8316: `source`/`detail`
+ *  are parameterized so an agent-doc-derived result runs through this SAME sizing/keyword logic and differs only
+ *  in provenance — the schema's `agent_docs` source, unused since #6795, finally gets emitted. */
 function extractPrBody(
   contributing: string | null,
+  source: ContributionSignalProvenance["source"] = "contributing_md",
+  detail = "CONTRIBUTING.md",
 ): ContributionSignalRule<ContributionPrBodyRequirements> {
   if (contributing === null)
     return { value: null, confidence: "absent", provenance: [] };
@@ -272,7 +299,7 @@ function extractPrBody(
   return {
     value: { requiresLinkedIssue },
     confidence: "explicit",
-    provenance: [{ source: "contributing_md", detail: "CONTRIBUTING.md" }],
+    provenance: [{ source, detail }],
   };
 }
 
@@ -321,7 +348,19 @@ export async function extractContributionProfile(
     "explicit",
   );
   const exclusionLabels = classifyLabels(labels, EXCLUSION_TERMS, "inferred");
-  const prBody = extractPrBody(contributing);
+  // #8316: CONTRIBUTING.md stays authoritative. Only a fully `absent` result (no CONTRIBUTING.md anywhere)
+  // lets agent docs have a turn, so every repo that already publishes one is bit-for-bit unaffected — and the
+  // agent doc is never even FETCHED in that case, costing no extra API call on the common path. A present but
+  // signpost-sized CONTRIBUTING.md yields `unknown`, not `absent`, and deliberately does NOT fall through:
+  // that repo HAS stated where its rules live, so second-guessing it would be the false negative this
+  // heuristic exists to avoid.
+  let prBody = extractPrBody(contributing);
+  if (prBody.confidence === "absent") {
+    const agentDocs = await fetchAgentDocs(base, target, headers, fetchImpl, sleepFn);
+    // Detail names both candidates because fetchAgentDocs' mandated `Promise<string | null>` shape (mirroring
+    // fetchContributing) doesn't report WHICH of the two matched.
+    prBody = extractPrBody(agentDocs, "agent_docs", "AGENTS.md or CLAUDE.md");
+  }
 
   return {
     repoFullName: `${target.owner}/${target.repo}`,

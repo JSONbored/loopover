@@ -16,6 +16,9 @@ function stubFetch(
     labels?: Label[] | number;
     contributing?: string | null;
     contributingGithubDir?: string | null;
+    /** #8316: AGENTS.md / CLAUDE.md at the repo root. Omitted ⇒ 404, so every pre-existing case is unchanged. */
+    agentsMd?: string | null;
+    claudeMd?: string | null;
   } = {},
 ) {
   const emptyHeaders = { get: (_name: string) => null };
@@ -72,6 +75,28 @@ function stubFetch(
             content: Buffer.from(String(opts.contributingGithubDir)).toString(
               "base64",
             ),
+          }),
+        } as unknown as Response;
+      }
+      for (const [path, body] of [
+        ["/contents/AGENTS.md", opts.agentsMd],
+        ["/contents/CLAUDE.md", opts.claudeMd],
+      ] as const) {
+        if (!u.includes(path)) continue;
+        if (body == null)
+          return {
+            ok: false,
+            status: 404,
+            headers: emptyHeaders,
+            json: async () => ({}),
+          } as unknown as Response;
+        return {
+          ok: true,
+          status: 200,
+          headers: emptyHeaders,
+          json: async () => ({
+            encoding: "base64",
+            content: Buffer.from(String(body)).toString("base64"),
           }),
         } as unknown as Response;
       }
@@ -612,8 +637,11 @@ describe("extractContributionProfile (#6796)", () => {
       generatedAt: AT,
       sleepFn: async () => {},
     });
-    // Both the root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths).
-    expect(docCalls).toBe(6);
+    // Both the root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths), and #8316
+    // adds the same exhaustion for AGENTS.md + CLAUDE.md: an unreachable CONTRIBUTING.md yields `absent`,
+    // which is exactly the precedence condition that lets the agent-doc source have its turn. 4 paths × 3.
+    expect(docCalls).toBe(12);
+    // The fail-open contract itself is unchanged — an outage still degrades to `absent`, never throws.
     expect(profile.prBody.confidence).toBe("absent");
   });
 
@@ -762,5 +790,80 @@ describe("extractContributionProfile (#6796)", () => {
     expect(profile.exclusionLabels.confidence).toBe("absent");
     expect(profile.prBody.confidence).toBe("explicit");
     expect(profile.completeness).toBe("absent");
+  });
+});
+
+describe("agent-docs fallback (#8316)", () => {
+  const agentDoc = (body: string) => bigContributing(body);
+
+  it("keeps CONTRIBUTING.md authoritative and never fetches an agent doc when it yields a real rule", async () => {
+    const fetchImpl = stubFetch({
+      contributing: bigContributing("Please link an issue in the PR description."),
+      agentsMd: agentDoc("This AGENTS.md must be ignored."),
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("explicit");
+    expect(profile.prBody.provenance).toEqual([{ source: "contributing_md", detail: "CONTRIBUTING.md" }]);
+    // The common path costs no extra API call: the agent doc is not even probed.
+    const probed = (fetchImpl as unknown as { mock: { calls: [string][] } }).mock.calls.map((c) => String(c[0]));
+    expect(probed.some((u) => u.includes("AGENTS.md"))).toBe(false);
+    expect(probed.some((u) => u.includes("CLAUDE.md"))).toBe(false);
+  });
+
+  it("falls back to AGENTS.md when there is no CONTRIBUTING.md, tagging agent_docs provenance", async () => {
+    const fetchImpl = stubFetch({
+      agentsMd: agentDoc("Every PR must reference a linked issue."),
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("explicit");
+    expect(profile.prBody.value).toEqual({ requiresLinkedIssue: true });
+    expect(profile.prBody.provenance).toEqual([{ source: "agent_docs", detail: "AGENTS.md or CLAUDE.md" }]);
+  });
+
+  it("probes CLAUDE.md when AGENTS.md is missing (second path in the first-hit-wins loop)", async () => {
+    const fetchImpl = stubFetch({
+      claudeMd: agentDoc("Open a linked issue before submitting."),
+    });
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("explicit");
+    expect(profile.prBody.value).toEqual({ requiresLinkedIssue: true });
+    expect(profile.prBody.provenance).toEqual([{ source: "agent_docs", detail: "AGENTS.md or CLAUDE.md" }]);
+  });
+
+  it("stays absent when neither CONTRIBUTING.md nor any agent doc exists", async () => {
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(stubFetch({})),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("absent");
+    expect(profile.prBody.value).toBeNull();
+    expect(profile.prBody.provenance).toEqual([]);
+  });
+
+  it("treats a signpost-sized agent doc as unknown, reusing extractPrBody's existing size floor", async () => {
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(stubFetch({ agentsMd: "See our wiki." })),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("unknown");
+    expect(profile.prBody.value).toBeNull();
+  });
+
+  it("records no linked-issue requirement when a real agent doc simply doesn't mention one", async () => {
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: asFetch(stubFetch({ agentsMd: agentDoc("Run the formatter before committing.") })),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("explicit");
+    expect(profile.prBody.value).toEqual({ requiresLinkedIssue: false });
   });
 });

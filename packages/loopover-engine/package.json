@@ -30,6 +30,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./parse-pull-request-target-key": {
+      "types": "./dist/parse-pull-request-target-key.d.ts",
+      "default": "./dist/parse-pull-request-target-key.js"
+    },
     "./scoring/model": {
       "types": "./dist/scoring/model.d.ts",
       "default": "./dist/scoring/model.js"

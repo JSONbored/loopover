@@ -1,5 +1,4 @@
 import { Octokit } from "@octokit/core";
-import { isGlobalAgentFrozen, recordAuditEvent } from "../db/repositories";
 import { isGlobalAgentPause, resolveAgentActionMode, type AgentActionMode } from "../settings/agent-execution";
 import { incr } from "../selfhost/metrics";
 import type { RepositorySettings } from "../types";
@@ -32,8 +31,10 @@ export const GITHUB_RESPONSE_CACHE_REPLAY_HEADER = "x-loopover-cache";
 /** The single source of truth for the product's outbound User-Agent, used by every raw-`fetch`/`timeoutFetch`
  *  call across `src/` that identifies itself generically (as opposed to a service-specific variant like the
  *  self-host or content-lane User-Agent). Consolidates what had drifted into ~16 independently hardcoded
- *  copies of the same literal. */
-export const PRODUCT_USER_AGENT = "loopover/0.1";
+ *  copies of the same literal. Defined in ./user-agent (a leaf module) so constant-only importers don't pay
+ *  this file's import graph (#test-import-cost); re-exported here so existing importers are unchanged. */
+import { PRODUCT_USER_AGENT } from "./user-agent";
+export { PRODUCT_USER_AGENT };
 
 /** The single shared GitHub REST header-builder for every raw-`fetch`/`timeoutFetch` call in `src/` (Octokit
  *  calls set their own headers internally and don't need this). Consolidates four independent, drifted
@@ -640,6 +641,12 @@ const WRITE_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
  * per-write hot path.
  */
 export async function resolveRepoActionMode(env: Env, settings: Pick<RepositorySettings, "agentPaused" | "agentDryRun"> | null | undefined): Promise<AgentActionMode> {
+  // Lazy import (#test-import-cost): db/repositories is this file's only heavy dependency, needed by just
+  // this function and the suppressed-write audit hook below — a static import re-created the client ↔
+  // repositories cycle (~1.1s cold import under vitest) for every importer of this module. Module-cached
+  // after the first call, so the per-call cost is a resolved-promise tick; same idiom as
+  // processors.ts's own `await import("../github/pr-command-request")`.
+  const { isGlobalAgentFrozen } = await import("../db/repositories");
   return resolveAgentActionMode({
     globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
     agentPaused: settings?.agentPaused,
@@ -701,6 +708,8 @@ export function makeInstallationOctokit(env: Env, token: string, mode: AgentActi
       const method = options.method.toUpperCase();
       if (!WRITE_METHODS.has(method)) return request(options); // reads + create-vs-update probes always run
       const url = options.url;
+      // Same lazy-import reasoning as resolveRepoActionMode above (#test-import-cost).
+      const { recordAuditEvent } = await import("../db/repositories");
       await recordAuditEvent(env, {
         eventType: "github.write.suppressed",
         actor: "loopover",

@@ -1,5 +1,8 @@
 import type { ContributorRepoStatRecord } from "../types";
-import { PRODUCT_USER_AGENT } from "../github/client";
+// The leaf module, NOT ../github/client: this file needs only the constant, and the client import
+// dragged the client ↔ repositories cycle (~1.1s cold import under vitest) into db/repositories'
+// graph — the single most-imported path in the test suite (#test-import-cost).
+import { PRODUCT_USER_AGENT } from "../github/user-agent";
 import { errorMessage } from "../utils/json";
 
 const GITTENSOR_API_BASE = "https://api.gittensor.io";

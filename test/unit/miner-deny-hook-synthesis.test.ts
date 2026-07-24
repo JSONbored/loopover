@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import type { DenyRuleProposal } from "../../packages/loopover-engine/src/miner/
 // #7525: normalizeRepoFullName is defined in the engine and re-exported unchanged by the miner-lib module
 // above; import it from the engine source directly so the guard's src branches are the ones exercised.
 import { normalizeRepoFullName } from "../../packages/loopover-engine/src/miner/deny-hook-synthesis";
+import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
 
 const tempDirs: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -60,12 +61,28 @@ describe("resolveDenyHookSynthesisDbPath() (#4522)", () => {
       "/custom/d.sqlite3",
     );
     expect(resolveDenyHookSynthesisDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
-      "/custom/config/deny-hook-synthesis.sqlite3",
+      join("/custom/config", "deny-hook-synthesis.sqlite3"),
     );
     expect(resolveDenyHookSynthesisDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
-      "/xdg/loopover-miner/deny-hook-synthesis.sqlite3",
+      join("/xdg", "loopover-miner", "deny-hook-synthesis.sqlite3"),
     );
-    expect(resolveDenyHookSynthesisDbPath({})).toMatch(/\/\.config\/loopover-miner\/deny-hook-synthesis\.sqlite3$/);
+    expect(resolveDenyHookSynthesisDbPath({})).toBe(
+      join(homedir(), ".config", "loopover-miner", "deny-hook-synthesis.sqlite3"),
+    );
+  });
+
+  it("stays byte-identical to resolveLocalStoreDbPath for representative env combinations (#8336)", () => {
+    const cases: Array<Record<string, string | undefined>> = [
+      { LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB: "/custom/d.sqlite3" },
+      { LOOPOVER_MINER_CONFIG_DIR: "/custom/config" },
+      { XDG_CONFIG_HOME: "/xdg" },
+      {},
+    ];
+    for (const env of cases) {
+      expect(resolveDenyHookSynthesisDbPath(env)).toBe(
+        resolveLocalStoreDbPath("deny-hook-synthesis.sqlite3", "LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB", env),
+      );
+    }
   });
 });
 

@@ -54,13 +54,21 @@ afterEach(() => {
 describe("loopover-miner laptop init (#2329)", () => {
   it("resolves the laptop SQLite path from the state-dir override and XDG fallback", () => {
     expect(resolveLaptopStateDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/state" }))
-      .toBe("/custom/state/laptop-state.sqlite3");
+      .toBe(join("/custom/state", "laptop-state.sqlite3"));
     expect(resolveLaptopStateDbPath({ XDG_CONFIG_HOME: "/xdg" }))
-      .toBe("/xdg/loopover-miner/laptop-state.sqlite3");
+      .toBe(join("/xdg", "loopover-miner", "laptop-state.sqlite3"));
   });
 
   it("falls back to ~/.config when neither LOOPOVER_MINER_CONFIG_DIR nor XDG_CONFIG_HOME is set", () => {
     expect(resolveLaptopStateDbPath({})).toBe(join(homedir(), ".config", "loopover-miner", "laptop-state.sqlite3"));
+  });
+
+  it("honors LOOPOVER_MINER_LAPTOP_STATE_DB over config-dir and XDG fallbacks (#8336)", () => {
+    expect(resolveLaptopStateDbPath({
+      LOOPOVER_MINER_LAPTOP_STATE_DB: "/custom/laptop-state.sqlite3",
+      LOOPOVER_MINER_CONFIG_DIR: "/custom/state",
+      XDG_CONFIG_HOME: "/xdg",
+    })).toBe("/custom/laptop-state.sqlite3");
   });
 
   it("fresh init creates the state dir and SQLite file", () => {

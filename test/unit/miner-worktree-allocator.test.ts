@@ -179,4 +179,43 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     closeAllCleanupResources(); // what installCliSignalHandlers invokes on SIGINT/SIGTERM
     expect(cleanupResourceCount()).toBe(0);
   });
+
+  describe("purgeByRepo (#8320)", () => {
+    it("clears a free slot's stale repo_full_name and counts it", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      // Normal operation never leaves a free slot with a non-null repo_full_name (release() already blanks
+      // it) -- seed one directly to exercise the defensive backstop the issue calls out.
+      const db = new DatabaseSync(allocator.dbPath);
+      db.exec("UPDATE worktree_slots SET repo_full_name = 'acme/widgets' WHERE slot_index = 0");
+      db.close();
+
+      expect(allocator.purgeByRepo("acme/widgets")).toBe(1);
+      const slot = allocator.listSlots()[0]!;
+      expect(slot.repoFullName).toBeNull();
+      expect(slot.status).toBe("free");
+    });
+
+    it("never touches an active slot for the target repo", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      const allocation = allocator.acquire("attempt-a", "acme/widgets");
+
+      expect(allocator.purgeByRepo("acme/widgets")).toBe(0);
+      const slot = allocator.listSlots()[0]!;
+      expect(slot.status).toBe("active");
+      expect(slot.repoFullName).toBe("acme/widgets");
+      expect(slot.attemptId).toBe(allocation.attemptId);
+    });
+
+    it("returns 0 when no slot matches the repo", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      allocator.acquire("attempt-a", "acme/widgets");
+      expect(allocator.purgeByRepo("acme/other")).toBe(0);
+    });
+
+    it("rejects an invalid repo full name, matching acquire's own guard", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      expect(() => allocator.purgeByRepo("bad")).toThrow("invalid_repo_full_name");
+      expect(() => allocator.purgeByRepo("../widgets")).toThrow("invalid_repo_full_name");
+    });
+  });
 });

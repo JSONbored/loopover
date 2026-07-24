@@ -8,6 +8,7 @@ import {
   EVENT_LEDGER_RETENTION_SPEC,
   LEDGER_RETENTION_DAYS_ENV,
   LEDGER_RETENTION_MAX_ROWS_ENV,
+  WORKTREE_ALLOCATOR_PURGE_SPEC,
   checkStoreIntegrity,
   classifyIntegrityRows,
   countStoreByRepo,
@@ -297,6 +298,39 @@ describe("countStoreByRepo (#5564)", () => {
     expect(() => countStoreByRepo(db, { table: "bad; DROP TABLE t", repoColumn: "repo_full_name" }, "acme/widgets")).toThrow(
       /unsafe SQL identifier/,
     );
+    db.close();
+  });
+
+  // #8320: extraWhereSql ANDs an extra condition onto the repoColumn match, for a spec whose real purge (a
+  // custom purgeByRepo, never this file's generic purgeStoreByRepo) must not match every row a plain
+  // repoColumn = ? would -- e.g. WORKTREE_ALLOCATOR_PURGE_SPEC's "status = 'free'".
+  it("ANDs extraWhereSql onto the match when the spec declares one", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE worktree_slots (
+        slot_index INTEGER PRIMARY KEY,
+        repo_full_name TEXT,
+        status TEXT NOT NULL
+      )
+    `);
+    db.exec(`
+      INSERT INTO worktree_slots (slot_index, repo_full_name, status) VALUES
+        (0, 'acme/widgets', 'free'),
+        (1, 'acme/widgets', 'active'),
+        (2, 'acme/gadgets', 'free')
+    `);
+    // Only the free row for the target repo satisfies both the repoColumn match AND extraWhereSql -- the
+    // active row for the same repo (repoColumn matches, extraWhereSql doesn't) is excluded.
+    expect(countStoreByRepo(db, WORKTREE_ALLOCATOR_PURGE_SPEC, "acme/widgets")).toBe(1);
+    // A repo with no free row at all (repoColumn wouldn't even match here) still returns 0, not a crash.
+    expect(countStoreByRepo(db, WORKTREE_ALLOCATOR_PURGE_SPEC, "acme/other")).toBe(0);
+    db.close();
+  });
+
+  it("omits extraWhereSql entirely when the spec doesn't declare one (existing specs unaffected)", () => {
+    const db = seedPurgeTable([{ repoFullName: "acme/widgets" }, { repoFullName: "acme/gadgets" }]);
+    expect(CLAIM_LEDGER_PURGE_SPEC.extraWhereSql).toBeUndefined();
+    expect(countStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(1);
     db.close();
   });
 });

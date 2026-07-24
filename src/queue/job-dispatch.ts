@@ -107,7 +107,7 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
         if (repositories.length > 0) {
           const delayStepSeconds =
             message.mode === "full" || message.mode === "resume" ? 45 : 15;
-          await Promise.all(
+          const settled = await Promise.allSettled(
             repositories.map((repo, index) => {
               const repoMessage: JobMessage = {
                 type: "backfill-registered-repos",
@@ -124,6 +124,23 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
                 : env.JOBS.send(repoMessage);
             }),
           );
+          // #8355: Promise.allSettled (not Promise.all) so one repo's send failure never blocks or duplicates
+          // a sibling repo's send -- a bare Promise.all rejecting mid-fan-out previously caused the queue's own
+          // retry to re-run this ENTIRE repositories.map from scratch, duplicate-dispatching every repo whose
+          // send had already succeeded before the failure. Every repo's send is attempted exactly once
+          // regardless of an earlier one's outcome; a genuine failure still surfaces below (after every send
+          // has been attempted) so the cron invocation itself is marked failed for observability.
+          const failedRepoFullNames: string[] = [];
+          settled.forEach((result, index) => {
+            if (result.status === "rejected") {
+              const repoFullName = repositories[index]!.fullName;
+              failedRepoFullNames.push(repoFullName);
+              console.error(JSON.stringify({ level: "error", event: "backfill_registered_repos_fanout_send_failed", repoFullName, reason: String(result.reason) }));
+            }
+          });
+          if (failedRepoFullNames.length > 0) {
+            throw new Error(`backfill-registered-repos fan-out: ${failedRepoFullNames.length}/${repositories.length} repo send(s) failed: ${failedRepoFullNames.join(", ")}`);
+          }
           return;
         }
       }

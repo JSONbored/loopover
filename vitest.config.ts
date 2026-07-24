@@ -17,6 +17,7 @@ export default defineConfig({
     globals: true,
     testTimeout: 15000,
     globalSetup: ["./test/helpers/vitest-global-setup-node-version.ts"],
+    setupFiles: ["./test/helpers/vitest-setup.ts"],
     // Retry a failed test once before failing the run. The loopover gate auto-CLOSES a contributor PR
     // on a red required CI, so a single transient flake must not kill an honest PR; a deterministic
     // failure still fails both attempts (and vitest flags the retried test as flaky so it stays visible).

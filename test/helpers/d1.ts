@@ -86,6 +86,14 @@ export class TestD1Database {
     );
     copyFileSync(getMigratedTemplatePath(), clonePath);
     this.db = new DatabaseSync(clonePath);
+    // #test-hotspots: SQLite's defaults (journal_mode=DELETE, synchronous=FULL) fsync on every
+    // autocommit write -- each of the app's `.prepare(...).run()` calls is its own implicit
+    // transaction, so a write-heavy test (audit events, PR upserts, gate results) pays a real disk
+    // fsync per statement. Under concurrent CI/local load this dominated wall time far more than a
+    // quiet-machine benchmark suggests (queue-lifecycle-guards.test.ts: ~1000ms on several tests).
+    // Both are safe to disable for a throwaway per-test clone that's unlinked as soon as it's open:
+    // crash-consistency durability is meaningless for data nothing outlives the test to read back.
+    this.db.exec("PRAGMA journal_mode = MEMORY; PRAGMA synchronous = OFF;");
     state.clonePaths.push(clonePath);
     if (!state.exitSweepRegistered) {
       state.exitSweepRegistered = true;

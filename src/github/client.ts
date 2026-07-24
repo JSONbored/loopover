@@ -390,7 +390,20 @@ export function isGitHubResponseCacheReplay(response: Response): boolean {
 const GITHUB_RATE_LIMIT_MAX_RETRIES = 3;
 const GITHUB_RATE_LIMIT_MAX_DELAY_MS = 8_000;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+// Test-only override (#test-hotspots): several tests deliberately drive fetchWithGitHubRetry through its
+// FULL rate-limit backoff (up to 500+1000+2000=3500ms real wall time) to assert the resulting sync state
+// (rate_limited status, capped segments) -- not the delay itself. This caps what's actually AWAITED
+// without touching rateLimitRetryMs's own return value, so its dedicated pure-function correctness test
+// (github-app.test.ts, asserting exact backoff math) stays exercising the real numbers unmodified. Same
+// `...ForTest` convention as reviewFilesEmptyRetryDelayMs; the suite defaults it near-zero suite-wide via
+// test/helpers/vitest-setup.ts.
+let githubRateLimitRetrySleepCapMsOverride: number | null = null;
+export function setGithubRateLimitRetrySleepCapMsForTest(value: number | null): void {
+  githubRateLimitRetrySleepCapMsOverride = value;
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, githubRateLimitRetrySleepCapMsOverride ?? ms));
 
 /** Does this GitHub response signal a rate limit (primary or secondary)? 403/429 with a Retry-After header, an
  *  exhausted x-ratelimit-remaining, or a secondary-limit/abuse body. A 403 with NONE of these is a real

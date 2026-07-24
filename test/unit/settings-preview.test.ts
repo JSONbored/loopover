@@ -134,6 +134,41 @@ describe("decidePublicSurface", () => {
     expect(decision).toMatchObject({ skipped: false, willComment: false, willLabel: false, willCheckRun: false, actions: ["none"] });
     expect(decision.summary).toMatch(/no surface action is enabled/);
   });
+
+  // #8324: the willLabel oss_maintainer + not_checked fallback disjunct. shouldApplyPrLabel returns false for
+  // an oss_maintainer repo whose miner status isn't "confirmed", so this inline condition is the only thing
+  // that can set willLabel for a not_checked PR -- it governs whether the live webhook processor labels a PR
+  // before the official Gittensor miner lookup completes.
+  describe("oss_maintainer + not_checked auto-label fallback", () => {
+    const decide = (over: Partial<RepositorySettings>) =>
+      decidePublicSurface({
+        settings: settings({ publicAudienceMode: "oss_maintainer", autoLabelEnabled: true, ...over }),
+        authorLogin: "contributor",
+        authorType: "User",
+        authorAssociation: "NONE",
+        minerStatus: "not_checked",
+      });
+
+    it("labels a comment_and_label surface (shouldApplyPrLabel is false here, so the fallback is what fires)", () => {
+      const decision = decide({ publicSurface: "comment_and_label" });
+      expect(decision.willLabel).toBe(true);
+      expect(decision.actions).toContain("label");
+    });
+
+    it("labels a label_only surface", () => {
+      expect(decide({ publicSurface: "label_only" }).willLabel).toBe(true);
+    });
+
+    it("does NOT label a comment_only surface (the disjunct's own publicSurface check excludes it)", () => {
+      const decision = decide({ publicSurface: "comment_only" });
+      expect(decision.willLabel).toBe(false);
+      expect(decision.actions).not.toContain("label");
+    });
+
+    it("does NOT label when autoLabelEnabled is false, even on a labelling surface", () => {
+      expect(decide({ publicSurface: "comment_and_label", autoLabelEnabled: false }).willLabel).toBe(false);
+    });
+  });
 });
 
 describe("buildRepoSettingsPreview", () => {

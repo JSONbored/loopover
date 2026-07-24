@@ -6,6 +6,7 @@
 // which survived even with full-file grounding on). This builder orders source-first, reduces oversized
 // patches hunk-aware instead of dropping them, and always lists patch-less/over-budget files. (#accuracy-gap-1)
 
+import { isLockfile } from "../signals/path-matchers";
 import { isTestPath } from "../signals/test-evidence";
 import type { listPullRequestFiles } from "../db/repositories";
 
@@ -19,9 +20,13 @@ export const DEFAULT_DIFF_BUDGET = 80_000;
  *  Test detection delegates to the canonical `isTestPath` so this matcher can't drift from it — the
  *  previous inline regex missed real conventions (pytest `test_*.py`, Go `*_test.go`, Ruby `*_spec.rb`,
  *  Cypress/Playwright `.cy`/`.e2e`, a bare `spec/` dir), so those tests were ranked as SOURCE(0) and
- *  could displace real source under a tight budget — the exact opposite of this function's job. */
+ *  could displace real source under a tight budget — the exact opposite of this function's job.
+ *  Lockfile detection delegates to the canonical `isLockfile`/`LOCKFILE_NAMES` for the same reason: a
+ *  hand-duplicated name list silently misses every future ecosystem addition to the shared set (which has
+ *  been extended in batches before), ranking a new lockfile format as SOURCE(0) instead of GENERATED(4). */
 export function diffFilePriority(path: string): number {
-  if (/(^|\/)(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock|bun\.lockb|cargo\.lock|poetry\.lock|pipfile\.lock|composer\.lock|gemfile\.lock|go\.sum|go\.work\.sum|uv\.lock|packages\.lock\.json|flake\.lock|deno\.lock|pubspec\.lock|podfile\.lock|mix\.lock|package\.resolved|gradle\.lockfile|pdm\.lock|conan\.lock|pixi\.lock|cartfile\.resolved|gopkg\.lock|shard\.lock|rebar\.lock|renv\.lock|chart\.lock)$|\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
+  // Only the lockfile-NAME portion is delegated; the suffix-based generated-file patterns stay inline.
+  if (isLockfile(path) || /\.(min\.(js|css)|map|snap)$/i.test(path)) return 4;
   if (/(^|\/)(dist|build|out|coverage|vendor|node_modules)\//i.test(path)) return 4;
   if (/\.(md|mdx|markdown|rst|adoc|asciidoc|txt)$/i.test(path)) return 2;
   if (isTestPath(path)) return 1;

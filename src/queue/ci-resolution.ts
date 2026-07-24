@@ -31,6 +31,9 @@ import type { GitHubRateLimitAdmissionKey } from "../github/client";
 import { incr } from "../selfhost/metrics";
 import type { LiveGithubFacts, RequiredStatusContextsLookup } from "./processors";
 
+/** Emitted when a live gate evaluation falls back to config-only required contexts because the branch-protection read failed. */
+export const REQUIRED_CONTEXTS_UNRESOLVED_METRIC = "loopover_required_contexts_unresolved_total";
+
 export function liveFactKey(...parts: Array<string | number | null | undefined>): string {
   return JSON.stringify(parts.map((part) => [typeof part, part]));
 }
@@ -103,6 +106,28 @@ export function cachedRequiredStatusContexts(
   );
   facts.requiredContexts.set(key, next);
   return next;
+}
+
+/**
+ * #8358: surface a previously unused `resolved: false` on RequiredStatusContextsLookup. Callers (the live
+ * gate path in processors.ts) must invoke this after cachedRequiredStatusContexts so a degraded
+ * branch-protection read is observable via metric + structured warn — gate disposition is unchanged.
+ */
+export function observeRequiredContextsLookup(
+  lookup: RequiredStatusContextsLookup,
+  meta: { repoFullName: string; pullNumber: number; baseRef: string | null | undefined },
+): void {
+  if (lookup.resolved) return;
+  incr(REQUIRED_CONTEXTS_UNRESOLVED_METRIC);
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "required_contexts_branch_protection_unresolved",
+      repoFullName: meta.repoFullName,
+      pullNumber: meta.pullNumber,
+      baseRef: meta.baseRef ?? null,
+    }),
+  );
 }
 
 function evictLiveFactOnReject<T>(

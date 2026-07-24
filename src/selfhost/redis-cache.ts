@@ -8,6 +8,17 @@ import { incr } from "./metrics";
 
 const WEBHOOK_DELIVERY_CACHE_PREFIX = "delivery:";
 
+const REDIS_WEBHOOK_DEDUP_CACHE_METRIC = "loopover_redis_webhook_dedup_cache_total";
+
+/** Records a webhook-dedup Redis cache outcome. Mirrors redis-token-cache.ts's recordTokenCacheMetric /
+ *  redis-response-cache.ts's recordRedisResponseCacheMetric: a named recorder over a `{result}`-labeled
+ *  counter, so a sustained Redis outage on this cache is as visible as one on either sibling. Kept separate
+ *  from `loopover_webhook_dedup_total{backend="redis"}`, which counts actual dedup HITS -- folding errors
+ *  into that counter would conflate "deliveries deduplicated" with "cache unavailable". */
+function recordWebhookDedupCacheMetric(result: "error"): void {
+  incr(REDIS_WEBHOOK_DEDUP_CACHE_METRIC, { result });
+}
+
 export function webhookDeliveryCacheKey(deliveryId: string): string {
   return `${WEBHOOK_DELIVERY_CACHE_PREFIX}${deliveryId}`;
 }
@@ -24,6 +35,9 @@ export async function isWebhookDeliveryDuplicate(cache: RedisCache, deliveryId: 
     }
     return false;
   } catch {
+    // Fail open (unchanged): a cache outage must never block webhook processing -- but record it so the
+    // outage is visible, matching both sibling Redis caches.
+    recordWebhookDedupCacheMetric("error");
     return false;
   }
 }
@@ -33,7 +47,9 @@ export async function rememberWebhookDelivery(cache: RedisCache, deliveryId: str
   try {
     await cache.set(webhookDeliveryCacheKey(deliveryId), "1", ttlSeconds);
   } catch {
-    // best-effort — never block the response on a cache write failure
+    // best-effort — never block the response on a cache write failure (unchanged), but make the failure
+    // observable on the same metric surface as the sibling caches.
+    recordWebhookDedupCacheMetric("error");
   }
 }
 

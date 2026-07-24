@@ -96,6 +96,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_redis_gh_response_cache_total", { help: "Redis-backed GitHub response cache outcomes.", type: "counter" }],
   ["loopover_redis_gh_response_cache_hit_ratio", { help: "Redis GitHub response cache hit ratio (hits / (hits + misses)) at scrape time.", type: "gauge" }],
   ["loopover_redis_token_cache_total", { help: "Redis-backed GitHub token cache outcomes.", type: "counter" }],
+  ["loopover_redis_webhook_dedup_cache_total", { help: "Redis-backed webhook-dedup cache outcomes.", type: "counter" }],
   ["loopover_qdrant_queries_total", { help: "Qdrant vector query attempts.", type: "counter" }],
   ["loopover_qdrant_upserts_total", { help: "Qdrant vector upserted item count.", type: "counter" }],
   ["loopover_qdrant_errors_total", { help: "Qdrant vector operation errors.", type: "counter" }],

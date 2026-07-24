@@ -448,6 +448,34 @@ describe("pending PR scenario detection", () => {
     ).toBe("stale_likely_close");
   });
 
+  it("#8329: excludes ghost-account PRs and matches repo/login case-insensitively", async () => {
+    const env = {} as Env;
+    // Return a review keyed to whichever PR number is asked for, so the resulting reviews reveal exactly
+    // which records survived sameRepoFullName + sameLogin.
+    vi.spyOn(repositories, "listPullRequestReviews").mockImplementation(async (_env, _repo, pullNumber: number) => [
+      approvedReview(pullNumber),
+    ]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      // sameLogin's `value &&` short-circuit: a ghost/deleted account has no resolvable login and must be
+      // excluded rather than throwing on .toLowerCase() or matching by accident.
+      pr({ number: 80, authorLogin: null as unknown as string }),
+      pr({ number: 81, authorLogin: undefined }),
+      // Case-insensitive repo match: GitHub treats owner/repo case-insensitively, stored values may differ.
+      pr({ number: 82, repoFullName: "Entrius/Allways-UI" }),
+      // Case-insensitive login match.
+      pr({ number: 83, authorLogin: "Miner-A" }),
+    ]);
+
+    const matched = records.pullRequestReviews.map((review) => review.pullNumber).sort((a, b) => a - b);
+    expect(matched).toEqual([82, 83]);
+    // Explicitly: neither ghost-account PR slipped through.
+    expect(matched).not.toContain(80);
+    expect(matched).not.toContain(81);
+    vi.restoreAllMocks();
+  });
+
   it("loads cached reviews and checks for contributor open PRs", async () => {
     const env = {} as Env;
     vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(70)]);

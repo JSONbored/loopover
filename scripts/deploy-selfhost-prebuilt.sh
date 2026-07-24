@@ -16,6 +16,9 @@ set -euo pipefail
 ENV_FILE="${SELFHOST_ENV_FILE:-.env}"
 NODE_IMAGE="${SELFHOST_NODE_IMAGE:-public.ecr.aws/docker/library/node:24-slim}"
 SERVICE="${SELFHOST_SERVICE:-loopover}"
+# #8395: same override + default deploy-selfhost-image.sh already uses, so both deploy paths honour one
+# health-check budget.
+HEALTH_TIMEOUT_SECONDS="${SELFHOST_HEALTH_TIMEOUT_SECONDS:-180}"
 SKIP_SENTRY_UPLOAD="${SELFHOST_SKIP_SENTRY_UPLOAD:-0}"
 SENTRY_CLI_PACKAGE="${SENTRY_CLI_PACKAGE:-@sentry/cli@3.6.0}"
 
@@ -118,6 +121,13 @@ YAML
 
   echo "selfhost deploy: restarting $SERVICE"
   maybe_infisical_run docker compose "${compose_args[@]}" up -d --no-deps "$SERVICE"
+
+  # #8395: `up -d` only confirms the container was CREATED and STARTED -- without this, a crash-looping
+  # or never-healthy image still reported "selfhost deploy: complete". Called here (not at the top level)
+  # because compose_args is function-local, and it includes the generated override file. Exits non-zero
+  # with the same ps/logs diagnostics deploy-selfhost-image.sh produces; the EXIT trap above still cleans
+  # up the temp override file on that path.
+  wait_for_healthy "$SERVICE" "$HEALTH_TIMEOUT_SECONDS" "selfhost deploy" "${compose_args[@]}"
 }
 
 require_cmd docker

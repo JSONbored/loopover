@@ -36,8 +36,9 @@ flags, so it works on the whole declared `engines` range.
 Codecov (`codecov/patch`) only reads the root vitest suite, so modules that need a Codecov-visible mirror also
 have a root test under `test/unit/` (e.g. `test/unit/reviewer-consensus-calibration.test.ts` for
 `src/reviewer-consensus-calibration.ts` — #8349, or `test/unit/signal-tracking.test.ts` for
-`src/calibration/signal-tracking.ts` — #8343). The package-local `node:test` suite remains the package's own
-gate; the root mirror is what makes the same scenarios gradeable by Codecov.
+`src/calibration/signal-tracking.ts` — #8343, or `test/unit/harness-submission-trigger.test.ts` for
+`src/miner/harness-submission-trigger.ts` — #8346). The package-local `node:test` suite remains the package's
+own gate; the root mirror is what makes the same scenarios gradeable by Codecov.
 
 ## `opportunity-ranker`
 
@@ -680,6 +681,16 @@ engine-pure / miner-lib-stateful split every module uses). Open the named source
 These modules compute the *decisions*; the append-only record of what was decided is the separate *storage* contract
 in [Governor ledger](#governor-ledger) below (`allowed` / `denied` / `throttled` / `kill_switch`), which the
 chokepoint's returned ledger event feeds.
+
+`action-mode.ts`'s dry-run-by-default precedence (`resolveMinerActionMode` and siblings) has a Codecov-visible
+root mirror at `test/unit/miner-governor-action-mode.test.ts` (#8345) — `codecov/patch` only reads the root
+vitest suite (see [Test](#test)), so this safety-adjacent write-execution gate is gradeable there as well as by
+the package's own `node:test` suite, alongside the existing `test/unit/miner-governor-kill-switch.test.ts` mirror.
+
+Similarly, the miner self-review adapter (`src/miner/self-review-adapter.ts`, which builds the predicted-gate +
+slop inputs the miner's self-review pass runs) has a Codecov-visible root mirror at
+`test/unit/self-review-adapter.test.ts` (#8348) — again because `codecov/patch` only reads the root vitest suite
+(see [Test](#test)), not the package's own `node:test` suite.
 
 ## Governor ledger
 

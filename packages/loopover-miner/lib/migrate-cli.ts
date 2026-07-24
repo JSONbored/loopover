@@ -27,6 +27,7 @@ import { initPolicyVerdictCacheStore, resolvePolicyVerdictCacheDbPath } from "./
 import { initPolicyDocCacheStore, resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
 import { initRankedCandidatesStore, resolveRankedCandidatesDbPath } from "./ranked-candidates.js";
 import { initDenyHookSynthesisStore, resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
+import { openOrbExportStore, resolveOrbExportDbPath } from "./orb-export.js";
 
 const MIGRATE_USAGE = "Usage: loopover-miner migrate [--json]";
 
@@ -80,6 +81,9 @@ const STORES: MigrateStoreDescriptor[] = [
   { name: "policy-doc-cache", resolveDbPath: resolvePolicyDocCacheDbPath, open: initPolicyDocCacheStore },
   { name: "ranked-candidates", resolveDbPath: resolveRankedCandidatesDbPath, open: initRankedCandidatesStore },
   { name: "deny-hook-synthesis", resolveDbPath: resolveDenyHookSynthesisDbPath, open: initDenyHookSynthesisStore },
+  // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
+  // durable local store like every entry above, but was never added when it shipped.
+  { name: "orb-export", resolveDbPath: resolveOrbExportDbPath, open: openOrbExportStore },
 ];
 
 /** Read a store file's stamped schema version without ever creating it -- matches checkStoreIntegrity's

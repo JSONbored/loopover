@@ -145,6 +145,7 @@ describe("loopover-miner status/doctor (#2288)", () => {
       "store-integrity:policy-doc-cache",
       "store-integrity:ranked-candidates",
       "store-integrity:deny-hook-synthesis",
+      "store-integrity:orb-export",
     ]);
     // REGRESSION (#6768): doctor previously omitted these four durable local stores from the integrity sweep.
     expect(checks.map((check) => check.name)).toEqual(

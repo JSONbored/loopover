@@ -34,6 +34,7 @@ const STORE_NAMES = [
   "policy-doc-cache",
   "ranked-candidates",
   "deny-hook-synthesis",
+  "orb-export",
 ];
 
 afterEach(() => {
@@ -42,7 +43,7 @@ afterEach(() => {
 });
 
 describe("loopover-miner migrate (#4871)", () => {
-  it("covers the exact same sixteen stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
+  it("covers the exact same seventeen stores doctor's store-integrity sweep covers, in the same order, and skips every one when nothing has been created yet", () => {
     const env = tempEnv();
     const results = runMigrateChecks(env);
 
@@ -51,6 +52,9 @@ describe("loopover-miner migrate (#4871)", () => {
     expect(STORE_NAMES).toEqual(expect.arrayContaining(["governor-state", "attempt-log", "replay-snapshot", "worktree-allocator"]));
     // REGRESSION (#8008): ranked-candidates and deny-hook-synthesis were likewise omitted from both lists.
     expect(STORE_NAMES).toEqual(expect.arrayContaining(["ranked-candidates", "deny-hook-synthesis"]));
+    // REGRESSION (#8318): orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor) was
+    // never added to either list when it shipped, so a corrupted store was invisible to doctor and migrate.
+    expect(STORE_NAMES).toEqual(expect.arrayContaining(["orb-export"]));
     for (const result of results) {
       expect(result.ok).toBe(true);
       expect(result.status).toBe("skipped");

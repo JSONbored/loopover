@@ -31,6 +31,7 @@ import { resolvePolicyVerdictCacheDbPath } from "./policy-verdict-cache.js";
 import { resolvePolicyDocCacheDbPath } from "./policy-doc-cache.js";
 import { resolveRankedCandidatesDbPath } from "./ranked-candidates.js";
 import { resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
+import { resolveOrbExportDbPath } from "./orb-export.js";
 
 // Slim laptop-mode CLI commands (#2288): `status` (what's installed + where local state lives) and `doctor` (is
 // this laptop set up correctly). Both are read-only and 100% local — no repo-scanning, no coding-agent invocation,
@@ -381,6 +382,9 @@ function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCh
     ["policy-doc-cache", resolvePolicyDocCacheDbPath(env)],
     ["ranked-candidates", resolveRankedCandidatesDbPath(env)],
     ["deny-hook-synthesis", resolveDenyHookSynthesisDbPath(env)],
+    // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
+    // durable local store like every entry above, but was never added when it shipped.
+    ["orb-export", resolveOrbExportDbPath(env)],
   ];
   return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
 }

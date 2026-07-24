@@ -915,6 +915,149 @@ describe("renameRepositoryIdentity", () => {
     });
   });
 
+  // #8380: seven more raw-SQL-only identity-bearing tables with live writers that a rename used to orphan.
+  describe("orb_pr_outcomes (#8380)", () => {
+    const insert = (env: Env, repo: string, pr: number, outcome: string) =>
+      env.DB.prepare("INSERT INTO orb_pr_outcomes (repository_full_name, pr_number, outcome) VALUES (?, ?, ?)").bind(repo, pr, outcome).run();
+
+    it("moves outcomes to the new name and folds a colliding pr_number, keeping the old row's data", async () => {
+      const env = createTestEnv();
+      await insert(env, OLD, 7, "merged");
+      await insert(env, NEW, 7, "closed"); // collides on the (repo, pr) PK
+      await insert(env, NEW, 9, "merged"); // a different PR under the new name must survive untouched
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select pr_number, outcome from orb_pr_outcomes where repository_full_name = ? order by pr_number").bind(NEW).all<{ pr_number: number; outcome: string }>();
+      expect(rows.results).toEqual([{ pr_number: 7, outcome: "merged" }, { pr_number: 9, outcome: "merged" }]);
+      const stale = await env.DB.prepare("select count(*) as n from orb_pr_outcomes where repository_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(stale?.n).toBe(0);
+    });
+  });
+
+  describe("orb_webhook_events (#8380)", () => {
+    it("renames the repo column and leaves NULL-repo and unrelated rows untouched", async () => {
+      const env = createTestEnv();
+      const insert = (delivery: string, repo: string | null) =>
+        env.DB.prepare("INSERT INTO orb_webhook_events (delivery_id, event_name, repository_full_name, payload_hash) VALUES (?, 'pull_request', ?, 'hash')").bind(delivery, repo).run();
+      await insert("d1", OLD);
+      await insert("d2", OLD);
+      await insert("d3", null); // nullable by design — must stay NULL
+      await insert("d4", "some/other-repo");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const renamed = await env.DB.prepare("select count(*) as n from orb_webhook_events where repository_full_name = ?").bind(NEW).first<{ n: number }>();
+      expect(renamed?.n).toBe(2); // no unique constraint on this column — both rows survive
+      const nulls = await env.DB.prepare("select count(*) as n from orb_webhook_events where repository_full_name is null").first<{ n: number }>();
+      expect(nulls?.n).toBe(1);
+      const unrelated = await env.DB.prepare("select count(*) as n from orb_webhook_events where repository_full_name = ?").bind("some/other-repo").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
+    });
+  });
+
+  describe("override_audit (#8380)", () => {
+    it("renames project while leaving the non-project-derived id untouched", async () => {
+      const env = createTestEnv();
+      const insert = (id: string, project: string) =>
+        env.DB.prepare("INSERT INTO override_audit (id, project, event_type) VALUES (?, ?, 'override.applied')").bind(id, project).run();
+      await insert("ova_abc_1", OLD);
+      await insert("ova_abc_2", OLD);
+      await insert("ova_xyz_9", "some/other-repo");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id from override_audit where project = ? order by id").bind(NEW).all<{ id: string }>();
+      expect(rows.results.map((r) => r.id)).toEqual(["ova_abc_1", "ova_abc_2"]); // ids never embed the project
+      const unrelated = await env.DB.prepare("select count(*) as n from override_audit where project = ?").bind("some/other-repo").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
+    });
+  });
+
+  describe("tunables_overrides / tunables_overrides_shadow (#8380)", () => {
+    it("folds the new name's anchor row and carries the old row's values forward, in both the live and shadow tables", async () => {
+      const env = createTestEnv();
+      for (const table of ["tunables_overrides", "tunables_overrides_shadow"]) {
+        await env.DB.prepare(`INSERT INTO ${table} (project, confidence_floor) VALUES (?, 0.9)`).bind(OLD).run();
+        await env.DB.prepare(`INSERT INTO ${table} (project, confidence_floor) VALUES (?, 0.1)`).bind(NEW).run(); // the collision
+        await env.DB.prepare(`INSERT INTO ${table} (project, confidence_floor) VALUES ('some/other-repo', 0.5)`).run();
+      }
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      for (const table of ["tunables_overrides", "tunables_overrides_shadow"]) {
+        const rows = await env.DB.prepare(`select confidence_floor from ${table} where project = ?`).bind(NEW).all<{ confidence_floor: number }>();
+        expect(rows.results).toEqual([{ confidence_floor: 0.9 }]); // the OLD row's value won
+        const stale = await env.DB.prepare(`select count(*) as n from ${table} where project = ?`).bind(OLD).first<{ n: number }>();
+        expect(stale?.n).toBe(0);
+        const unrelated = await env.DB.prepare(`select count(*) as n from ${table} where project = 'some/other-repo'`).first<{ n: number }>();
+        expect(unrelated?.n).toBe(1);
+      }
+    });
+  });
+
+  describe("predicted_gate_calibration_ledger (#8380)", () => {
+    const insert = (env: Env, id: string, project: string, targetId: string) =>
+      env.DB.prepare(
+        "INSERT INTO predicted_gate_calibration_ledger (id, login, project, target_id, predicted_action, real_decision, agreed, predicted_at, decided_at) VALUES (?, 'alice', ?, ?, 'pass', 'merge', 1, '2026-07-01T00:00:00Z', '2026-07-02T00:00:00Z')",
+      )
+        .bind(id, project, targetId)
+        .run();
+
+    it("rewrites project, the project-embedding id, and target_id together", async () => {
+      const env = createTestEnv();
+      await insert(env, `calibration:alice:${OLD}:7@sha1`, OLD, `${OLD}#7`);
+      await insert(env, "calibration:alice:some/other-repo:1@sha2", "some/other-repo", "some/other-repo#1");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id, target_id from predicted_gate_calibration_ledger where project = ?").bind(NEW).all<{ id: string; target_id: string }>();
+      expect(rows.results).toEqual([{ id: `calibration:alice:${NEW}:7@sha1`, target_id: `${NEW}#7` }]);
+      const unrelated = await env.DB.prepare("select count(*) as n from predicted_gate_calibration_ledger where project = 'some/other-repo'").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
+    });
+
+    it("folds a row whose renamed id would collide with an existing new-name row", async () => {
+      const env = createTestEnv();
+      await insert(env, `calibration:alice:${OLD}:7@sha1`, OLD, `${OLD}#7`);
+      await insert(env, `calibration:alice:${NEW}:7@sha1`, NEW, `${NEW}#7`); // the id the rename would produce
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select count(*) as n from predicted_gate_calibration_ledger where project = ?").bind(NEW).first<{ n: number }>();
+      expect(rows?.n).toBe(1);
+    });
+  });
+
+  describe("predicted_gate_calls (#8380)", () => {
+    const insert = (env: Env, id: string, project: string) =>
+      env.DB.prepare("INSERT INTO predicted_gate_calls (id, login, project, predicted_action, conclusion) VALUES (?, 'alice', ?, 'pass', 'success')").bind(id, project).run();
+
+    it("rewrites project and the project-embedding id (this table has no target_id)", async () => {
+      const env = createTestEnv();
+      await insert(env, `predicted:alice:${OLD}:1700000000:abc`, OLD);
+      await insert(env, "predicted:alice:some/other-repo:1700000000:zzz", "some/other-repo");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id from predicted_gate_calls where project = ?").bind(NEW).all<{ id: string }>();
+      expect(rows.results.map((r) => r.id)).toEqual([`predicted:alice:${NEW}:1700000000:abc`]);
+      const unrelated = await env.DB.prepare("select count(*) as n from predicted_gate_calls where project = 'some/other-repo'").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
+    });
+
+    it("folds a row whose renamed id would collide with an existing new-name row", async () => {
+      const env = createTestEnv();
+      await insert(env, `predicted:alice:${OLD}:1700000000:abc`, OLD);
+      await insert(env, `predicted:alice:${NEW}:1700000000:abc`, NEW); // the id the rename would produce
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select count(*) as n from predicted_gate_calls where project = ?").bind(NEW).first<{ n: number }>();
+      expect(rows?.n).toBe(1);
+    });
+  });
+
   describe("audit_events", () => {
     it("renames every target_key containing the old full name, including composite repo#number keys, leaving unrelated keys untouched", async () => {
       const env = createTestEnv();

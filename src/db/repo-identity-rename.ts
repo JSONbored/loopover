@@ -414,6 +414,81 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
   }
   await env.DB.prepare("UPDATE submitter_stats SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
 
+  // Seven more raw-SQL-only identity-bearing tables (#8380), each with a confirmed live writer. Same three
+  // fold shapes already used above, chosen per table by its REAL constraint (verified against each table's
+  // own migration), not by column name:
+
+  // orbPrOutcomes: PRIMARY KEY (repository_full_name, pr_number) (src/orb/outcomes.ts's recordOrbPrOutcome
+  // upserts on exactly that). Fold on the OTHER half of the composite key, pr_number -- same shape as
+  // submitterStats above.
+  const collidingOrbPrNumbers = (
+    await env.DB.prepare("SELECT pr_number FROM orb_pr_outcomes WHERE repository_full_name = ?").bind(oldFullName).all<{ pr_number: number }>()
+  ).results.map((row) => row.pr_number);
+  if (collidingOrbPrNumbers.length > 0) {
+    const placeholders = collidingOrbPrNumbers.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM orb_pr_outcomes WHERE repository_full_name = ? AND pr_number IN (${placeholders})`)
+      .bind(newFullName, ...collidingOrbPrNumbers)
+      .run();
+  }
+  await env.DB.prepare("UPDATE orb_pr_outcomes SET repository_full_name = ? WHERE repository_full_name = ?")
+    .bind(newFullName, oldFullName)
+    .run();
+
+  // orbWebhookEvents: PK is delivery_id; repository_full_name is NULLABLE with no unique constraint on it
+  // (src/orb/webhook.ts). Nothing can collide -- plain rename, same as signalSnapshots above.
+  await env.DB.prepare("UPDATE orb_webhook_events SET repository_full_name = ? WHERE repository_full_name = ?")
+    .bind(newFullName, oldFullName)
+    .run();
+
+  // overrideAudit: PK `id` is a random, NON-project-derived string (`ova_<ts36>_<random>`, newAuditId() in
+  // src/review/auto-apply.ts), and the only index on `project` is non-unique. Unlike reviewAudit's id, it
+  // never embeds the project, so no substring rewrite and no collision fold -- plain rename.
+  await env.DB.prepare("UPDATE override_audit SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
+
+  // tunablesOverrides / tunablesOverridesShadow: `project` is itself the PRIMARY KEY (src/review/
+  // auto-apply.ts's writeLiveOverride). The new name's own row is the collision -- delete it first, then
+  // rename, the same anchor-row fold shape used for repositories/burdenForecasts above.
+  for (const table of ["tunables_overrides", "tunables_overrides_shadow"] as const) {
+    await env.DB.prepare(`DELETE FROM ${table} WHERE project = ?`).bind(newFullName).run();
+    await env.DB.prepare(`UPDATE ${table} SET project = ? WHERE project = ?`).bind(newFullName, oldFullName).run();
+  }
+
+  // predictedGateCalibrationLedger / predictedGateCalls: the sharpest instance of this module's own dominant
+  // shape -- `project` plus an `id` (and, for the ledger, a `target_id`) that embed the project as a
+  // substring, exactly like reviewAudit/contributorGateHistory above. Identical substring-replace + PK-
+  // collision fold. The ledger's id is `calibration:${login}:${project}:${pull}@${sha}` and its target_id is
+  // `${project}#${pull}`; predicted_gate_calls' id is `predicted:${login}:${project}:${ts}:${random}` and it
+  // has NO target_id column, so only id/project are rewritten there.
+  const oldCalibrationLedgerIds = (
+    await env.DB.prepare("SELECT id FROM predicted_gate_calibration_ledger WHERE project = ?").bind(oldFullName).all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const renamedCalibrationLedgerIds = oldCalibrationLedgerIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedCalibrationLedgerIds.length > 0) {
+    const placeholders = renamedCalibrationLedgerIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM predicted_gate_calibration_ledger WHERE id IN (${placeholders})`)
+      .bind(...renamedCalibrationLedgerIds)
+      .run();
+  }
+  await env.DB.prepare(
+    "UPDATE predicted_gate_calibration_ledger SET id = replace(id, ?, ?), project = ?, target_id = replace(target_id, ?, ?) WHERE project = ?",
+  )
+    .bind(oldFullName, newFullName, newFullName, oldFullName, newFullName, oldFullName)
+    .run();
+
+  const oldPredictedGateCallIds = (
+    await env.DB.prepare("SELECT id FROM predicted_gate_calls WHERE project = ?").bind(oldFullName).all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const renamedPredictedGateCallIds = oldPredictedGateCallIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedPredictedGateCallIds.length > 0) {
+    const placeholders = renamedPredictedGateCallIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM predicted_gate_calls WHERE id IN (${placeholders})`)
+      .bind(...renamedPredictedGateCallIds)
+      .run();
+  }
+  await env.DB.prepare("UPDATE predicted_gate_calls SET id = replace(id, ?, ?), project = ? WHERE project = ?")
+    .bind(oldFullName, newFullName, newFullName, oldFullName)
+    .run();
+
   // Deliberately OUT OF SCOPE:
   //   - The request-scoped AI/LLM result caches (ai_review_cache, ai_slop_cache,
   //     linked_issue_satisfaction_cache, grounding_file_content_cache). Every one of these is a rebuildable

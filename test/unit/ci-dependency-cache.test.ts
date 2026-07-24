@@ -31,7 +31,7 @@ function jobSteps(workflow: Record<string, unknown>, jobName: string): Array<Rec
 
 // The root node_modules restore/install/save sequence used to be asserted here directly against
 // validate-code's own step list, but it's now a shared composite action
-// (.github/actions/setup-workspace) invoked by validate-code/validate-tests/validate-tests-merge alike
+// (.github/actions/setup-workspace) invoked by validate-code/validate-tests alike
 // -- see ci-composite-setup-workspace.test.ts for that logic and its call sites. review-enrichment's
 // cache is untouched by that extraction (own lockfile, not an npm workspace member, no reason to share
 // the same composite action), so it's still checked here directly.

@@ -71,6 +71,7 @@
     "ui:version-audit": "node --experimental-strip-types scripts/check-ui-mcp-version-copy.ts",
     "ui:version-audit:sync": "node --experimental-strip-types scripts/check-ui-mcp-version-copy.ts --write",
     "docs:drift-check": "node --experimental-strip-types scripts/check-docs-drift.ts",
+    "roadmap:drift-check": "node --experimental-strip-types scripts/check-roadmap-issue-drift.ts",
     "branding-drift:check": "node --experimental-strip-types scripts/check-branding-drift.ts",
     "branding-drift:update": "node --experimental-strip-types scripts/check-branding-drift.ts --update",
     "manifest:drift-check": "tsx scripts/check-manifest-drift.ts",

@@ -1199,6 +1199,34 @@ describe("private-beta auth and rate limiting", () => {
     await expect(pollGitHubDeviceFlow(createTestEnv(), "device-code")).rejects.toThrow(/not_configured/);
   });
 
+  // #8378: routine polling used to write an `outcome: "denied"` audit row on EVERY poll (~180 per successful
+  // login), while the one genuine user rejection (`access_denied`) was filed as a generic `error`.
+  it("REGRESSION (#8378): audits only terminal device-poll errors, with access_denied as the sole 'denied'", async () => {
+    const env = createTestEnv({ GITHUB_OAUTH_CLIENT_ID: "client-id" });
+    const pollWith = async (error: string) => {
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+        input.toString().includes("access_token") ? Response.json({ error, error_description: `${error} desc` }) : Response.json({}),
+      );
+      return pollGitHubDeviceFlow(env, "device-code");
+    };
+    const auditRows = async () =>
+      (await env.DB.prepare("select detail, outcome from audit_events where event_type = ?").bind("auth.github_device_poll").all<{ detail: string; outcome: string }>()).results;
+
+    // Routine, non-terminal polling states write NO audit row at all...
+    for (const routine of ["authorization_pending", "slow_down"]) {
+      await expect(pollWith(routine)).resolves.toMatchObject({ status: routine, message: `${routine} desc` });
+    }
+    expect(await auditRows()).toEqual([]);
+
+    // ...the user actually declining is the one genuine `denied`...
+    await expect(pollWith("access_denied")).resolves.toMatchObject({ status: "access_denied", message: "access_denied desc" });
+    expect(await auditRows()).toEqual([{ detail: "access_denied", outcome: "denied" }]);
+
+    // ...and every other terminal code stays `error`, unchanged.
+    await expect(pollWith("expired_token")).resolves.toMatchObject({ status: "expired_token" });
+    expect(await auditRows()).toContainEqual({ detail: "expired_token", outcome: "error" });
+  });
+
   it("rejects invalid GitHub tokens when creating sessions", async () => {
     const env = createTestEnv();
     vi.stubGlobal("fetch", async () => Response.json({ message: "bad credentials" }, { status: 401 }));

@@ -343,7 +343,8 @@ describe("MCP tool calls return schema-valid structured content", () => {
     });
     const result = await client.callTool({ name: "loopover_get_ams_miner_cohort", arguments: { owner: "victim-org", repo: "private-repo" } });
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    // (#8338) requireRepoAccess denial — matches sibling read tools (not the live-write approval-queue message).
+    expect(JSON.stringify(result.content)).toContain("session cannot access this repository");
     expect(result.structuredContent).toBeUndefined();
   });
 
@@ -515,7 +516,8 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const result = await client.callTool({ name: "loopover_get_activation_preview", arguments: { owner: "victim-org", repo: "private-repo" } });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    // (#8338) requireRepoAccess denial — matches sibling read tools (not the live-write approval-queue message).
+    expect(JSON.stringify(result.content)).toContain("session cannot access this repository");
     expect(result.structuredContent).toBeUndefined();
   });
 
@@ -547,7 +549,8 @@ describe("MCP tool calls return schema-valid structured content", () => {
     const result = await client.callTool({ name: "loopover_get_maintainer_noise", arguments: { owner: "victim-org", repo: "private-repo" } });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain("maintainer access is required");
+    // (#8338) MEMBER on a non-installed repo does not grant requireRepoAccess scope; message matches sibling reads.
+    expect(JSON.stringify(result.content)).toContain("session cannot access this repository");
     expect(result.structuredContent).toBeUndefined();
   });
 

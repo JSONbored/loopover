@@ -4019,6 +4019,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     !manifest.maintainerRecap.present &&
     !manifest.ops.present &&
     !manifest.publicStats.present &&
+    !manifest.fairnessAnalytics.present &&
     !manifest.draftFlow.present &&
     !manifest.upstreamDriftIssues.present &&
     !manifest.sweepWatchdog.present &&

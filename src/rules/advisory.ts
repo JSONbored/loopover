@@ -387,6 +387,11 @@ function sanitizeForCheckRun(text: string): string {
 
 export const CHECK_RUN_ANNOTATION_LIMIT = 50;
 
+// Max configured hard-blocker lines rendered inline in the gate check-run text before truncation — a long
+// list is unreadable and risks GitHub's check-run output size limit. Overflow is disclosed via a
+// "…N more omitted" line (formatGateCheckOutput, #8323), the same transparency CHECK_RUN_ANNOTATION_LIMIT gets.
+const GATE_CHECK_BLOCKER_LIMIT = 8;
+
 export type CheckRunAnnotation = {
   path: string;
   start_line: number;
@@ -741,17 +746,24 @@ export function formatGateCheckOutput(gate: GateCheckEvaluation): { title: strin
       text: "LoopOver did not create a contributor-facing failure for this event.",
     };
   }
-  const blockerLines = gate.blockers.slice(0, 8).map((finding) => {
+  const blockerLines = gate.blockers.slice(0, GATE_CHECK_BLOCKER_LIMIT).map((finding) => {
     const action = finding.action ? ` Action: ${sanitizeForCheckRun(finding.action)}` : "";
     return `- ${sanitizeForCheckRun(finding.title)}.${action}`;
   });
+  // #8323: disclose truncation, mirroring buildCheckRunAnnotations' omittedCount line — a contributor with 9+
+  // genuine blockers must know more exist than are shown, not silently discover them on the next gate run.
+  const omittedCount = Math.max(0, gate.blockers.length - GATE_CHECK_BLOCKER_LIMIT);
+  let text = blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.";
+  if (omittedCount > 0) {
+    text = `${text}\n\n…${omittedCount} more configured blocker(s) omitted from inline check output.`;
+  }
   return {
     // GitHub's check-run output.title 422s when too long; cap it (matches the 255 cap used for annotations).
     // An unbounded title (e.g. when failing-check names are appended) threw a 422 that aborted the ENTIRE
     // review before the comment, audit, and auto-action — so red-CI PRs were never reviewed or closed.
     title: gate.title.slice(0, 255),
     summary: `${LOOPOVER_GATE_CHECK_NAME} found a repo-configured hard blocker.`,
-    text: blockerLines.length > 0 ? blockerLines.join("\n") : "A configured hard blocker was found.",
+    text,
   };
 }
 

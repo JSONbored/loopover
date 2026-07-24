@@ -33,6 +33,11 @@ npm test --workspace @loopover/engine
 Compiles the package and the `test/` suite (`node:test`) to plain JS and runs it — no experimental runtime
 flags, so it works on the whole declared `engines` range.
 
+Codecov (`codecov/patch`) only reads the root vitest suite, so modules that need a Codecov-visible mirror also
+have a root test under `test/unit/` (e.g. `test/unit/reviewer-consensus-calibration.test.ts` for
+`src/reviewer-consensus-calibration.ts` — #8349). The package-local `node:test` suite remains the package's own
+gate; the root mirror is what makes the same scenarios gradeable by Codecov.
+
 ## `opportunity-ranker`
 
 The Phase-1 miner-discovery ranker. It composes five already-normalized `[0, 1]` signals into one ordinal score:

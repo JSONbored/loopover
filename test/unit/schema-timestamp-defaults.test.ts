@@ -1,7 +1,15 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getDb } from "../../src/db/client";
-import { aiReviewCache, aiSlopCache, linkedIssueSatisfactionCache, orbRelayPending, repositorySettings, webhookEvents } from "../../src/db/schema";
+import {
+  aiReviewCache,
+  aiSlopCache,
+  linkedIssueSatisfactionCache,
+  orbRelayPending,
+  repositorySettings,
+  upstreamDriftReports,
+  webhookEvents,
+} from "../../src/db/schema";
 import { createTestEnv } from "../helpers/d1";
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
@@ -101,5 +109,28 @@ describe("timestamp column defaults", () => {
     const [row] = await db.select().from(linkedIssueSatisfactionCache).where(eq(linkedIssueSatisfactionCache.repoFullName, "acme/widgets")).limit(1);
     expect(row?.createdAt).toMatch(ISO);
     expect(row?.createdAt).not.toBe("CURRENT_TIMESTAMP");
+  });
+
+  it("applies upstreamDriftReports.updatedAt default on omit (#8369)", async () => {
+    const env = createTestEnv();
+    const db = getDb(env.DB);
+    // Omit updatedAt — the schema $defaultFn must inject a real ISO timestamp (same house rule as every
+    // sibling updatedAt). generatedAt stays explicit; this issue only covers the updatedAt gap.
+    await db.insert(upstreamDriftReports).values({
+      id: "drift-ts-default-1",
+      fingerprint: "fp-ts-default-1",
+      severity: "low",
+      summary: "schema defaultFn regression",
+      generatedAt: "2026-07-24T00:00:00.000Z",
+    });
+    const [row] = await db
+      .select()
+      .from(upstreamDriftReports)
+      .where(eq(upstreamDriftReports.id, "drift-ts-default-1"))
+      .limit(1);
+    expect(row?.updatedAt).toMatch(ISO);
+    expect(row?.updatedAt).not.toBe("CURRENT_TIMESTAMP");
+    expect(row?.updatedAt).not.toBe("");
+    expect(row?.generatedAt).toBe("2026-07-24T00:00:00.000Z");
   });
 });

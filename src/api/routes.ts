@@ -1293,25 +1293,42 @@ export function createApp() {
   // Public-safe README status badge (#541). Unauthenticated and embeddable: it serves ONLY whitelisted,
   // repo-level metrics, and ONLY for installed repos that opted in via the `badgeEnabled` setting. Excluded
   // from requiresApiToken above; aggressively cached + stale-while-revalidate like the public stats route.
+  // #8377: loadPublicRepoBadge is NOT fail-safe (D1 reads plus a possible cold-cache GitHub manifest fetch),
+  // so a transient blip used to escape as Hono's bare 500 — unusually visible here, since these badges are
+  // embedded in third-party READMEs behind GitHub's camo proxy. Same route-level try/catch the sibling
+  // /quality route and the #4995 relay fix already use (the loader itself is untouched). 503, never 404:
+  // 404 stays reserved for the real "no public badge for this repo" case so a monitor can tell the two
+  // apart, and the 503 branch uses the SHORT cache so a transient failure is never cached for the long
+  // stale-while-revalidate window.
   app.get("/v1/public/repos/:owner/:repo/badge.svg", async (c) => {
-    const quality = await loadPublicRepoBadge(c.env, c.req.param("owner"), c.req.param("repo"));
     c.header("Content-Type", "image/svg+xml; charset=utf-8");
-    if (!quality) {
+    try {
+      const quality = await loadPublicRepoBadge(c.env, c.req.param("owner"), c.req.param("repo"));
+      if (!quality) {
+        c.header("Cache-Control", "public, max-age=300");
+        return c.body(renderUnavailableBadgeSvg(), 404);
+      }
+      c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+      return c.body(renderBadgeSvg(quality));
+    } catch {
       c.header("Cache-Control", "public, max-age=300");
-      return c.body(renderUnavailableBadgeSvg(), 404);
+      return c.body(renderUnavailableBadgeSvg(), 503);
     }
-    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
-    return c.body(renderBadgeSvg(quality));
   });
 
   app.get("/v1/public/repos/:owner/:repo/badge.json", async (c) => {
-    const quality = await loadPublicRepoBadge(c.env, c.req.param("owner"), c.req.param("repo"));
-    if (!quality) {
+    try {
+      const quality = await loadPublicRepoBadge(c.env, c.req.param("owner"), c.req.param("repo"));
+      if (!quality) {
+        c.header("Cache-Control", "public, max-age=300");
+        return c.json({ schemaVersion: 1, label: PUBLIC_BADGE_LABEL, message: "unavailable", color: "#9e9e9e", cacheSeconds: 300 }, 404);
+      }
+      c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+      return c.json(buildShieldsBadge(quality, 600));
+    } catch {
       c.header("Cache-Control", "public, max-age=300");
-      return c.json({ schemaVersion: 1, label: PUBLIC_BADGE_LABEL, message: "unavailable", color: "#9e9e9e", cacheSeconds: 300 }, 404);
+      return c.json({ schemaVersion: 1, label: PUBLIC_BADGE_LABEL, message: "unavailable", color: "#9e9e9e", cacheSeconds: 300 }, 503);
     }
-    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
-    return c.json(buildShieldsBadge(quality, 600));
   });
 
   // Public per-repo review-quality metrics (#2568). Unauthenticated; aggregate counts/rates only; opt-in via

@@ -5,18 +5,12 @@ import { Bar, BarChart, Cell, XAxis, YAxis } from "recharts";
 import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@loopover/ui-kit/components/chart";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@loopover/ui-kit/components/pagination";
 import { Skeleton } from "@loopover/ui-kit/components/skeleton";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
+import { TablePagination } from "../components/table-pagination";
+import { usePagedRows } from "../lib/paged-rows";
 import {
   fetchPortfolioQueueItems,
   requeuePortfolioQueueItem,
@@ -65,66 +59,12 @@ const STATUS_TONE: Record<QueueStatus, string> = {
   done: "text-success",
 };
 
-/** Rows per page once a repos/actions table grows past this; below it the full table renders unpaginated. */
-const PAGE_SIZE = 20;
-
 const QUEUE_CHART_CONFIG = {
   count: { label: "Queue items" },
   queued: { label: "Queued", color: "var(--muted-foreground)" },
   in_progress: { label: "In progress", color: "var(--warning)" },
   done: { label: "Done", color: "var(--success)" },
 } satisfies ChartConfig;
-
-function TablePagination({
-  page,
-  pageCount,
-  onPageChange,
-}: {
-  page: number;
-  pageCount: number;
-  onPageChange: (next: number) => void;
-}) {
-  return (
-    <Pagination className="mt-4">
-      <PaginationContent>
-        <PaginationItem>
-          <PaginationPrevious
-            href="#"
-            aria-disabled={page === 0}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.max(0, page - 1));
-            }}
-          />
-        </PaginationItem>
-        {Array.from({ length: pageCount }).map((_, index) => (
-          <PaginationItem key={index}>
-            <PaginationLink
-              href="#"
-              isActive={index === page}
-              onClick={(event) => {
-                event.preventDefault();
-                onPageChange(index);
-              }}
-            >
-              {index + 1}
-            </PaginationLink>
-          </PaginationItem>
-        ))}
-        <PaginationItem>
-          <PaginationNext
-            href="#"
-            aria-disabled={page >= pageCount - 1}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.min(pageCount - 1, page + 1));
-            }}
-          />
-        </PaginationItem>
-      </PaginationContent>
-    </Pagination>
-  );
-}
 
 /** Horizontal bar chart of queue status counts — the chart.tsx adoption for the status cards section (#6831).
  *  Cards still show the exact numbers; the chart is the glanceable breakdown the bare `<dd>`s alone weren't. */
@@ -158,14 +98,10 @@ function QueueStatusChart({ byStatus }: { byStatus: QueueStatusCounts }) {
 }
 
 function ReposTable({ repos }: { repos: PortfolioRepoSummary[] }) {
-  const [page, setPage] = useState(0);
   // Sorted by total desc (then name) so the busiest repos surface first — same "sort then page" shape as the
   // ledgers CountTable (#6832), without inventing interactive column headers.
   const sorted = [...repos].sort((a, b) => b.total - a.total || a.repoFullName.localeCompare(b.repoFullName));
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const isPaginated = sorted.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = isPaginated ? sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : sorted;
+  const { visible, isPaginated, page, pageCount, setPage } = usePagedRows(sorted);
   return (
     <div>
       <Table>
@@ -190,7 +126,7 @@ function ReposTable({ repos }: { repos: PortfolioRepoSummary[] }) {
           ))}
         </TableBody>
       </Table>
-      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+      {isPaginated && <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />}
     </div>
   );
 }
@@ -206,7 +142,6 @@ function QueueActionsTable({
   onRelease: (item: PortfolioQueueActionItem) => void;
   onRequeue: (item: PortfolioQueueActionItem) => void;
 }) {
-  const [page, setPage] = useState(0);
   // in_progress before done, then repo/identifier — actionable release rows float to the top of page 1.
   const sorted = [...items].sort((a, b) => {
     const statusOrder = (status: PortfolioQueueActionItem["status"]) => (status === "in_progress" ? 0 : 1);
@@ -216,10 +151,7 @@ function QueueActionsTable({
       a.identifier.localeCompare(b.identifier)
     );
   });
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const isPaginated = sorted.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = isPaginated ? sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : sorted;
+  const { visible, isPaginated, page, pageCount, setPage } = usePagedRows(sorted);
   return (
     <div>
       <Table>
@@ -252,7 +184,7 @@ function QueueActionsTable({
           ))}
         </TableBody>
       </Table>
-      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+      {isPaginated && <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />}
     </div>
   );
 }

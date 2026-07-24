@@ -397,6 +397,27 @@ describe("runHistoricalReplayCalibrationCycle (#4248)", () => {
     expect(noReplay.snapshot.replayRunId).toBeNull();
     expect(noReplay.sampleSize).toBe(0);
   });
+
+  it("forwards backtestTrackRecord into the snapshot meta (#8317)", () => {
+    const ledger = mockLedger();
+    const record = { totalRuns: 4, regressedRuns: 1, regressedRate: 0.25 };
+    const withRecord = runHistoricalReplayCalibrationCycle(
+      { config: enabledConfig, prOutcome, repoFullName: "acme/widgets", backtestTrackRecord: record },
+      { eventLedger: ledger },
+    );
+    expect(withRecord.snapshot.backtestTrackRecord).toEqual(record);
+    expect(readCalibrationSnapshots(ledger)[0]?.backtestTrackRecord).toEqual(record);
+
+    const without = runHistoricalReplayCalibrationCycle({ config: enabledConfig, prOutcome });
+    expect(without.snapshot.backtestTrackRecord).toBeNull();
+
+    const explicitNull = runHistoricalReplayCalibrationCycle({
+      config: enabledConfig,
+      prOutcome,
+      backtestTrackRecord: null,
+    });
+    expect(explicitNull.snapshot.backtestTrackRecord).toBeNull();
+  });
 });
 
 describe("backtestTrackRecord snapshot section (#8185)", () => {

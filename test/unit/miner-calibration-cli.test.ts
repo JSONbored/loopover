@@ -327,3 +327,122 @@ describe("calibration report sections (#8185/#8186)", () => {
     expect(parsed.backtestProposals[0]?.candidateThreshold).toBe(0.2);
   });
 });
+
+// ── #8317: calibration snapshot wires the Phase 7 runner into a real CLI caller ─────────────────────────────
+
+import { MINER_CALIBRATION_SNAPSHOT_EVENT } from "../../packages/loopover-miner/lib/calibration-run.js";
+
+function seedPredictionFor(
+  env: Record<string, string | undefined>,
+  repoFullName: string,
+  targetId: number,
+  conclusion: string,
+): void {
+  const store = initPredictionLedger(resolvePredictionLedgerDbPath(env));
+  store.appendPrediction({
+    repoFullName,
+    targetId,
+    conclusion,
+    pack: "oss",
+    readinessScore: 90,
+    blockerCodes: [],
+    warningCodes: [],
+    engineVersion: "1.0.0",
+  });
+  store.close();
+}
+
+function seedOutcomeFor(
+  env: Record<string, string | undefined>,
+  repoFullName: string,
+  payload: Record<string, unknown>,
+): void {
+  const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+  ledger.appendEvent({ type: "pr_outcome", repoFullName, payload });
+  ledger.close();
+}
+
+describe("calibration snapshot (#8317)", () => {
+  it("persists one snapshot per project for a multi-project report (not one merged event)", () => {
+    const env = envForTempStores();
+    seedPredictionFor(env, "acme/widgets", 1, "merge");
+    seedOutcomeFor(env, "acme/widgets", { prNumber: 1, decision: "merged" });
+    seedPredictionFor(env, "acme/gadgets", 2, "merge");
+    seedOutcomeFor(env, "acme/gadgets", { prNumber: 2, decision: "merged" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runCalibrationCli(["snapshot"], env)).toBe(0);
+    const output = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(output).toContain("calibration snapshot acme/widgets:");
+    expect(output).toContain("calibration snapshot acme/gadgets:");
+    expect(output).toContain("persisted 2 project snapshot(s)");
+
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    const snaps = ledger.readEvents().filter((e) => e.type === MINER_CALIBRATION_SNAPSHOT_EVENT);
+    ledger.close();
+    expect(snaps).toHaveLength(2);
+    expect(snaps.map((e) => e.repoFullName).sort()).toEqual(["acme/gadgets", "acme/widgets"]);
+  });
+
+  it("persists a single-project snapshot and embeds null backtestTrackRecord when no backtest runs exist", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runCalibrationCli(["snapshot", "--json"], env)).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls[0]?.[0])) as {
+      snapshots: Array<{ repoFullName: string; snapshot: { backtestTrackRecord: unknown } }>;
+    };
+    expect(parsed.snapshots).toHaveLength(1);
+    expect(parsed.snapshots[0]).toMatchObject({ repoFullName: "acme/widgets" });
+    expect(parsed.snapshots[0]?.snapshot.backtestTrackRecord).toBeNull();
+
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    const snaps = ledger.readEvents().filter((e) => e.type === MINER_CALIBRATION_SNAPSHOT_EVENT);
+    ledger.close();
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]?.payload).toMatchObject({ backtestTrackRecord: null });
+  });
+
+  it("embeds a populated backtestTrackRecord when backtest runs exist", () => {
+    const env = envForTempStores();
+    seedTakenHistory(env);
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    expect(runCalibrationCli(["backtest-threshold", "--candidate", "0.2"], env)).toBe(0);
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runCalibrationCli(["snapshot", "--json"], env)).toBe(0);
+    const parsed = JSON.parse(String(log.mock.calls[0]?.[0])) as {
+      snapshots: Array<{ snapshot: { backtestTrackRecord: { totalRuns: number; regressedRuns: number } | null } }>;
+    };
+    expect(parsed.snapshots[0]?.snapshot.backtestTrackRecord).toMatchObject({ totalRuns: 2, regressedRuns: 0 });
+  });
+
+  it("prints the no-signal message and persists NOTHING when the report has zero decided rows", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 1, "merge"); // pending — no outcome
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(runCalibrationCli(["snapshot"], env)).toBe(0);
+    expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain("no decided predictions yet");
+
+    log.mockClear();
+    expect(runCalibrationCli(["snapshot", "--json"], env)).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      snapshots: [],
+      reason: "no_decided_predictions",
+    });
+
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(ledger.readEvents().filter((e) => e.type === MINER_CALIBRATION_SNAPSHOT_EVENT)).toHaveLength(0);
+    ledger.close();
+  });
+
+  it("rejects an unknown option on the snapshot subcommand", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runCalibrationCli(["snapshot", "--bogus"], envForTempStores())).toBe(1);
+    expect(String(err.mock.calls[0]?.[0])).toContain("Unknown option");
+  });
+});

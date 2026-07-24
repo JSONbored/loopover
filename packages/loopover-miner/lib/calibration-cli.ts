@@ -24,11 +24,12 @@ import type { LedgerEntry } from "./event-ledger.js";
 import { MINER_PR_OUTCOME_EVENT } from "./pr-outcome.js";
 import { initPredictionLedger, resolvePredictionLedgerDbPath } from "./prediction-ledger.js";
 import type { PredictionLedgerEntry } from "./prediction-ledger.js";
-import type { PredictedVerdictRecord, ObservedOutcomeRecord, CalibrationReport } from "./calibration-types.js";
+import type { PredictedVerdictRecord, ObservedOutcomeRecord, CalibrationReport, CalibrationRow } from "./calibration-types.js";
 import { reportCliFailure, describeCliError } from "./cli-error.js";
+import { runHistoricalReplayCalibrationCycle, type CalibrationSnapshotPayload } from "./calibration-run.js";
 
 const CALIBRATION_USAGE =
-  "Usage: loopover-miner calibration [--json] | calibration backtest-threshold --candidate <x> [--json] | calibration apply-min-rank --candidate <x> --approve [--json] | calibration revert-min-rank --approve [--json]";
+  "Usage: loopover-miner calibration [--json] | calibration snapshot [--json] | calibration backtest-threshold --candidate <x> [--json] | calibration apply-min-rank --candidate <x> --approve [--json] | calibration revert-min-rank --approve [--json]";
 
 export type CalibrationCliDeps = {
   readFileSync?: typeof readFileSync;
@@ -125,6 +126,93 @@ function renderReportText(report: CalibrationReport): void {
   }
 }
 
+/** Map one {@link CalibrationRow} onto the engine's {@link PrOutcomeCalibrationInput} shape (#8317) —
+ *  field-for-field; `hold` is always present on the row so it always forwards. */
+export function prOutcomeFromCalibrationRow(row: CalibrationRow): {
+  mergeConfirmed: number;
+  mergeFalse: number;
+  closeConfirmed: number;
+  closeFalse: number;
+  hold: number;
+} {
+  return {
+    mergeConfirmed: row.mergeConfirmed,
+    mergeFalse: row.mergeFalse,
+    closeConfirmed: row.closeConfirmed,
+    closeFalse: row.closeFalse,
+    hold: row.hold,
+  };
+}
+
+/** `calibration snapshot [--json]` (#8317): run the Phase 7 calibration runner once per project row from
+ *  {@link buildCalibrationReport}, persist a `calibration_snapshot` ledger event per project (with the AMS
+ *  backtest track record attached when any runs exist), and print the results. Mirrors
+ *  {@link runBacktestThreshold}'s open/run/persist/print/finally shape. Does NOT pass a Phase 7 config —
+ *  no `.loopover-ams.yml` calibration-section reader exists yet, so the engine defaults to loop-disabled
+ *  (honest, not a workaround). */
+function runCalibrationSnapshot(args: string[], env: Record<string, string | undefined>, deps: CalibrationCliDeps): number {
+  const json = args.includes("--json");
+  const unknown = args.find((token) => token !== "--json");
+  if (unknown) {
+    return reportCliFailure(json, `Unknown option: ${unknown}. ${CALIBRATION_USAGE}`, 1);
+  }
+
+  let predictionStore;
+  let eventLedger;
+  try {
+    predictionStore = initPredictionLedger(resolvePredictionLedgerDbPath(env));
+    eventLedger = initEventLedger(resolveEventLedgerDbPath(env));
+    const predictionRows = predictionStore.readPredictions();
+    const events = eventLedger.readEvents();
+    const report = buildCalibrationReport(toPredictionRecords(predictionRows), toOutcomeRecords(events));
+    const trackRecord = computeAmsBacktestTrackRecord(readAmsThresholdBacktestRuns(eventLedger));
+    // #8317: only attach a real history; an empty track record stays null so consumers can tell "no runs yet"
+    // from "runs exist with zero REGRESSED" without inventing a fabricated zero-run object at the CLI boundary.
+    const backtestTrackRecord = trackRecord.totalRuns > 0 ? trackRecord : null;
+
+    if (!report.hasSignal) {
+      const message = "calibration snapshot: no decided predictions yet (predictions need a realized merge/close outcome); nothing persisted.";
+      console.log(json ? JSON.stringify({ snapshots: [], reason: "no_decided_predictions" }) : message);
+      return 0;
+    }
+
+    const snapshots: Array<{ repoFullName: string; snapshot: CalibrationSnapshotPayload }> = [];
+    for (const row of report.rows) {
+      const cycle = runHistoricalReplayCalibrationCycle(
+        {
+          prOutcome: prOutcomeFromCalibrationRow(row),
+          repoFullName: row.project,
+          backtestTrackRecord,
+          ...(deps.nowMs !== undefined ? { now: new Date(deps.nowMs).toISOString() } : {}),
+        },
+        { eventLedger },
+      );
+      snapshots.push({ repoFullName: row.project, snapshot: cycle.snapshot });
+    }
+
+    if (json) {
+      console.log(JSON.stringify({ snapshots }, null, 2));
+    } else {
+      for (const entry of snapshots) {
+        const accuracy =
+          entry.snapshot.combinedAccuracy === null ? "n/a" : `${Math.round(entry.snapshot.combinedAccuracy * 100)}%`;
+        console.log(
+          `calibration snapshot ${entry.repoFullName}: enabled=${entry.snapshot.enabled} combined=${accuracy} ` +
+            `delta=${entry.snapshot.deltaFromBaseline === null ? "n/a" : entry.snapshot.deltaFromBaseline.toFixed(3)} ` +
+            `sources=${entry.snapshot.contributingSources.join(",") || "none"}`,
+        );
+      }
+      console.log(`calibration snapshot: persisted ${snapshots.length} project snapshot(s).`);
+    }
+    return 0;
+  } catch (error) {
+    return reportCliFailure(json, describeCliError(error));
+  } finally {
+    predictionStore?.close();
+    eventLedger?.close();
+  }
+}
+
 /** `calibration backtest-threshold --candidate <x>` (#8184): advisory replay of a candidate min-rank skip
  *  threshold against the taken-opportunity corpus. Prints the shared comparison renderer's report and
  *  persists the run event. Exit is nonzero ONLY on operational error -- never on verdict (the #8138
@@ -205,13 +293,14 @@ function runMinRankMutation(kind: "apply" | "revert", args: string[], env: Recor
 }
 
 /**
- * Run `loopover-miner calibration [--json]` (or one of the #8184/#8187 subcommands -- see
+ * Run `loopover-miner calibration [--json]` (or one of the #8184/#8187/#8317 subcommands -- see
  * CALIBRATION_USAGE). The bare form reads the prediction ledger + PR-outcome events, joins them into a
  * calibration report, and prints it (a JSON dump under `--json`, else a per-project text summary) along
  * with the corpus stats, the backtest track record (#8185), and any current backtest-cleared proposals
  * (#8186). Returns the process exit code: 0 on success, 1 on an unknown option.
  */
 export function runCalibrationCli(args: string[] = [], env: Record<string, string | undefined> = process.env, deps: CalibrationCliDeps = {}): number {
+  if (args[0] === "snapshot") return runCalibrationSnapshot(args.slice(1), env, deps);
   if (args[0] === "backtest-threshold") return runBacktestThreshold(args.slice(1), env, deps);
   if (args[0] === "apply-min-rank") return runMinRankMutation("apply", args.slice(1), env, deps);
   if (args[0] === "revert-min-rank") return runMinRankMutation("revert", args.slice(1), env, deps);

@@ -124,6 +124,8 @@ export interface RunCalibrationCycleInput {
   now?: string | Date | null;
   observedAt?: string | null;
   repoFullName?: string;
+  /** #8317 / #8185: AMS backtest track record to embed on the persisted snapshot. Omit/null when none. */
+  backtestTrackRecord?: SnapshotMeta["backtestTrackRecord"];
 }
 
 export interface RunCalibrationCycleDeps extends ScoreCompositeOptions {
@@ -373,6 +375,7 @@ export function runHistoricalReplayCalibrationCycle(
     replayRunId: (built.historicalReplay as Record<string, unknown> | null)?.replayRunId as string | null ?? null,
     observedAt: input.observedAt ?? ((built.historicalReplay as Record<string, unknown> | null)?.observedAt as string | null) ?? null,
     sampleSize: built.sampleSize,
+    ...(input.backtestTrackRecord !== undefined ? { backtestTrackRecord: input.backtestTrackRecord } : {}),
   });
   const recorded = deps.eventLedger
     ? recordCalibrationSnapshot(snapshot, { eventLedger: deps.eventLedger, repoFullName: input.repoFullName } as RecordCalibrationSnapshotOptions)

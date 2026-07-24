@@ -163,6 +163,7 @@ export * from "./governor/kill-switch.js";
 export * from "./governor/action-mode.js";
 export * from "./governor/chokepoint.js";
 export * from "./calibration/signal-tracking.js";
+export * from "./calibration/attestation-envelope.js";
 export * from "./calibration/backtest-corpus.js";
 export * from "./calibration/repo-corpus-slice.js";
 export * from "./calibration/ams-prediction-corpus.js";

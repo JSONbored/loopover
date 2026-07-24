@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMaintainerRecap, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
+import { buildDriftRecapSection } from "../../src/services/maintainer-recap-drift";
 import type { OutcomeCalibration } from "../../src/services/outcome-calibration";
 import type { RecapReport } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -229,8 +230,27 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
     expect(result.skipped).toBe(false);
     if (result.skipped) return;
     expect(result.report.repos).toEqual([]);
-    expect(result.formatted).toContain("_No repositories in this window._");
+    // #8372: the empty window now renders the per-repo BUILDER's no-activity line, and both new sections.
+    expect(result.formatted).toContain("No repo activity in the last 7 day(s).");
+    expect(result.formatted).toContain("## Calibration");
+    expect(result.formatted).toContain("## Gate outcomes");
     expect(result.formatted).toContain("(n/a)");
+  });
+
+  it("forwards a configDrift section into the rendered digest, and omits the section when none is passed (#8372)", async () => {
+    stubRecapChannelFetch();
+    const configDrift = buildDriftRecapSection({ generatedAt: GEN, sentinelEnabled: false, drifting: [], cleanKnobs: 0 });
+    // configDrift PRESENT arm: the drift section reaches the formatted digest.
+    const withDrift = await runMaintainerRecap(envWithBothWebhooks(), { configDrift });
+    expect(withDrift.skipped).toBe(false);
+    if (withDrift.skipped) return;
+    expect(withDrift.formatted).toContain("## Config drift");
+    expect(withDrift.formatted).toContain("drift sentinel disabled — no drift evaluation ran this window.");
+    // configDrift ABSENT arm: no drift section (options.configDrift undefined ⇒ the formatter's empty-append arm).
+    const withoutDrift = await runMaintainerRecap(envWithBothWebhooks(), {});
+    expect(withoutDrift.skipped).toBe(false);
+    if (withoutDrift.skipped) return;
+    expect(withoutDrift.formatted).not.toContain("## Config drift");
   });
 
   it("short-circuits when enabled is false — no build/format/fetch (flag-OFF arm)", async () => {

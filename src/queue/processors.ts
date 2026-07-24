@@ -3330,6 +3330,13 @@ async function runAgentMaintenancePlanAndExecute(
         finalActionClasses: breakerOnPlan.map((action) => action.actionClass),
       },
     }).catch(() => undefined);
+    // #merge-race guarantee: "unknown" is the ONE genuinely transient mergeableState value (GitHub still
+    // computing) -- "dirty"/"blocked"/"behind" are real, stable holds that a re-check moments later would only
+    // reproduce, so they're deliberately NOT retried here. Best-effort: an enqueue failure here must never
+    // fail this webhook pass, matching every other trailing-schedule call site in this file.
+    if ((liveMergeState ?? pr.mergeableState) === "unknown") {
+      await scheduleTrailingMergeableStateReReview(env, deliveryId, installationId, repoFullName, pr.number).catch(() => undefined);
+    }
   }
   if (breakerOnPlan.length === 0) {
     return;
@@ -4342,6 +4349,49 @@ async function scheduleTrailingIssueLinkedReReview(
     return; // do NOT claim — a later coalesced event in this window should retry the enqueue
   }
   await putTransientKey(env, key, "1", CI_COALESCE_WINDOW_SECONDS);
+}
+
+// #merge-race guarantee (metagraphed#8037): refreshLiveMergeState's own short inline retry (ci-resolution.ts,
+// ~4s total) resolves most GitHub mergeable_state "still computing" reads within the SAME pass, but not all --
+// on a large PR or under load, GitHub can take longer. Without this, the ONLY remaining catch-up mechanism was
+// the periodic agent-regate-sweep, which is NOT a reliable fixed interval: it throttles under GitHub REST-budget
+// backpressure and skips re-arming while a previous sweep trigger is still in flight (see the backpressure
+// comment in index.ts) -- under sustained cross-repo load this can stretch well past minutes, during which an
+// overlapping sibling PR can land first and base-conflict the original PR out from under it (observed live).
+// This schedules ONE targeted, single-PR follow-up -- reusing the same agent-regate-pr job every other trailing
+// re-check in this file uses -- completely independent of the sweep's own budget/backlog throttling, so a hold
+// caused SPECIFICALLY by an unresolved mergeable_state is guaranteed a fresh look within a short, bounded,
+// sweep-independent window instead of an unbounded one.
+const MERGE_STATE_UNKNOWN_TRAILING_RECHECK_DELAY_SECONDS = 60;
+async function scheduleTrailingMergeableStateReReview(
+  env: Env,
+  deliveryId: string,
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<void> {
+  const key = `merge-state-unknown-trailing:${repoFullName.toLowerCase()}#${prNumber}`;
+  // Same check-then-claim-only-after-send shape as scheduleTrailingIssueLinkedReReview above (#2371 follow-up
+  // reasoning applies identically here): claiming before the enqueue succeeds would permanently swallow the
+  // guarantee this function exists to provide for the rest of the window.
+  if (await getTransientKey(env, key)) return;
+  try {
+    await env.JOBS.send(
+      { type: "agent-regate-pr", deliveryId, repoFullName, prNumber, installationId },
+      { delaySeconds: MERGE_STATE_UNKNOWN_TRAILING_RECHECK_DELAY_SECONDS },
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        event: "merge_state_unknown_trailing_enqueue_failed",
+        repoFullName,
+        pull: prNumber,
+        message: errorMessage(error).slice(0, 120),
+      }),
+    );
+    return; // do NOT claim -- a later pass hitting the same "unknown" read should retry the enqueue
+  }
+  await putTransientKey(env, key, "1", MERGE_STATE_UNKNOWN_TRAILING_RECHECK_DELAY_SECONDS);
 }
 
 /** Best-effort wake for sibling PRs discovered to be over the per-contributor cap by a LATER delivery (#2270,

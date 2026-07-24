@@ -3578,6 +3578,33 @@ describe("pure helpers", () => {
     expect(result).toContain("Add a test for the pagination edge case.");
   });
 
+  it("REGRESSION (#public-score-terms-scoping): runLoopOverAiReview resolves isPublicScoreTermSafeForRepo from LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS and threads it into composeAdvisoryNotes end-to-end", async () => {
+    const run = vi.fn(async () => ({
+      response: reviewJson({ assessment: "The resolver correctly filters results by their score before returning them." }),
+    }));
+    const allowedEnv = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "acme/widgets",
+    });
+    const allowedResult = await runLoopOverAiReview(allowedEnv, baseInput); // baseInput.repoFullName === "acme/widgets"
+    expect(allowedResult.status).toBe("ok");
+    expect(allowedResult.status === "ok" ? allowedResult.advisoryNotes : undefined).toContain(
+      "The resolver correctly filters results by their score",
+    );
+
+    const deniedEnv = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      // Unset LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: fail-closed default, same repo as above.
+    });
+    const deniedResult = await runLoopOverAiReview(deniedEnv, baseInput);
+    expect(deniedResult.status).toBe("ok");
+    expect(deniedResult.status === "ok" ? deniedResult.advisoryNotes : undefined).not.toContain("filters results by their score");
+  });
+
   it("parseModelReview parses well-formed inline findings, including a trimmed optional suggestion; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
     const json = JSON.stringify({
       assessment: "ok",

@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,6 +19,7 @@ import {
   sendAmsExportBatch,
 } from "../../packages/loopover-miner/lib/orb-export.js";
 import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export.js";
+import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
 
 let dir: string;
 function storePath() {
@@ -210,10 +211,28 @@ describe("resolveOrbExportDbPath (#4277)", () => {
   it("resolves the DB path from env override, miner config dir, XDG config, then the home default", () => {
     expect(resolveOrbExportDbPath({ LOOPOVER_MINER_ORB_EXPORT_DB: "/custom/d.sqlite3" })).toBe("/custom/d.sqlite3");
     expect(resolveOrbExportDbPath({ LOOPOVER_MINER_CONFIG_DIR: "/custom/config" })).toBe(
-      "/custom/config/orb-export.sqlite3",
+      join("/custom/config", "orb-export.sqlite3"),
     );
-    expect(resolveOrbExportDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/loopover-miner/orb-export.sqlite3");
-    expect(resolveOrbExportDbPath({})).toMatch(/\/\.config\/loopover-miner\/orb-export\.sqlite3$/);
+    expect(resolveOrbExportDbPath({ XDG_CONFIG_HOME: "/xdg" })).toBe(
+      join("/xdg", "loopover-miner", "orb-export.sqlite3"),
+    );
+    expect(resolveOrbExportDbPath({})).toBe(
+      join(homedir(), ".config", "loopover-miner", "orb-export.sqlite3"),
+    );
+  });
+
+  it("stays byte-identical to resolveLocalStoreDbPath for representative env combinations (#8336)", () => {
+    const cases: Array<Record<string, string | undefined>> = [
+      { LOOPOVER_MINER_ORB_EXPORT_DB: "/custom/d.sqlite3" },
+      { LOOPOVER_MINER_CONFIG_DIR: "/custom/config" },
+      { XDG_CONFIG_HOME: "/xdg" },
+      {},
+    ];
+    for (const env of cases) {
+      expect(resolveOrbExportDbPath(env)).toBe(
+        resolveLocalStoreDbPath("orb-export.sqlite3", "LOOPOVER_MINER_ORB_EXPORT_DB", env),
+      );
+    }
   });
 });
 

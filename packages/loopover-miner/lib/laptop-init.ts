@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { applySchemaMigrations } from "./schema-version.js";
 import { reportCliFailure } from "./cli-error.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
+import { resolveLocalStoreDbPath } from "./local-store.js";
 
 const githubApiBaseUrl = "https://api.github.com";
 const githubApiVersion = "2022-11-28";
@@ -43,9 +44,9 @@ function resolveMinerStateDir(env: Record<string, string | undefined> = process.
   return join(configHome, "loopover-miner");
 }
 
-/** Path to the laptop-mode SQLite bootstrap file inside the miner state directory. */
+/** Path to the laptop-mode SQLite bootstrap file (shared local-store resolution + optional explicit override). */
 export function resolveLaptopStateDbPath(env: Record<string, string | undefined> = process.env): string {
-  return join(resolveMinerStateDir(env), defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_LAPTOP_STATE_DB", env);
 }
 
 /** Create the state dir and SQLite file. Re-running is idempotent and never clobbers existing rows. */

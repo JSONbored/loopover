@@ -164,6 +164,12 @@ This is where most PRs fail Codecov. The bar is **every changed line AND every c
   `createTestEnv()`), `test/workers/` (Cloudflare pool, separate config), plus `test/contract/`.
   Use the `createTestEnv()` / `TestD1Database` helpers (in-memory SQLite, applies all migrations) and
   `vi.stubGlobal("fetch", …)` for GitHub calls. Patterns + snippets in `reference.md`.
+- **Never close a coverage gap with a new `*-coverage.test.ts` / `*-branch-coverage.test.ts` bolt-on
+  file.** Add the missing branch case(s) to the module's own existing test file instead. A CI check
+  (`coverage-boltons:check`, part of `test:ci`) blocks this filename pattern — a whole family of these
+  (`predicted-gate-engine-coverage.test.ts`, `reward-risk-engine-branch-coverage.test.ts`,
+  `focus-manifest-engine-branch-coverage.test.ts`, `signals-coverage.test.ts`) accumulated in the repo
+  and each needed its own dedicated consolidation PR to undo (epic #8574).
 - **Branch coverage is the trap.** Every `if/else`, ternary `? :`, `&&`/`||`, and especially every
   nullish fallback `?? 0` / `?? []` is **two branches** — you must exercise *both* sides. The classic
   miss: a `SUM(...)` over an empty set returns **NULL**, so `count ?? 0` needs a test where the value

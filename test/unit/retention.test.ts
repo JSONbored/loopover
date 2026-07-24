@@ -277,6 +277,56 @@ describe("dedupeSignalSnapshots", () => {
   });
 });
 
+describe("pruneExpiredRecords defensive ?? 0 arms (#8370)", () => {
+  // Mirrors the sibling dedupeSignalSnapshots tests for the identical pattern: mock env.DB so the
+  // row / meta shape is missing the field, and assert the fallback yields 0 rather than NaN or a throw.
+  const RULE = [{ table: "audit_events", column: "created_at", days: 90 }] as const;
+
+  it("dry-run falls back to 0 when the count query returns no row (line 75 arm)", async () => {
+    const noRowEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => undefined }), // no row -> `row?.n ?? 0`
+        }),
+      },
+    } as unknown as Env;
+
+    const results = await pruneExpiredRecords(noRowEnv, { dryRun: true, nowMs: NOW, policy: RULE });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.deleted).toBe(0);
+    expect(Number.isNaN(results[0]?.deleted)).toBe(false); // Number(undefined) would be NaN without the ?? 0
+  });
+
+  it("dry-run falls back to 0 when the row is present but n is null (line 75 arm)", async () => {
+    const nullCountEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => ({ n: null }) }), // nullish n -> same arm
+        }),
+      },
+    } as unknown as Env;
+
+    const results = await pruneExpiredRecords(nullCountEnv, { dryRun: true, nowMs: NOW, policy: RULE });
+    expect(results[0]?.deleted).toBe(0);
+  });
+
+  it("falls back to 0 changes when a delete run() result lacks meta (line 85 arm)", async () => {
+    const noMetaEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          // no meta -> `result.meta?.changes ?? 0` fires, so changes = 0 < batchSize and the loop exits.
+          bind: (..._binds: unknown[]) => ({ run: async () => ({}) }),
+        }),
+      },
+    } as unknown as Env;
+
+    const results = await pruneExpiredRecords(noMetaEnv, { nowMs: NOW, policy: RULE, batchSize: 5 });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.deleted).toBe(0);
+    expect(Number.isNaN(results[0]?.deleted)).toBe(false);
+  });
+});
+
 describe("runRetentionPrune + processJob", () => {
   it("audits a dry-run without deleting", async () => {
     const env = createTestEnv();

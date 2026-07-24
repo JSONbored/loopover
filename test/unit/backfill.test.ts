@@ -66,6 +66,7 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // #4682 incident (2026-07-10): the stored-body cap used to be 4000 chars -- well under what a compliant
 // screenshot-evidence table (or any sufficiently detailed PR/issue) actually needs -- and every body-content
@@ -216,22 +217,6 @@ async function seedRegisteredRepo(env: Env) {
 async function seedInstalledAndRegisteredRepo(env: Env) {
   await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
   await seedRegisteredRepo(env);
-}
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 async function persistTotalsSnapshot(

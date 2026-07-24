@@ -6,6 +6,7 @@ import {
 } from "../../src/queue/review-evasion";
 import { createTestEnv } from "../helpers/d1";
 import type { GitHubWebhookPayload, PullRequestRecord, RepositorySettings } from "../../src/types";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // #4889: the review-evasion guards' fleet-operator exemptions in per-repo admin mode. Mode OFF (self-host
 // default) keeps the ADMIN_GITHUB_LOGINS shortcut byte-identical — an allowlisted actor is exempt with NO
@@ -15,19 +16,6 @@ import type { GitHubWebhookPayload, PullRequestRecord, RepositorySettings } from
 
 const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer)
-    .toString("base64")
-    .replace(/(.{64})/g, "$1\n");
-  return `${PEM_HEADER}\n${base64}\n${PEM_FOOTER}`;
-}
 
 type StubHandler = (url: string) => Response | undefined;
 

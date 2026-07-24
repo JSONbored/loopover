@@ -38,7 +38,7 @@ import {
   filePriority,
   getStoredChunkMeta,
   isIndexablePath,
-  MAX_CHUNKS_PER_REPO,
+  maxChunksPerRepo,
   MAX_FILE_BYTES,
   ragNamespace,
   type RagChunk,
@@ -209,8 +209,8 @@ async function upsertChunksCapped(env: Env, project: string, repo: string, chunk
   const infra = createReviewAdapters(env);
   let stored = alreadyStored;
   let upserted = 0;
-  for (let i = 0; i < chunks.length && stored < MAX_CHUNKS_PER_REPO; i += UPSERT_BATCH) {
-    const remaining = MAX_CHUNKS_PER_REPO - stored;
+  for (let i = 0; i < chunks.length && stored < maxChunksPerRepo(); i += UPSERT_BATCH) {
+    const remaining = maxChunksPerRepo() - stored;
     const batch = chunks.slice(i, i + Math.min(UPSERT_BATCH, remaining));
     if (batch.length === 0) break;
     const n = await upsertChunks(infra, project, repo, batch, blobSha);
@@ -324,7 +324,7 @@ export async function indexRepo(
         skipped += 1;
         continue; // unchanged since the last full index — skip the fetch/chunk/embed entirely
       }
-      if (stored >= MAX_CHUNKS_PER_REPO && (!known || known.count <= 0)) {
+      if (stored >= maxChunksPerRepo() && (!known || known.count <= 0)) {
         capped = true;
         break;
       }
@@ -395,7 +395,7 @@ export async function reindexChangedPaths(
     let filesIndexed = 0;
     let capped = false;
     for (const path of indexable) {
-      if (stored >= MAX_CHUNKS_PER_REPO) {
+      if (stored >= maxChunksPerRepo()) {
         capped = true;
         break;
       }

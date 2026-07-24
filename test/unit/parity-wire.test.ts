@@ -21,6 +21,7 @@ import {
 } from "../../src/review/parity-wire";
 import type { AdvisoryFinding } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // ── Direct D1 helpers over the real migrated schema (0049 review_audit) ──────────────────────────────────────
 
@@ -342,12 +343,6 @@ describe("GET /v1/internal/parity — bearer-gated, flag-gated endpoint", () => 
 // both sides of the reasonCode ternary (failure → blockers[0].code, non-failure → conclusion).
 
 // A self-signed RSA PEM so the GitHub App can mint an installation token (gate check-run posting).
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
-  const pkcs8 = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const b64 = Buffer.from(pkcs8 as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
-}
 
 // A confirmed-miner snapshot (confirmed status now feeds only on-chain scoring; the gate blocks every author
 // the same on a configured blocker — #gate-nonconfirmed).

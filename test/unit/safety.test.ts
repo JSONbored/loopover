@@ -11,6 +11,7 @@ import {
 } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // Drives the LOOPOVER_REVIEW_SAFETY secrets-scan WIRING through the live review finalize path
 // (processGitHubWebhook → maybePublishPrPublicSurface → `await maybeAddSecretLeakFinding(...)` at the gate
@@ -21,12 +22,6 @@ import { createTestEnv } from "../helpers/d1";
 const LEAKED_TOKEN = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 // A self-signed RSA PEM so the GitHub App can mint an installation token (gate check-run posting).
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
-  const pkcs8 = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const b64 = Buffer.from(pkcs8 as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${b64}\n-----END PRIVATE KEY-----\n`;
-}
 
 // A confirmed-miner snapshot. The author confirmation no longer changes whether the gate can block
 // (#gate-nonconfirmed); this just stands up a representative confirmed author so the flag-ON safety blocker's

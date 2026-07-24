@@ -21,6 +21,7 @@ import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { Advisory, PullRequestFileRecord, RepositorySettings } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // Split so the literal PEM marker text never appears contiguous in source -- the review-safety secrets
 // scanner's private_key_block pattern is a pure text match with no awareness that the bytes between these
@@ -28,19 +29,6 @@ import { createTestEnv } from "../helpers/d1";
 // identical helper duplicated across other test files (e.g. test/unit/queue.test.ts).
 const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer)
-    .toString("base64")
-    .replace(/(.{64})/g, "$1\n");
-  return `${PEM_HEADER}\n${base64}\n${PEM_FOOTER}`;
-}
 
 function satisfactionJson(over: Partial<{ status: string; rationale: string; confidence: number }> = {}): string {
   return JSON.stringify({

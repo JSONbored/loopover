@@ -12,6 +12,7 @@ import { normalizeRegistryPayload } from "../../src/registry/normalize";
 import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
 import type { GitHubWebhookPayload } from "../../src/types";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // #7626: maybeProcessPrPanelRetrigger threads forceAiReview: true into maybePublishPrPublicSurface when the
 // "Re-run LoopOver review" checkbox is checked -- but ONLY when prReadyForReview can confirm readiness right
@@ -20,22 +21,6 @@ import type { GitHubWebhookPayload } from "../../src/types";
 // had no idea a manual retrigger was pending and silently replayed/skipped stale content instead of forcing a
 // fresh AI opinion. These tests pin the persisted pending-marker fix: mark on defer, consume (once) on the
 // next readiness-confirmed pass through either reReviewStoredPullRequest or handlePullRequestWebhookEvent.
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
-}
 
 function queueMinerSnapshot(login: string) {
   return {

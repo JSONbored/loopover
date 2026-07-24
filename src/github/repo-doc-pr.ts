@@ -25,6 +25,7 @@
 // module's own design intent), so a skill-only content change can still open a PR even when AGENTS.md itself
 // is unchanged, and a skill-file conflict (manual-review-required without the overwrite opt-in) only excludes
 // the skill from this run rather than blocking the AGENTS.md refresh it rode in with.
+import { errorMessage } from "../utils/json";
 import { githubErrorStatus, withInstallationTokenRetry } from "./app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
 import { LOOPOVER_SITE_URL } from "./footer";
@@ -58,6 +59,13 @@ function splitRepo(repoFullName: string): { owner: string; repo: string } {
 
 type DocTreeEntry = { path: string; mode: "100644" | "120000"; type: "blob"; content: string };
 type Octokit = ReturnType<typeof makeInstallationOctokit>;
+
+/** #8310: GitHub answers a create-ref for an existing branch with 422 "Reference already exists". Matched on
+ *  BOTH the status and the message so an unrelated 422 (e.g. a bad sha) still fails loudly instead of being
+ *  silently force-updated. */
+function isRefAlreadyExistsError(error: unknown): boolean {
+  return githubErrorStatus(error) === 422 && /reference already exists/i.test(errorMessage(error));
+}
 
 // GitHub's Contents API base64-encodes the file's raw bytes (with line-wrapped whitespace); decoding through
 // atob + TextDecoder (rather than a naive charCodeAt reassembly) is what makes this correct for non-ASCII
@@ -224,7 +232,18 @@ export async function openRepoDocPullRequest(env: Env, repoFullName: string, mod
       const commit = await octokit.request("POST /repos/{owner}/{repo}/git/commits", { owner, repo, message: PR_TITLE, tree: treeSha, parents: [baseCommitSha] });
       const commitSha = (commit.data as { sha: string }).sha;
 
-      await octokit.request("POST /repos/{owner}/{repo}/git/refs", { owner, repo, ref: `refs/heads/${REPO_DOC_BRANCH_NAME}`, sha: commitSha });
+      // #8310: the ref can already exist with NO open PR on it -- a maintainer closed the previous repo-doc PR
+      // without deleting its branch (GitHub never forces that, and an API/bot close deletes nothing). The
+      // open-only PR lookup above then finds nothing, so we reach here and POST /git/refs 422s "Reference
+      // already exists", failing the whole refresh forever. This branch is exclusively owned by this feature
+      // (see the header comment), never shared with contributor work, so force-updating it to the freshly
+      // built commit is safe. Any OTHER failure still propagates to the outer catch's fail-safe.
+      try {
+        await octokit.request("POST /repos/{owner}/{repo}/git/refs", { owner, repo, ref: `refs/heads/${REPO_DOC_BRANCH_NAME}`, sha: commitSha });
+      } catch (refError) {
+        if (!isRefAlreadyExistsError(refError)) throw refError;
+        await octokit.request("PATCH /repos/{owner}/{repo}/git/refs/{ref}", { owner, repo, ref: `heads/${REPO_DOC_BRANCH_NAME}`, sha: commitSha, force: true });
+      }
 
       const pr = await octokit.request("POST /repos/{owner}/{repo}/pulls", {
         owner,

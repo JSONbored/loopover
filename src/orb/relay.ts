@@ -106,14 +106,30 @@ async function finalizeRelayFailureRetryRow(
   row: { delivery_id: string; event_name: string; installation_id: number },
   outcome: RelayForwardOutcome,
 ): Promise<void> {
-  if (isRelayFailureRetryTerminal(outcome, row.event_name)) {
-    await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
+  try {
+    if (isRelayFailureRetryTerminal(outcome, row.event_name)) {
+      await env.DB.prepare("DELETE FROM orb_relay_failures WHERE delivery_id = ?").bind(row.delivery_id).run();
+      return;
+    }
+    await env.DB
+      .prepare("UPDATE orb_relay_failures SET attempts = attempts + 1, last_attempt_at = datetime('now') WHERE delivery_id = ?")
+      .bind(row.delivery_id)
+      .run();
+  } catch (error) {
+    // The forward already succeeded (outcome is known) before this write failed -- the row stays pending retry, so
+    // the SAME event risks redelivery to the container on the next retry tick. Never throw (retryFailedRelays's
+    // "Never throws" contract): log with enough context to spot the duplicate-forward risk from the log alone.
+    console.error(JSON.stringify({
+      level: "error",
+      event: "orb_relay_failure_finalize_write_failed",
+      message: `finalizeRelayFailureRetryRow DB write failed after a successful forward -- duplicate redelivery risk for ${row.delivery_id}`,
+      deliveryId: row.delivery_id,
+      eventName: row.event_name,
+      outcome,
+      error: error instanceof Error ? error.message : String(error),
+    }));
     return;
   }
-  await env.DB
-    .prepare("UPDATE orb_relay_failures SET attempts = attempts + 1, last_attempt_at = datetime('now') WHERE delivery_id = ?")
-    .bind(row.delivery_id)
-    .run();
   if (outcome === "skipped") {
     logRelayTransientSkip({
       deliveryId: row.delivery_id,

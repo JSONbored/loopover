@@ -196,6 +196,13 @@ export function assertScenarioLocalBranchInputSafe(payload: Record<string, unkno
     }
   }
   const changedFiles = payload.changedFiles;
+  // #8328: a present-but-non-array changedFiles (a plain object like { diff: "…source…" }, a string, a number)
+  // is not the documented array-of-entries shape, and the Array.isArray guard below would silently skip the
+  // entire forbidden-key/oversize scan for it — letting exactly the source content this validator exists to
+  // refuse slip through unchecked. Reject it outright; an omitted / undefined changedFiles stays allowed.
+  if (changedFiles !== undefined && !Array.isArray(changedFiles)) {
+    throw new Error("Refusing non-array changedFiles; an array of file entries is required.");
+  }
   if (Array.isArray(changedFiles)) {
     for (const entry of changedFiles) {
       if (!entry || typeof entry !== "object") continue;

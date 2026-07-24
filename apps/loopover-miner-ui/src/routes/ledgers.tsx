@@ -6,18 +6,12 @@ import { Button } from "@loopover/ui-kit/components/button";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@loopover/ui-kit/components/chart";
 import { Input } from "@loopover/ui-kit/components/input";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@loopover/ui-kit/components/pagination";
 import { Skeleton } from "@loopover/ui-kit/components/skeleton";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
+import { TablePagination } from "../components/table-pagination";
+import { usePagedRows } from "../lib/paged-rows";
 import {
   CLAIM_STATUSES,
   fetchLedgers,
@@ -66,9 +60,6 @@ const CLAIM_STATUS_TONE: Record<ClaimStatus, string> = {
   expired: "text-warning",
 };
 
-/** Rows per page once a count/feed table grows past this; below it the full table renders unpaginated. */
-const PAGE_SIZE = 20;
-
 const CLAIMS_CHART_CONFIG = {
   count: { label: "Claims" },
   active: { label: "Active", color: "var(--success)" },
@@ -76,64 +67,9 @@ const CLAIMS_CHART_CONFIG = {
   expired: { label: "Expired", color: "var(--warning)" },
 } satisfies ChartConfig;
 
-function TablePagination({
-  page,
-  pageCount,
-  onPageChange,
-}: {
-  page: number;
-  pageCount: number;
-  onPageChange: (next: number) => void;
-}) {
-  return (
-    <Pagination className="mt-4">
-      <PaginationContent>
-        <PaginationItem>
-          <PaginationPrevious
-            href="#"
-            aria-disabled={page === 0}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.max(0, page - 1));
-            }}
-          />
-        </PaginationItem>
-        {Array.from({ length: pageCount }).map((_, index) => (
-          <PaginationItem key={index}>
-            <PaginationLink
-              href="#"
-              isActive={index === page}
-              onClick={(event) => {
-                event.preventDefault();
-                onPageChange(index);
-              }}
-            >
-              {index + 1}
-            </PaginationLink>
-          </PaginationItem>
-        ))}
-        <PaginationItem>
-          <PaginationNext
-            href="#"
-            aria-disabled={page >= pageCount - 1}
-            onClick={(event) => {
-              event.preventDefault();
-              onPageChange(Math.min(pageCount - 1, page + 1));
-            }}
-          />
-        </PaginationItem>
-      </PaginationContent>
-    </Pagination>
-  );
-}
-
 function CountTable({ counts, keyLabel }: { counts: Record<string, number>; keyLabel: string }) {
-  const [page, setPage] = useState(0);
   const entries = Object.entries(counts).sort(([, a], [, b]) => b - a);
-  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
-  const isPaginated = entries.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = isPaginated ? entries.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : entries;
+  const { visible, isPaginated, page, pageCount, setPage } = usePagedRows(entries);
   return (
     <div>
       <Table>
@@ -152,17 +88,13 @@ function CountTable({ counts, keyLabel }: { counts: Record<string, number>; keyL
           ))}
         </TableBody>
       </Table>
-      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+      {isPaginated && <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />}
     </div>
   );
 }
 
 function RecentEventsTable({ entries }: { entries: EventFeedEntry[] }) {
-  const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
-  const isPaginated = entries.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visible = isPaginated ? entries.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : entries;
+  const { visible, isPaginated, page, pageCount, setPage } = usePagedRows(entries);
   return (
     <div>
       <Table>
@@ -183,7 +115,7 @@ function RecentEventsTable({ entries }: { entries: EventFeedEntry[] }) {
           ))}
         </TableBody>
       </Table>
-      {isPaginated && <TablePagination page={safePage} pageCount={pageCount} onPageChange={setPage} />}
+      {isPaginated && <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />}
     </div>
   );
 }

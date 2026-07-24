@@ -36,11 +36,25 @@ function normalizeRequiredString(value: unknown, code: string): string {
   return trimmed;
 }
 
+// #5831/#7525's path-safety guard, restated locally. The miner package's parsers share
+// repo-clone.ts's isValidRepoSegment, but this engine package must not import from the miner package
+// (miner depends on engine, not the reverse), so the semantics are duplicated here deliberately:
+// a segment must be entirely [A-Za-z0-9._-] and must not be a bare "." or ".." traversal segment.
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function isValidRepoSegment(segment: string): boolean {
+  return REPO_SEGMENT_PATTERN.test(segment) && segment !== "." && segment !== "..";
+}
+
 function normalizeOptionalRepoFullName(repoFullName: unknown): string | null {
   if (repoFullName === undefined || repoFullName === null) return null;
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  // This is the WRITE path (normalizeGovernorLedgerEvent -> appendGovernorEvent's SQLite INSERT). Without
+  // this, "../evilrepo" normalized unchanged -- owner ".." and repo "evilrepo" both pass the
+  // non-empty/one-slash check -- and reached persistence, the exact value class #7525 exists to stop.
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

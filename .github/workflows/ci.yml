@@ -474,6 +474,12 @@ jobs:
       - name: Build engine package
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' }}
         run: npx turbo run build --filter=@loopover/engine
+      # Mirrors "MCP package check"/"Miner package check" below: the published npm tarball is a
+      # different surface than the workspace build above (files field, forbidden paths/content,
+      # stale README wording) and needs its own dry-run validation (#8591).
+      - name: Engine package check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' }}
+        run: npm run test:engine-pack
       # .tsbuildinfo mutates every run (tsc's own incremental state), unlike node_modules above which is
       # immutable per lockfile -- so this needs the run_id-suffixed-key + restore-keys-prefix pattern (always
       # creates a new cache entry to save into, restore falls back to the most recent matching prefix) rather
@@ -733,6 +739,11 @@ jobs:
       - name: Build UI-kit package
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run build --filter=@loopover/ui-kit
+      # Mirrors "MCP package check"/"Miner package check" above: the published npm tarball is a
+      # different surface than the workspace build above and needs its own dry-run validation (#8591).
+      - name: UI-kit package check
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
+        run: npm run test:ui-kit-pack
       # apps/loopover-ui's fumadocs-mdx virtual modules (collections/browser, collections/server, imported by
       # docs-client-loader.tsx/docs-source.ts) are gitignored generated output, normally produced by npm ci's
       # own `postinstall` hook -- but "Install dependencies" above is SKIPPED on a node_modules cache hit (the

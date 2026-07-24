@@ -3605,6 +3605,24 @@ describe("pure helpers", () => {
     expect(deniedResult.status === "ok" ? deniedResult.advisoryNotes : undefined).not.toContain("filters results by their score");
   });
 
+  it("REGRESSION (#public-score-terms-scoping, branch coverage): runLoopOverAiReview falls through to composeFallbackAdvisoryNotes when composeAdvisoryNotes itself returns null (every field unsafe)", async () => {
+    // Mirrors the "composeAdvisoryNotes returns null when no assessment or finding is public-safe" unit
+    // fixture, but driven end-to-end through runLoopOverAiReview so the `composeAdvisoryNotes(...) ??
+    // composeFallbackAdvisoryNotes(fallbackNotes)` line's right-hand branch is actually exercised (the
+    // score-terms tests above only ever hit composeAdvisoryNotes' own internal non-null fallback text, never
+    // this outer `??`).
+    const run = vi.fn(async () => ({
+      response: reviewJson({ assessment: "reward payout farming", suggestions: ["payout"], nits: ["reward"], blockers: [] }),
+    }));
+    const env = createTestEnv({
+      AI: { run } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+    });
+    const result = await runLoopOverAiReview(env, baseInput);
+    expect(result.status).toBe("ok");
+  });
+
   it("parseModelReview parses well-formed inline findings, including a trimmed optional suggestion; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
     const json = JSON.stringify({
       assessment: "ok",

@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.13.0](https://github.com/JSONbored/loopover/compare/miner-v3.12.0...miner-v3.13.0) (2026-07-24)
+
+
+### Fixes
+
+* **miner:** delegate three resolve*DbPath helpers to resolveLocalStoreDbPath ([#8336](https://github.com/JSONbored/loopover/issues/8336)) ([#8524](https://github.com/JSONbored/loopover/issues/8524)) ([ee4fa21](https://github.com/JSONbored/loopover/commit/ee4fa218bec750d5a6dbf0bed2111f5a7fbbffb5))
+* **miner:** route orb-export, deny-hook-synthesis, and laptop-init through openLocalStoreDb ([#8319](https://github.com/JSONbored/loopover/issues/8319)) ([#8529](https://github.com/JSONbored/loopover/issues/8529)) ([219d5a7](https://github.com/JSONbored/loopover/commit/219d5a7048487465f64a96a31aad0f628e737df2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.12.0 to ^3.13.0
+
 ## [3.12.0](https://github.com/JSONbored/loopover/compare/miner-v3.11.0...miner-v3.12.0) (2026-07-24)
 
 

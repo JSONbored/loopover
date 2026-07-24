@@ -37,6 +37,12 @@ import { openReplaySnapshotStore, resolveReplaySnapshotDbPath } from "./replay-s
 import type { ReplaySnapshotStore } from "./replay-snapshot.js";
 import { initDenyHookSynthesisStore, resolveDenyHookSynthesisDbPath } from "./deny-hook-synthesis.js";
 import type { DenyHookSynthesisStore } from "./deny-hook-synthesis.js";
+import {
+  openWorktreeAllocator,
+  resolveWorktreeAllocatorDbPath,
+  countPurgeableWorktreeSlotsByRepo,
+} from "./worktree-allocator.js";
+import type { WorktreeAllocator } from "./worktree-allocator.js";
 import { resolveAttemptLogDbPath } from "./attempt-log.js";
 import {
   CLAIM_LEDGER_PURGE_SPEC,
@@ -79,7 +85,8 @@ type PurgeOpenerKey =
   | "initPolicyVerdictCacheStore"
   | "initRankedCandidatesStore"
   | "openReplaySnapshotStore"
-  | "initDenyHookSynthesisStore";
+  | "initDenyHookSynthesisStore"
+  | "openWorktreeAllocator";
 
 export type PurgeCliOptions = {
   openClaimLedger?: () => ClaimLedger;
@@ -94,6 +101,7 @@ export type PurgeCliOptions = {
   initRankedCandidatesStore?: () => RankedCandidatesStore;
   openReplaySnapshotStore?: () => ReplaySnapshotStore;
   initDenyHookSynthesisStore?: () => DenyHookSynthesisStore;
+  openWorktreeAllocator?: () => WorktreeAllocator;
   resolveDbPaths?: Record<string, () => string>;
 };
 
@@ -104,6 +112,9 @@ type PurgeTarget = {
   resolveDbPath: () => string;
   spec?: LedgerPurgeSpec;
   specs?: LedgerPurgeSpec[];
+  // A store whose --dry-run count needs custom, non-generic logic (worktree-allocator's status-aware count,
+  // #8320) declares it here INSTEAD of a spec/specs, exactly as its purge logic lives on the store object.
+  countByRepo?: (db: DatabaseSync, repoFullName: string) => number;
 };
 
 const REAL_PURGE_TARGETS: PurgeTarget[] = [
@@ -124,6 +135,12 @@ const REAL_PURGE_TARGETS: PurgeTarget[] = [
   { name: "ranked-candidates", optionKey: "initRankedCandidatesStore", opener: initRankedCandidatesStore, resolveDbPath: resolveRankedCandidatesDbPath, spec: RANKED_CANDIDATES_PURGE_SPEC },
   { name: "replay-snapshot", optionKey: "openReplaySnapshotStore", opener: openReplaySnapshotStore, resolveDbPath: resolveReplaySnapshotDbPath, spec: REPLAY_SNAPSHOT_PURGE_SPEC },
   { name: "deny-hook-synthesis", optionKey: "initDenyHookSynthesisStore", opener: initDenyHookSynthesisStore, resolveDbPath: resolveDenyHookSynthesisDbPath, spec: DENY_HOOK_SYNTHESIS_PURGE_SPEC },
+  // worktree-allocator's worktree_slots is a FIXED pool of pre-allocated slot rows, not an append-only ledger,
+  // so the generic DELETE-based purgeStoreByRepo would corrupt the pool (#8320). Its purge lives on the store
+  // object (purgeByRepo clears only FREE, never active, slots), and its dry-run count uses a dedicated status-
+  // aware counter (countByRepo) instead of a spec/specs — exactly mirroring how governor-state's entry carries
+  // `specs` rather than a single `spec` for its own non-uniform case.
+  { name: "worktree-allocator", optionKey: "openWorktreeAllocator", opener: openWorktreeAllocator, resolveDbPath: resolveWorktreeAllocatorDbPath, countByRepo: countPurgeableWorktreeSlotsByRepo },
 ];
 
 export type ParsedPurgeArgs = { json: boolean; dryRun: boolean; repoFullName: string } | { error: string };
@@ -216,13 +233,19 @@ export function runPurgeDryRun(
   const resolveDbPaths = options.resolveDbPaths ?? {};
   const stores: PurgeDryRunStoreResult[] = REAL_PURGE_TARGETS.map((target) => {
     const dbPath = (resolveDbPaths[target.name] ?? target.resolveDbPath)();
-    // A target scopes one table (`spec`) or -- for governor-state -- several in one file (`specs`); sum the
-    // per-table counts against the single read-only handle so the preview matches what a real purge removes.
-    // Every REAL_PURGE_TARGETS entry declares exactly one of the two, so `target.spec` is always set here.
-    const specs = target.specs ?? [target.spec!];
+    // A target either scopes one table (`spec`) or -- for governor-state -- several in one file (`specs`), summed
+    // against the single read-only handle; or, when its purge can't be a generic repoColumn DELETE, brings its
+    // own status-aware counter (`countByRepo`, worktree-allocator #8320). Whichever it is, the preview must match
+    // exactly what a real purge removes. Every entry declares exactly one of the three, so `target.spec!` is only
+    // dereferenced on the spec branch, where it is always set.
     try {
       const wouldPurge = countExistingRows(dbPath, (db) =>
-        specs.reduce((sum, spec) => sum + countStoreByRepo(db, spec, parsed.repoFullName), 0),
+        target.countByRepo
+          ? target.countByRepo(db, parsed.repoFullName)
+          : (target.specs ?? [target.spec!]).reduce(
+              (sum, spec) => sum + countStoreByRepo(db, spec, parsed.repoFullName),
+              0,
+            ),
       );
       return { store: target.name, wouldPurge };
     } catch (error) {

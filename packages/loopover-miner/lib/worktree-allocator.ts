@@ -38,6 +38,7 @@ export type WorktreeAllocator = {
   acquire(attemptId: string, repoFullName: string): WorktreeAllocation;
   release(attemptId: string): WorktreeAllocation | null;
   listSlots(): WorktreeAllocation[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 
@@ -252,6 +253,32 @@ function reclaimOrphanedAllocations(db: DatabaseSync, nowMs: number, maxLeaseMs:
   }
 }
 
+// Right-to-be-forgotten purge (#8320). `worktree_slots` is a FIXED pool of pre-allocated slot rows (every index
+// 0..maxConcurrency-1 always exists), NOT an append-only ledger, so the generic DELETE-based `purgeStoreByRepo`
+// would shrink the pool and break ensureSlots/selectFreeSlot's invariant. Instead, purge-by-repo clears the repo
+// only from slots that are already `free` — mirroring release()/reclaimOrphanedAllocations()'s own blanking of
+// repo_full_name/attempt_id/owner_pid/owner_host/allocated_at. An `active` slot is NEVER matched: its
+// repo_full_name reflects a live, in-flight attempt's real worktree checkout on disk, and clearing it while
+// active would desync the allocator from that checkout. This match condition is shared verbatim by the real
+// UPDATE (below) and the read-only --dry-run counter (countPurgeableWorktreeSlotsByRepo) so the two can never
+// diverge. It is expected to match 0 rows on the overwhelming majority of real calls, by design: every normal
+// release/reclaim path already blanks these fields on free, so only a row predating this fix or stranded by an
+// unexpected crash path can ever match — the clear is a defensive backstop, not a routine deletion.
+const PURGEABLE_FREE_SLOT_MATCH = "status = 'free' AND repo_full_name = ?";
+
+/**
+ * Read-only count of the rows `purgeByRepo` would clear for one repo (#8320) — the `--dry-run` counterpart used
+ * by purge-cli.js against a driver-enforced read-only handle. Uses the exact same `PURGEABLE_FREE_SLOT_MATCH`
+ * condition the real purge does, so an `active` slot is never reported as purgeable in dry-run either. Mirrors
+ * store-maintenance.js's `countStoreByRepo` for the generic repoColumn stores.
+ */
+export function countPurgeableWorktreeSlotsByRepo(db: DatabaseSync, repoFullName: string): number {
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS count FROM worktree_slots WHERE ${PURGEABLE_FREE_SLOT_MATCH}`)
+    .get(repoFullName) as CountRow;
+  return countRow.count;
+}
+
 /**
  * Opens the local worktree allocator store. On startup reclaims orphaned active slots — any slot past its
  * `maxLeaseMs` age (the container-agnostic guarantee for fleet mode's shared store), plus, as a same-host fast
@@ -304,6 +331,11 @@ export function openWorktreeAllocator(options: {
   const listSlots = db.prepare(
     "SELECT slot_index, worktree_path, attempt_id, repo_full_name, status, owner_pid, owner_host, allocated_at FROM worktree_slots ORDER BY slot_index",
   );
+  const purgeFreeByRepo = db.prepare(`
+    UPDATE worktree_slots
+    SET repo_full_name = NULL, attempt_id = NULL, owner_pid = NULL, owner_host = NULL, allocated_at = NULL
+    WHERE ${PURGEABLE_FREE_SLOT_MATCH}
+  `);
 
   const allocator: WorktreeAllocator = {
     dbPath: resolvedPath,
@@ -357,6 +389,14 @@ export function openWorktreeAllocator(options: {
     },
     listSlots() {
       return (listSlots.all() as WorktreeSlotRow[]).map(rowToAllocation);
+    },
+    purgeByRepo(repoFullName) {
+      // Right-to-be-forgotten sweep (#8320): clear the repo only from FREE slots (see PURGEABLE_FREE_SLOT_MATCH).
+      // Never deletes a pooled slot row and never touches an `active` slot's live in-flight checkout. Returns the
+      // number of rows cleared — expected to be 0 on the overwhelming majority of real calls, by design, since
+      // every normal release/reclaim path already blanks these fields on free.
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      return Number(purgeFreeByRepo.run(normalizedRepo).changes);
     },
     close() {
       db.close();

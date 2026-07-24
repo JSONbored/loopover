@@ -180,3 +180,41 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     expect(cleanupResourceCount()).toBe(0);
   });
 });
+
+describe("worktree allocator right-to-be-forgotten purge (#8320)", () => {
+  it("clears only a stale FREE slot for the repo, leaves an ACTIVE slot fully untouched, and counts one", () => {
+    const allocator = tempAllocator({ maxConcurrency: 3 });
+    // slot 0: an ACTIVE attempt against the target repo — a live in-flight checkout that must never be touched.
+    const active = allocator.acquire("attempt-live", "acme/widgets");
+    // slot 1: seed a STALE free row carrying the repo directly (normal release/reclaim always blanks these, so
+    // bypass them). slot 2 stays clean/free with no repo. Only slot 1 must be cleared and counted.
+    const seedDb = new DatabaseSync(allocator.dbPath);
+    seedDb.exec("UPDATE worktree_slots SET repo_full_name = 'acme/widgets' WHERE slot_index = 1");
+    seedDb.close();
+
+    expect(allocator.purgeByRepo("acme/widgets")).toBe(1);
+
+    const slots = allocator.listSlots();
+    const activeSlot = slots.find((slot) => slot.slotIndex === active.slotIndex);
+    expect(activeSlot?.status).toBe("active");
+    expect(activeSlot?.repoFullName).toBe("acme/widgets");
+    expect(activeSlot?.attemptId).toBe("attempt-live");
+    const clearedSlot = slots.find((slot) => slot.slotIndex === 1);
+    expect(clearedSlot?.status).toBe("free");
+    expect(clearedSlot?.repoFullName).toBeNull();
+    expect(clearedSlot?.attemptId).toBeNull();
+    // The pool is intact — no row was deleted, every slot index still exists.
+    expect(slots).toHaveLength(3);
+  });
+
+  it("returns 0 when no FREE slot carries the repo — an ACTIVE row for it is never cleared or counted", () => {
+    const allocator = tempAllocator({ maxConcurrency: 1 });
+    allocator.acquire("attempt-live", "acme/widgets");
+    // A different repo has nothing to forget; the target repo's only row is active, so it too must be left alone.
+    expect(allocator.purgeByRepo("acme/other")).toBe(0);
+    expect(allocator.purgeByRepo("acme/widgets")).toBe(0);
+    const slot = allocator.listSlots()[0];
+    expect(slot?.status).toBe("active");
+    expect(slot?.repoFullName).toBe("acme/widgets");
+  });
+});

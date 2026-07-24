@@ -27,7 +27,7 @@ export { isCalibrationReport, isCalibrationRow, isObservedOutcomeRecord, isPredi
  *  unrecognized. `value` is always the already-validated non-empty string field of a record (the type guards run
  *  first), so no non-string handling is needed here. Accepts both the predicted (`merge`/`close`/`hold`) and the
  *  realized (`merged`/`closed`) forms. */
-function normalizeDecision(value: string): "merge" | "close" | "hold" | "" {
+export function normalizeDecision(value: string): "merge" | "close" | "hold" | "" {
   const decision = value.trim().toLowerCase();
   if (decision === "merge" || decision === "merged") return "merge";
   if (decision === "close" || decision === "closed") return "close";

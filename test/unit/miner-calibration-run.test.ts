@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 // default (non-injected) combine branch runs against the real engine, exactly like miner-feasibility-cli.test.ts.
 vi.mock("@loopover/engine", async () => import("../../packages/loopover-engine/src/index"));
 
-import {
+// Load calibration-run.ts directly so scoped CI runs (`--changed` after `build:miner`) attribute patch coverage to
+// the .ts diff, not a 0%-hit phantom when literal `.js` imports resolve to emitted artifacts (#7796 / #8317).
+const CALIBRATION_RUN_MODULE = "../../packages/loopover-miner/lib/calibration-run.ts";
+const {
   MINER_CALIBRATION_SNAPSHOT_EVENT,
   buildHistoricalReplayCalibrationInput,
   latestCalibrationSnapshot,
@@ -14,7 +17,7 @@ import {
   runHistoricalReplayCalibrationCycle,
   scoreHistoricalReplayComposite,
   snapshotPayloadFromResult,
-} from "../../packages/loopover-miner/lib/calibration-run.js";
+} = (await import(CALIBRATION_RUN_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-run.js");
 import type { AppendEventInput, LedgerEntry } from "../../packages/loopover-miner/lib/event-ledger.js";
 
 // A minimal injected event ledger (the DI shape record/read accept) — pure unit tests, no SQLite file. `_events` is
@@ -396,6 +399,27 @@ describe("runHistoricalReplayCalibrationCycle (#4248)", () => {
     expect(noReplay.snapshot.observedAt).toBeNull();
     expect(noReplay.snapshot.replayRunId).toBeNull();
     expect(noReplay.sampleSize).toBe(0);
+  });
+
+  it("forwards backtestTrackRecord into the snapshot meta (#8317)", () => {
+    const ledger = mockLedger();
+    const record = { totalRuns: 4, regressedRuns: 1, regressedRate: 0.25 };
+    const withRecord = runHistoricalReplayCalibrationCycle(
+      { config: enabledConfig, prOutcome, repoFullName: "acme/widgets", backtestTrackRecord: record },
+      { eventLedger: ledger },
+    );
+    expect(withRecord.snapshot.backtestTrackRecord).toEqual(record);
+    expect(readCalibrationSnapshots(ledger)[0]?.backtestTrackRecord).toEqual(record);
+
+    const without = runHistoricalReplayCalibrationCycle({ config: enabledConfig, prOutcome });
+    expect(without.snapshot.backtestTrackRecord).toBeNull();
+
+    const explicitNull = runHistoricalReplayCalibrationCycle({
+      config: enabledConfig,
+      prOutcome,
+      backtestTrackRecord: null,
+    });
+    expect(explicitNull.snapshot.backtestTrackRecord).toBeNull();
   });
 });
 

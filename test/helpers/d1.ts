@@ -1,34 +1,104 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 type BoundValue = string | number | null | Uint8Array;
 
-// Listing + reading migrations/*.sql (~90 files) on every TestD1Database construction (~1500 call sites
-// across the suite) is pure overhead: the file list and contents never change within a worker process's
-// lifetime. Cache the concatenated SQL once per process instead of re-reading it every call.
+// Executing the full migrations/*.sql chain (178 files and growing) into a fresh :memory: database on
+// EVERY TestD1Database construction (~1500 call sites across the suite) was the suite's single biggest
+// time sink: ~640ms per construction, ~950s aggregate per full run, and it inflated ordinary tests into
+// the 3s+ range. Instead, build ONE fully-migrated template database file per migration-chain content
+// (shared across every vitest worker), then give each instance its own copyFileSync clone: ~1.5ms per
+// construction including a verified write, identical schema, fully isolated state.
 //
-// NOT using node:sqlite's serialize()/deserialize() here: they would let one migrated template be cloned
-// per instance instead of re-executing the SQL each time (a much bigger win), but they don't exist on this
-// repo's pinned Node 22 (`.nvmrc`) at all -- confirmed absent from DatabaseSync's prototype on Node 22.23.1,
-// present only from Node 24+. An earlier version of this cache used them and passed locally on a newer Node,
-// but crashed every test in CI (`db.deserialize is not a function`) since CI runs the pinned Node 22. Stick
-// to what Node 22 actually supports.
-let migratedSql: string | null = null;
-function getMigratedSql(): string {
-  if (migratedSql) return migratedSql;
-  migratedSql = readdirSync("migrations")
+// Design constraints this shape answers (each learned the hard way):
+// - node:sqlite's serialize()/deserialize() (the in-memory equivalent of this clone) don't exist on the
+//   pinned Node 22 (`.nvmrc`) at all -- absent from DatabaseSync's prototype on 22.23.1, present only
+//   from Node 24+. An earlier attempt used them and crashed every test in CI. File copy is Node-22-safe.
+// - The clone file must NOT be unlinked while its database is open: SQLite detects the missing main file
+//   and fails every later write with SQLITE_READONLY_DBMOVED ("attempt to write a readonly database").
+//   Clones therefore stay on disk until the single exit sweep below removes them.
+// - Vitest's per-file module isolation re-evaluates this module constantly, so ALL memoization lives on
+//   globalThis, never in module-scope state -- module-scope memos would rebuild the template once per
+//   test FILE (~640ms each), silently giving back most of the win.
+// - The template is keyed by a hash of the concatenated migration SQL, and built at a `.tmp` sibling
+//   then renameSync'd (atomic) into place -- concurrent workers can double-build harmlessly, but no
+//   reader can ever copy a half-written template, and a schema change gets a fresh key instead of a
+//   stale reuse. page_size=1024 + VACUUM shrink the empty-schema template ~3.4x (1.4MB -> ~410KB), which
+//   bounds worst-case tmpdir usage for a full run's clones to a few hundred MB, swept at worker exit.
+type TestD1GlobalState = {
+  templatePath?: string;
+  cloneCounter: number;
+  clonePaths: string[];
+  exitSweepRegistered: boolean;
+};
+
+function testD1State(): TestD1GlobalState {
+  const holder = globalThis as { __loopoverTestD1State?: TestD1GlobalState };
+  holder.__loopoverTestD1State ??= {
+    cloneCounter: 0,
+    clonePaths: [],
+    exitSweepRegistered: false,
+  };
+  return holder.__loopoverTestD1State;
+}
+
+function getMigratedTemplatePath(): string {
+  const state = testD1State();
+  if (state.templatePath) return state.templatePath;
+  const migratedSql = readdirSync("migrations")
     .filter((file) => file.endsWith(".sql"))
     .sort()
     .map((file) => readFileSync(`migrations/${file}`, "utf8"))
     .join("\n");
-  return migratedSql;
+  const key = createHash("sha256").update(migratedSql).digest("hex").slice(0, 16);
+  const path = join(tmpdir(), `loopover-test-migrated-${key}.sqlite3`);
+  if (!existsSync(path)) {
+    const buildPath = `${path}.${process.pid}.tmp`;
+    const template = new DatabaseSync(buildPath);
+    template.exec("PRAGMA page_size=1024;");
+    template.exec(migratedSql);
+    template.exec("VACUUM;");
+    template.close();
+    renameSync(buildPath, path);
+  }
+  state.templatePath = path;
+  return path;
 }
 
 export class TestD1Database {
-  readonly db = new DatabaseSync(":memory:");
+  readonly db: DatabaseSync;
 
   constructor() {
-    this.db.exec(getMigratedSql());
+    const state = testD1State();
+    const clonePath = join(
+      tmpdir(),
+      `loopover-test-clone-${process.pid}-${state.cloneCounter++}-${Math.random().toString(36).slice(2, 8)}.sqlite3`,
+    );
+    copyFileSync(getMigratedTemplatePath(), clonePath);
+    this.db = new DatabaseSync(clonePath);
+    state.clonePaths.push(clonePath);
+    if (!state.exitSweepRegistered) {
+      state.exitSweepRegistered = true;
+      process.on("exit", () => {
+        for (const path of state.clonePaths) {
+          try {
+            unlinkSync(path);
+          } catch {
+            // best-effort tmp hygiene only
+          }
+        }
+      });
+    }
   }
 
   prepare(sql: string) {

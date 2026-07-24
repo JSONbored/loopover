@@ -60,6 +60,35 @@ describe("governor ledger normalization (#2328)", () => {
     ).toThrow(/invalid_event_type/);
   });
 
+  it("REGRESSION (#8350): rejects a path-traversal or invalid-character repo segment on the WRITE path", () => {
+    // normalizeGovernorLedgerEvent backs appendGovernorEvent's SQLite INSERT. It only checked "exactly two
+    // non-empty segments", so "../evilrepo" normalized unchanged (owner "..", repo "evilrepo") and reached
+    // persistence -- the value class #5831/#7525 already guard against in every miner-lib sibling parser.
+    const base = {
+      eventType: "denied",
+      actionClass: "open_pr",
+      decision: "deny",
+      reason: "x",
+    };
+    for (const repoFullName of [
+      "../evilrepo",   // traversal owner
+      "acme/..",       // traversal repo
+      "./acme",        // bare-dot owner
+      "acme/.",        // bare-dot repo
+      "ac me/widgets", // space -> outside [A-Za-z0-9._-]
+      "acme/wid;gets", // shell metacharacter
+      "acme/wid\u0000gets", // control character
+    ]) {
+      expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName }), repoFullName).toThrow(
+        /invalid_repo_full_name/,
+      );
+    }
+    // Legitimate slugs (including the dots/dashes/underscores real repos use) still normalize.
+    for (const repoFullName of ["acme/widgets", "acme-co/my_widget.js", "a/b"]) {
+      expect(normalizeGovernorLedgerEvent({ ...base, repoFullName }).repoFullName).toBe(repoFullName);
+    }
+  });
+
   it("rejects malformed repo slugs, blank required strings, and lossy payloads", () => {
     const base = {
       eventType: "throttled",

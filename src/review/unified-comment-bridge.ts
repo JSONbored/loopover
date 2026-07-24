@@ -71,8 +71,8 @@ export { splitAiReviewNits } from "./ai-notes";
 // src/signals/engine.ts containsPrivatePublicTerm (drop if still present). Kept inline so this module
 // stays a pure, dependency-light renderer-mapping seam.
 const PRIVATE_FORBIDDEN_TERMS =
-  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
-const PRIVATE_DROP_TERMS = /\b(?:reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|likely_duplicate|reviewability\s*\d)\b/i;
+  /\b(?:rewards?|payouts?|farming|estimated\s+scores?|raw\s+trust\s+scores?|raw\s+trust|trust\s+scores?|score\s+estimates?|reward\s+estimates?|wallets?|hotkeys?|coldkeys?|mnemonics?|seed\s?phrases?|cohorts?|miner[-_\s]?originated|human[-_\s]?originated|rankings?|reviewability|scoreability|private\s+signals?|likely_duplicate|reviewability\s*\d)\b/gi;
+const PRIVATE_DROP_TERMS = /\b(?:reward|payout|farming|wallet|hotkey|trust score|raw trust|estimated score|scoreability|cohort|mnemonic|likely_duplicate|reviewability\s*\d)\b/i;
 
 /** Scrub forbidden terms from a contributor-facing Nit; return null to DROP it if it still leaks after
  *  scrubbing (fail-safe: never publish a line that names private rubric/scoring/reward internals). */

@@ -1,8 +1,38 @@
+import { existsSync } from "node:fs";
+import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
 import { defineConfig } from "vitest/config";
 
 const junitPath = process.env.VITEST_JUNIT_PATH;
 
+// In-process imports must resolve the miner/mcp packages' NodeNext ".js"-suffixed specifiers to the
+// .ts SOURCE even when the in-place compiled .js exists on disk (both packages emit next to their
+// sources -- tsconfig outDir "."; CI builds them before the coverage run, and local checkouts
+// accumulate the same gitignored emit). Without this, Vite resolves the literal .js file, v8
+// coverage attributes every hit to the built-file identity (flatlining the .ts to 0% -- the
+// 2026-07-24 codecov/patch (0%/99%) incident), and --changed's import-graph tracing can't relate a
+// changed .ts to the tests importing it. Deleting the emit before the coverage run instead (the
+// first attempt at fixing that incident) broke the OTHER class of tests: subprocess-spawning ones
+// (the CLI harnesses and the MCP stdio tests) run under plain Node outside Vite's resolver and
+// genuinely need the built .js at spawn time. This plugin serves both: in-process resolution always
+// lands on the .ts (correct identity for coverage + tracing), while spawned subprocesses keep the
+// built artifacts on disk. Scoped to exactly the two in-place-emit packages -- engine emits to
+// dist/ and must keep resolving through its package boundary unchanged.
+const IN_PLACE_EMIT_RE = /packages\/loopover-(?:miner|mcp)\/(?:lib|bin)\/.*\.js$/;
+const preferTsSourceForInPlaceEmit = {
+  name: "loopover:prefer-ts-source-for-in-place-emit",
+  enforce: "pre" as const,
+  resolveId(source: string, importer: string | undefined) {
+    if (!importer || !source.endsWith(".js")) return null;
+    if (!source.startsWith("./") && !source.startsWith("../") && !isAbsolute(source)) return null;
+    const candidate = isAbsolute(source) ? source : resolvePath(dirname(importer), source);
+    if (!IN_PLACE_EMIT_RE.test(candidate)) return null;
+    const tsSibling = `${candidate.slice(0, -3)}.ts`;
+    return existsSync(tsSibling) ? tsSibling : null;
+  },
+};
+
 export default defineConfig({
+  plugins: [preferTsSourceForInPlaceEmit],
   ssr: {
     noExternal: ["agents", "partyserver"],
   },

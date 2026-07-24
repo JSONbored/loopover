@@ -347,6 +347,27 @@ describe("api routes", () => {
     const unknown = await app.request("/v1/public/repos/acme/missing/badge.json", {}, env);
     expect(unknown.status).toBe(404);
     await expect(unknown.json()).resolves.toMatchObject({ message: "unavailable" });
+
+    // REGRESSION (#8377): a backend failure inside loadPublicRepoBadge must render the graceful
+    // "unavailable" badge with 503 — not escape as Hono's bare, unstructured 500 (no app.onError exists).
+    // 503 (not 404) so a monitor can tell a transient backend problem apart from "this repo has no badge",
+    // and the short cache so a blip is never cached for the long stale-while-revalidate window.
+    const brokenEnv = withRepositoryReadFailure(env);
+    const failedSvg = await app.request("/v1/public/repos/acme/badged/badge.svg", {}, brokenEnv);
+    expect(failedSvg.status).toBe(503);
+    expect(failedSvg.headers.get("content-type")).toContain("image/svg+xml");
+    expect(failedSvg.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(await failedSvg.text()).toContain("unavailable");
+
+    const failedJson = await app.request("/v1/public/repos/acme/badged/badge.json", {}, brokenEnv);
+    expect(failedJson.status).toBe(503);
+    expect(failedJson.headers.get("cache-control")).toBe("public, max-age=300");
+    await expect(failedJson.json()).resolves.toMatchObject({ schemaVersion: 1, label: "loopover", message: "unavailable", cacheSeconds: 300 });
+
+    // The healthy path is untouched by the new guard — still 200 with the long cache.
+    const stillOk = await app.request("/v1/public/repos/acme/badged/badge.svg", {}, env);
+    expect(stillOk.status).toBe(200);
+    expect(stillOk.headers.get("cache-control")).toContain("stale-while-revalidate");
   });
 
   it("serves public per-repo review-quality metrics only for installed, opted-in repos (#2568)", async () => {
@@ -7067,6 +7088,24 @@ function mcpHeaders(env: Env, sessionId?: string): Record<string, string> {
     "x-loopover-mcp-version": "0.4.0",
     "x-loopover-mcp-client": "loopover-mcp-cli",
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+  };
+}
+
+/** #8377: make the badge loader's first D1 read (getRepository) throw, so the route's own catch is what
+ *  produces the response — the same targeted-`prepare` technique as {@link withProductUsageInsertFailure}. */
+function withRepositoryReadFailure(env: Env): Env {
+  const db = env.DB as unknown as { prepare(sql: string): unknown; batch(statements: unknown[]): Promise<unknown> };
+  return {
+    ...env,
+    DB: {
+      prepare(sql: string) {
+        if (sql.includes("repositories")) throw new Error("d1 blip reading repositories");
+        return db.prepare.call(db, sql);
+      },
+      batch(statements: unknown[]) {
+        return db.batch.call(db, statements);
+      },
+    } as unknown as D1Database,
   };
 }
 

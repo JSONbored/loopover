@@ -58,6 +58,33 @@ function recordKey(project: string, targetId: string): string {
   return `${project} ${targetId}`;
 }
 
+/** Build the same `(project, targetId)` → normalized-outcome map {@link buildCalibrationReport} uses internally.
+ *  Malformed outcome records are skipped. Exported so metrics-cli (#8315) can reuse the join without a second
+ *  implementation. */
+export function buildOutcomeDecisionMap(outcomes: ObservedOutcomeRecord[]): Map<string, "merge" | "close" | "hold" | ""> {
+  const outcomeByKey = new Map<string, "merge" | "close" | "hold" | "">();
+  for (const outcome of Array.isArray(outcomes) ? outcomes : []) {
+    if (!isObservedOutcomeRecord(outcome)) continue;
+    outcomeByKey.set(recordKey(outcome.project, outcome.targetId), normalizeDecision(outcome.outcomeDecision));
+  }
+  return outcomeByKey;
+}
+
+/** Resolve one prediction's `correct` flag using the same join rules as {@link buildCalibrationReport}: only
+ *  directional merge/close predictions with a realized merge/close outcome are scored; hold, pending, and
+ *  unclassifiable rows return `undefined` (unset). Malformed predictions return `undefined`. */
+export function resolvePredictionCorrectness(
+  prediction: PredictedVerdictRecord,
+  outcomeByKey: Map<string, "merge" | "close" | "hold" | "">,
+): boolean | undefined {
+  if (!isPredictedVerdictRecord(prediction)) return undefined;
+  const observed = outcomeByKey.get(recordKey(prediction.project, prediction.targetId));
+  if (observed !== "merge" && observed !== "close") return undefined;
+  const predicted = normalizeDecision(prediction.predictedDecision);
+  if (predicted !== "merge" && predicted !== "close") return undefined;
+  return predicted === observed;
+}
+
 /**
  * Join predicted-verdict records with realized-outcome records into a per-project calibration report. Pure and
  * read-only. A prediction counts as "decided" only when a realized outcome for the SAME `(project, targetId)`
@@ -70,11 +97,7 @@ export function buildCalibrationReport(
   predictions: PredictedVerdictRecord[],
   outcomes: ObservedOutcomeRecord[],
 ): CalibrationReport {
-  const outcomeByKey = new Map<string, "merge" | "close" | "hold" | "">();
-  for (const outcome of Array.isArray(outcomes) ? outcomes : []) {
-    if (!isObservedOutcomeRecord(outcome)) continue;
-    outcomeByKey.set(recordKey(outcome.project, outcome.targetId), normalizeDecision(outcome.outcomeDecision));
-  }
+  const outcomeByKey = buildOutcomeDecisionMap(outcomes);
 
   const byProject = new Map<string, CalibrationRow>();
   for (const prediction of Array.isArray(predictions) ? predictions : []) {

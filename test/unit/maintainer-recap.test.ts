@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMaintainerRecap, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
+import { buildDriftRecapSection } from "../../src/services/maintainer-recap-drift";
 import type { OutcomeCalibration } from "../../src/services/outcome-calibration";
 import type { RecapReport } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -229,8 +230,73 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
     expect(result.skipped).toBe(false);
     if (result.skipped) return;
     expect(result.report.repos).toEqual([]);
-    expect(result.formatted).toContain("_No repositories in this window._");
+    // #8372: the ## Per-repo body is buildPerRepoRecapSection's, which carries its own empty-state line.
+    expect(result.formatted).toContain("No repo activity in the last 7 day(s).");
     expect(result.formatted).toContain("(n/a)");
+  });
+
+  it("forwards a caller-supplied configDrift projection into the delivered digest (#8372 present arm)", async () => {
+    const calls = stubRecapChannelFetch();
+    const configDrift = buildDriftRecapSection({ generatedAt: GEN, sentinelEnabled: false, drifting: [], cleanKnobs: 0 });
+    const result = await runMaintainerRecap(envWithBothWebhooks(), { configDrift });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("## Config drift");
+    // Reaches the actual delivered payload, not just the returned string.
+    expect(calls.some((c) => c.body.includes("## Config drift"))).toBe(true);
+  });
+
+  // #8372: runMaintainerRecap now assembles its formatter options key-by-key, so the routingShadow-present
+  // arm needs a real recorded decision. #8229 shipped that path with no test that produced one.
+  it("includes the #8229 routing-shadow section when the window has recorded decisions (routingShadow present arm)", async () => {
+    stubRecapChannelFetch();
+    const env = envWithBothWebhooks();
+    await env.DB.prepare(
+      "INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+      .bind(
+        "ae-routing-1",
+        "reviewer_routing_shadow",
+        "loopover",
+        "acme/widgets#1",
+        "completed",
+        "shadow",
+        JSON.stringify({ repoFullName: "acme/widgets", preferredProvider: "claude-code", basis: ["evidence"] }),
+        GEN, // pinned to the same instant as generatedAt below, so the since-filter keeps it deterministically
+      )
+      .run();
+    const result = await runMaintainerRecap(env, { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("Reviewer routing shadow");
+  });
+
+  // The absent arm: loadRoutingRecapSection is fail-safe (returns null on any read error), so a routing
+  // read blip must leave the digest intact minus that one section rather than breaking the whole recap.
+  it("omits the routing-shadow section when its audit read fails (routingShadow absent arm)", async () => {
+    stubRecapChannelFetch();
+    const base = envWithBothWebhooks();
+    const env = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop !== "DB") return Reflect.get(target, prop, receiver);
+        return new Proxy(target.DB, {
+          get(dbTarget, dbProp, dbReceiver) {
+            if (dbProp !== "prepare") return Reflect.get(dbTarget, dbProp, dbReceiver);
+            return (sql: string) => {
+              if (sql.includes("SELECT metadata_json FROM audit_events")) throw new Error("routing_read_blip");
+              return dbTarget.prepare(sql);
+            };
+          },
+        });
+      },
+    }) as Env;
+
+    const result = await runMaintainerRecap(env, { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).not.toContain("Reviewer routing shadow");
+    // The rest of the digest is unaffected — the failure costs one section, not the recap.
+    expect(result.formatted).toContain("## Totals");
   });
 
   it("short-circuits when enabled is false — no build/format/fetch (flag-OFF arm)", async () => {

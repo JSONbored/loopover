@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildCalibrationReport,
-  isCalibrationReport,
-} from "../../packages/loopover-miner/lib/calibration.js";
 import type {
   ObservedOutcomeRecord,
   PredictedVerdictRecord,
 } from "../../packages/loopover-miner/lib/calibration.js";
+
+// Same .ts-via-variable import as miner-metrics-cli.test.ts (#8315) — CI grades patch on the .ts paths.
+const CALIBRATION_MODULE = "../../packages/loopover-miner/lib/calibration.ts";
+const {
+  buildCalibrationReport,
+  buildOutcomeDecisionMap,
+  isCalibrationReport,
+  resolvePredictionCorrectness,
+} = (await import(CALIBRATION_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration.js");
 
 const TS = "2026-07-12T00:00:00.000Z";
 const pred = (project: string, targetId: string, predictedDecision: string): PredictedVerdictRecord => ({
@@ -111,5 +116,23 @@ describe("buildCalibrationReport (#4849)", () => {
   it("matches strictly on (project, targetId) — a same id under a different project is not joined", () => {
     const report = buildCalibrationReport([pred("a/b", "1", "merge")], [out("c/d", "1", "merged")]);
     expect(report.hasSignal).toBe(false); // outcome belongs to a different project
+  });
+});
+
+describe("resolvePredictionCorrectness (#8315)", () => {
+  it("scores directional predictions and leaves hold/pending/unrecognized unset", () => {
+    const outcomeByKey = buildOutcomeDecisionMap([
+      out("a/b", "1", "merged"),
+      out("a/b", "2", "closed"),
+      out("a/b", "3", "closed"),
+      out("a/b", "4", "unknown"),
+    ]);
+    expect(resolvePredictionCorrectness(pred("a/b", "1", "merge"), outcomeByKey)).toBe(true);
+    expect(resolvePredictionCorrectness(pred("a/b", "2", "merge"), outcomeByKey)).toBe(false);
+    expect(resolvePredictionCorrectness(pred("a/b", "3", "close"), outcomeByKey)).toBe(true);
+    expect(resolvePredictionCorrectness(pred("a/b", "5", "merge"), outcomeByKey)).toBeUndefined();
+    expect(resolvePredictionCorrectness(pred("a/b", "3", "hold"), outcomeByKey)).toBeUndefined();
+    expect(resolvePredictionCorrectness(pred("a/b", "4", "merge"), outcomeByKey)).toBeUndefined();
+    expect(resolvePredictionCorrectness({ project: "a/b" } as never, outcomeByKey)).toBeUndefined();
   });
 });

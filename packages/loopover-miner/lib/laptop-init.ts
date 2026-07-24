@@ -1,11 +1,11 @@
-import { accessSync, chmodSync, constants, existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { applySchemaMigrations } from "./schema-version.js";
 import { reportCliFailure } from "./cli-error.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
-import { resolveLocalStoreDbPath } from "./local-store.js";
+import { openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 const githubApiBaseUrl = "https://api.github.com";
 const githubApiVersion = "2022-11-28";
@@ -53,9 +53,11 @@ export function resolveLaptopStateDbPath(env: Record<string, string | undefined>
 export function initLaptopState(env: Record<string, string | undefined> = process.env): LaptopInitResult {
   const stateDir = resolveMinerStateDir(env);
   const dbPath = resolveLaptopStateDbPath(env);
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  // Sample before openLocalStoreDb: the helper creates the parent dir + file, so `created` must be read first.
   const created = !existsSync(dbPath);
-  const db = new DatabaseSync(dbPath);
+  // openLocalStoreDb centralizes the mkdir(0o700)/chmod(0o600)/busy_timeout + crash-safe cleanup registration
+  // (#8319) -- this was previously the one store with no busy-timeout and no crash-safety registration at all.
+  const db = openLocalStoreDb(dbPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS laptop_meta (
       key TEXT PRIMARY KEY,
@@ -68,7 +70,6 @@ export function initLaptopState(env: Record<string, string | undefined> = proces
     db.prepare("INSERT INTO laptop_meta (key, value) VALUES ('initialized_at', ?)")
       .run(new Date().toISOString());
   }
-  chmodSync(dbPath, 0o600);
   db.close();
   return { stateDir, dbPath, created };
 }

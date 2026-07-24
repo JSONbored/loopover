@@ -2,8 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export.js";
+import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
-import {
+// Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. Once `build:miner` has produced
+// the artifact, a plain `.js` import loads that .js and leaves coverage.include's `.ts` entry at 0% — the
+// .js-vs-.ts mismatch that closed #8500/#8516 on codecov/patch. Same pattern as miner-replay-snapshot.test.ts (#7796).
+const ORB_EXPORT_MODULE = "../../packages/loopover-miner/lib/orb-export.ts";
+const {
   ORB_EXPORT_ENABLED_BY_DEFAULT,
   DEFAULT_AMS_COLLECTOR_URL,
   DEFAULT_ORB_EXPORT_TIMEOUT_MS,
@@ -17,9 +24,7 @@ import {
   resolveAmsCollectorUrl,
   resolveOrbExportDbPath,
   sendAmsExportBatch,
-} from "../../packages/loopover-miner/lib/orb-export.js";
-import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export.js";
-import { resolveLocalStoreDbPath } from "../../packages/loopover-miner/lib/local-store.js";
+} = (await import(ORB_EXPORT_MODULE)) as typeof import("../../packages/loopover-miner/lib/orb-export.js");
 
 let dir: string;
 function storePath() {
@@ -68,6 +73,15 @@ describe("orb-export store (#4277)", () => {
     store.setCursor("2026-01-02T00:00:00Z");
     expect(store.getCursor()).toBe("2026-01-02T00:00:00Z");
     store.close();
+  });
+
+  it("registers the store for crash-safe cleanup via openLocalStoreDb, and unregisters it on close (#8319)", () => {
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const store = openOrbExportStore(storePath());
+    expect(cleanupResourceCount()).toBe(1);
+    store.close();
+    expect(cleanupResourceCount()).toBe(0);
   });
 });
 

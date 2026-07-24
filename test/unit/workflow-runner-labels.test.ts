@@ -17,7 +17,7 @@ describe("workflow runner labels", () => {
     expect(workflow).not.toContain("|| 'self-hosted'");
     expect(workflow).not.toContain('"fork-ci"');
     expect(workflow).toContain("validate-code:");
-    expect(workflow).toContain("needs: [changes, validate-code, validate-tests, security]");
+    expect(workflow).toContain("needs: [changes, validate-code, validate-tests]");
     expect(workflow).not.toContain("\n  lint:\n");
     expect(workflow).not.toContain("\n  test:\n");
     expect(workflow).not.toContain("\n  workers:\n");
@@ -32,10 +32,8 @@ describe("workflow runner labels", () => {
     // validate-tests (#ci-shard-coverage) is the unsharded full-suite coverage run, split out of
     // validate-code so the long suite never serializes with the much-faster checks (unsharded again
     // 2026-07 -- see the job's header comment in ci.yml; the old merge job is gone with the shards).
-    const validateTestsJob = workflow.slice(workflow.indexOf("\n  validate-tests:\n"), workflow.indexOf("\n  security:\n"));
+    const validateTestsJob = workflow.slice(workflow.indexOf("\n  validate-tests:\n"), workflow.indexOf("\n  validate:\n"));
     expect(validateTestsJob).toContain("runs-on: ubuntu-latest");
-    const securityJob = workflow.slice(workflow.indexOf("\n  security:\n"), workflow.indexOf("\n  validate:\n"));
-    expect(securityJob).toContain("runs-on: ubuntu-latest");
     const validateJob = workflow.slice(workflow.indexOf("\n  validate:\n"));
     expect(validateJob).toContain("runs-on: ubuntu-latest");
   });
@@ -50,11 +48,9 @@ describe("workflow runner labels", () => {
   it("cancels a superseded selfhost.yml run instead of letting it run to completion (#2496)", () => {
     const workflow = read(".github/workflows/selfhost.yml");
 
-    // Same push/pr split as ci.yml's own group, for the same reason: distinct main-branch pushes must not
-    // cancel each other's validation, only a superseded run on the SAME ref/PR should be cancelled.
-    expect(workflow).toContain(
-      "group: selfhost-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}",
-    );
+    // Push-only workflow since 2026-07-24: sha-scoped so distinct main-branch pushes never cancel each
+    // other's validation (the old push/pr split went with the pull_request trigger).
+    expect(workflow).toContain("group: selfhost-${{ github.sha }}");
     expect(workflow).toContain("cancel-in-progress: true");
     // Must be a literal boolean, not an expression -- ci.yml's own comment documents that an expression here
     // causes GitHub to fail the workflow at startup (startup_failure).

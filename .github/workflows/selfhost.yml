@@ -3,6 +3,14 @@
 #   2. Self-host bundle build validation (build-selfhost.ts)
 #   3. Docker image build + container smoke test (/health, /ready, /metrics)
 # Unit tests and typecheck are NOT duplicated here — the main CI validate job covers them.
+#
+# Push-to-main only since 2026-07-24 (was also per-PR): at this repo's PR volume the ~5-minute
+# build-boot fired ~100x/week (its path list includes migrations/**, which nearly every backend PR
+# touches) and was a top runner-queue consumer. Pre-merge, ci.yml already validates everything except
+# the docker boot itself (db:migrations:check, schema drift, the selfhost pg integration suites); a
+# boot-breaking merge is caught by this run minutes after landing, and self-host users only ever
+# consume tagged releases (release-selfhost.yml), never main -- so the pre-merge boot smoke bought
+# almost nothing at real cost. Revisit if a hosted deploy ever tracks main directly.
 name: self-host
 
 on:
@@ -19,46 +27,19 @@ on:
       - "test/unit/selfhost-*"
       - "test/integration/selfhost-pg*"
       - ".github/workflows/selfhost.yml"
-  pull_request:
-    # Explicit list because the default (opened/synchronize/reopened) omits ready_for_review -- once
-    # build-boot below skips draft PRs, marking a PR ready must itself trigger a real run (#6670), not
-    # wait for the next push. Mirrors ci.yml's pull_request.types comment/list exactly.
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "src/selfhost/**"
-      - "src/server.ts"
-      - "scripts/build-selfhost.ts"
-      - "scripts/validate-selfhost-sourcemap.ts"
-      - "Dockerfile"
-      - "docker-compose.yml"
-      - "migrations/**"
-      - "test/unit/selfhost-*"
-      - "test/integration/selfhost-pg*"
-      - ".github/workflows/selfhost.yml"
-
 # Least privilege — the smoke test only reads the repo; no writes, no packages.
 permissions:
   contents: read
 
 concurrency:
-  # Same push/pr split as ci.yml's group, and for the same reason: pull requests stay in one ref-scoped
-  # group so newer commits cancel superseded PR runs (this job boots a Postgres service container, does a
-  # full npm ci, builds the self-host bundle, and runs two docker buildx builds plus a boot smoke test --
-  # letting a superseded push run to completion wastes real minutes). github.sha for push runs keeps
-  # distinct main commits from cancelling each other's validation.
-  group: selfhost-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
+  # Push-only workflow: sha-scoped so distinct main commits never cancel each other's validation.
+  group: selfhost-${{ github.sha }}
   # NB: keep this a literal boolean, not an expression — see ci.yml for why (startup_failure).
   cancel-in-progress: true
 
 jobs:
   build-boot:
     name: build + boot smoke test
-    # Skip draft PRs (#6670, anti-abuse): this job boots a real Postgres service, does a full npm ci, and
-    # runs two docker buildx builds plus a container smoke test -- real minutes on every push, including a
-    # force-push, to a PR nobody has marked ready for review yet. Mirrors ci.yml's validate-code guard;
-    # draft != true also gates push runs correctly (github.event.pull_request is unset there, so the
-    # property access evaluates to null, and null != true is true).
-    if: ${{ github.event_name == 'push' || github.event.pull_request.draft != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:

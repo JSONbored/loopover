@@ -15,7 +15,7 @@ for maintainer approval (CI shows unverified → the engine **holds**, never clo
 ## 1. Every CI check → local command → what fails it
 
 The **required** status checks on `main` are **`validate`** (it aggregates `changes, lint, test,
-workers, mcp, ui, security`; a path-skipped job counts as success) and **`Superagent Security Scan`**
+workers, mcp, ui`; a path-skipped job counts as success) and **`Superagent Security Scan`**
 (a separate third-party GitHub App check, not part of this repo's own workflow files — confirmed via
 `gh api repos/JSONbored/loopover/branches/main/protection/required_status_checks`). **Codecov** posts
 `codecov/patch` (the real coverage gate) and `codecov/project` (informational) independently. The
@@ -91,9 +91,9 @@ regression-guards the script itself against reverting to `vite preview`.
 
 | ui → extension lint | `eslint` (VS Code + miner extensions) | `npm run extension:lint && npm run miner-extension:lint` | extension ESLint error (same `push \|\| ui==true` trigger as the `ui →` rows) |
 | ui → extension typecheck | `tsc --noEmit` (extensions) | `npm run extension:typecheck && npm run miner-extension:typecheck` | extension type error (same `push \|\| ui==true` trigger) |
-| security (PR only) | dependency-review (moderate+) | `npm audit --audit-level=moderate` | a **newly added** dep has a moderate+ advisory |
+| changes → dependency review (PR only) | dependency-review (moderate+; a step inside the `changes` job since 2026-07-24, not a separate job) | `npm audit --audit-level=moderate` | a **newly added** dep has a moderate+ advisory |
 
-**One command for *almost* everything except `security`:** `npm run test:ci`. There is **no** CodeQL/Analyze
+**One command for *almost* everything except the dependency review:** `npm run test:ci`. There is **no** CodeQL/Analyze
 workflow in this repo. There is **no** root-level Prettier gate — Prettier is enforced only inside
 `ui:lint` (so it only bites `apps/loopover-ui/**`).
 

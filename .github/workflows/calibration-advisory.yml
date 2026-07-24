@@ -1,0 +1,301 @@
+# Calibration advisory checks — the logic/regex-change backtest (#8139, epic #8082) and the
+# counterfactual prompt replay (#8222, sub-epic #8218, epic #8211 track C), merged into ONE workflow
+# 2026-07-24: they shared identical scaffolding (dual base/head checkout, npm ci, engine build, D1
+# corpus export, fail-open posture, fork-notice pairing) and overlapping path filters
+# (src/services/ai-review.ts triggered BOTH — two runners doing the same npm ci on every judge-prompt
+# PR), so one job runs both halves for one setup cost and one runner slot.
+#
+# BACKTEST half: replays linked_issue_scope_mismatch's recorded raw-context history (#8129/#8130 +
+# the #8139 model-response capture) through BOTH the PR's head checkout and its base checkout —
+# actually executing the two versions of the detection code, which is why this lives in CI and not in
+# ORB's live Worker (the Worker holds credentials and must never execute PR-supplied logic; a CI
+# checkout running a PR's own code is the exact trust boundary validate-code/validate-tests already
+# use for every PR).
+#
+# REPLAY half: replays the CANONICAL judge prompt from both checkouts (scripts/print-review-prompt.ts)
+# against the recorded raw-context fixture corpus and posts the Pareto-floored comparison. It
+# self-gates twice: on the COUNTERFACTUAL_REPLAY_BUDGET spend guard (#8222's requirement — unset, it
+# posts a visible skip notice and spends nothing), and on the canonical prompt text actually differing
+# between base and head (byte-identical ⇒ nothing to replay), so no extra path filter is needed for
+# runs that only touched the backtest's watched paths.
+#
+# Advisory only (#8105): never a required check, never blocks merge, and every step after setup FAILS
+# OPEN (notice + green) — the review engine auto-closes contributor PRs on ANY red check, so this
+# workflow's own plumbing must never redden. Each half posts its OWN clearly-labeled PR comment,
+# update-in-place keyed on its marker.
+name: calibration-advisory
+
+on:
+  pull_request:
+    # Explicit list because the default (opened/synchronize/reopened) omits ready_for_review -- once the
+    # draft guard below skips draft PRs, marking a PR ready must itself trigger a real run (#6670).
+    types: [opened, synchronize, reopened, ready_for_review]
+    # The union of the two halves' watched surfaces. Backtest: exactly the paths whose changes can alter
+    # linked_issue_scope_mismatch-adjacent detection logic (#8139's Design section). Replay: the judge-
+    # prompt surface (REVIEW_PROMPT_VERSION + buildSystemPrompt/parseModelReview), which is
+    # src/services/ai-review.ts — already in the backtest's list, so the union IS the backtest's list.
+    paths:
+      - "src/rules/**"
+      - "src/review/content-lane/**"
+      - "src/settings/agent-actions.ts"
+      - "src/services/ai-review.ts"
+      - "src/services/linked-issue-satisfaction.ts"
+
+# Least privilege: the checks only read the repo; pull-requests: write is for their advisory comments.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # pull_request-only workflow, so one ref-scoped group suffices (no push/github.sha split like ci.yml
+  # needs): a newer push cancels the superseded run — its comments would be overwritten anyway.
+  group: calibration-advisory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advisory:
+    name: calibration advisory (backtest + replay)
+    # Skip draft PRs (#6670, anti-abuse). Fork PRs are excluded at the job level rather than per-step:
+    # GitHub withholds repo secrets from fork-originated pull_request runs, so the D1 corpus reads below
+    # are impossible there and the whole job (npm ci included) would be waste — the fork-notice job below
+    # is this workflow's half of ci.yml's paired fork==true/!=true convention.
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # The PR's base commit, checked out INSIDE the head workspace: the dynamically imported base modules
+      # resolve bare npm specifiers by walking up from their own directory into the head checkout's
+      # node_modules, so one `npm ci` serves both sides of every comparison (#8139).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .advisory-base
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      # Both halves' scripts import @loopover/engine, which resolves to its dist/ build output.
+      - name: Build engine package
+        run: npx turbo run build --filter=@loopover/engine
+
+      # ---------------------------------------------------------------------------------------------
+      # Every step from here down FAILS OPEN (notice + green, never a red check): the review engine
+      # auto-closes a contributor PR on ANY failed check, required or not — so an advisory job that can
+      # go red on an infra problem (an under-scoped CLOUDFLARE_API_TOKEN, a D1 outage, a comment-post
+      # hiccup) would let OUR plumbing close an innocent contributor's PR. "Never blocks merge" (#8105)
+      # has to hold against this job's own failures, not just its verdicts.
+      # ---------------------------------------------------------------------------------------------
+
+      # ============================ BACKTEST HALF (#8139) ============================
+      # Read-only corpus export (#8084's CLI, reused as-is — no new D1 read code). The wrangler secrets
+      # are available here because the fork guard above already excluded fork-originated runs.
+      - name: Export backtest corpus from D1
+        id: corpus
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output backtest-corpus.json --remote; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Corpus export from D1 failed (missing or under-scoped CLOUDFLARE_API_TOKEN — it needs D1 read/write on the loopover database). Logic backtest skipped; advisory only, never fails the PR."
+          fi
+
+      - name: Run logic backtest
+        id: backtest
+        if: ${{ steps.corpus.outputs.available == 'true' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if npx tsx scripts/backtest-logic-check.ts \
+            --rule-id linked_issue_scope_mismatch \
+            --corpus backtest-corpus.json \
+            --head-root . \
+            --base-root .advisory-base \
+            --output backtest-comment.md \
+            --head-sha "$HEAD_SHA" \
+            --base-sha "$BASE_SHA" \
+            --persist --remote --db loopover \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Logic backtest run failed — no comparison produced. Advisory only, never fails the PR."
+          fi
+
+      # Update-in-place keyed on the comment marker so a re-run edits the existing comment instead of
+      # stacking a new one per push.
+      - name: Post or update the backtest PR comment
+        if: ${{ steps.backtest.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          post_comment() {
+            marker="<!-- loopover-logic-backtest -->"
+            # --paginate runs the --jq filter once per page, so pin to the first emitted id.
+            comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty" | head -n 1)
+            if [ -n "$comment_id" ]; then
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -X PATCH -F body=@backtest-comment.md
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@backtest-comment.md
+            fi
+          }
+          if ! post_comment; then
+            echo "::notice::PR comment post failed — backtest result computed and persisted but not posted. Advisory only, never fails the PR."
+          fi
+
+      # ============================ REPLAY HALF (#8222) ============================
+      # SPEND GUARD (#8222's requirement): the replay costs real model inference, so it is gated on the
+      # deployment explicitly configuring a budget — the COUNTERFACTUAL_REPLAY_BUDGET repo variable
+      # (neuron units, see COUNTERFACTUAL_DEFAULT_NEURON_BUDGET) plus the provider endpoint/model.
+      # #8279: the default provider is Workers AI (the CLOUDFLARE_* secrets above double as its
+      # credentials — the token needs Workers AI run perms); an explicit COUNTERFACTUAL_OLLAMA_URL
+      # secret switches to a reachable ollama instead.
+      - name: Check replay budget configuration
+        id: budget
+        env:
+          REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
+          REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
+          REPLAY_OLLAMA_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+        run: |
+          if [ -n "$REPLAY_BUDGET" ] && [ -n "$REPLAY_MODEL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            if [ -n "$REPLAY_OLLAMA_URL" ]; then echo "provider=ollama" >> "$GITHUB_OUTPUT"; else echo "provider=workers-ai" >> "$GITHUB_OUTPUT"; fi
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Counterfactual replay skipped: no replay budget configured (set the COUNTERFACTUAL_REPLAY_BUDGET + COUNTERFACTUAL_REPLAY_MODEL repo variables; Workers AI runs on the existing CLOUDFLARE_* secrets, or set COUNTERFACTUAL_OLLAMA_URL to use a reachable ollama). Advisory only, never fails the PR."
+          fi
+
+      # Cheap self-gate replacing the old workflow's ai-review.ts-only path filter: extract the canonical
+      # prompt from both checkouts and replay only when the text actually differs — a PR that matched this
+      # workflow's paths without touching the judge prompt costs two script invocations and stops here.
+      - name: Extract base/head canonical prompts
+        if: ${{ steps.budget.outputs.configured == 'true' }}
+        id: prompts
+        run: |
+          if npx tsx scripts/print-review-prompt.ts --root . > head-prompt.txt \
+            && npx tsx scripts/print-review-prompt.ts --root .advisory-base > base-prompt.txt \
+            && npx tsx scripts/print-review-prompt.ts --root . --version-only > head-version.txt \
+            && npx tsx scripts/print-review-prompt.ts --root .advisory-base --version-only > base-version.txt; then
+            if cmp -s head-prompt.txt base-prompt.txt; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Canonical judge prompt text is byte-identical across base/head — nothing to replay."
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Prompt extraction failed — replay skipped. Advisory only, never fails the PR."
+          fi
+
+      - name: Export replay corpus from D1
+        if: ${{ steps.budget.outputs.configured == 'true' && steps.prompts.outputs.changed == 'true' }}
+        id: replaycorpus
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if npx tsx scripts/backtest-corpus-export.ts --rule-id ai_consensus_defect --output replay-corpus.json --remote; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Corpus export from D1 failed — replay skipped. Advisory only, never fails the PR."
+          fi
+
+      # Two runs over the IDENTICAL deterministic sample (seed = head SHA, per the design contract's
+      # per-PR determinism requirement): base prompt first (the baseline artifact), then head with
+      # --baseline (comparison + comment + persisted run event).
+      - name: Replay base and head prompts
+        if: ${{ steps.replaycorpus.outputs.available == 'true' }}
+        id: replay
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REPLAY_BUDGET: ${{ vars.COUNTERFACTUAL_REPLAY_BUDGET }}
+          REPLAY_MODEL: ${{ vars.COUNTERFACTUAL_REPLAY_MODEL }}
+          REPLAY_OLLAMA_URL: ${{ secrets.COUNTERFACTUAL_OLLAMA_URL }}
+          REPLAY_PROVIDER: ${{ steps.budget.outputs.provider }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BASE_VERSION=$(cat base-version.txt)
+          HEAD_VERSION=$(cat head-version.txt)
+          if npx tsx scripts/counterfactual-replay.ts \
+              --fixtures replay-corpus.json \
+              --variant "${BASE_VERSION}@${REPLAY_MODEL}" \
+              --prompt-file base-prompt.txt \
+              --budget "$REPLAY_BUDGET" \
+              --seed-suffix "$HEAD_SHA" \
+              --provider "$REPLAY_PROVIDER" \
+              --ollama-url "${REPLAY_OLLAMA_URL:-http://localhost:11434}" \
+              --out base-scores.json \
+            && npx tsx scripts/counterfactual-replay.ts \
+              --fixtures replay-corpus.json \
+              --variant "${HEAD_VERSION}@${REPLAY_MODEL}" \
+              --prompt-file head-prompt.txt \
+              --budget "$REPLAY_BUDGET" \
+              --seed-suffix "$HEAD_SHA" \
+              --provider "$REPLAY_PROVIDER" \
+              --ollama-url "${REPLAY_OLLAMA_URL:-http://localhost:11434}" \
+              --baseline base-scores.json \
+              --base-variant-label "$BASE_VERSION" \
+              --comment-out replay-comment.md \
+              --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
+              --persist --remote --db loopover \
+              --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Counterfactual replay failed — no comparison produced. Advisory only, never fails the PR."
+          fi
+
+      - name: Post or update the replay PR comment
+        if: ${{ steps.replay.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          post_comment() {
+            marker="<!-- loopover-counterfactual-backtest -->"
+            comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty" | head -n 1)
+            if [ -n "$comment_id" ]; then
+              gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" -X PATCH -F body=@replay-comment.md
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@replay-comment.md
+            fi
+          }
+          if ! post_comment; then
+            echo "::notice::PR comment post failed — replay computed and persisted but not posted. Advisory only, never fails the PR."
+          fi
+
+  # The fork half of ci.yml's paired fork==true/!=true convention: fork-originated pull_request runs get
+  # no repo secrets, so the D1-backed halves cannot run — say so visibly instead of failing or going
+  # silent. Advisory only either way; a skipped run never blocks anything (#8105).
+  fork-notice:
+    name: calibration advisory (skipped for fork PRs)
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain the skip
+        run: echo "::notice::Fork PR — repo secrets are withheld, so the D1-backed calibration advisory checks (logic backtest + counterfactual replay) are skipped. Advisory only; nothing blocks."

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Logic/regex-change backtest CLI (#8139, epic #8082) — the CI-side runner .github/workflows/
-// backtest-logic-check.yml invokes. Loads a corpus manifest (produced by backtest-corpus-export.ts),
+// calibration-advisory.yml invokes. Loads a corpus manifest (produced by backtest-corpus-export.ts),
 // dynamically imports the registered detection function from TWO checkout roots (the PR's head and its base
 // — the dual checkout is what makes an honest before/after comparison possible), runs the pure core's
 // scoring/comparison, writes the PR-comment Markdown, and optionally persists the run to D1 via

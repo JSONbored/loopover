@@ -1,19 +1,26 @@
 name: UI Preview Build
 
-# Build half of the fork-safe per-PR preview pipeline. Runs for EVERY PR — including forks — and
-# deliberately WITHOUT secrets (fork PRs get a read-only token): it only produces the built `dist`
-# artifact. The trusted `ui-preview-deploy.yml` (triggered on workflow_run) then deploys that artifact
-# WITH secrets and records the GitHub Deployment that Reviewbot reads for the "after" screenshot.
+# Per-PR preview pipeline, split by trust (reshaped 2026-07-24 — one fewer runner slot per same-repo
+# UI push, which is nearly every UI push at this repo's volume):
 #
-# Why split: a preview requires building the PR's UI, and building runs the PR's (possibly fork-authored)
-# code. Doing that here with no secret access — and deploying the resulting bundle in a separate trusted
-# step that never executes fork code — is the standard way to give fork PRs previews without exposing
-# Cloudflare credentials to untrusted code.
+#   SAME-REPO PRs (`build-deploy`): a branch in this repo implies a collaborator, and same-repo
+#   pull_request runs get secrets — so ONE job builds and deploys inline via the shared
+#   .github/actions/deploy-ui-preview composite. No artifact hop, no second runner, and the
+#   workflow_run deploy job below skips runner-free.
+#
+#   FORK PRs (`build`): unchanged two-stage boundary. The build runs fork code with NO secrets (fork
+#   PRs get a read-only token) and only produces the built `dist` artifact; the trusted
+#   `ui-preview-deploy.yml` (workflow_run) then deploys that artifact WITH secrets and records the
+#   GitHub Deployment that Reviewbot reads for the "after" screenshot. Building runs the PR's
+#   (possibly fork-authored) code — doing that with no secret access, and deploying the resulting
+#   bundle in a separate trusted step that never executes fork code, is the standard way to give fork
+#   PRs previews without exposing Cloudflare credentials to untrusted code. Do NOT collapse the fork
+#   path into build-deploy: that boundary is the entire security model.
 
 on:
   pull_request:
     # Explicit list because the default (opened/synchronize/reopened) omits ready_for_review -- once the
-    # build job below skips draft PRs, marking a PR ready must itself trigger a real preview build (#6670),
+    # build jobs below skip draft PRs, marking a PR ready must itself trigger a real preview build (#6670),
     # not wait for the next push. Mirrors ci.yml's pull_request.types comment/list exactly.
     types: [opened, synchronize, reopened, ready_for_review]
     # Scoped to exactly what apps/loopover-ui actually depends on (packages/loopover-ui-kit only) --
@@ -34,16 +41,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # ------------------------- SAME-REPO: build + deploy in one runner -------------------------
+  build-deploy:
     name: Build UI preview artifact
-    # Skip draft PRs (#6670, anti-abuse): a full npm ci + UI build on every push, including a force-push, to
-    # a PR nobody has marked ready for review yet. Mirrors ci.yml's validate-code guard; draft != true also
-    # gates push runs correctly (github.event.pull_request is unset there, so the property access evaluates
-    # to null, and null != true is true) -- kept even though this workflow has no push trigger today, so the
-    # condition stays correct if one is ever added.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.draft != true }}
+    # Same-repo only (fork PRs take the `build` job below). Skip draft PRs (#6670, anti-abuse): a full
+    # npm ci + UI build on every push, including a force-push, to a PR nobody has marked ready yet.
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: write # record the preview Deployment Reviewbot reads
+    # Same environment binding as ui-preview-deploy.yml's job: the org can attach approval gating
+    # and/or environment-scoped secrets to every path that holds Cloudflare credentials.
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.preview_url }}
     steps:
       - name: Checkout PR head
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -62,10 +75,10 @@ jobs:
 
       # Same steps as the root `ui:build` script, except the last one: that script also builds
       # @loopover/ui-miner (`npm --workspace @loopover/ui-miner run build`), a full separate Vite app
-      # this workflow never uploads or deploys (only apps/loopover-ui/dist below) -- every UI PR was
-      # paying for that build and throwing away the result. `npx turbo run build --filter=@loopover/ui`
-      # replaces the last two `ui:build` steps (`extension:build && miner-extension:build && ui build`
-      # already covered by @loopover/ui#build's own turbo.json dependsOn) and skips ui-miner entirely.
+      # this workflow never uploads or deploys -- every UI PR was paying for that build and throwing
+      # away the result. `npx turbo run build --filter=@loopover/ui` replaces the last two `ui:build`
+      # steps (`extension:build && miner-extension:build && ui build` already covered by
+      # @loopover/ui#build's own turbo.json dependsOn) and skips ui-miner entirely.
       - name: Build UI
         env:
           VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
@@ -73,6 +86,96 @@ jobs:
           # screenshot the authenticated /app/* dashboard via ?preview=1 instead of the sign-in wall. The
           # production build (ui-deploy.yml) does NOT set this, so the escape hatch is dead-code-eliminated
           # from prod. (#authed-route-preview)
+          VITE_PREVIEW: "1"
+        run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
+
+      # Deploys stay best-effort when the Cloudflare secrets aren't configured (Reviewbot shows
+      # before-only) — mirrors ui-preview-deploy.yml's guard.
+      - name: Check Cloudflare secrets
+        id: cfg
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — skipping preview deploy (Reviewbot shows before-only)."
+          fi
+
+      - name: Deploy preview
+        id: deploy
+        if: ${{ steps.cfg.outputs.ready == 'true' }}
+        uses: ./.github/actions/deploy-ui-preview
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          # GitHub-set; the same value the checkout above pinned.
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          dist-dir: apps/loopover-ui/dist
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record FAILED deployment for Reviewbot
+        # A deploy was attempted but never produced a preview (build-side failures skip this via the
+        # cfg gate ordering: cfg only runs after a successful build). Record a `failure`
+        # deployment_status so Reviewbot flips the "after" cell from an eternal spinner to a terminal
+        # "preview deploy failed" card. Gated on CF creds so a credential-less skip records nothing.
+        if: ${{ failure() && steps.cfg.outputs.ready == 'true' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const sha = context.payload.pull_request.head.sha; // GitHub-set; never fork-supplied
+            const prNumber = context.payload.pull_request.number;
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              environment: `preview/pr-${prNumber}`,
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+              description: "LoopOver UI preview (failed)",
+              payload: JSON.stringify({ pr: prNumber, head_sha: sha }),
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: "failure",
+              environment: `preview/pr-${prNumber}`,
+              description: "Preview deploy failed",
+            });
+            core.notice(`Recorded FAILED preview deployment for PR #${prNumber}.`);
+
+  # ------------------------- FORK: unprivileged build half only -------------------------
+  build:
+    name: Build UI preview artifact (fork)
+    # Fork PRs only — no secrets here, ever (see the file header). Draft guard as above.
+    if: ${{ github.event.pull_request.draft != true && github.event.pull_request.head.repo.fork == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same build as build-deploy above — see its comment for the turbo-filter rationale.
+      - name: Build UI
+        env:
+          VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
           VITE_PREVIEW: "1"
         run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
 

@@ -26,11 +26,15 @@ jobs:
   # On push to main everything runs regardless (keeps the coverage baseline solid).
   changes:
     name: changes
-    # Just actions/checkout + git diff --check + dorny/paths-filter -- no build/test work, and it runs FIRST
-    # to decide whether validate-code needs to run at all, so gating it behind the same contended self-hosted
-    # queue it's meant to protect was circular (#2507).
+    # Just actions/checkout + git diff --check + dorny/paths-filter + the diff-scoped dependency review --
+    # no build/test work, and it runs FIRST to decide whether validate-code needs to run at all, so gating
+    # it behind the same contended self-hosted queue it's meant to protect was circular (#2507).
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # pull-requests: write is solely for dependency-review's comment-summary-in-pr: on-failure below.
+    permissions:
+      contents: read
+      pull-requests: write
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       backendConfig: ${{ steps.filter.outputs.backendConfig }}
@@ -46,8 +50,8 @@ jobs:
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
-      # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests,
-      # security) has `needs: changes` in its dependency chain, so none of
+      # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests)
+      # has `needs: changes` in its dependency chain, so none of
       # them get queued for a runner until this job finishes -- and this job lives in the SAME PR-ref-scoped
       # concurrency group as everything else (top of file), so a newer push cancels this job outright while
       # it's asleep, well before it ever reaches "Filter changed paths". That means a rapid burst of pushes
@@ -234,6 +238,19 @@ jobs:
               - 'packages/loopover-miner/**'
               - 'test/unit/check-miner-package.test.ts'
               - 'test/unit/miner-calibration-types.test.ts'
+
+      # Diff-scoped security gate, folded in from the old standalone `security` job (2026-07-24, one fewer
+      # runner slot on every PR at zero added wall-clock -- the API-based lockfile diff takes seconds and
+      # needs nothing this job hasn't already got). Fails only on vulnerabilities this PR introduces;
+      # ambient advisories in untouched deps are handled by Renovate + the scheduled audit workflow, so one
+      # upstream CVE never blocks unrelated PRs. A failure here fails `changes`, which skips the whole
+      # fan-out and reddens `validate` -- the same end state the standalone job produced, one job earlier.
+      - name: Dependency review
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft != true }}
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
 
   # Path-aware validation. Keep this as one job so a PR uses one dependency
   # install for the fast checks (drift/typecheck/build/UI toolchain). The
@@ -1134,36 +1151,13 @@ jobs:
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
 
-  # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.
-  # Ambient advisories in untouched deps are handled by Renovate + the scheduled
-  # audit workflow, so one upstream CVE never blocks unrelated PRs.
-  security:
-    name: security
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft != true }}
-    # actions/dependency-review-action needs no self-hosted toolchain/cache (checkout + a lockfile diff), so
-    # this always runs on ubuntu-latest -- keeping it self-hosted for same-repo PRs only competed for the
-    # scarce self-hosted pool with validate-code, the one job that actually benefits from it (#2501).
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: moderate
-          comment-summary-in-pr: on-failure
-
   # Single required status check. Branch protection points at "validate"; this
-  # aggregates the path-aware jobs and the PR-only dependency review gate so that
-  # requirement keeps working unchanged.
+  # aggregates the path-aware jobs (the PR-only dependency review gate lives inside
+  # `changes` since 2026-07-24) so that requirement keeps working unchanged.
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, validate-code, validate-tests, security]
+    needs: [changes, validate-code, validate-tests]
     if: ${{ always() }}
     # Pure result-aggregation (reads needs.*.result, echoes pass/fail) -- no build/test work, so it never
     # needed the self-hosted pool's cached toolchain (#2507).

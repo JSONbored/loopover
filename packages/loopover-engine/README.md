@@ -37,7 +37,8 @@ Codecov (`codecov/patch`) only reads the root vitest suite, so modules that need
 have a root test under `test/unit/` (e.g. `test/unit/reviewer-consensus-calibration.test.ts` for
 `src/reviewer-consensus-calibration.ts` — #8349, or `test/unit/signal-tracking.test.ts` for
 `src/calibration/signal-tracking.ts` — #8343, or `test/unit/harness-submission-trigger.test.ts` for
-`src/miner/harness-submission-trigger.ts` — #8346). The package-local `node:test` suite remains the package's
+`src/miner/harness-submission-trigger.ts` — #8346, or `test/unit/loop-reentry-policy.test.ts` for
+`src/miner/loop-reentry-policy.ts` — #8347). The package-local `node:test` suite remains the package's
 own gate; the root mirror is what makes the same scenarios gradeable by Codecov.
 
 ## `opportunity-ranker`

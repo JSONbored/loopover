@@ -33,12 +33,18 @@ describe("formatMaintainerRecap (#2240)", () => {
     expect(body).toContain("## Summary");
     expect(body).toContain("## Totals");
     expect(body).toContain("## Per-repo");
+    // #8372: both builders read only totals/windowDays, so their sections are unconditional.
+    expect(body).toContain("## Calibration");
+    expect(body).toContain("## Gate outcomes");
     // #8214: without a sentinel projection the drift section is entirely absent — the digest stays
     // byte-identical to the pre-drift shape, not a dangling empty header.
     expect(body).not.toContain("## Config drift");
     // Empty sections show a single fallback line instead of dangling under the header.
     expect(body).toContain("_No summary lines for this window._");
-    expect(body).toContain("_No repositories in this window._");
+    // #8372: the ## Per-repo body now comes from buildPerRepoRecapSection, which emits its own
+    // windowed empty-state line, so the section is never empty and the generic fallback never fires.
+    expect(body).toContain("No repo activity in the last 7 day(s).");
+    expect(body).not.toContain("_No repositories in this window._");
     // Null rate ⇒ the "n/a" arm.
     expect(body).toContain("- Gate false positives: 0/0 (n/a)");
     expect(body).toContain("- Repos: 0");
@@ -98,8 +104,10 @@ describe("formatMaintainerRecap (#2240)", () => {
     // Numeric / non-null rate arm.
     expect(body).toContain("- Gate false positives: 1/4 (25%)");
     expect(body).toContain("- Repos: 1");
-    // Per-repo row rendered (non-empty section arm).
-    expect(body).toContain("acme/widgets — 5 reviewed, 3 merged, 2 closed, 1 gate false-positive(s), 1 override(s), 0 reversal(s)");
+    // Per-repo row rendered (non-empty section arm), now in buildPerRepoRecapSection's row format (#8372).
+    // The gate/override/reversal counts this row used to carry are unchanged in ## Totals above, and are
+    // broken out per-dimension by the ## Gate outcomes section this digest now composes.
+    expect(body).toContain("acme/widgets: reviewed 5, merged 3, closed 2");
     // Clean summary line survives verbatim (redaction no-op arm).
     expect(body).toContain("- Normal recap line about resolved reviews.");
     // Arm 1: local path scrubbed to the placeholder, raw path gone.

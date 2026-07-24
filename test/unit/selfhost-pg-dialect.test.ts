@@ -115,6 +115,29 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     expect(translateInsertOr("SELECT 1")).toBe("SELECT 1"); // passthrough
   });
 
+  // #8382: src/ams/ingest.ts's live INSERT OR REPLACE threw "no known conflict key" on every self-host
+  // Postgres deployment, failing the first AMS telemetry-ingest write outright. The statement below is the
+  // one that module actually issues, verbatim.
+  it("REGRESSION (#8382): translates the real ams_signals ingest INSERT OR REPLACE without throwing", () => {
+    const translated = translateInsertOr(
+      `INSERT OR REPLACE INTO ams_signals
+           (instance_id, repo_hash, pr_hash, decision, reason_bucket, closed_at, received_at)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    );
+    expect(translated).toContain("INSERT INTO ams_signals");
+    // The conflict target must name the table's REAL constraint (UNIQUE (instance_id, pr_hash), migration
+    // 0148) — a 3-column target would make Postgres reject the statement outright.
+    expect(translated).toContain("ON CONFLICT (instance_id, pr_hash) DO UPDATE SET");
+    // Key columns are excluded from the SET list; every non-key column is upserted.
+    expect(translated).toContain("repo_hash=excluded.repo_hash");
+    expect(translated).toContain("decision=excluded.decision");
+    expect(translated).toContain("reason_bucket=excluded.reason_bucket");
+    expect(translated).toContain("closed_at=excluded.closed_at");
+    expect(translated).toContain("received_at=excluded.received_at");
+    expect(translated).not.toContain("instance_id=excluded.instance_id");
+    expect(translated).not.toContain("pr_hash=excluded.pr_hash");
+  });
+
   it("translateSql composes all passes; translateDdl handles the ISO-now default", () => {
     expect(translateSql("SELECT * FROM t WHERE updated_at > datetime('now', ?)")).toMatch(/\$1/);
     expect(translateDdl("created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))")).toContain("to_char(now() AT TIME ZONE 'UTC'");

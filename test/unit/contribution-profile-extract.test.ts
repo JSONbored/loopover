@@ -16,9 +16,24 @@ function stubFetch(
     labels?: Label[] | number;
     contributing?: string | null;
     contributingGithubDir?: string | null;
+    agentsMd?: string | null;
+    claudeMd?: string | null;
   } = {},
 ) {
   const emptyHeaders = { get: (_name: string) => null };
+  // #8316: a base64 contents response (present) or 404 (absent), matching the CONTRIBUTING.md branches above.
+  const contentsResponse = (text: string | null | undefined) =>
+    (text == null
+      ? { ok: false, status: 404, headers: emptyHeaders, json: async () => ({}) }
+      : {
+          ok: true,
+          status: 200,
+          headers: emptyHeaders,
+          json: async () => ({
+            encoding: "base64",
+            content: Buffer.from(String(text)).toString("base64"),
+          }),
+        }) as unknown as Response;
   return asFetch(
     vi.fn(async (url: string) => {
       const u = String(url);
@@ -75,6 +90,8 @@ function stubFetch(
           }),
         } as unknown as Response;
       }
+      if (u.includes("/contents/AGENTS.md")) return contentsResponse(opts.agentsMd);
+      if (u.includes("/contents/CLAUDE.md")) return contentsResponse(opts.claudeMd);
       return {
         ok: false,
         status: 404,
@@ -612,8 +629,10 @@ describe("extractContributionProfile (#6796)", () => {
       generatedAt: AT,
       sleepFn: async () => {},
     });
-    // Both the root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths).
-    expect(docCalls).toBe(6);
+    // CONTRIBUTING.md's root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths = 6);
+    // then, because that leaves prBody `absent`, the #8316 agent-doc fallback probes AGENTS.md and CLAUDE.md,
+    // each likewise retried to exhaustion (3 × 2 = 6) — 12 doc calls total, all still degrading fail-open.
+    expect(docCalls).toBe(12);
     expect(profile.prBody.confidence).toBe("absent");
   });
 
@@ -762,5 +781,75 @@ describe("extractContributionProfile (#6796)", () => {
     expect(profile.exclusionLabels.confidence).toBe("absent");
     expect(profile.prBody.confidence).toBe("explicit");
     expect(profile.completeness).toBe("absent");
+  });
+});
+
+describe("extractContributionProfile — agent-doc PR-body fallback (#8316)", () => {
+  it("keeps CONTRIBUTING.md authoritative and ignores agent docs when it yields a non-absent rule", async () => {
+    // CONTRIBUTING.md states the rule; an AGENTS.md that WOULD flip the result if consulted must be ignored.
+    const fetchImpl = stubFetch({
+      contributing: bigContributing("Every PR must include closes #<issue>."),
+      agentsMd: bigContributing("This repo has no linked-issue requirement whatsoever."),
+    });
+    const profile = await extractContributionProfile("acme/has-contributing", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: true },
+      confidence: "explicit",
+      provenance: [{ source: "contributing_md", detail: "CONTRIBUTING.md" }],
+    });
+  });
+
+  it("falls back to AGENTS.md (tagged agent_docs) when there is no CONTRIBUTING.md", async () => {
+    const fetchImpl = stubFetch({
+      contributing: null,
+      agentsMd: bigContributing("Contributors must link the issue: closes #<n>."),
+    });
+    const profile = await extractContributionProfile("acme/agents-only", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: true },
+      confidence: "explicit",
+      provenance: [{ source: "agent_docs", detail: "CONTRIBUTING.md" }],
+    });
+  });
+
+  it("falls back to CLAUDE.md when AGENTS.md is missing but CLAUDE.md is present", async () => {
+    const fetchImpl = stubFetch({
+      contributing: null,
+      agentsMd: null,
+      claudeMd: bigContributing("Please reference an issue in the PR body."),
+    });
+    const profile = await extractContributionProfile("acme/claude-only", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: true },
+      confidence: "explicit",
+      provenance: [{ source: "agent_docs", detail: "CONTRIBUTING.md" }],
+    });
+  });
+
+  it("stays absent when neither CONTRIBUTING.md nor any agent doc exists", async () => {
+    const fetchImpl = stubFetch({ contributing: null, agentsMd: null, claudeMd: null });
+    const profile = await extractContributionProfile("acme/nothing", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({ value: null, confidence: "absent", provenance: [] });
+  });
+
+  it("treats a signpost-sized agent doc as unknown, not a false rule (no provenance to tag)", async () => {
+    const fetchImpl = stubFetch({ contributing: null, agentsMd: "See our wiki." });
+    const profile = await extractContributionProfile("acme/tiny-agents", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({ value: null, confidence: "unknown", provenance: [] });
   });
 });

@@ -254,6 +254,45 @@ async function fetchContributing(
   return null;
 }
 
+/** #8316: mirror of `fetchContributing` for AI-agent-facing contributor docs. Probes `AGENTS.md` then `CLAUDE.md`
+ *  at the repo ROOT only (unlike CONTRIBUTING.md, neither follows the `.github/` convention in real repos),
+ *  reusing the same `getJson`/`decodeContents` helpers, returning the first hit or `null`. #6794's own signal
+ *  inventory found some repos state their contribution rules only in an agent doc — the `agent_docs` source the
+ *  schema (`contribution-profile.ts`) already defines but nothing populated until now. */
+async function fetchAgentDocs(
+  base: string,
+  target: { owner: string; repo: string },
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<string | null> {
+  for (const path of ["AGENTS.md", "CLAUDE.md"]) {
+    const payload = await getJson(
+      `${base}/repos/${target.owner}/${target.repo}/contents/${path}`,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    const text = decodeContents(payload);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/** #8316: an agent-doc-derived prBody rule flowed through the same `extractPrBody` logic CONTRIBUTING.md uses,
+ *  which hardcodes the `contributing_md` provenance source — re-tag it to the schema's `agent_docs` source so a
+ *  repo that states its PR-body rule only in AGENTS.md/CLAUDE.md is attributed correctly. An `absent`/`unknown`
+ *  result carries empty provenance, so it maps to itself unchanged. */
+function tagAgentDocsSource(
+  rule: ContributionSignalRule<ContributionPrBodyRequirements>,
+): ContributionSignalRule<ContributionPrBodyRequirements> {
+  if (rule.provenance.length === 0) return rule;
+  return {
+    ...rule,
+    provenance: rule.provenance.map((entry) => ({ ...entry, source: "agent_docs" })),
+  };
+}
+
 /** Extract the PR-body linked-issue requirement from CONTRIBUTING.md. A very small file is a signpost, not the
  *  rules, so it yields `absent` rather than a false negative dressed as a real one. */
 function extractPrBody(
@@ -321,7 +360,15 @@ export async function extractContributionProfile(
     "explicit",
   );
   const exclusionLabels = classifyLabels(labels, EXCLUSION_TERMS, "inferred");
-  const prBody = extractPrBody(contributing);
+  // #8316: CONTRIBUTING.md stays authoritative. Only when it yields no rule at all (`absent`, i.e. no
+  // CONTRIBUTING.md exists) do we fall back to an AI-agent doc (AGENTS.md/CLAUDE.md) through the SAME
+  // extractPrBody logic, tagging its provenance `agent_docs`. A signpost-sized CONTRIBUTING.md (`unknown`) is
+  // deliberately NOT overridden — zero regression for any repo that already has a real CONTRIBUTING.md.
+  let prBody = extractPrBody(contributing);
+  if (prBody.confidence === "absent") {
+    const agentDocs = await fetchAgentDocs(base, target, headers, fetchImpl, sleepFn);
+    prBody = tagAgentDocsSource(extractPrBody(agentDocs));
+  }
 
   return {
     repoFullName: `${target.owner}/${target.repo}`,

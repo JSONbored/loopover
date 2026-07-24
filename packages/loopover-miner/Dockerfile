@@ -30,18 +30,22 @@ ENV NODE_ENV=production \
 # see egress-firewall-entrypoint.sh for the full mechanism and why this image now starts as root.
 RUN apt-get update && apt-get install -y --no-install-recommends dnsmasq iptables ipset gosu \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/packages/loopover-miner ./packages/loopover-miner
-COPY --from=build --chown=node:node /app/packages/loopover-engine ./packages/loopover-engine
+# #7857 security review (round 2): root:root on the FULL code tree, not just the two files that directly
+# EXECUTE with root privilege. Owning only the entrypoint + generate-egress-firewall-config.{js,ts} left every
+# module they import (ams-policy.js, egress-*.js, @loopover/engine, ...) node:node-owned -- a compromised
+# node-level process (the coding-agent subprocess this whole mechanism sandboxes) could tamper with any of
+# those, and root would load + execute the tampered code on the container's next restart. `--chown` on COPY
+# only changes ownership, not mode bits, so this stays world-readable (standard 644/755 from the build stage)
+# -- just no longer node-writable. The miner's own real runtime writes (config/.env, ledgers, the coding
+# agent's working directory) all resolve under LOOPOVER_MINER_CONFIG_DIR (/data/miner, below) or a target-repo
+# checkout, never /app, so this closes the persistence vector without touching anything node actually needs
+# to write.
+COPY --from=build --chown=root:root /app/node_modules ./node_modules
+COPY --from=build --chown=root:root /app/packages/loopover-miner ./packages/loopover-miner
+COPY --from=build --chown=root:root /app/packages/loopover-engine ./packages/loopover-engine
 RUN mkdir -p /data/miner && chown -R node:node /data \
-    # #7857 security review: the two files that actually EXECUTE with root privilege (the entrypoint itself,
-    # and the config-generation script it invokes as root) must not be writable by node -- a compromised
-    # node-level process (the coding-agent subprocess this whole mechanism sandboxes) could otherwise rewrite
-    # either one, persisting a root-privileged backdoor across this container's next restart. Scoped to these
-    # two specific files, not their full transitive dependency graph (ams-policy.js/egress-*.js and everything
-    # under node_modules/@loopover/engine they in turn import) -- hardening the entire graph would be a much
-    # larger, more invasive change; this closes the direct, obvious persistence vector without one.
-    && chown root:root /app/packages/loopover-miner/scripts/egress-firewall-entrypoint.sh /app/packages/loopover-miner/lib/generate-egress-firewall-config.js /app/packages/loopover-miner/lib/generate-egress-firewall-config.ts \
+    # Not executable in git (checked in as a normal 644 file) -- COPY --chown above only sets ownership, so
+    # the exec bit still needs setting explicitly, same as before this file became root:root by default.
     && chmod 755 /app/packages/loopover-miner/scripts/egress-firewall-entrypoint.sh
 VOLUME ["/data/miner"]
 # No HEALTHCHECK: the miner is a batch/CLI workload (`docker run … loopover-miner <cmd>`), not a

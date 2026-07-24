@@ -140,6 +140,30 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
     expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
+
+  it("dry-run falls back to 0 when the count query returns no row (defensive ?? 0 arm, #8370)", async () => {
+    const noRowEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => undefined }), // count query returns no row → `row?.n ?? 0` fallback fires
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noRowEnv, { dryRun: true, policy: [{ table: "webhook_events", column: "received_at", days: 1 }] });
+    expect(results).toEqual([{ table: "webhook_events", column: "received_at", cutoff: expect.any(String), deleted: 0 }]);
+  });
+
+  it("falls back to 0 changes when a delete run() result lacks meta (defensive ?? 0 arm, #8370)", async () => {
+    const noMetaEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ run: async () => ({}) }), // no meta → `result.meta?.changes ?? 0` fallback fires, so changes = 0 < batchSize
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noMetaEnv, { policy: [{ table: "webhook_events", column: "received_at", days: 1 }] });
+    expect(results).toEqual([{ table: "webhook_events", column: "received_at", cutoff: expect.any(String), deleted: 0 }]);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {

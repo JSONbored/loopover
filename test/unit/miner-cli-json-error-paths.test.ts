@@ -69,7 +69,12 @@ async function expectJsonErrorAsync(
   stderr.mockRestore();
 }
 
-describe("miner CLI --json error coverage (#4836)", () => {
+// Shared --json error-envelope contract across the miner CLI's subcommands (#4836): every run* entry
+// point must fail with { ok: false, error: string } on stdout, exit code 2, and nothing on stderr.
+// Grouped by CLI surface (not split per-sibling file) because the thing under test IS the shared
+// envelope, exercised via expectJsonError/expectJsonErrorAsync above -- splitting it apart would
+// duplicate that helper and lose the "one contract, many entry points" narrative.
+describe("miner CLI --json error paths (#4836)", () => {
   it("portfolio queue list/next/done/claim-batch failures", () => {
     expectJsonError(() => runQueueList(["--verbose", "--json"]), /Unknown option/);
     expectJsonError(

@@ -30,6 +30,8 @@ import { MINER_PR_OUTCOME_EVENT } from "./pr-outcome.js";
 /** Event-ledger vocabulary for one persisted advisory min-rank backtest run (the AMS analog of ORB's
  *  `calibration.threshold_backtest_run` -- the #8185 track record aggregates over these). */
 export const MINER_AMS_THRESHOLD_BACKTEST_EVENT = "ams_threshold_backtest_run";
+/** Event-ledger vocabulary for one persisted advisory eligibility-exclusion backtest run (#8545). */
+export const MINER_AMS_ELIGIBILITY_BACKTEST_EVENT = "ams_eligibility_backtest_run";
 /** Event-ledger vocabulary for an approved min-rank override apply (#8187). */
 export const MINER_AMS_MIN_RANK_APPLIED_EVENT = "ams_min_rank_override_applied";
 /** Event-ledger vocabulary for a min-rank override reversion (#8187's one-command revert). */
@@ -146,10 +148,47 @@ export function recordAmsThresholdBacktestRun(result: AmsMinRankBacktestResult, 
   });
 }
 
+/** Persist one advisory eligibility-exclusion backtest run (#8545): comparison metadata only, same shape
+ *  discipline as {@link recordAmsThresholdBacktestRun} so #8185's aggregation stays byte-compatible. */
+export function recordAmsEligibilityBacktestRun(
+  result: {
+    ruleId: string;
+    skippedNoContext: number;
+    visibleCases: number;
+    heldOutCases: number;
+    visible: BacktestComparison;
+    heldOut: BacktestComparison;
+  },
+  options: { eventLedger?: LedgerWriter } = {},
+): LedgerEntry {
+  const eventLedger = options.eventLedger;
+  if (!eventLedger || typeof eventLedger.appendEvent !== "function") throw new Error("invalid_event_ledger");
+  return eventLedger.appendEvent({
+    type: MINER_AMS_ELIGIBILITY_BACKTEST_EVENT,
+    payload: {
+      ruleId: result.ruleId,
+      skippedNoContext: result.skippedNoContext,
+      visibleCases: result.visibleCases,
+      heldOutCases: result.heldOutCases,
+      visible: result.visible as unknown as Record<string, unknown>,
+      heldOut: result.heldOut as unknown as Record<string, unknown>,
+    },
+  });
+}
+
 export type PersistedAmsBacktestRun = {
   createdAt: string | null;
   currentThreshold: number;
   candidateThreshold: number;
+  visibleCases: number;
+  heldOutCases: number;
+  visible: BacktestComparison;
+  heldOut: BacktestComparison;
+};
+
+export type PersistedAmsEligibilityBacktestRun = {
+  createdAt: string | null;
+  skippedNoContext: number;
   visibleCases: number;
   heldOutCases: number;
   visible: BacktestComparison;
@@ -189,11 +228,38 @@ export function readAmsThresholdBacktestRuns(eventLedger: LedgerReader): Persist
   return runs;
 }
 
-/** #8185: the REGRESSED-verdict track record over every persisted run's comparisons -- the SAME aggregation
- *  ORB uses (`computeRegressedVerdictTrackRecord`), zero new math. Both slices count: a held-out REGRESSED
- *  is exactly as real a verdict as a visible one. */
-export function computeAmsBacktestTrackRecord(runs: readonly PersistedAmsBacktestRun[]): RegressedVerdictTrackRecord {
-  return computeRegressedVerdictTrackRecord(runs.flatMap((run) => [run.visible, run.heldOut]));
+/** Read every persisted eligibility-exclusion backtest run, oldest first; foreign types and malformed payloads
+ *  are skipped. */
+export function readAmsEligibilityBacktestRuns(eventLedger: LedgerReader): PersistedAmsEligibilityBacktestRun[] {
+  const runs: PersistedAmsEligibilityBacktestRun[] = [];
+  for (const record of readAll(eventLedger)) {
+    if (record.type !== MINER_AMS_ELIGIBILITY_BACKTEST_EVENT) continue;
+    const payload = record.payload as Record<string, unknown> | null | undefined;
+    if (!payload || typeof payload !== "object") continue;
+    if (!Number.isInteger(payload.skippedNoContext)) continue;
+    if (!isComparison(payload.visible) || !isComparison(payload.heldOut)) continue;
+    runs.push({
+      createdAt: typeof record.createdAt === "string" ? record.createdAt : null,
+      skippedNoContext: payload.skippedNoContext as number,
+      visibleCases: Number.isInteger(payload.visibleCases) ? (payload.visibleCases as number) : 0,
+      heldOutCases: Number.isInteger(payload.heldOutCases) ? (payload.heldOutCases as number) : 0,
+      visible: payload.visible,
+      heldOut: payload.heldOut,
+    });
+  }
+  return runs;
+}
+
+/** #8185/#8545: the REGRESSED-verdict track record over every persisted threshold AND eligibility backtest
+ *  comparison — the SAME aggregation ORB uses (`computeRegressedVerdictTrackRecord`), zero new math. */
+export function computeAmsBacktestTrackRecord(
+  runs: readonly PersistedAmsBacktestRun[],
+  eligibilityRuns: readonly PersistedAmsEligibilityBacktestRun[] = [],
+): RegressedVerdictTrackRecord {
+  return computeRegressedVerdictTrackRecord([
+    ...runs.flatMap((run) => [run.visible, run.heldOut]),
+    ...eligibilityRuns.flatMap((run) => [run.visible, run.heldOut]),
+  ]);
 }
 
 export type AmsBacktestProposal = {

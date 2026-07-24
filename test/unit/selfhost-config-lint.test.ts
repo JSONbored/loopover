@@ -86,6 +86,16 @@ reviewRecap:
     expect(result.recognizedFields).toEqual(["experimental"]);
   });
 
+  it("REGRESSION: recognizes a standalone fairnessAnalytics: block instead of flagging it as unknown (#8365)", () => {
+    // fairnessAnalytics is fully parsed by focus-manifest.ts but was missing from TOP_LEVEL_FIELDS,
+    // so operators got a spurious unknown-field warning for a supported config-as-code block.
+    const result = lintManifestText("fairnessAnalytics:\n  enabled: true\n");
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(result.recognizedFields).toEqual(["fairnessAnalytics"]);
+  });
+
   it("recognizes a standalone reviewRecap: block instead of flagging it as unknown (#1963)", () => {
     const result = lintManifestText("reviewRecap:\n  enabled: true\n  cadenceDays: 14\n");
 

@@ -35,7 +35,8 @@ flags, so it works on the whole declared `engines` range.
 
 Codecov (`codecov/patch`) only reads the root vitest suite, so modules that need a Codecov-visible mirror also
 have a root test under `test/unit/` (e.g. `test/unit/reviewer-consensus-calibration.test.ts` for
-`src/reviewer-consensus-calibration.ts` — #8349). The package-local `node:test` suite remains the package's own
+`src/reviewer-consensus-calibration.ts` — #8349, or `test/unit/signal-tracking.test.ts` for
+`src/calibration/signal-tracking.ts` — #8343). The package-local `node:test` suite remains the package's own
 gate; the root mirror is what makes the same scenarios gradeable by Codecov.
 
 ## `opportunity-ranker`
@@ -567,6 +568,11 @@ dashboard progress summaries:
 `computeOpportunityFreshness` and `computeOpportunityCompetition` mirror the hosted reward-risk helpers with pure,
 injected-clock semantics for local miners.
 
+`computeLaneFit` (in `goal-model.ts`, composed here through `computeMetadataLaneFit`) has a Codecov-visible root
+mirror at `test/unit/goal-model.test.ts` (#8344) — `codecov/patch` only reads the root vitest suite (see
+[Test](#test)), so its lane-fit precedence and glob-matcher branches are gradeable there as well as by the
+package's own `node:test` suite.
+
 ## AI Policy Map
 
 `scanAiPolicyText` and `resolveAiPolicyVerdict` provide the deterministic policy gate used by miner discovery.
@@ -674,6 +680,11 @@ engine-pure / miner-lib-stateful split every module uses). Open the named source
 These modules compute the *decisions*; the append-only record of what was decided is the separate *storage* contract
 in [Governor ledger](#governor-ledger) below (`allowed` / `denied` / `throttled` / `kill_switch`), which the
 chokepoint's returned ledger event feeds.
+
+`action-mode.ts`'s dry-run-by-default precedence (`resolveMinerActionMode` and siblings) has a Codecov-visible
+root mirror at `test/unit/miner-governor-action-mode.test.ts` (#8345) — `codecov/patch` only reads the root
+vitest suite (see [Test](#test)), so this safety-adjacent write-execution gate is gradeable there as well as by
+the package's own `node:test` suite, alongside the existing `test/unit/miner-governor-kill-switch.test.ts` mirror.
 
 ## Governor ledger
 

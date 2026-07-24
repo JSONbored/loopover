@@ -780,7 +780,7 @@ export function buildFocusManifestGuidance(args: {
       action: "Link the relevant issue (for example `Closes #123`) before opening the PR.",
     });
     publicNextSteps.push("Link the relevant tracked issue; the maintainer requires linked issues on PRs.");
-  } else if (manifest.linkedIssuePolicy === "preferred" && linkedIssueCount === 0) {
+  } else if (manifest.linkedIssuePolicy === "preferred" && linkedIssueCount === 0 && bodyObserved) {
     findings.push({
       code: "manifest_linked_issue_preferred",
       severity: "info",

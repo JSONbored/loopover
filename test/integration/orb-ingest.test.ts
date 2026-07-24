@@ -251,6 +251,20 @@ describe("readOrbIngestBody()", () => {
     const req = new Request("http://collector", { method: "POST", body: stream, ...({ duplex: "half" } as object) });
     expect(await readOrbIngestBody(req, null)).toBeNull();
   });
+
+  it("REGRESSION (#8330): returns null instead of throwing when the underlying stream errors mid-read", async () => {
+    // Mirrors readOrbRelayRegisterBody's identical dropped-connection regression test (orb-relay.test.ts) — a
+    // first successful chunk (some bytes already arrived) followed by a stream error is the realistic shape of
+    // a mid-read network drop, not an error on the very first read.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"instance_id":'));
+        controller.error(new Error("simulated network reset"));
+      },
+    });
+    const req = new Request("http://collector", { method: "POST", body: stream, ...({ duplex: "half" } as object) });
+    await expect(readOrbIngestBody(req, null)).resolves.toBeNull();
+  });
 });
 
 describe("POST /v1/orb/ingest route", () => {
@@ -278,6 +292,22 @@ describe("POST /v1/orb/ingest route", () => {
   it("returns 413 when the body exceeds the ingest byte ceiling", async () => {
     const huge = "x".repeat(MAX_ORB_INGEST_BODY_BYTES + 16);
     const res = await app.request("/v1/orb/ingest", { method: "POST", body: huge }, createTestEnv());
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
+  });
+
+  it("REGRESSION (#8330): a dropped connection mid-upload returns the same clean 413, not a framework 500", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"instance_id":'));
+        controller.error(new Error("simulated network reset"));
+      },
+    });
+    const res = await app.request(
+      "/v1/orb/ingest",
+      { method: "POST", body: stream, ...({ duplex: "half" } as object) },
+      createTestEnv(),
+    );
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
   });

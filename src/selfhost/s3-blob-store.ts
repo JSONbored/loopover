@@ -37,6 +37,12 @@ export type S3BlobStoreConfig = {
 // review pipeline over a persistently misconfigured or down bucket.
 const S3_CLIENT_RETRIES = 3;
 
+// Per-request ceiling for every S3 REST call (matches the bounded-fetch convention already used by the
+// other self-host adapters, e.g. qdrant-vectorize.ts's QDRANT_FETCH_TIMEOUT_MS). aws4fetch's `retries`
+// option above only bounds retry COUNT, not per-attempt hang time -- a misconfigured or unreachable
+// S3-compatible endpoint could otherwise hang get/put/delete indefinitely.
+const S3_FETCH_TIMEOUT_MS = 15_000;
+
 /** Build an S3-compatible-bucket-backed REVIEW_AUDIT store. Keys are app-generated
  *  (`loopover/shots/<hash>.png`, already validated by the /loopover/shot serve route's own prefix +
  *  traversal check) and passed straight through as the S3 object key -- no additional encoding beyond the
@@ -56,7 +62,7 @@ export function createS3BlobStore(config: S3BlobStoreConfig): R2Bucket {
     /** Stream a stored object's bytes, or null on a miss (404) or any request failure. */
     async get(key: string): Promise<R2ObjectBody | null> {
       try {
-        const response = await client.fetch(urlFor(key), { method: "GET" });
+        const response = await client.fetch(urlFor(key), { method: "GET", signal: AbortSignal.timeout(S3_FETCH_TIMEOUT_MS) });
         if (!response.ok) return null;
         return { body: response.body } as unknown as R2ObjectBody;
       } catch {
@@ -74,14 +80,14 @@ export function createS3BlobStore(config: S3BlobStoreConfig): R2Bucket {
       const body = await new Response(value ?? "").arrayBuffer();
       const headers: Record<string, string> = {};
       if (options?.httpMetadata?.contentType) headers["content-type"] = options.httpMetadata.contentType;
-      const response = await client.fetch(urlFor(key), { method: "PUT", headers, body });
+      const response = await client.fetch(urlFor(key), { method: "PUT", headers, body, signal: AbortSignal.timeout(S3_FETCH_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`S3 put failed: ${response.status} ${await response.text().catch(() => "")}`);
       return { key } as unknown as R2Object;
     },
     /** Delete a stored object. Best-effort semantics live with the caller (see actions-fallback.ts's dispatch
      *  marker cleanup) -- this itself just reports whether the DELETE request succeeded. */
     async delete(key: string): Promise<void> {
-      const response = await client.fetch(urlFor(key), { method: "DELETE" });
+      const response = await client.fetch(urlFor(key), { method: "DELETE", signal: AbortSignal.timeout(S3_FETCH_TIMEOUT_MS) });
       if (!response.ok && response.status !== 404) {
         throw new Error(`S3 delete failed: ${response.status} ${await response.text().catch(() => "")}`);
       }

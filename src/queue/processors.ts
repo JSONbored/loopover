@@ -412,6 +412,7 @@ import {
   cachedRequiredStatusContexts,
   liveFactKey,
   liveFactTokenPart,
+  observeRequiredContextsLookup,
   refreshLiveCiAggregate,
   refreshLiveMergeState,
   reuseOrRefreshLiveCiAggregate,
@@ -2877,6 +2878,9 @@ async function runAgentMaintenancePlanAndExecute(
     // is not re-reviewed for the same state.
     fetchLivePullRequestReviewDecision(env, repoFullName, pr.number, token, admissionKey),
   ]);
+  // #8358: consume `.resolved` — a branch-protection read failure still yields a config-fallback set, but
+  // without this signal the degraded path was silent. Observability only; disposition is unchanged.
+  observeRequiredContextsLookup(requiredContextsLookup, { repoFullName, pullNumber: pr.number, baseRef });
   const requiredContexts = requiredContextsLookup.requiredContexts;
   // Same reuse-this-pass-else-refresh-live rationale as reuseOrRefreshLiveMergeState above (#4498).
   const ciAggregate = await reuseOrRefreshLiveCiAggregate(

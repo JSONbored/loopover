@@ -1,12 +1,30 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  compileFocusManifestPolicy,
   gateConfigToJson,
+  matchesManifestPath,
   MAX_FOCUS_MANIFEST_BYTES,
   parseFocusManifest,
   parseFocusManifestContent,
   reviewConfigToJson,
 } from "../../packages/loopover-engine/src/focus-manifest";
+
+describe("loopover-engine focus-manifest barrel exports (#2280)", () => {
+  it("re-exports the focus-manifest parse/compile API from the package barrel", async () => {
+    const barrel = await import("../../packages/loopover-engine/src/index");
+    expect(typeof barrel.parseFocusManifest).toBe("function");
+    expect(typeof barrel.parseFocusManifestContent).toBe("function");
+    expect(typeof barrel.compileFocusManifestPolicy).toBe("function");
+    expect(typeof barrel.matchesManifestPath).toBe("function");
+    expect(typeof barrel.isFocusManifestPublicSafe).toBe("function");
+    expect(barrel.MAX_FOCUS_MANIFEST_BYTES).toBeGreaterThan(0);
+    expect(typeof barrel.parseFocusManifest).toBe(typeof parseFocusManifest);
+    expect(typeof barrel.parseFocusManifestContent).toBe(typeof parseFocusManifestContent);
+    expect(typeof barrel.compileFocusManifestPolicy).toBe(typeof compileFocusManifestPolicy);
+    expect(typeof barrel.matchesManifestPath).toBe(typeof matchesManifestPath);
+  });
+});
 
 describe("focus-manifest engine branch coverage (#2280)", () => {
   it("warns when settings.linkedIssueHardRules is not an object", () => {

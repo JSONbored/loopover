@@ -120,3 +120,40 @@ describe("createS3BlobStore (self-host visual screenshot persistence, S3-compati
     expect(request.headers.get("authorization")).toContain("/us-east-1/s3/aws4_request");
   });
 });
+
+describe("S3 REST calls are bounded by an AbortSignal timeout (#8362)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("get, put, and delete all pass an AbortSignal to the underlying fetch", async () => {
+    fetchMock.mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+    const store = createS3BlobStore(CONFIG);
+    await store.get("loopover/shots/x.png");
+    await store.put("loopover/shots/x.png", new Uint8Array([1]));
+    await store.delete("loopover/shots/x.png");
+
+    expect(fetchMock.mock.calls.length).toBe(3);
+    for (const call of fetchMock.mock.calls) {
+      const [request] = call as [Request];
+      expect(request.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("a get() request that aborts (simulating a timed-out fetch) degrades to null (never throws), matching the network-failure fail-safe", async () => {
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted.", "TimeoutError"));
+    await expect(createS3BlobStore(CONFIG).get("loopover/shots/x.png")).resolves.toBeNull();
+  });
+
+  it("a put() request that aborts (simulating a timed-out fetch) rejects, matching the network-failure fail-safe contract of put/delete", async () => {
+    fetchMock.mockRejectedValueOnce(new DOMException("The operation was aborted.", "TimeoutError"));
+    await expect(createS3BlobStore(CONFIG).put("loopover/shots/x.png", new Uint8Array([1]))).rejects.toThrow(/aborted/);
+  });
+});

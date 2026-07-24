@@ -1644,12 +1644,27 @@ describe("runDiscover onResult hook (#6522)", () => {
 
     describe("eligibility-exclusion signal tracking (#7982)", () => {
       function fakeSignalStore() {
-        const fired: Array<{ ruleId: string; targetKey: string; outcome: string }> = [];
+        const fired: Array<{
+          ruleId: string;
+          targetKey: string;
+          outcome: string;
+          metadata?: Record<string, unknown>;
+        }> = [];
         return {
           fired,
           store: {
-            recordRuleFired: vi.fn(async (event: { ruleId: string; targetKey: string; outcome: string }) => {
-              fired.push({ ruleId: event.ruleId, targetKey: event.targetKey, outcome: event.outcome });
+            recordRuleFired: vi.fn(async (event: {
+              ruleId: string;
+              targetKey: string;
+              outcome: string;
+              metadata?: Record<string, unknown>;
+            }) => {
+              fired.push({
+                ruleId: event.ruleId,
+                targetKey: event.targetKey,
+                outcome: event.outcome,
+                ...(event.metadata ? { metadata: event.metadata } : {}),
+              });
             }),
             recordHumanOverride: vi.fn(async () => undefined),
             queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
@@ -1669,8 +1684,18 @@ describe("runDiscover onResult hook (#6522)", () => {
         const exitCode = await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
         expect(exitCode).toBe(0);
         expect(fired).toEqual([
-          { ruleId: "exclusion_label", targetKey: "acme/widgets#issue-2", outcome: "exclude" },
-          { ruleId: "missing_eligibility_label", targetKey: "acme/widgets#issue-3", outcome: "exclude" },
+          {
+            ruleId: "exclusion_label",
+            targetKey: "acme/widgets#issue-2",
+            outcome: "exclude",
+            metadata: { owner: "acme", labels: ["blocked"] },
+          },
+          {
+            ruleId: "missing_eligibility_label",
+            targetKey: "acme/widgets#issue-3",
+            outcome: "exclude",
+            metadata: { owner: "acme", labels: ["bug"] },
+          },
         ]);
       });
 
@@ -1741,6 +1766,56 @@ describe("runDiscover onResult hook (#6522)", () => {
         });
         expect(exitCode).toBe(0);
         expect(recordRuleFired).toHaveBeenCalledTimes(2);
+      });
+
+      it("captures bounded candidate context in fired-event metadata on a real run (#8544)", async () => {
+        const issues = [
+          fanOutIssue({
+            issueNumber: 2,
+            labels: ["blocked"],
+            assignees: ["alice"],
+            owner: "acme",
+          }),
+        ];
+        const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
+        const { fired, store } = fakeSignalStore();
+        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const exitCode = await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
+        expect(exitCode).toBe(0);
+        expect(fired).toEqual([
+          {
+            ruleId: "exclusion_label",
+            targetKey: "acme/widgets#issue-2",
+            outcome: "exclude",
+            metadata: {
+              owner: "acme",
+              labels: ["blocked"],
+              assignees: ["alice"],
+            },
+          },
+        ]);
+      });
+
+      it("omits metadata entirely when the excluded candidate has no capturable context (#8544)", async () => {
+        const issues = [
+          fanOutIssue({
+            issueNumber: 3,
+            labels: [123 as unknown as string],
+            owner: undefined,
+            assignees: undefined,
+          }),
+        ];
+        const { opts } = discoverWith(issues, new Map([["acme/widgets", trustworthyProfile]]));
+        const { fired, store } = fakeSignalStore();
+        const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+        await runDiscover(["acme/widgets", "--json"], { ...opts, initSignalTrackingStore: () => store });
+        expect(fired).toEqual([
+          {
+            ruleId: "missing_eligibility_label",
+            targetKey: "acme/widgets#issue-3",
+            outcome: "exclude",
+          },
+        ]);
       });
     });
 

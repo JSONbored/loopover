@@ -161,15 +161,45 @@ export async function analyzePRQueue(
   return { rankedPRs: scored.map(({ pr }) => pr), recommendations };
 }
 
-export function sanitizePublicComment(comment: string): string {
+/** CSV/whitespace repo allowlist for {@link isPublicScoreTermSafeForRepo} -- same fail-closed/wildcard parse
+ *  shape as auth/security.ts's MCP repo allowlists (a distinct, smaller local copy rather than a shared
+ *  import: this one governs a content-safety exemption, not an actuation/read trust boundary, and the two
+ *  concerns should stay independently editable). Unset/empty ⇒ deny (fail closed: the bare-score check stays
+ *  ENFORCED for every repo unless an operator explicitly opts one in). `*`/`all` is deliberately NOT treated
+ *  as a wildcard here, unlike the MCP allowlists -- this exemption is safety-relevant enough that a blanket
+ *  opt-in-everything value would silently cover a FUTURE repo that DOES have private trust/reward data (e.g.
+ *  loopover itself), which the MCP read/actuation allowlists' analogous risk doesn't share.
+ *  LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS is the env var; config-as-code, never hardcoded per #config-as-code. */
+export function isPublicScoreTermSafeForRepo(env: { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS?: string }, repoFullName: string): boolean {
+  const entries = (env.LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS ?? "")
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.includes(repoFullName.toLowerCase());
+}
+
+/** `allowBareScoreTerm` (#public-score-terms-scoping, default false = today's unchanged behavior): the bare
+ *  "\bscore\w*\b" check exists to catch a LEAKED gittensor trust/reward VALUE, but it also matches the word
+ *  "score" used as ordinary, already-public API vocabulary -- a real problem for a repo like metagraphed,
+ *  whose own public schema legitimately has fields named `totalScore`/`credibility`/`baseTotalScore`. Any AI
+ *  review discussing that code naturally uses the word "score" and, before this option existed, had its
+ *  WHOLE narrative assessment silently discarded (observed live: metagraphed#8038 and recurring). The other,
+ *  EXPLICIT-PHRASE entries in FORBIDDEN_PUBLIC_COMMENT_WORDS ("trust score", "reward", "scoreability", ...)
+ *  are NEVER skippable by this flag -- those name the actual private concept regardless of repo, so they stay
+ *  enforced everywhere; only the over-broad bare-word check is ever relaxed, and only where a caller has
+ *  positively confirmed (via a repo allowlist, never a blanket default) that "score" is safe public
+ *  vocabulary for that repo. */
+export function sanitizePublicComment(comment: string, options?: { allowBareScoreTerm?: boolean }): string {
   for (const forbiddenWord of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
     if (comment.toLowerCase().includes(forbiddenWord.toLowerCase())) {
       throw new Error(`Public comment contains forbidden word: "${forbiddenWord}"`);
     }
   }
-  const bareScoreMatch = comment.match(BARE_SCORE_TERM_PATTERN);
-  if (bareScoreMatch) {
-    throw new Error(`Public comment contains forbidden word: "${bareScoreMatch[0]}"`);
+  if (!options?.allowBareScoreTerm) {
+    const bareScoreMatch = comment.match(BARE_SCORE_TERM_PATTERN);
+    if (bareScoreMatch) {
+      throw new Error(`Public comment contains forbidden word: "${bareScoreMatch[0]}"`);
+    }
   }
   return comment;
 }

@@ -5180,6 +5180,115 @@ describe("auto-action convergence: end-to-end plan+execute for the general heuri
     expect(await renderMetrics()).toContain('loopover_agent_disposition_total{action_class="merge",autonomy_level="auto",blocker_class="none",repo="redacted-1"} 1');
   });
 
+  it("REGRESSION (#merge-race, metagraphed#8037): an otherwise-mergeable PR whose live mergeable_state comes back \"unknown\" schedules a trailing single-PR re-check instead of relying solely on the periodic sweep", async () => {
+    // Same fully-qualifying-to-merge fixture as the convergence-chain test above (real file, CI green, approved
+    // review, linked-issue gate off) -- the ONLY difference is /pulls/63 reporting mergeable_state "unknown"
+    // (GitHub still computing) instead of "clean", isolating this as the SOLE hold reason.
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    const scheduled: Array<{ message: import("../../src/types").JobMessage; options?: { delaySeconds?: number } }> = [];
+    const originalSend = env.JOBS.send.bind(env.JOBS);
+    env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) => {
+      scheduled.push(options ? { message, options } : { message });
+      return originalSend(message, options);
+    }) as typeof env.JOBS.send;
+    const seen = { closed: false, merged: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") {
+        return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      }
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/63/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/63/reviews")) return Response.json([]);
+      if (url.includes("/pulls/63/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/63/merge") && method === "PUT") {
+        seen.merged = true;
+        return Response.json({ merged: true });
+      }
+      if (url.endsWith("/pulls/63")) {
+        return Response.json({ number: 63, state: "open", user: { login: "contributor" }, head: { sha: "conv63" }, mergeable_state: "unknown" });
+      }
+      if (url.includes("/commits/conv63/check-runs")) {
+        return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      }
+      if (url.includes("/commits/conv63/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/63/labels")) return Response.json([]);
+      if (url.includes("/issues/63/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "merge-race-1",
+      eventName: "pull_request",
+      payload: prPayload({ number: 63, head: { sha: "conv63" }, body: "Closes #1", action: "synchronize" }),
+    });
+
+    // Not merged THIS pass -- mergeableState never resolved to "clean" even after refreshLiveMergeState's own
+    // inline retry (this fixture returns "unknown" on every /pulls/63 call, simulating GitHub still computing
+    // well past that short window).
+    expect(seen.merged).toBe(false);
+    const holdAudit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ detail: string }>();
+    expect(holdAudit?.detail).toContain("mergeable_state is unknown");
+    // The guarantee this test exists for: a targeted, single-PR trailing re-check is scheduled, decoupled
+    // from the periodic agent-regate-sweep's own GitHub-REST-budget throttling.
+    const trailing = scheduled.find((s) => s.message.type === "agent-regate-pr" && "prNumber" in s.message && s.message.prNumber === 63);
+    expect(trailing).toBeDefined();
+    expect(trailing?.options).toEqual({ delaySeconds: 60 });
+  });
+
+  it("REGRESSION (#merge-race): a real, stable non-clean mergeable_state (dirty) does NOT schedule a trailing re-check — only the transient \"unknown\" value does", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await setupAutoActionRepo(env, { autonomy: { merge: "auto", approve: "auto" }, linkedIssueGateMode: "off" });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    const scheduled: Array<{ message: import("../../src/types").JobMessage; options?: { delaySeconds?: number } }> = [];
+    const originalSend = env.JOBS.send.bind(env.JOBS);
+    env.JOBS.send = (async (message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) => {
+      scheduled.push(options ? { message, options } : { message });
+      return originalSend(message, options);
+    }) as typeof env.JOBS.send;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url === "https://api.github.com/graphql") {
+        return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      }
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/64/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.includes("/pulls/64/reviews")) return Response.json([]);
+      if (url.includes("/pulls/64/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/64")) {
+        return Response.json({ number: 64, state: "open", user: { login: "contributor" }, head: { sha: "conv64" }, mergeable_state: "dirty" });
+      }
+      if (url.includes("/commits/conv64/check-runs")) {
+        return Response.json({ total_count: 1, check_runs: [{ name: "CI", status: "completed", conclusion: "success", app: { slug: "github-actions" } }] });
+      }
+      if (url.includes("/commits/conv64/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/64/labels")) return Response.json([]);
+      if (url.includes("/issues/64/comments")) return Response.json([]);
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "merge-race-dirty-1",
+      eventName: "pull_request",
+      payload: prPayload({ number: 64, head: { sha: "conv64" }, body: "Closes #1", action: "synchronize" }),
+    });
+
+    const holdAudit = await env.DB.prepare("select detail from audit_events where event_type = 'agent.action.hold' order by created_at desc limit 1").first<{ detail: string }>();
+    // "dirty" gets its own dedicated message (agentHoldAuditDetail), distinct from the generic
+    // "mergeable_state is X" phrasing every OTHER non-clean value shares -- confirms this test fixture actually
+    // reached the dirty branch, not some other unrelated hold reason.
+    expect(holdAudit?.detail).toContain("conflicts with the base branch");
+    expect(scheduled.some((s) => s.message.type === "agent-regate-pr" && "prNumber" in s.message && s.message.prNumber === 64)).toBe(false);
+  });
+
   // #terminal-outcome-audit: end-to-end proof that the LIVE runAgentMaintenancePlanAndExecute call site (not just
   // the extracted pure precisionBreakerDowngradeDirections/applyPrecisionBreakers unit tests) actually increments
   // loopover_precision_breaker_downgrades_total when an engaged accuracy circuit-breaker rewrites a real plan.

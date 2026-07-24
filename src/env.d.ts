@@ -316,6 +316,13 @@ declare global {
      *  non-repo-scoped contributor/operator tools (another contributor's private data, fleet analytics). Unset
      *  ⇒ none. A separate allowlist from MCP_ACTUATION_REPO_ALLOWLIST so read and write trust can differ (#2455). */
     MCP_READ_REPO_ALLOWLIST?: string;
+    /** Repos where a bare "score"/"scores"/"scored" mention in AI-review-composed public text is safe to
+     *  publish (comma/whitespace `owner/repo` list; no `*`/`all` wildcard -- see
+     *  isPublicScoreTermSafeForRepo's own doc comment for why). Unset ⇒ none: the check stays enforced
+     *  everywhere by default. Set this for a repo whose OWN public schema legitimately names fields like
+     *  `totalScore`/`credibility` (e.g. metagraphed) so a real AI review of that code doesn't have its whole
+     *  narrative assessment silently discarded (#public-score-terms-scoping). */
+    LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS?: string;
     /** Shared bearer secret required by the hosted Orb ingest collector. */
     ORB_INGEST_TOKEN?: string;
     /** Shared bearer secret required by the hosted AMS ingest collector (#5681) — same optional, fail-open

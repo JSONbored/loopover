@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildContributorRewardRiskStrategy,
   buildMaintainerNoiseReport,
   buildPullRequestReviewability,
 } from "../../src/signals/reward-risk";
 import {
+  buildContributorFit,
   buildContributorOutcomeHistory,
   buildContributorProfile,
+  buildContributorScoringProfile,
   type ContributorOutcomeHistory,
 } from "../../src/signals/engine";
 import type {
   CheckSummaryRecord,
+  ContributorRepoStatRecord,
   IssueRecord,
   PullRequestFileRecord,
   PullRequestRecord,
@@ -17,6 +21,7 @@ import type {
   RecentMergedPullRequestRecord,
   RegistryRepoConfig,
   RepositoryRecord,
+  ScoringModelSnapshotRecord,
 } from "../../src/types";
 
 function repo(fullName: string, overrides: Partial<RegistryRepoConfig> = {}): RepositoryRecord {
@@ -104,6 +109,20 @@ function failingCheck(pullNumber: number, name = "ci"): CheckSummaryRecord {
     name,
     status: "completed",
     conclusion: "failure",
+    payload: {},
+  };
+}
+
+function scoringSnapshot(): ScoringModelSnapshotRecord {
+  return {
+    id: "branch-cov",
+    sourceKind: "test",
+    sourceUrl: "fixture://branch-cov",
+    fetchedAt: "2026-05-25T00:00:00.000Z",
+    activeModel: "current_density_model",
+    constants: {},
+    programmingLanguages: {},
+    warnings: [],
     payload: {},
   };
 }
@@ -461,5 +480,66 @@ describe("buildPullRequestReviewability (#2093)", () => {
       ].sort(),
     );
     expect(result.maintainerNextSteps.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildContributorRewardRiskStrategy branch coverage (#2281)", () => {
+  it("breaks analysis and action ties across two identical repos", () => {
+    // Two byte-identical registered repos (differing only by name) produce equal analysisRank and equal
+    // top-action (priorityScore, actionKind) pairs, exercising the localeCompare/ACTION_RANK tie-breaks in
+    // both the repoAnalyses and topActions sorts, plus the fit.opportunities map callback.
+    const repoA = repo("twin/aaa");
+    const repoB = repo("twin/bbb");
+    const profile = buildContributorProfile("dev", { login: "dev", topLanguages: ["TypeScript"], source: "github" }, [], []);
+    const stat = (repoFullName: string): ContributorRepoStatRecord => ({
+      login: "dev",
+      repoFullName,
+      pullRequests: 4,
+      mergedPullRequests: 2,
+      openPullRequests: 4,
+      issues: 0,
+      stalePullRequests: 0,
+      unlinkedPullRequests: 0,
+      dominantLabels: ["feature"],
+    });
+    const outcomeHistory = buildContributorOutcomeHistory({
+      login: "dev",
+      profile,
+      repositories: [repoA, repoB],
+      pullRequests: [],
+      issues: [],
+      repoStats: [stat(repoA.fullName), stat(repoB.fullName)],
+    });
+    const fit = buildContributorFit(profile, [repoA, repoB], [], [], [], [stat(repoA.fullName), stat(repoB.fullName)]);
+    const scoringProfile = buildContributorScoringProfile({ login: "dev", fit, scoringSnapshot: scoringSnapshot() });
+    const fitWithOpportunities = {
+      ...fit,
+      opportunities: [
+        {
+          repoFullName: repoA.fullName,
+          title: "Grabbable",
+          fit: "good" as const,
+          score: 40,
+          lane: "direct_pr" as const,
+          multiplierTier: "community" as const,
+          availability: "ready" as const,
+          reasons: [],
+          warnings: [],
+        },
+      ],
+    };
+    const strategy = buildContributorRewardRiskStrategy({
+      login: "dev",
+      fit: fitWithOpportunities,
+      scoringProfile,
+      scoringSnapshot: scoringSnapshot(),
+      outcomeHistory,
+      repositories: [repoA, repoB],
+      allIssues: [] as IssueRecord[],
+      allPullRequests: [] as PullRequestRecord[],
+    });
+    expect(strategy.repoAnalyses).toHaveLength(2);
+    // Deterministic tie-break => the two identical analyses come back in lexicographic repo order.
+    expect(strategy.repoAnalyses.map((a) => a.repoFullName)).toEqual([repoA.fullName, repoB.fullName]);
   });
 });

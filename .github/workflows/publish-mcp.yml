@@ -33,6 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      release_sha: ${{ steps.version.outputs.release_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -71,19 +72,41 @@ jobs:
             exit 1
           fi
           TAG="mcp-v${VERSION}"
+          # The RELEASE COMMIT is the newest main commit that introduced this exact version string
+          # into package.json (the release PR's merge commit) -- NOT whatever main head happens to
+          # be when this run was dispatched. A bare/reconcile dispatch used to tag-and-pack HEAD,
+          # which silently swept any commits that landed after the version bump into the tag and the
+          # published artifact (#8525: ui-kit-v1.1.2 got tagged two commits late during a runner
+          # backlog, absorbing the 1.1.3 fix and zombifying its release PR). Resolving the commit
+          # from the version string keeps the release-please-dispatched path a no-op (it dispatches
+          # against the tag, so HEAD already IS this commit) while making late dispatches correct.
+          RELEASE_SHA="$(git log -n 1 --format=%H -S "\"version\": \"${VERSION}\"" refs/remotes/origin/main -- packages/loopover-mcp/package.json)"
+          if [ -z "$RELEASE_SHA" ]; then
+            echo "::error::Could not resolve the commit that introduced version $VERSION into packages/loopover-mcp/package.json -- refusing to guess (would tag main head). (#8525)"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::Resolved release commit $RELEASE_SHA is not reachable from main."
+            exit 1
+          fi
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            HEAD_SHA="$(git rev-parse HEAD)"
             TAG_SHA="$(git rev-list -n 1 "$TAG")"
-            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
-              echo "::error::Tag $TAG already exists but points at $TAG_SHA, not the dispatched commit $HEAD_SHA"
+            if [ "$TAG_SHA" != "$RELEASE_SHA" ]; then
+              echo "::error::Tag $TAG already exists but points at $TAG_SHA, not the resolved release commit $RELEASE_SHA"
               exit 1
             fi
-            echo "Tag $TAG already exists and matches HEAD."
+            echo "Tag $TAG already exists and matches the resolved release commit."
           else
-            echo "Tag $TAG does not exist yet; the publish job will create it."
+            echo "Tag $TAG does not exist yet; the publish job will create it at $RELEASE_SHA."
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # Build/typecheck/pack against the release commit's own tree, so the published artifact is
+          # byte-for-byte the content the version number describes.
+          git checkout --detach "$RELEASE_SHA"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "release_sha=$RELEASE_SHA"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -185,16 +208,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_SHA: ${{ needs.validate.outputs.release_sha }}
         run: |
           set -euo pipefail
-          HEAD_SHA="$(git rev-parse HEAD)"
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "Tag $TAG already exists (verified against HEAD by the validate job)."
+            echo "Tag $TAG already exists (verified against the resolved release commit by the validate job)."
           else
-            echo "Creating tag $TAG at HEAD ($HEAD_SHA)."
+            echo "Creating tag $TAG at the resolved release commit ($RELEASE_SHA) -- never at HEAD (#8525)."
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "@loopover/mcp v${VERSION}"
+            git tag -a "$TAG" -m "@loopover/mcp v${VERSION}" "$RELEASE_SHA"
             git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
             gh auth setup-git
             git push origin "$TAG"

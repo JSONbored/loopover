@@ -107,6 +107,21 @@ describe("extractSchemaEvents (#2551)", () => {
     ]);
   });
 
+  it("extracts ADD without the optional COLUMN keyword (#8368: valid terser SQLite syntax)", () => {
+    expect(extractSchemaEvents("ALTER TABLE widgets ADD color TEXT;")).toEqual([{ type: "define_column", table: "widgets", column: "color" }]);
+  });
+
+  it("extracts DROP without the optional COLUMN keyword (#8368: valid terser SQLite syntax)", () => {
+    expect(extractSchemaEvents("ALTER TABLE widgets DROP color;")).toEqual([{ type: "remove_column", table: "widgets", column: "color" }]);
+  });
+
+  it("extracts RENAME without the optional COLUMN keyword (#8368: valid terser SQLite syntax)", () => {
+    expect(extractSchemaEvents("ALTER TABLE widgets RENAME color TO hue;")).toEqual([
+      { type: "remove_column", table: "widgets", column: "color" },
+      { type: "define_column", table: "widgets", column: "hue" },
+    ]);
+  });
+
   it("returns [] for a statement with no schema-shape effect (CREATE INDEX, INSERT)", () => {
     expect(extractSchemaEvents("CREATE INDEX widgets_name_idx ON widgets (name);")).toEqual([]);
     expect(extractSchemaEvents("INSERT INTO widgets (name) VALUES ('x');")).toEqual([]);

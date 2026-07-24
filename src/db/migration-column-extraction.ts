@@ -163,7 +163,10 @@ export function extractSchemaEvents(rawStatement: string): SchemaEvent[] {
   const dropTableMatch = /^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i.exec(statement);
   if (dropTableMatch) return [{ type: "drop_table", table: dropTableMatch[1]!.toLowerCase() }];
 
-  const renameColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+RENAME\s+COLUMN\s+(\w+)\s+TO\s+(\w+)/i.exec(statement);
+  // SQLite's ALTER TABLE grammar makes COLUMN optional for RENAME/DROP/ADD (#8368) -- `ALTER TABLE t ADD x
+  // INTEGER`, `DROP x`, and `RENAME x TO y` are all valid without it, so each regex tolerates the absent
+  // keyword instead of silently producing zero SchemaEvents for the terser (equally valid) form.
+  const renameColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+RENAME\s+(?:COLUMN\s+)?(\w+)\s+TO\s+(\w+)/i.exec(statement);
   if (renameColumnMatch) {
     const table = renameColumnMatch[1]!.toLowerCase();
     return [
@@ -172,10 +175,10 @@ export function extractSchemaEvents(rawStatement: string): SchemaEvent[] {
     ];
   }
 
-  const dropColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+DROP\s+COLUMN\s+(\w+)/i.exec(statement);
+  const dropColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+DROP\s+(?:COLUMN\s+)?(\w+)/i.exec(statement);
   if (dropColumnMatch) return [{ type: "remove_column", table: dropColumnMatch[1]!.toLowerCase(), column: dropColumnMatch[2]!.toLowerCase() }];
 
-  const addColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i.exec(statement);
+  const addColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:COLUMN\s+)?(\w+)/i.exec(statement);
   if (addColumnMatch) return [{ type: "define_column", table: addColumnMatch[1]!.toLowerCase(), column: addColumnMatch[2]!.toLowerCase() }];
 
   const createTableMatch = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(([\s\S]*)\)[^)]*$/i.exec(statement);

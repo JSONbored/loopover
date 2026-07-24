@@ -461,4 +461,36 @@ describe("pending PR scenario detection", () => {
     expect(records.pullRequestChecks).toHaveLength(0);
     vi.restoreAllMocks();
   });
+
+  it("excludes PRs whose authorLogin is null or undefined via sameLogin's short-circuit (#8329)", async () => {
+    const env = {} as Env;
+    // Only the target login's own open PR (#70) should be loaded; the null/undefined-author rows must be
+    // excluded by sameLogin (`Boolean(value && ...)`), not matched or thrown on.
+    const reviewsSpy = vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(70)]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      pr({ number: 70 }),
+      pr({ number: 73, authorLogin: null }),
+      pr({ number: 74, authorLogin: undefined }),
+    ]);
+    // Reviews/checks are fetched per matched PR only, so exactly one PR (the target login's) was matched.
+    expect(records.pullRequestReviews).toHaveLength(1);
+    expect(reviewsSpy).toHaveBeenCalledTimes(1);
+    expect(reviewsSpy).toHaveBeenCalledWith(env, "entrius/allways-ui", 70);
+    vi.restoreAllMocks();
+  });
+
+  it("matches a repoFullName that differs from the query only in letter case (#8329)", async () => {
+    const env = {} as Env;
+    // The PR record's repoFullName differs in case from the query argument; sameRepoFullName lowercases both,
+    // so the PR is still matched and its cached reviews loaded.
+    const reviewsSpy = vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(70)]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      pr({ number: 70, repoFullName: "Entrius/Allways-UI" }),
+    ]);
+    expect(records.pullRequestReviews).toHaveLength(1);
+    expect(reviewsSpy).toHaveBeenCalledWith(env, "Entrius/Allways-UI", 70);
+    vi.restoreAllMocks();
+  });
 });

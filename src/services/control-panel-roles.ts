@@ -71,7 +71,22 @@ export async function loadControlPanelRoleSummary(env: Env, login: string): Prom
   });
 }
 
-export function buildControlPanelAccessScope(args: RoleSummaryInputs): ControlPanelAccessScope {
+/**
+ * The access-scope facts both {@link buildControlPanelAccessScope} and {@link buildControlPanelRoleSummary}
+ * derive from the same inputs (#8373). Previously each builder carried its own byte-identical copy of this
+ * block — including the #953 suspension fix below, which had to be applied twice — so any future rule change
+ * had to be found and repeated in two places with nothing keeping them in sync.
+ *
+ * `maintainerRepoNames` is returned PRE-deduplication on purpose: the two callers finish it differently
+ * (`uniqueRepoNames` vs `uniqueRepos`, which additionally applies `sanitizeRoleText`), so deduplicating here
+ * would silently change one of their outputs. Each caller still applies its own helper.
+ */
+function resolveAccountRepoScope(args: RoleSummaryInputs): {
+  installedRepos: RoleSummaryInputs["repositories"];
+  accountInstallations: RoleSummaryInputs["installations"];
+  ownedInstalledRepos: RoleSummaryInputs["repositories"];
+  maintainerRepoNames: string[];
+} {
   const installedRepos = args.repositories.filter((repo) => repo.isInstalled);
   const accountInstallations = args.installations.filter((installation) => !installation.suspendedAt && sameLogin(installation.accountLogin, args.login));
   const accountInstallationIds = new Set(accountInstallations.map((installation) => installation.id));
@@ -85,12 +100,16 @@ export function buildControlPanelAccessScope(args: RoleSummaryInputs): ControlPa
       !(repo.installationId !== undefined && repo.installationId !== null && suspendedAccountInstallationIds.has(repo.installationId)) &&
       (sameLogin(repo.owner, args.login) || (repo.installationId !== undefined && repo.installationId !== null && accountInstallationIds.has(repo.installationId))),
   );
-  const maintainerRepos = uniqueRepoNames(
-    args.pullRequests
-      .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAssociation(pull.authorAssociation))
-      .map((pull) => pull.repoFullName)
-      .filter((repoFullName) => installedRepos.some((repo) => sameRepo(repo.fullName, repoFullName))),
-  );
+  const maintainerRepoNames = args.pullRequests
+    .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAssociation(pull.authorAssociation))
+    .map((pull) => pull.repoFullName)
+    .filter((repoFullName) => installedRepos.some((repo) => sameRepo(repo.fullName, repoFullName)));
+  return { installedRepos, accountInstallations, ownedInstalledRepos, maintainerRepoNames };
+}
+
+export function buildControlPanelAccessScope(args: RoleSummaryInputs): ControlPanelAccessScope {
+  const { installedRepos, accountInstallations, ownedInstalledRepos, maintainerRepoNames } = resolveAccountRepoScope(args);
+  const maintainerRepos = uniqueRepoNames(maintainerRepoNames);
   const scopedRepoNames = uniqueRepoNames([...ownedInstalledRepos.map((repo) => repo.fullName), ...maintainerRepos]);
   const scopedInstallationIds = new Set(accountInstallations.map((installation) => installation.id));
   for (const repo of installedRepos) {
@@ -108,25 +127,8 @@ export function buildControlPanelAccessScope(args: RoleSummaryInputs): ControlPa
 }
 
 export function buildControlPanelRoleSummary(args: RoleSummaryInputs): ControlPanelRoleSummary {
-  const installedRepos = args.repositories.filter((repo) => repo.isInstalled);
-  const accountInstallations = args.installations.filter((installation) => !installation.suspendedAt && sameLogin(installation.accountLogin, args.login));
-  const accountInstallationIds = new Set(accountInstallations.map((installation) => installation.id));
-  // A suspended installation revokes the App's access, so a repo under a suspended account installation must not grant
-  // control-panel scope — including via the owner-match branch, which previously ignored suspendedAt (#953).
-  const suspendedAccountInstallationIds = new Set(
-    args.installations.filter((installation) => installation.suspendedAt && sameLogin(installation.accountLogin, args.login)).map((installation) => installation.id),
-  );
-  const ownedInstalledRepos = installedRepos.filter(
-    (repo) =>
-      !(repo.installationId !== undefined && repo.installationId !== null && suspendedAccountInstallationIds.has(repo.installationId)) &&
-      (sameLogin(repo.owner, args.login) || (repo.installationId !== undefined && repo.installationId !== null && accountInstallationIds.has(repo.installationId))),
-  );
-  const maintainerRepos = uniqueRepos(
-    args.pullRequests
-      .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAssociation(pull.authorAssociation))
-      .map((pull) => pull.repoFullName)
-      .filter((repoFullName) => installedRepos.some((repo) => sameRepo(repo.fullName, repoFullName))),
-  );
+  const { accountInstallations, ownedInstalledRepos, maintainerRepoNames } = resolveAccountRepoScope(args);
+  const maintainerRepos = uniqueRepos(maintainerRepoNames);
   const roles: ControlPanelRoleName[] = [];
   if (args.confirmedMiner) roles.push("miner");
   if (maintainerRepos.length > 0 || ownedInstalledRepos.length > 0) roles.push("maintainer");

@@ -2950,7 +2950,7 @@ describe("queue processors", () => {
   // takes its TRUE arm: every other existing test leaves the feature off (the default), which already covers the
   // FALSE arm thousands of times over. Proves the deterministic tier threads end to end into a real posted
   // comment, not just in the isolated `buildPublicPrPanelSignalRows`/`buildStructuralImprovementAssessment` unit
-  // tests (signals-coverage.test.ts).
+  // tests (signals-edge-cases.test.ts).
   it("#4744: threads the improvement-signal row into the unified comment when the converged feature resolves on", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

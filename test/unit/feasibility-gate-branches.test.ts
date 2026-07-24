@@ -10,7 +10,7 @@ import {
 import { buildPreStartCheck } from "../../src/signals/engine";
 import type { IssueRecord, PullRequestRecord, RegistryRepoConfig, RepositoryRecord } from "../../src/types";
 
-// Record builders mirror test/unit/signals-coverage.test.ts so parity cases reuse the same fixture shape.
+// Record builders mirror test/unit/signals-edge-cases.test.ts so parity cases reuse the same fixture shape.
 function repo(fullName: string, overrides: Partial<RegistryRepoConfig> = {}): RepositoryRecord {
   const [owner, name] = fullName.split("/") as [string, string];
   return {

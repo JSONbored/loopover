@@ -13,6 +13,7 @@ import {
   verdictToRecommendation,
   visualFindingsFromFindings,
 } from "../../src/review/unified-comment-bridge";
+import { buildCheckRunAnnotations } from "../../src/rules/advisory";
 import { VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "../../src/review/visual/visual-findings";
 import { PR_PANEL_COMMENT_MARKER as MARKER_FROM_COMMENTS } from "../../src/github/comments";
 import { deriveUnifiedStatus, type MergeReadiness, type UnifiedCollapsible, type UnifiedCommentStatus } from "../../src/review/unified-comment";
@@ -1418,6 +1419,71 @@ describe("buildDualReviewNotes — public-safe Nit scrub (privacy-critical, gate
       });
       const nit = reviews[0]?.notes?.nits?.[0] ?? "";
       expect(nit, `"${term}" must not leak`).not.toContain(term);
+    }
+  });
+
+  it("REGRESSION (#8322): every forbidden term is redacted by BOTH public-surface sanitizers (check-run text and PR-comment Nits)", () => {
+    // The two lists had drifted: advisory.ts scrubbed mnemonic/seed phrase/cohort/miner-originated/
+    // human-originated/rankings/bare "raw trust" while the Nit path did not (so those leaked into public
+    // PR comments), and the Nit path scrubbed likely_duplicate/reviewability<digit> while the check-run
+    // path did not. This drives one representative string per term through BOTH sanitizers via their real
+    // public entry points, so a future one-sided edit to either regex fails here. It is deliberately a
+    // behavioral test, not a string comparison of the two regex sources.
+    const forbiddenTerms = [
+      "reward", "rewards", "payout", "payouts", "farming", "estimated score", "raw trust scores",
+      "raw trust", "trust score", "score estimates", "reward estimates", "wallet", "hotkey", "coldkey",
+      "mnemonic", "seed phrase", "cohort", "miner-originated", "human_originated", "rankings",
+      "reviewability", "scoreability", "private signals", "likely_duplicate", "reviewability3",
+    ];
+
+    for (const term of forbiddenTerms) {
+      // (1) PR-comment Nit path — publicSafeNit scrubs to "[context]" or drops the Nit entirely.
+      const reviews = buildDualReviewNotes({
+        aiReview: { notes: "Reviewer assessment." },
+        warnings: [{ code: "w", severity: "warning", title: `Concern about ${term} here`, detail: "...", action: "n/a" }],
+        recommendation: "manual_review",
+        verdict: "manual",
+      });
+      const nit = reviews[0]?.notes?.nits?.[0] ?? "";
+      expect(nit.toLowerCase(), `Nit path must not leak "${term}"`).not.toContain(term.toLowerCase());
+
+      // (2) Check-run annotation path — sanitizeForCheckRun scrubs title and message.
+      const advisory = {
+        id: "a1",
+        targetType: "pull_request" as const,
+        targetKey: "o/r#1",
+        repoFullName: "o/r",
+        pullNumber: 1,
+        headSha: "sha",
+        conclusion: "neutral" as const,
+        severity: "warning" as const,
+        title: "LoopOver advisory",
+        summary: "s",
+        findings: [
+          {
+            code: "missing_test_evidence",
+            title: `Concern about ${term} here`,
+            severity: "warning" as const,
+            detail: `Detail naming ${term} explicitly.`,
+            // publicText is what actually reaches an annotation (advisory.ts skips findings without it),
+            // so the term must live here or the check-run leg would assert against an EMPTY list.
+            publicText: `Detail naming ${term} explicitly.`,
+          },
+        ],
+        generatedAt: "2026-07-24T00:00:00.000Z",
+      };
+      const { annotations } = buildCheckRunAnnotations(
+        advisory,
+        {
+          files: [{ repoFullName: "o/r", pullNumber: 1, path: "src/a.ts", additions: 1, deletions: 0, changes: 1, payload: {} }],
+          collisions: { repoFullName: "o/r", generatedAt: "2026-07-24T00:00:00.000Z", summary: { clusterCount: 0, highRiskCount: 0, itemsReviewed: 0 }, clusters: [] },
+          pullNumber: 1,
+        },
+        "standard",
+      );
+      // Non-vacuity guard: an empty annotation list would make the assertion below trivially true.
+      expect(annotations.length, `check-run leg must actually produce an annotation for "${term}"`).toBeGreaterThan(0);
+      expect(JSON.stringify(annotations).toLowerCase(), `check-run path must not leak "${term}"`).not.toContain(term.toLowerCase());
     }
   });
 

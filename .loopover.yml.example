@@ -678,6 +678,10 @@ review:
 #     claude_effort: null  # Overrides CLAUDE_AI_EFFORT for this repo. String or null. Default (env unset): medium.
 #     codex_model: null    # Overrides CODEX_AI_MODEL for this repo. String or null.
 #     codex_effort: null   # Overrides CODEX_AI_EFFORT for this repo. String or null. Default (env unset): medium.
+#     claude_timeout_ms: null  # Overrides CLAUDE_AI_TIMEOUT_MS for this repo. Positive integer (ms) or null. (#8364)
+#     codex_timeout_ms: null   # Overrides CODEX_AI_TIMEOUT_MS for this repo. Positive integer (ms) or null. (#8364)
+#     claude_first_output_timeout_ms: null  # Overrides CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS for this repo. Positive integer (ms) or null. (#8364)
+#     codex_first_output_timeout_ms: null   # Overrides CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS for this repo. Positive integer (ms) or null. (#8364)
 #     ollama_model: null   # Overrides OLLAMA_AI_MODEL for this repo's ollama reviewer. String or null. (#3902)
 #     openai_model: null   # Overrides OPENAI_AI_MODEL for this repo's openai reviewer. String or null. (#3902)
 #     openai_compatible_model: null  # Overrides OPENAI_COMPATIBLE_AI_MODEL for this repo. String or null. (#3902)

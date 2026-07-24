@@ -19,7 +19,9 @@ const BROKER_TIMEOUT_MS = 25_000;
 const ORB_RELAY_REGISTER_TIMEOUT_MS = 25_000;
 
 function isLocalBrokerHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || (hostname === "::1" || hostname === "[::1]");
+  // `hostname` is always a WHATWG URL's `.hostname`, which brackets an IPv6 literal ([::1], never bare ::1),
+  // so only the bracketed form is a reachable input here (#8334).
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
 }
 
 function orbBrokerBaseUrl(env: { ORB_BROKER_URL?: string | undefined }): string {

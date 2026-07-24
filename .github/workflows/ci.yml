@@ -46,8 +46,8 @@ jobs:
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
     steps:
-      # Debounce rapid re-pushes to an open PR: every job below (validate-code, all 3 validate-tests
-      # shards, validate-tests-merge, security) has `needs: changes` in its dependency chain, so none of
+      # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests,
+      # security) has `needs: changes` in its dependency chain, so none of
       # them get queued for a runner until this job finishes -- and this job lives in the SAME PR-ref-scoped
       # concurrency group as everything else (top of file), so a newer push cancels this job outright while
       # it's asleep, well before it ever reaches "Filter changed paths". That means a rapid burst of pushes
@@ -816,39 +816,35 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         run: npm run bundle-analysis --workspace @loopover/ui
 
-  # The full-suite coverage run, sharded (#ci-shard-coverage). This alone was ~9-10 of the ~11 minutes a
-  # typical backend PR spent in validate-code, because vitest schedules whole test FILES atomically to
-  # workers -- one unsharded job with --maxWorkers=4 (a standard runner's real CPU budget) has no way to
-  # use more than 4-way parallelism no matter how many files exist. Splitting the vitest invocation itself
-  # across N parallel GitHub-hosted jobs (vitest's own --shard=<i>/<n>, not a hand-rolled file list) gives
-  # N*4-way parallelism instead, at zero extra $ on this public repo (standard runners are free regardless
-  # of job count -- more jobs consumes more of the shared free pool, not more billable minutes).
-  # Each shard uploads its own lcov.info + junit report to Codecov; multiple uploads for the same
-  # commit/PR are additive (Codecov merges them into one patch-coverage view), which is the standard
-  # pattern for matrix-split test suites. vitest.config.ts already had COVERAGE_NO_THRESHOLDS support
-  # wired in (a shard only exercises part of the tree, so the global 90% backstop threshold would always
-  # false-fail per-shard) -- this job is what finally turns it on; previously nothing ever set it.
+  # The full-suite coverage run (#ci-shard-coverage kept it OUT of validate-code so the ~25-minute suite
+  # never serializes with the fast drift/typecheck/build checks -- that split remains). It ran 2023-style
+  # as a 3-shard matrix for wall-clock; unsharded again 2026-07-24 (see the job's own header comment) to
+  # trade PR latency for 2 fewer runners per PR and the simpler, flake-free single-report pipeline.
   validate-tests:
     name: validate-tests
     needs: changes
-    # Also runs on REES/mcp/engine/miner/discoveryIndex-only changes: Codecov holds codecov/patch until
-    # `after_n_builds` (3) coverage uploads land (codecov.yml), and a PR scoped to just one of those
-    # self-contained packages doesn't otherwise touch `backend`, so without the shards it would upload no
+    # Also runs on REES/mcp/engine/miner/discoveryIndex-only changes: a PR scoped to just one of those
+    # self-contained packages doesn't otherwise touch `backend`, so without this job it would upload no
     # coverage report at all and codecov/patch would never post -- not even a vacuous pass, no check at
     # all, and the required `validate` aggregate treats a skipped job as success (#7318-#7321: 3
-    # packages/loopover-miner/lib-only PRs merged this way with validate-tests never running). Running the
-    # shards guarantees the 3 uploads so Codecov posts a real patch verdict covering whichever package
-    # actually changed (review-enrichment/** via the `rees` flag from validate-code; packages/loopover-mcp,
+    # packages/loopover-miner/lib-only PRs merged this way with validate-tests never running). Running it
+    # guarantees the upload so Codecov posts a real patch verdict covering whichever package actually
+    # changed (review-enrichment/** via the `rees` flag from validate-code; packages/loopover-mcp,
     # packages/loopover-engine, packages/loopover-miner, and packages/discovery-index via their entries in
-    # vitest.config.ts's coverage.include, exercised by the root test/** suite these shards already run).
+    # vitest.config.ts's coverage.include, exercised by the root test/** suite this job already runs).
     # Draft PRs still skip the whole fan-out (#6448), so these triggers only apply to ready PRs.
+    #
+    # UNSHARDED (2026-07-24, queue-pressure + reliability consolidation): this ran as a 3-shard matrix
+    # (#ci-shard-coverage) to cut wall-clock; at the one-shot gate's PR volume those 2 extra runners per
+    # PR were a major driver of org-wide concurrency saturation (observed: 60-run queue), and the shard
+    # seams were a recurring flake/complexity source (blob merges, per-shard threshold suppression,
+    # duration-aware bin-packing, premature partial Codecov verdicts needing after_n_builds). One slower
+    # job trades ~10-15 min of PR latency for 2 fewer runners per PR, one honest whole-suite coverage
+    # report (the same signal `npm run test:coverage` gives locally), an inline global threshold check,
+    # and no merge job at all.
     if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
+    timeout-minutes: 45
     env:
       VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
     steps:
@@ -938,38 +934,23 @@ jobs:
           key: turbo-tests-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
       - name: Prepare test reports dir
         run: mkdir -p reports/junit
-      # Restore-only -- this job never saves it, test-timing-refresh.yml is the sole writer, on its own
-      # schedule (pulling from Codecov's Test Analytics API, which already pools per-test durations
-      # across every push-to-main run). key never actually matches (no save ever uses this literal
-      # string); it exists only so the step always falls through to the restore-keys prefix match,
-      # picking whatever the most recent refresh wrote. A cache MISS here is always safe: see
-      # scripts/compute-test-shards.ts's fallback -- it splits evenly across shards when no timing
-      # data is available for a file (or none at all), the same balance vitest's own --shard already
-      # gives today, so this can only make shard balance better than today's baseline, never worse.
-      - name: Restore test timing cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: test-timing.json
-          key: test-timing-unused
-          restore-keys: |
-            test-timing-
-      - name: Test with coverage (shard ${{ matrix.shard }}/3)
+      - name: Test with coverage
         id: coverage
         env:
-          # Disables vitest.config.ts's own global 90% threshold check for THIS per-shard invocation -- a
-          # single shard only exercises part of the tree, so it would always false-fail. The global-threshold
-          # "catastrophe net" this disables is NOT dropped from CI, though: validate-tests-merge (below) merges
-          # all shards' coverage via vitest's own --mergeReports and re-checks the threshold against that
-          # merged (whole-suite) total, without COVERAGE_NO_THRESHOLDS set.
-          COVERAGE_NO_THRESHOLDS: "true"
+          # Disables vitest.config.ts's own global 90% threshold check ONLY for scoped-selection runs (the
+          # SCOPED_TEST_SELECTION expression below, verbatim): a scoped run exercises a narrow slice of the
+          # tree, so the whole-include-set threshold would always false-fail it (Codecov's patch gate still
+          # enforces real per-line coverage on the scoped diff). Full-suite runs keep the threshold INLINE --
+          # unsharded, this job sees the whole suite, so the "loose catastrophe net" (e.g. a deleted test
+          # file) that previously required the separate validate-tests-merge job now just... runs here.
+          COVERAGE_NO_THRESHOLDS: ${{ (github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.controlPlane != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true')) && 'true' || '' }}
           # Same self-contained-test-file narrowing as the pre-sharding job had -- see the `mcpCliHarness`/
           # `minerTestHarness` filter comments in the `changes` job above for the full rationale.
           SKIP_MCP_CLI_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.mcpCliHarness != 'true' }}
           SKIP_MINER_TEST_HARNESS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.minerTestHarness != 'true' }}
           # Scoped test selection (#ci-scoped-test-selection): a PR touching miner/mcp/discoveryIndex/backend --
           # never rees or engine -- runs vitest's own --changed against origin/main instead of the full
-          # ~2,900+-test suite, since the same 6-shard fan-out this job exists for (see header comment) is
-          # otherwise massive overkill for a diff touching a handful of files. engine is deliberately EXCLUDED
+          # ~2,900+-test suite, which is otherwise massive overkill for a diff touching a handful of files. engine is deliberately EXCLUDED
           # from this fast path: it's the one package other code imports through a built, gitignored dist/ that
           # --changed's import-graph analysis can't safely trace across a node_modules/package.json-exports
           # boundary -- verified by reproducing a real missed regression (editing packages/loopover-engine/
@@ -1055,7 +1036,7 @@ jobs:
             # scratch, and record it as a step output so "Verify coverage report exists" below can tell
             # this apart from a real crash that should still fail loudly.
             set -o pipefail
-            npm run test:coverage -- --maxWorkers=4 --shard=${{ matrix.shard }}/3 --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}" 2>&1 | tee vitest-scoped-output.log
+            npm run test:coverage -- --maxWorkers=4 --reporter=default --reporter=junit --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}" "${SCOPE_ARGS[@]}" 2>&1 | tee vitest-scoped-output.log
             if grep -q "No test files found" vitest-scoped-output.log; then
               echo "no_tests_matched=true" >> "$GITHUB_OUTPUT"
             elif [ ! -s coverage/lcov.info ]; then
@@ -1066,39 +1047,18 @@ jobs:
               # which is NOT a failed run; the junit report written above is the proof the suite ran.
               # Without this output, "Verify coverage report exists" fails the green run. The success
               # signal here is the test run itself, never the coverage file's size.
-              echo "scoped run passed but exercised no src/** files -- skipping coverage artifacts for this shard"
+              echo "scoped run passed but exercised no src/** files -- skipping coverage artifacts"
               echo "no_src_coverage=true" >> "$GITHUB_OUTPUT"
             fi
           else
-            # Duration-aware sharding (#ci-duration-aware-sharding), full-suite case only: vitest's own
-            # --shard splits by file COUNT alone, no duration awareness -- confirmed via real per-shard CI
-            # timing data to produce a consistent ~20-30% gap between the slowest and fastest of the 6
-            # shards, every run sampled. Deliberately not applied to the scoped-selection branch above:
-            # that file set isn't known until vitest resolves --changed itself, so a precomputed
-            # assignment can't cover it without duplicating vitest's own dependency-graph resolution here.
-            # compute-test-shards.ts enforces its own hard invariant (the union of all 3 shards' files
-            # must exactly equal the discovered file set, no file missing or duplicated) and refuses to
-            # write output at all if that's ever violated, so a bug here fails this step loudly rather
-            # than silently dropping a test file from CI.
-            node --experimental-strip-types scripts/compute-test-shards.ts --shards=3 --timing=test-timing.json --output=shard-assignment.json
-            # #7767: capture via a checked assignment so a throw in the node one-liner (bad matrix.shard
-            # value, corrupt/missing shard-assignment.json) actually aborts this step -- the old
-            # `mapfile -t SHARD_FILES < <(node -e ...)` ran node in a subshell whose non-zero exit was
-            # swallowed (mapfile itself returns 0), leaving SHARD_FILES empty and silently making vitest
-            # run the entire suite instead of its slice. Same fix idiom as compose_file_args (#7765).
-            if ! SHARD_FILES_RAW="$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-assignment.json','utf8'))['${{ matrix.shard }}'].join('\n'))")"; then
-              echo "::error::failed to resolve shard file list for shard ${{ matrix.shard }}"
-              exit 1
-            fi
-            mapfile -t SHARD_FILES <<< "$SHARD_FILES_RAW"
-            npm run test:coverage -- --maxWorkers=4 "${SHARD_FILES[@]}" --reporter=default --reporter=blob --reporter=junit --outputFile.blob=blob-report/report-${{ matrix.shard }}.blob --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
+            npm run test:coverage -- --maxWorkers=4 --reporter=default --reporter=junit --outputFile.junit=reports/junit/vitest.xml "${EXCLUDE_ARGS[@]}"
           fi
       - name: Test failure guidance
         if: ${{ failure() && steps.coverage.conclusion == 'failure' }}
         run: |
-          echo "::error title=Tests::The backend test coverage suite failed (shard ${{ matrix.shard }}/3)."
-          echo "Coverage itself is gated by Codecov on changed lines (codecov/patch), computed from all shards' merged lcov."
-          echo "Reproduce locally with: 'npm run test:coverage' (unsharded, runs the whole suite)."
+          echo "::error title=Tests::The backend test coverage suite failed."
+          echo "Coverage itself is gated by Codecov on changed lines (codecov/patch)."
+          echo "Reproduce locally with: 'npm run test:coverage' (the identical whole-suite run)."
       - name: Verify coverage report exists
         # Skipped when the scoped-selection branch above matched zero test files (steps.coverage.outputs.
         # no_tests_matched) -- a legitimately test-free diff (e.g. docs-only under a scoped path) writes no
@@ -1113,17 +1073,7 @@ jobs:
             echo "::error title=Coverage::coverage/lcov.info is missing or empty"
             exit 1
           fi
-      # Consumed by validate-tests-merge to re-check the global coverage threshold against all shards
-      # combined -- see this job's own header comment.
-      - name: Upload coverage blob report
-        if: ${{ success() && steps.coverage.outputs.no_tests_matched != 'true' && steps.coverage.outputs.no_src_coverage != 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-blob-shard-${{ matrix.shard }}
-          path: blob-report/report-${{ matrix.shard }}.blob
-          retention-days: 1
-      # Direct upload for trusted contexts (push + same-repo PRs). Multiple shards' uploads for the same
-      # commit/PR are additive in Codecov -- see this job's own header comment.
+      # Direct upload for trusted contexts (push + same-repo PRs).
       - name: Upload coverage to Codecov
         # Same no_tests_matched skip as the verify step above (#8167 follow-up): with zero matched tests
         # there is no lcov to upload, and fail_ci_if_error would otherwise turn that non-event red.
@@ -1132,7 +1082,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
-          flags: shard-${{ matrix.shard }}
+          flags: backend
           disable_search: true
           override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
           override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -1149,7 +1099,7 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           files: ./coverage/lcov.info
-          flags: shard-${{ matrix.shard }}
+          flags: backend
           disable_search: true
           override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
           override_commit: ${{ github.event.pull_request.head.sha }}
@@ -1165,7 +1115,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./reports/junit/vitest.xml
           report_type: test_results
-          flags: shard-${{ matrix.shard }}
+          flags: backend
           disable_search: true
           override_branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
           override_commit: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
@@ -1177,82 +1127,12 @@ jobs:
         with:
           files: ./reports/junit/vitest.xml
           report_type: test_results
-          flags: shard-${{ matrix.shard }}
+          flags: backend
           disable_search: true
           override_branch: ${{ github.event.pull_request.head.repo.owner.login }}:${{ github.event.pull_request.head.ref }}
           override_commit: ${{ github.event.pull_request.head.sha }}
           override_pr: ${{ github.event.pull_request.number }}
           fail_ci_if_error: false
-
-  # Re-checks vitest.config.ts's global 90% coverage threshold against all shards MERGED -- each shard
-  # above deliberately disables that check for itself (COVERAGE_NO_THRESHOLDS=true), since a single shard's
-  # partial view would always false-fail it. This is the "loose catastrophe net" (e.g. a deleted test file)
-  # vitest.config.ts's own comment describes; Codecov's patch gate (changed-lines only) doesn't cover a
-  # whole-repo regression outside the diff, so this is what actually restores that backstop for CI, using
-  # vitest's own --mergeReports against each shard's uploaded blob report.
-  #
-  # That "merged = whole-suite" assumption breaks when scoped test selection (#ci-scoped-test-selection,
-  # see the shard job's own SCOPED_TEST_SELECTION comment above) was active for this run: all 3 shards then
-  # ran the SAME narrow `--changed=origin/main` subset (not a partition of the ~2,900-test full suite), so
-  # merging them still only reconstructs that narrow slice's coverage -- correctly high for the files it
-  # touches, but the threshold judges the WHOLE include set, so it false-fails even a fully-tested scoped
-  # PR (confirmed live: a 3-file packages/loopover-mcp-only PR with 100% coverage on its own two touched
-  # test files still reported 0%/80% and failed). This job disables the threshold in that same case, via
-  # the identical SCOPED_TEST_SELECTION condition -- Codecov's patch gate already enforces real per-line
-  # coverage on a scoped PR's actual diff regardless, so nothing is lost by skipping the whole-suite
-  # backstop specifically when it can't see the whole suite.
-  validate-tests-merge:
-    name: validate-tests-merge
-    needs: [changes, validate-tests]
-    # Same trigger as validate-tests: whenever shards ran (REES/mcp/engine/miner/discoveryIndex-only PRs
-    # included), merge their reports too.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-      # Same cache key as validate-code/validate-tests -- a cache hit here is the common case since those
-      # jobs run concurrently and one of them usually wins the race to populate it first. save-cache:
-      # false -- this job only ever reads that cache, it never writes to it (see
-      # .github/actions/setup-workspace).
-      - name: Setup workspace
-        uses: ./.github/actions/setup-workspace
-        with:
-          save-cache: "false"
-      - name: Download all shards' blob reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: coverage-blob-shard-*
-          path: all-blob-reports
-          merge-multiple: true
-      - name: Merge shard coverage and check the global threshold
-        env:
-          # Mirrors validate-tests' own SCOPED_TEST_SELECTION condition exactly (this job already has
-          # `needs.changes` available). vitest.config.ts checks this var for TRUTHINESS, not `=== 'true'`,
-          # so the false branch must be an empty string (falsy), not the literal string "false" (which JS
-          # treats as truthy) -- that's why this is a `&& 'true' || ''` expression, not a bare boolean.
-          COVERAGE_NO_THRESHOLDS: ${{ (github.event_name == 'pull_request' && vars.SCOPED_TEST_SELECTION_ENABLED != 'false' && needs.changes.outputs.rees != 'true' && needs.changes.outputs.controlPlane != 'true' && needs.changes.outputs.engine != 'true' && needs.changes.outputs.backendConfig != 'true' && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.discoveryIndex == 'true')) && 'true' || '' }}
-        run: |
-          # Unlike the per-shard --changed run (validate-tests above), --mergeReports exits 1 (not 0) when
-          # every merged shard's report represents zero matched test files -- confirmed live: PR #8168, a
-          # pure docs-only scoped PR where all 3 shards legitimately matched nothing, printed vitest's own
-          # "No test files found, exiting with code 1" and failed here even with COVERAGE_NO_THRESHOLDS
-          # already disabling the threshold check that comment block above describes. Only treat that exact
-          # case as success, and only when COVERAGE_NO_THRESHOLDS is set (i.e. this run is the scoped case
-          # to begin with) -- in the unscoped full-suite case, "no test files found" while merging would be
-          # a real, surprising break worth failing loudly on, not a legitimate outcome to paper over.
-          set -o pipefail
-          if npx vitest run --coverage --mergeReports=all-blob-reports 2>&1 | tee vitest-merge-output.log; then
-            exit 0
-          fi
-          if [ -n "$COVERAGE_NO_THRESHOLDS" ] && grep -q "No test files found" vitest-merge-output.log; then
-            echo "Merged report matched zero test files, which is expected for this scoped, test-free PR -- not a failure."
-            exit 0
-          fi
-          exit 1
 
   # Diff-scoped security gate: fails only on vulnerabilities this PR introduces.
   # Ambient advisories in untouched deps are handled by Renovate + the scheduled
@@ -1283,7 +1163,7 @@ jobs:
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, validate-code, validate-tests, validate-tests-merge, security]
+    needs: [changes, validate-code, validate-tests, security]
     if: ${{ always() }}
     # Pure result-aggregation (reads needs.*.result, echoes pass/fail) -- no build/test work, so it never
     # needed the self-hosted pool's cached toolchain (#2507).

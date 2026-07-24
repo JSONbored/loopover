@@ -75,7 +75,7 @@ describe("Codecov policy", () => {
     expect(String(testResultsUpload.if)).toContain("no_src_coverage != 'true'");
     // The scoped branch must derive BOTH outputs from the run itself (vitest's own stdout + exit status),
     // never from re-deriving selection logic -- pin the detector lines so they can't silently vanish.
-    const coverageStep = steps[stepNames.indexOf("Test with coverage (shard ${{ matrix.shard }}/3)")]!;
+    const coverageStep = steps[stepNames.indexOf("Test with coverage")]!;
     expect(String(coverageStep.run)).toContain('grep -q "No test files found" vitest-scoped-output.log');
     expect(String(coverageStep.run)).toContain('echo "no_src_coverage=true"');
     expect(String(verifyStep.run)).toContain("coverage/lcov.info is missing or empty");
@@ -254,8 +254,9 @@ describe("Codecov policy", () => {
 
     const validateTests = nestedRecord(workflow, ["jobs", "validate-tests"]);
     expect(String(validateTests.if)).toContain("needs.changes.outputs.rees == 'true'");
-    const validateTestsMerge = nestedRecord(workflow, ["jobs", "validate-tests-merge"]);
-    expect(String(validateTestsMerge.if)).toContain("needs.changes.outputs.rees == 'true'");
+    // Unsharded (2026-07-24): the merge job is gone -- the whole-suite threshold runs inline in
+    // validate-tests, so the only invariant left to pin is that no stale merge job lingers.
+    expect((workflow as { jobs?: Record<string, unknown> }).jobs?.["validate-tests-merge"]).toBeUndefined();
   });
 
   it("captures control-plane node:test coverage for Codecov (#7743)", () => {
@@ -295,7 +296,5 @@ describe("Codecov policy", () => {
 
     const validateTests = nestedRecord(workflow, ["jobs", "validate-tests"]);
     expect(String(validateTests.if)).toContain("needs.changes.outputs.controlPlane == 'true'");
-    const validateTestsMerge = nestedRecord(workflow, ["jobs", "validate-tests-merge"]);
-    expect(String(validateTestsMerge.if)).toContain("needs.changes.outputs.controlPlane == 'true'");
   });
 });

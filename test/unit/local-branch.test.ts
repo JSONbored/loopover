@@ -213,6 +213,46 @@ describe("local branch analysis", () => {
     expect(analysis.workspaceIntelligence.localScorerDiagnostics?.warnings).toHaveLength(MAX_LOCAL_SCORER_WARNING_COUNT);
   });
 
+  it("REGRESSION (#8325): mode 'gittensor_root' is NOT metadata-only (the scorer ran the real gittensor_root binary, not a metadata-only fallback)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/scorer.ts", additions: 10, deletions: 0, status: "modified" }],
+        localScorer: { mode: "gittensor_root", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scorePreview.blockedBy).not.toEqual(expect.arrayContaining([expect.objectContaining({ code: "metadata_only" })]));
+  });
+
+  it("REGRESSION (#8325): mode 'metadata_only' IS metadata-only, contrasting the 'gittensor_root' case above (both operands of the metadataOnly && independently exercised)", () => {
+    const analysis = buildLocalBranchAnalysis({
+      input: {
+        login: "oktofeesh1",
+        repoFullName: repo.fullName,
+        changedFiles: [{ path: "src/scorer.ts", additions: 10, deletions: 0, status: "modified" }],
+        localScorer: { mode: "metadata_only", sourceTokenScore: 48, totalTokenScore: 80, sourceLines: 46 },
+      },
+      repo,
+      issues: [],
+      pullRequests: [],
+      profile,
+      outcomeHistory,
+      scoringSnapshot,
+      scoringProfile,
+    });
+
+    expect(analysis.scorePreview.blockedBy).toEqual(expect.arrayContaining([expect.objectContaining({ code: "metadata_only" })]));
+  });
+
   it("projects a blocked local branch into a useful after-pending-merge scenario", () => {
     const pressuredHistory: ContributorOutcomeHistory = {
       ...outcomeHistory,

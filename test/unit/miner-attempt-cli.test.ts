@@ -1372,6 +1372,7 @@ describe("runAttempt (#5132)", () => {
         },
         release: vi.fn(),
         listSlots: () => [],
+        purgeByRepo: vi.fn(),
         close: vi.fn(),
       }),
       openClaimLedger: () => claimLedger,

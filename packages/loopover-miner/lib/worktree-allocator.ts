@@ -38,6 +38,7 @@ export type WorktreeAllocator = {
   acquire(attemptId: string, repoFullName: string): WorktreeAllocation;
   release(attemptId: string): WorktreeAllocation | null;
   listSlots(): WorktreeAllocation[];
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 
@@ -304,6 +305,18 @@ export function openWorktreeAllocator(options: {
   const listSlots = db.prepare(
     "SELECT slot_index, worktree_path, attempt_id, repo_full_name, status, owner_pid, owner_host, allocated_at FROM worktree_slots ORDER BY slot_index",
   );
+  // #8320: a defensive backstop, not the normal path -- release()/reclaimOrphanedAllocations() already blank
+  // repo_full_name on every path that frees a slot, so this is expected to match 0 rows in the overwhelming
+  // majority of real calls. Deliberately an UPDATE, never a DELETE: worktree_slots is a fixed pool of
+  // maxConcurrency pre-allocated rows (slot_index is the primary key and every index must always exist), so
+  // removing a row would break ensureSlots'/selectFreeSlot's invariant. The `status = 'free'` guard is load-
+  // bearing -- an `active` row's repo_full_name reflects a live, currently-running attempt's real worktree
+  // checkout on disk, and force-clearing it would desync the allocator from that checkout.
+  const purgeFreeByRepo = db.prepare(`
+    UPDATE worktree_slots
+    SET repo_full_name = NULL, attempt_id = NULL, owner_pid = NULL, owner_host = NULL, allocated_at = NULL
+    WHERE status = 'free' AND repo_full_name = ?
+  `);
 
   const allocator: WorktreeAllocator = {
     dbPath: resolvedPath,
@@ -357,6 +370,11 @@ export function openWorktreeAllocator(options: {
     },
     listSlots() {
       return (listSlots.all() as WorktreeSlotRow[]).map(rowToAllocation);
+    },
+    purgeByRepo(repoFullName) {
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const info = purgeFreeByRepo.run(normalizedRepo);
+      return Number(info.changes);
     },
     close() {
       db.close();

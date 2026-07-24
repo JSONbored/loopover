@@ -59,9 +59,17 @@ export async function main(
     const { allowedHostCount, disabled } = await generateEgressFirewallConfig(dnsmasqConfigPath, rulesetScriptPath);
     io.log(JSON.stringify({ event: "egress_firewall_config_generated", allowedHostCount, disabled, dnsmasqConfigPath, rulesetScriptPath }));
   } catch (error) {
+    /* v8 ignore next -- this call site's only real error sources (fs writes, the tolerant-by-contract
+     * resolveAmsPolicy) always throw real Error instances; the non-Error side of this ternary is defensive
+     * against a future dependency change, not reachable through any input this function's own tests can drive. */
     io.error(JSON.stringify({ event: "egress_firewall_config_generation_failed", message: error instanceof Error ? error.message : String(error) }));
     io.exit(1);
   }
 }
 
+/* v8 ignore next -- subprocess-only executed (same convention as bin/loopover-miner.ts's own dispatcher tail,
+ * see the packages/loopover-miner/bin note in vitest.config.ts's coverage.include): main()'s own body is fully
+ * unit-covered in-process above via injectable IO; only this self-invocation guard's true branch requires
+ * actually running the file as `node generate-egress-firewall-config.js`, which egress-firewall-entrypoint.sh
+ * does in production and packages/loopover-miner/scripts/verify-egress-firewall.sh proves end to end. */
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) void main();

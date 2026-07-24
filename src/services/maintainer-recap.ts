@@ -14,6 +14,9 @@ import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signa
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import type { DriftRecapSection } from "./maintainer-recap-drift";
+import { buildPerRepoRecapSection } from "./maintainer-recap-per-repo";
+import { buildCalibrationRecapSection } from "./maintainer-recap-calibration";
+import { buildGateOutcomesRecapSection } from "./maintainer-recap-gate-outcomes";
 import { buildRoutingRecapSection } from "./maintainer-recap-routing";
 import { REVIEWER_ROUTING_SHADOW_EVENT_TYPE, type RoutingShadowDecision } from "./reviewer-routing";
 import type { OutcomeCalibration } from "./outcome-calibration";
@@ -167,10 +170,11 @@ function recapSectionLines(items: string[], fallback: string): string[] {
 export function formatMaintainerRecap(report: RecapReport, options: { configDrift?: DriftRecapSection; routingShadow?: { title: string; lines: string[] } } = {}): string {
   const { totals } = report;
   const rate = totals.gateFalsePositiveRate !== null ? `${Math.round(totals.gateFalsePositiveRate * 100)}%` : "n/a";
-  const perRepoLines = report.repos.map(
-    (repo) =>
-      `${redactRecapLine(repo.repoFullName)} — ${repo.reviewed} reviewed, ${repo.merged} merged, ${repo.closed} closed, ${repo.gateFalsePositives} gate false-positive(s), ${repo.gateOverrides} override(s), ${repo.reversals} reversal(s)`,
-  );
+  // #8372: compose the dedicated section builders instead of hand-rolling inline blocks, so a live digest now
+  // renders the same capped/sorted Per-repo, Calibration, and Gate-outcomes sections that ship unit-tested.
+  const perRepo = buildPerRepoRecapSection({ windowDays: report.windowDays, repos: report.repos });
+  const calibration = buildCalibrationRecapSection({ windowDays: report.windowDays, totals });
+  const gateOutcomes = buildGateOutcomesRecapSection({ windowDays: report.windowDays, totals });
   const lines = [
     "# Maintainer recap",
     "",
@@ -190,7 +194,15 @@ export function formatMaintainerRecap(report: RecapReport, options: { configDrif
     `- Reversals: ${totals.reversals}`,
     "",
     "## Per-repo",
-    ...recapSectionLines(perRepoLines, "_No repositories in this window._"),
+    ...recapSectionLines(perRepo.lines, "_No repositories in this window._"),
+    "",
+    // #8372: Calibration + Gate-outcomes are unconditional — their inputs (window + totals) always exist, so
+    // every digest carries both sections. Header via the builder's own title (like the configDrift render).
+    `## ${redactRecapLine(calibration.title)}`,
+    ...recapSectionLines(calibration.lines, "_No calibration data for this window._"),
+    "",
+    `## ${redactRecapLine(gateOutcomes.title)}`,
+    ...recapSectionLines(gateOutcomes.lines, "_No gate outcomes for this window._"),
     // #8214: optional config-drift section (maintainer-recap-drift.ts) — appended only when the caller has a
     // sentinel projection to render, so every existing digest stays byte-identical until the sentinel wires in.
     ...(options.configDrift
@@ -255,6 +267,10 @@ export async function runMaintainerRecap(
     repos?: MaintainerRecapRepoInput[];
     /** Pre-built report for test injection; skips {@link buildMaintainerRecap} when set. */
     report?: RecapReport;
+    /** #8372: optional config-drift section forwarded straight to {@link formatMaintainerRecap}. The real cron
+     *  caller (src/review/maintainer-recap-wire.ts) does NOT yet supply one — live digests stay unchanged for
+     *  that path until a sentinel projection wires it in; no live drift data is sourced here. */
+    configDrift?: DriftRecapSection;
     /** When explicitly false, short-circuits before build/format/delivery. Default: run. */
     enabled?: boolean;
   } = {},
@@ -271,7 +287,12 @@ export async function runMaintainerRecap(
   // #8229 stage 1: the routing-shadow section reads the window's recorded decisions straight from the
   // audit trail — fail-safe to an absent section (the recap must never break on a read blip).
   const routingShadow = await loadRoutingRecapSection(env, report.windowDays, options.generatedAt ?? nowIso());
-  const formatted = formatMaintainerRecap(report, routingShadow ? { routingShadow } : {});
+  // #8372: forward the caller's optional configDrift alongside the routing-shadow section. maintainer-recap-
+  // wire.ts passes no configDrift today, so its live digests stay unchanged until a sentinel projection wires in.
+  const formatted = formatMaintainerRecap(report, {
+    ...(options.configDrift ? { configDrift: options.configDrift } : {}),
+    ...(routingShadow ? { routingShadow } : {}),
+  });
   const [discord, slack] = await Promise.all([
     deliverRecapToDiscord(env, report, formatted),
     deliverRecapToSlack(env, report, formatted),

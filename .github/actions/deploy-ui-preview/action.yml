@@ -64,9 +64,14 @@ runs:
         #    smuggled scripts/binaries). A few extensionless CF asset files are explicitly permitted.
         #    `zip` covers the served downloads (e.g. /downloads/loopover-extension.zip) — a passive
         #    static asset wrangler only uploads (never executes), so allowing it doesn't run fork code.
+        #    `.nojekyll` is a zero-byte, purely-advisory host-compatibility marker the SSR build tooling
+        #    (Nitro, TanStack Start's build layer) emits into client/ by default for broad static-host
+        #    portability — no executable content, same risk profile as _headers/_redirects/.assetsignore
+        #    below (#8566 gap-closure: this action is brand-new as of #8523 and had never actually built
+        #    a real bundle before, so this exception was simply never exercised until now).
         unexpected="$(find . -regextype posix-extended -type f \
           -not -iregex '.*\.(mjs|js|cjs|map|json|css|html?|txt|svg|png|jpe?g|gif|webp|avif|ico|bmp|woff2?|ttf|otf|eot|wasm|xml|webmanifest|md|csv|zip|wgsl|glb|gltf)$' \
-          -not -name '_headers' -not -name '_redirects' -not -name '_routes.json' -not -name '.assetsignore')"
+          -not -name '_headers' -not -name '_redirects' -not -name '_routes.json' -not -name '.assetsignore' -not -name '.nojekyll')"
         if [ -n "$unexpected" ]; then
           echo "::error::Bundle contains unexpected file types — refusing to deploy:"
           printf '%s\n' "$unexpected"

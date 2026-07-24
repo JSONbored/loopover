@@ -1,13 +1,10 @@
-import { chmodSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { createHash, createHmac } from "node:crypto";
 import { generateAnonSecret, hmacAnonymize as engineHmacAnonymize } from "@loopover/engine";
 import { readPrOutcomes } from "./pr-outcome.js";
 import type { NormalizedPrOutcomePayload, PrOutcomeLedgerReader } from "./pr-outcome.js";
 import { initEventLedger } from "./event-ledger.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
-import { resolveLocalStoreDbPath } from "./local-store.js";
+import { openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 
 // Optional anonymized Orb telemetry export (#4277, network send wired in #5681). The self-host Orb collector
 // (src/selfhost/orb-collector.ts, #1255) is ALWAYS-ON for a maintainer's own instance; a miner runs on a
@@ -113,10 +110,9 @@ export function buildAnonymizedOrbBatch(
  */
 export function openOrbExportStore(dbPath: string = resolveOrbExportDbPath()): OrbExportStore {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  // openLocalStoreDb centralizes the mkdir(0o700)/chmod(0o600)/busy_timeout + crash-safe cleanup registration and
+  // treats ':memory:' as a no-file special case, so this store no longer hand-rolls that boilerplate (#8319).
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`CREATE TABLE IF NOT EXISTS orb_export_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
 
   const getStatement = db.prepare("SELECT value FROM orb_export_meta WHERE key = ?");

@@ -29,13 +29,19 @@ vi.mock("node:sqlite", async (importOriginal) => {
   }
   return { ...actual, DatabaseSync: RecordingDatabaseSync };
 });
-import {
+import { cleanupResourceCount, resetProcessLifecycleForTesting } from "../../packages/loopover-miner/lib/process-lifecycle.js";
+
+// Import the .ts SOURCE (not the build-time .js) via a non-literal specifier. Once `build:miner` has produced
+// the artifact, a plain `.js` import loads that .js and leaves coverage.include's `.ts` entry at 0% — the
+// .js-vs-.ts mismatch that closed #8500/#8516 on codecov/patch. Same pattern as miner-replay-snapshot.test.ts (#7796).
+const LAPTOP_INIT_MODULE = "../../packages/loopover-miner/lib/laptop-init.ts";
+const {
   checkDockerPresent,
   checkLaptopStateSqlite,
   initLaptopState,
   resolveLaptopStateDbPath,
   runInit,
-} from "../../packages/loopover-miner/lib/laptop-init.js";
+} = (await import(LAPTOP_INIT_MODULE)) as typeof import("../../packages/loopover-miner/lib/laptop-init.js");
 
 const roots: string[] = [];
 
@@ -89,6 +95,16 @@ describe("loopover-miner laptop init (#2329)", () => {
     const second = initLaptopState(env);
     expect(second.created).toBe(false);
     expect(readFileSync(join(first.stateDir, "marker.txt"), "utf8")).toBe("keep-me");
+  });
+
+  it("opens its store via openLocalStoreDb, registering and unregistering it for crash-safe cleanup within the call (#8319)", () => {
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const root = tempRoot();
+    initLaptopState({ LOOPOVER_MINER_CONFIG_DIR: join(root, "state") });
+    // initLaptopState closes its own handle internally before returning (it exposes no db handle), so a
+    // leftover registration here would mean the register→unregister cycle didn't complete cleanly.
+    expect(cleanupResourceCount()).toBe(0);
   });
 
   it("runInit prints human text (0) and machine JSON with --json", async () => {

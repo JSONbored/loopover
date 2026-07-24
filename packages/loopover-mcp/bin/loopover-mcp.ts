@@ -128,7 +128,7 @@ const CLI_COMMAND_SPEC = {
   "issue-slop": [],
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
-  agent: ["plan", "status", "explain", "packet"],
+  agent: ["start", "plan", "status", "explain", "packet"],
   maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
 };
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
@@ -4899,6 +4899,26 @@ async function runAgentCli(args: any) {
   const subcommand = args[0] ?? "help";
   if (subcommand === "--help" || subcommand === "help") return printAgentHelp();
   const options = parseOptions(args.slice(1));
+  if (subcommand === "start") {
+    // #8314: the CLI-typable counterpart to the loopover_agent_start_run stdio tool -- POSTs the same
+    // /v1/agent/runs request shape. `objective` and `actorLogin` are non-optional in agentRunShape
+    // (src/mcp/server.ts), so enforce both here, resolving --login exactly as plan/packet do. surface is "cli"
+    // (not the stdio tool's "mcp") so the two entry points stay distinguishable server-side, per the issue.
+    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
+    if (!options.objective || options.objective === true) throw new Error('Pass --objective "..." to describe the run.');
+    const payload = await apiPost("/v1/agent/runs", {
+      objective: options.objective,
+      actorLogin: login,
+      surface: "cli",
+      target: stripUndefined({
+        repoFullName: options.repo,
+        pullNumber: optionalInteger(options.pull),
+        issueNumber: optionalInteger(Array.isArray(options.issue) ? options.issue[0] : options.issue),
+      }),
+    });
+    return outputAgentPayload(payload, options, `Queued LoopOver base-agent run for ${login}.`);
+  }
   if (subcommand === "plan") {
     const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
@@ -4944,6 +4964,11 @@ async function runAgentCli(args: any) {
   }
   throw new Error(`Unknown agent command: ${subcommand}`);
 }
+// Exported (as a separate statement, not an inline `export async function`, so the CLI_COMMAND_SPEC↔handler
+// parity test's `\n(?:async )?function ` boundary regex still delimits this handler correctly) so an in-process
+// unit test can call it directly for v8/Codecov coverage of the `agent start` branch -- a subprocess-spawned
+// CLI run is invisible to coverage. Same rationale as maintainCli's own export. (#8314)
+export { runAgentCli };
 
 function outputAgentPayload(payload: any, options: any, summary: any) {
   if (options.json) {
@@ -5362,6 +5387,7 @@ Source upload remains disabled.
 
 function printAgentHelp() {
   process.stdout.write(`Usage:
+  loopover-mcp agent start --login <github-login> --objective "..." [--repo owner/repo] [--pull <n>] [--issue <n>] [--json]
   loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--objective "..."] [--json]
   loopover-mcp agent status <run-id> [--json]
   loopover-mcp agent explain <run-id> [--json]

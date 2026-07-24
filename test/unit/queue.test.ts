@@ -10,7 +10,8 @@ import * as repositoriesModule from "../../src/db/repositories";
 import * as reviewEffortModule from "../../src/review/review-effort";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import * as sentryModule from "../../src/selfhost/sentry";
-import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { counterValue, renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
+import { REQUIRED_CONTEXTS_UNRESOLVED_METRIC } from "../../src/queue/ci-resolution";
 import { jobCoalesceKey } from "../../src/selfhost/queue-common";
 import {
   listCollisionEdges,
@@ -3241,6 +3242,7 @@ describe("queue processors", () => {
   // existed (see the sibling "#audit-rate-headroom: the per-PR re-review refreshes..." dedup test above).
   it("REGRESSION (#selfhost-ci-verification): expectedCiContexts in the cache key does not defeat within-job required-contexts memoization", async () => {
     const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    resetMetrics();
     await upsertInstallation(env, { action: "created", installation: { id: 9001, account: { login: "owner", id: 1, type: "Organization" }, target_type: "Organization", repository_selection: "selected", permissions: { pull_requests: "write", checks: "write" }, events: [] } });
     await upsertRepositoryFromGitHub(env, { name: "agent-repo", full_name: "owner/agent-repo", private: false, owner: { login: "owner" } }, 9001);
     await upsertRepositorySettings(env, { repoFullName: "owner/agent-repo", autonomy: { merge: "auto", update_branch: "auto" }, autoMaintain: { requireApprovals: 0, mergeMethod: "squash" }, gatePack: "oss-anti-slop" });
@@ -3271,6 +3273,9 @@ describe("queue processors", () => {
 
     // One fetch for the whole job despite three internal call sites sharing the config-aware cache key.
     expect(branchProtectionGets).toBe(1);
+    // #8358: the 403 branch-protection read sets resolved:false; runAgentMaintenancePlanAndExecute must
+    // observe that (metric + warn) rather than silently consuming only `.requiredContexts`.
+    expect(counterValue(REQUIRED_CONTEXTS_UNRESOLVED_METRIC)).toBeGreaterThanOrEqual(1);
     const deferred = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
       .bind("github_app.review_deferred_ci_pending")
       .first<{ n: number }>();

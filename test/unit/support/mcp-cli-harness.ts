@@ -196,6 +196,8 @@ export async function startFixtureServer(
     /** #6980: overrides POST /v1/preflight/review-risk and captures the request body. */
     reviewRisk?: Record<string, unknown>;
     onReviewRiskRequest?: (body: unknown) => void;
+    /** #8314: captures the POST /v1/agent/runs request body (the `agent start` CLI create request). */
+    onAgentRunRequest?: (body: unknown) => void;
     /** #6745: overrides the notification feed / mark-read responses, and captures the mark-read POST body. */
     notifications?: Record<string, unknown>;
     notificationsRead?: Record<string, unknown>;
@@ -389,6 +391,13 @@ export async function startFixtureServer(
     }
     if (request.url === "/v1/agent/plan-next-work" && request.method === "POST") {
       await readJsonRequest(request);
+      response.end(JSON.stringify(agentFixture()));
+      return;
+    }
+    // #8314: POST /v1/agent/runs — the base-agent run-create endpoint the `agent start` CLI (and the
+    // loopover_agent_start_run stdio tool) posts to; captures the request body for assertion.
+    if (request.url === "/v1/agent/runs" && request.method === "POST") {
+      options.onAgentRunRequest?.(await readJsonRequest(request));
       response.end(JSON.stringify(agentFixture()));
       return;
     }

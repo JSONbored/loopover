@@ -134,3 +134,38 @@ compose_file_args() {
     printf '%s\n' -f "$file"
   done
 }
+
+# Block until $service reports healthy, or fail the deploy (#8395). Moved here from
+# deploy-selfhost-image.sh so BOTH deploy scripts share one implementation instead of one hand-copying
+# the other -- deploy-selfhost-prebuilt.sh previously printed "complete" straight after
+# `docker compose up -d`, which only confirms the container STARTED, so a crash-looping image reported
+# success. Parameterized rather than reading caller globals: prebuilt's compose_args is a function-local
+# array. $log_prefix keeps each script's existing message wording byte-identical.
+# Usage: wait_for_healthy <service> <timeout_seconds> <log_prefix> <compose_args...>
+wait_for_healthy() {
+  local service="$1" timeout_seconds="$2" log_prefix="$3"
+  shift 3
+  local -a compose_args=("$@")
+  local deadline container_id status
+
+  deadline=$((SECONDS + timeout_seconds))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    container_id="$(docker compose "${compose_args[@]}" ps -q "$service" 2>/dev/null || true)"
+    if [ -n "$container_id" ]; then
+      status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+      if [ "$status" = "healthy" ]; then
+        echo "$log_prefix: $service is healthy"
+        return 0
+      fi
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      break
+    fi
+    sleep 2
+  done
+
+  echo "error: $service did not become healthy within ${timeout_seconds}s" >&2
+  docker compose "${compose_args[@]}" ps "$service" >&2 || true
+  docker compose "${compose_args[@]}" logs --tail=80 "$service" >&2 || true
+  exit 1
+}

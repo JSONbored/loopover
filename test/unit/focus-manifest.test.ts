@@ -701,6 +701,15 @@ describe("buildFocusManifestGuidance", () => {
     expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_preferred")).toBe(true);
   });
 
+  // #8326: the "preferred" branch was missing the bodyObserved guard its "required" sibling already has (tested
+  // just above), so a sparse webhook payload (body never observed -> linkedIssueCount === 0 only means "unknown")
+  // could surface the "prefers a linked issue" nudge as a false positive.
+  it("does NOT prefer-nudge when the PR body was never observed (bodyObserved: false)", () => {
+    const manifest = parseFocusManifest({ wantedPaths: ["src/"], linkedIssuePolicy: "preferred" });
+    const guidance = buildFocusManifestGuidance({ manifest, changedPaths: ["src/x.ts"], linkedIssueCount: 0, testFileCount: 1, bodyObserved: false });
+    expect(guidance.findings.some((finding) => finding.code === "manifest_linked_issue_preferred")).toBe(false);
+  });
+
   it("surfaces missing preferred labels and test expectations", () => {
     const guidance = buildFocusManifestGuidance({ manifest: wanted, changedPaths: ["src/x.ts"], labels: [], linkedIssueCount: 1, testFileCount: 0, passedValidationCount: 0 });
     expect(guidance.findings.some((finding) => finding.code === "manifest_missing_preferred_label")).toBe(true);

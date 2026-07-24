@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.12.0](https://github.com/JSONbored/loopover/compare/engine-v3.11.0...engine-v3.12.0) (2026-07-24)
+
+
+### Features
+
+* **calibration:** register the slop gate score as the registry's first ceiling knob, report-only ([#8224](https://github.com/JSONbored/loopover/issues/8224)) ([#8275](https://github.com/JSONbored/loopover/issues/8275)) ([112ead6](https://github.com/JSONbored/loopover/commit/112ead610b7333418247276fa0857560b218e100))
+* **miner:** AMS min-rank calibration loop over the local event ledger ([#8184](https://github.com/JSONbored/loopover/issues/8184), [#8185](https://github.com/JSONbored/loopover/issues/8185), [#8186](https://github.com/JSONbored/loopover/issues/8186), [#8187](https://github.com/JSONbored/loopover/issues/8187)) ([#8270](https://github.com/JSONbored/loopover/issues/8270)) ([211f32d](https://github.com/JSONbored/loopover/commit/211f32db6dcf4fc94d120b2eb02f0e1de457a4a8))
+* **selfhost:** allow per-repo AI CLI timeout overrides in review.ai_model ([#8364](https://github.com/JSONbored/loopover/issues/8364)) ([#8458](https://github.com/JSONbored/loopover/issues/8458)) ([ac06b43](https://github.com/JSONbored/loopover/commit/ac06b439ebd199870774cf994598143d99aad2be))
+
+
+### Fixes
+
+* **config-lint:** recognize fairnessAnalytics as a top-level field ([#8406](https://github.com/JSONbored/loopover/issues/8406)) ([cad1763](https://github.com/JSONbored/loopover/commit/cad1763d49075f5ce38f9242d5ad046bd196e176)), closes [#8365](https://github.com/JSONbored/loopover/issues/8365)
+* **engine:** add minRankAutotuneEnabled to the policy-spec dist-twin test's full-shape pin ([#8283](https://github.com/JSONbored/loopover/issues/8283)) ([5486d9e](https://github.com/JSONbored/loopover/commit/5486d9efa1a06a90eb8340575896758d610785a9))
+* **engine:** include fairnessAnalytics in parseFocusManifest's emptiness check ([#8414](https://github.com/JSONbored/loopover/issues/8414)) ([66cbefa](https://github.com/JSONbored/loopover/commit/66cbefacfb465bbb39af96e07198aa3fbe851bbe)), closes [#8366](https://github.com/JSONbored/loopover/issues/8366)
+* **engine:** reject path-traversal repo segments on the governor-ledger write path ([#8469](https://github.com/JSONbored/loopover/issues/8469)) ([434aada](https://github.com/JSONbored/loopover/commit/434aadaed72748dc3f77ca6c7a1c5c83496ffb51)), closes [#8350](https://github.com/JSONbored/loopover/issues/8350)
+
 ## [3.11.0](https://github.com/JSONbored/loopover/compare/engine-v3.10.0...engine-v3.11.0) (2026-07-23)
 
 

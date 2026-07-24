@@ -39,11 +39,12 @@ describe("handleOrbIngest()", () => {
     expect(await ingest(makeDb(), [ev({ outcome: "opened" })])).toEqual({ accepted: 0 });
   });
 
-  it("stores gate_verdict string vs null", async () => {
+  it("stores gate_verdict string vs null, coercing an oversized value to null", async () => {
     const db = makeDb();
-    await ingest(db, [ev({ pr_hash: "v1", gate_verdict: "merge" }), ev({ pr_hash: "v2" })]);
+    await ingest(db, [ev({ pr_hash: "v1", gate_verdict: "merge" }), ev({ pr_hash: "v2" }), ev({ pr_hash: "v3", gate_verdict: "v".repeat(33) })]);
     expect(await col(db, "v1", "gate_verdict")).toBe("merge");
     expect(await col(db, "v2", "gate_verdict")).toBeNull();
+    expect(await col(db, "v3", "gate_verdict")).toBeNull();
   });
 
   it("whitelists reversal_flag: valid kept, invalid + absent → 'none'", async () => {
@@ -250,6 +251,20 @@ describe("readOrbIngestBody()", () => {
     const req = new Request("http://collector", { method: "POST", body: stream, ...({ duplex: "half" } as object) });
     expect(await readOrbIngestBody(req, null)).toBeNull();
   });
+
+  it("REGRESSION (#8330): returns null instead of throwing when the underlying stream errors mid-read", async () => {
+    // Mirrors readOrbRelayRegisterBody's identical dropped-connection regression test (orb-relay.test.ts) — a
+    // first successful chunk (some bytes already arrived) followed by a stream error is the realistic shape of
+    // a mid-read network drop, not an error on the very first read.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"instance_id":'));
+        controller.error(new Error("simulated network reset"));
+      },
+    });
+    const req = new Request("http://collector", { method: "POST", body: stream, ...({ duplex: "half" } as object) });
+    await expect(readOrbIngestBody(req, null)).resolves.toBeNull();
+  });
 });
 
 describe("POST /v1/orb/ingest route", () => {
@@ -277,6 +292,22 @@ describe("POST /v1/orb/ingest route", () => {
   it("returns 413 when the body exceeds the ingest byte ceiling", async () => {
     const huge = "x".repeat(MAX_ORB_INGEST_BODY_BYTES + 16);
     const res = await app.request("/v1/orb/ingest", { method: "POST", body: huge }, createTestEnv());
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
+  });
+
+  it("REGRESSION (#8330): a dropped connection mid-upload returns the same clean 413, not a framework 500", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('{"instance_id":'));
+        controller.error(new Error("simulated network reset"));
+      },
+    });
+    const res = await app.request(
+      "/v1/orb/ingest",
+      { method: "POST", body: stream, ...({ duplex: "half" } as object) },
+      createTestEnv(),
+    );
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe("payload_too_large");
   });

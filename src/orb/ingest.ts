@@ -7,6 +7,7 @@ const MAX_BATCH = 500;
 const MAX_INSTANCE_ID_CHARS = 64;
 const MAX_HASH_CHARS = 128;
 const MAX_BUCKET_CHARS = 64;
+const MAX_VERDICT_CHARS = 32;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
 const VALID_REVERSALS = new Set(["none", "reopened", "reverted"]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
@@ -24,7 +25,11 @@ function parseContentLength(header: string | null | undefined): number | null {
 }
 
 /** Read the request body with a hard byte ceiling so a hostile sender can't make us buffer unbounded
- *  input. Returns null when the body exceeds MAX_ORB_INGEST_BODY_BYTES (the caller answers 413). */
+ *  input. Returns null when the body exceeds MAX_ORB_INGEST_BODY_BYTES OR when the underlying stream
+ *  itself errors (a dropped connection / network reset mid-read, mirrors readOrbRelayRegisterBody in
+ *  ../orb/relay.ts) — both callers (/v1/orb/ingest, /v1/ams/ingest) already treat null identically to
+ *  "reject this request", so a transient read failure degrades the same way an oversized payload does,
+ *  instead of throwing UNCAUGHT out of this function as a bare framework 500. */
 export async function readOrbIngestBody(request: Request, contentLengthHeader: string | null | undefined): Promise<string | null> {
   const declared = parseContentLength(contentLengthHeader);
   if (declared !== null && declared > MAX_ORB_INGEST_BODY_BYTES) return null;
@@ -35,17 +40,21 @@ export async function readOrbIngestBody(request: Request, contentLengthHeader: s
   const decoder = new TextDecoder();
   let total = 0;
   let out = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_ORB_INGEST_BODY_BYTES) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_ORB_INGEST_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      out += decoder.decode(value, { stream: true });
     }
-    out += decoder.decode(value, { stream: true });
+    return out + decoder.decode();
+  } catch {
+    return null;
   }
-  return out + decoder.decode();
 }
 
 interface OrbIngestEvent {
@@ -166,7 +175,7 @@ export async function handleOrbIngest(body: string, db: D1Database): Promise<Orb
           instance_id,
           event.repo_hash,
           event.pr_hash,
-          typeof event.gate_verdict === "string" ? event.gate_verdict : null,
+          typeof event.gate_verdict === "string" && event.gate_verdict.length <= MAX_VERDICT_CHARS ? event.gate_verdict : null,
           event.outcome,
           reversal,
           typeof event.gate_reasoncode_bucket === "string" && event.gate_reasoncode_bucket.length <= MAX_BUCKET_CHARS ? event.gate_reasoncode_bucket : null,

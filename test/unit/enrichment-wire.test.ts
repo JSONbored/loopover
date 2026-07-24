@@ -150,8 +150,9 @@ describe("probeReesSecretAtStartup", () => {
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect(fetchSpy).toHaveBeenCalledTimes(3); // the first attempt + 2 retries, all still 503
+    // fetchReesPingWithRetry is fire-and-forget; poll instead of sleeping the retry budget's worst case
+    // (the test's own vitest-setup override collapses the real inter-retry delay to 0, so this settles fast).
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3)); // the first attempt + 2 retries, all still 503
     const parsed = errSpy.mock.calls.map((c) => JSON.parse(c[0] as string));
     expect(parsed.some((p) => p.event === "rees_ping_error" && p.status === 503)).toBe(true);
     errSpy.mockRestore();
@@ -167,8 +168,7 @@ describe("probeReesSecretAtStartup", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     probeReesSecretAtStartup(env({ REES_URL: "https://rees.example", REES_SHARED_SECRET: "s3cret" }));
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
     expect(logSpy.mock.calls.some((c) => JSON.parse(c[0] as string).event === "rees_ping_ok")).toBe(true);
     expect(errSpy).not.toHaveBeenCalled();
     logSpy.mockRestore();

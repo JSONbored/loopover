@@ -2,7 +2,7 @@
 // Real-Postgres integration paths (migrations, pg-adapter translation) live in test/integration/selfhost-pg.test.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Pool, QueryResult } from "pg";
-import { createPgQueue } from "../../src/selfhost/pg-queue";
+import { createPgQueue, setPgRetryPoolQueryDelayMsForTest } from "../../src/selfhost/pg-queue";
 import { queueSnapshotFromBinding } from "../../src/selfhost/queue-common";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { RetryableJobError } from "../../src/queue/retryable";
@@ -14,6 +14,11 @@ import type { JobMessage } from "../../src/types";
 // maintenance-admission test in this file would be flaky against the real node:os signal. Default to
 // "unavailable" (null, never gates) here; individual host-load tests override the mock explicitly.
 vi.mock("../../src/selfhost/host-pressure", () => ({ hostLoadAvg1PerCore: vi.fn(() => null) }));
+
+// The PG connection-resilience tests below deliberately trigger retryPoolQuery's real ECONNRESET retry
+// path; collapse its per-attempt backoff to near-zero so they don't pay real wall-clock time for it
+// (the delayMs default and production behavior in src/selfhost/pg-queue.ts are unchanged).
+setPgRetryPoolQueryDelayMsForTest(0);
 
 const msg = (t: string): JobMessage => ({ type: t }) as unknown as JobMessage;
 const webhook = (sender: { login: string; type: string }, eventName = "issue_comment", action = "edited"): JobMessage =>

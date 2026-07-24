@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   analyzePRQueue,
   generatePublicComment,
+  isPublicScoreTermSafeForRepo,
   sanitizePublicComment,
   FORBIDDEN_PUBLIC_COMMENT_WORDS,
 } from "../../src/queue-intelligence";
@@ -385,5 +386,39 @@ describe("sanitizePublicComment — cohort/score public-boundary gap regression"
     expect(sanitizePublicComment("This change would outscore the previous approach on readability alone.")).toBe(
       "This change would outscore the previous approach on readability alone.",
     );
+  });
+});
+
+describe("sanitizePublicComment — allowBareScoreTerm option (#public-score-terms-scoping)", () => {
+  it("passes a bare 'score' mention through when allowBareScoreTerm is true", () => {
+    const text = "The resolver correctly filters by totalScore before returning results.";
+    expect(sanitizePublicComment(text, { allowBareScoreTerm: true })).toBe(text);
+  });
+
+  it("still throws on a bare 'score' mention when allowBareScoreTerm is explicitly false (unchanged default)", () => {
+    expect(() => sanitizePublicComment("The score looks good here.", { allowBareScoreTerm: false })).toThrow(/score/i);
+  });
+
+  it("still throws on every OTHER forbidden phrase even when allowBareScoreTerm is true — only the bare-word check is relaxable", () => {
+    for (const forbiddenWord of FORBIDDEN_PUBLIC_COMMENT_WORDS) {
+      expect(() => sanitizePublicComment(`This comment contains ${forbiddenWord} information`, { allowBareScoreTerm: true })).toThrow();
+    }
+  });
+});
+
+describe("isPublicScoreTermSafeForRepo (#public-score-terms-scoping)", () => {
+  it("denies (fail-closed) when the env var is unset", () => {
+    expect(isPublicScoreTermSafeForRepo({}, "JSONbored/metagraphed")).toBe(false);
+  });
+
+  it("allows a repo present in the comma/whitespace list, case-insensitively", () => {
+    const env = { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "JSONbored/metagraphed, other/repo" };
+    expect(isPublicScoreTermSafeForRepo(env, "jsonbored/METAGRAPHED")).toBe(true);
+    expect(isPublicScoreTermSafeForRepo(env, "other/repo")).toBe(true);
+  });
+
+  it("denies a repo NOT present in the list — no '*'/'all' wildcard escape hatch, unlike the MCP allowlists", () => {
+    const env = { LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS: "*" };
+    expect(isPublicScoreTermSafeForRepo(env, "JSONbored/loopover")).toBe(false);
   });
 });

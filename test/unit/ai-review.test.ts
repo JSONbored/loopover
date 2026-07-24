@@ -3530,6 +3530,54 @@ describe("pure helpers", () => {
     expect(withNits).toContain("Add coverage for the edge case.");
   });
 
+  it("REGRESSION (#public-score-terms-scoping, metagraphed#8038): a bare 'score' mention drops the whole assessment by default, but survives when the repo is explicitly allowlisted", () => {
+    const reviewMentioningScore = [
+      {
+        // A standalone "score" in natural review prose (\bscore\w*\b -- note this does NOT match a camelCase
+        // identifier like "totalScore", only a real word-boundary-delimited mention; this is exactly the shape
+        // an AI reviewer's own natural-language description of a scoring field takes).
+        assessment: "The resolver correctly filters results by their score before returning them.",
+        suggestions: [],
+        // Deliberately score-free, unlike the assessment above: proves the fallback text below comes from
+        // this SURVIVING nit (dropping the assessment must not also silently empty out unrelated findings).
+        nits: ["Consider extracting the filter helper for reuse."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ];
+    // Default (no options / allowBareScoreTerm false): unchanged, current behavior -- the whole assessment is
+    // dropped and the generic no-narrative-summary fallback takes over, same as before this fix existed.
+    const defaultResult = composeAdvisoryNotes(reviewMentioningScore);
+    expect(defaultResult).toContain("did not include a separate narrative summary");
+    expect(defaultResult).not.toContain("filters results by their score");
+    // Allowlisted (what runLoopOverAiReview now passes for a repo in LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS):
+    // the real narrative assessment survives.
+    const allowedResult = composeAdvisoryNotes(reviewMentioningScore, { allowBareScoreTerm: true });
+    expect(allowedResult).toContain("The resolver correctly filters results by their score");
+    expect(allowedResult).not.toContain("did not include a separate narrative summary");
+  });
+
+  it("REGRESSION (#public-score-terms-scoping): the EXPLICIT-PHRASE bans (trust score, reward, scoreability, ...) stay enforced even when allowBareScoreTerm is true", () => {
+    const reviewLeakingTrustScore = [
+      {
+        assessment: "This PR exposes the miner's raw trust score in the response payload.",
+        suggestions: [],
+        // A surviving, unrelated nit -- proves the explicit-phrase throw takes down ONLY the assessment
+        // (the same "dropping one field must not silently empty everything else" property as the sibling
+        // test above), not that the whole review vanishes.
+        nits: ["Add a test for the pagination edge case."],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ];
+    const result = composeAdvisoryNotes(reviewLeakingTrustScore, { allowBareScoreTerm: true });
+    expect(result).not.toContain("raw trust score");
+    expect(result).toContain("did not include a separate narrative summary");
+    expect(result).toContain("Add a test for the pagination edge case.");
+  });
+
   it("parseModelReview parses well-formed inline findings, including a trimmed optional suggestion; severity defaults to nit unless exactly 'blocker' (#inline-comments)", () => {
     const json = JSON.stringify({
       assessment: "ok",

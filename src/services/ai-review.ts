@@ -24,7 +24,7 @@ import {
   recordAiUsageEvent,
   sumAiEstimatedNeuronsSince,
 } from "../db/repositories";
-import { sanitizePublicComment } from "../queue-intelligence";
+import { isPublicScoreTermSafeForRepo, sanitizePublicComment } from "../queue-intelligence";
 import { defangReviewInput } from "../review/safety";
 import { convergedFeatureActive } from "../review/feature-activation";
 import { labelSelfHostReviewerModels, labelSelfHostReviewerNames, resolveConfiguredProviderNames } from "../selfhost/ai-config";
@@ -599,12 +599,14 @@ function neutralizePublicMarkdown(text: string): string {
     .replace(/([\\`*_{}\[\]()#+!|])/g, "\\$1");
 }
 
-/** Returns neutralized text if it is public-safe, otherwise null (drop — never publish). */
-export function toPublicSafe(text: string | null | undefined): string | null {
+/** Returns neutralized text if it is public-safe, otherwise null (drop — never publish). `allowBareScoreTerm`
+ *  defaults false (unchanged behavior) -- only composeAdvisoryNotes' repo-scoped call sites ever pass true;
+ *  see sanitizePublicComment's own doc comment for why this is the ONLY relaxable check. */
+export function toPublicSafe(text: string | null | undefined, options?: { allowBareScoreTerm?: boolean }): string | null {
   const trimmed = (text ?? "").trim();
   if (!trimmed) return null;
   try {
-    return neutralizePublicMarkdown(sanitizePublicComment(trimmed));
+    return neutralizePublicMarkdown(sanitizePublicComment(trimmed, options));
   } catch {
     return null;
   }
@@ -1619,8 +1621,14 @@ function composeFallbackAdvisoryNotes(notes: readonly string[]): string | null {
   return safeNotes.join("\n\n");
 }
 
-/** Compose a public-safe markdown advisory blurb from one or two model reviews. Null if no assessment is safe. */
-export function composeAdvisoryNotes(reviews: ModelReview[]): string | null {
+/** Compose a public-safe markdown advisory blurb from one or two model reviews. Null if no assessment is safe.
+ *  `allowBareScoreTerm` (#public-score-terms-scoping, default false): set true only for a repo the caller has
+ *  confirmed via isPublicScoreTermSafeForRepo has no private trust/reward data of its own -- see
+ *  sanitizePublicComment's doc comment. Metagraphed#8038-class bug: without this, ANY review of code with a
+ *  legitimately-public `score`-named field (metagraphed's own `totalScore`/`credibility`) had its entire
+ *  narrative assessment silently discarded in favor of the generic "did not include a separate narrative
+ *  summary" fallback -- observed live, recurring. */
+export function composeAdvisoryNotes(reviews: ModelReview[], options?: { allowBareScoreTerm?: boolean }): string | null {
   const assessments = reviews.map((r) => r.assessment).filter(Boolean);
   // High-signal caps: a focused review shows only the few findings that matter (the prompt also asks the
   // model to be selective + deduplicate). Keep the core blockers and a handful of nits. (#focused-reviews)
@@ -1629,12 +1637,12 @@ export function composeAdvisoryNotes(reviews: ModelReview[]): string | null {
   const nits = [
     ...new Set(reviews.flatMap((r) => [...r.nits, ...r.suggestions])),
   ].slice(0, 5);
-  const assessment = toPublicSafe(assessments[0] ?? "");
+  const assessment = toPublicSafe(assessments[0] ?? "", options);
   const safeBlockers = blockers
-    .map((s) => toPublicSafe(s))
+    .map((s) => toPublicSafe(s, options))
     .filter((s): s is string => Boolean(s));
   const safeNits = nits
-    .map((s) => toPublicSafe(s))
+    .map((s) => toPublicSafe(s, options))
     .filter((s): s is string => Boolean(s));
   const publicAssessment =
     assessment || fallbackPublicAssessment(safeBlockers, safeNits);
@@ -2526,7 +2534,7 @@ export async function runLoopOverAiReview(
   if (inconclusive) incr("loopover_ai_review_inconclusive_total", { mode: input.mode });
   const advisoryNotes =
     reviewsForNotes.length > 0
-      ? (composeAdvisoryNotes(reviewsForNotes) ?? composeFallbackAdvisoryNotes(fallbackNotes))
+      ? (composeAdvisoryNotes(reviewsForNotes, { allowBareScoreTerm: isPublicScoreTermSafeForRepo(env, input.repoFullName) }) ?? composeFallbackAdvisoryNotes(fallbackNotes))
       : composeFallbackAdvisoryNotes(fallbackNotes);
   // Line-anchored inline findings (#inline-comments): only propagate model output when the resolved feature gate
   // asked for it. AI output is PR-author-influenced, so the prompt suffix is not an authorization boundary.

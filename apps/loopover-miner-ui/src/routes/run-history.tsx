@@ -1,20 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
 
 import { Badge } from "@loopover/ui-kit/components/badge";
 import { Card, CardContent, CardHeader } from "@loopover/ui-kit/components/card";
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@loopover/ui-kit/components/pagination";
 import { Skeleton } from "@loopover/ui-kit/components/skeleton";
 import { StateBoundary } from "@loopover/ui-kit/components/state-views";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@loopover/ui-kit/components/table";
 
+import { TablePagination } from "../components/table-pagination";
+import { usePagedRows } from "../lib/paged-rows";
 import { DEFAULT_POLL_INTERVAL_MS, usePolledFetch } from "../lib/use-polled-fetch";
 import {
   fetchRunStates,
@@ -45,9 +38,6 @@ const STATE_BADGE_VARIANT: Record<RunStateRow["state"], "secondary" | "outline">
   planning: "outline",
   preparing: "outline",
 };
-
-/** Rows per page once the run-state table grows past this; below it the full table renders unpaginated. */
-const PAGE_SIZE = 20;
 
 const TABLE_COLUMNS = ["Repository", "Forge", "State", "Last updated"] as const;
 
@@ -115,12 +105,8 @@ function RunStateTable({ rows }: { rows: RunStateRow[] }) {
 }
 
 export function RunHistoryView({ result }: { result: RunHistoryResult | null }) {
-  const [page, setPage] = useState(0);
   const rows = result?.ok ? result.rows : [];
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const isPaginated = rows.length > PAGE_SIZE;
-  const safePage = Math.min(page, pageCount - 1);
-  const visibleRows = isPaginated ? rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE) : rows;
+  const { visible, isPaginated, page, pageCount, setPage } = usePagedRows(rows);
 
   return (
     <StateBoundary
@@ -133,47 +119,8 @@ export function RunHistoryView({ result }: { result: RunHistoryResult | null }) 
       emptyTitle="No local run state yet"
       emptyDescription="The table fills in once the miner records its first repo run."
     >
-      <RunStateTable rows={visibleRows} />
-      {isPaginated && (
-        <Pagination className="mt-4">
-          <PaginationContent>
-            <PaginationItem>
-              <PaginationPrevious
-                href="#"
-                aria-disabled={safePage === 0}
-                onClick={(event) => {
-                  event.preventDefault();
-                  setPage((current) => Math.max(0, current - 1));
-                }}
-              />
-            </PaginationItem>
-            {Array.from({ length: pageCount }).map((_, index) => (
-              <PaginationItem key={index}>
-                <PaginationLink
-                  href="#"
-                  isActive={index === safePage}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    setPage(index);
-                  }}
-                >
-                  {index + 1}
-                </PaginationLink>
-              </PaginationItem>
-            ))}
-            <PaginationItem>
-              <PaginationNext
-                href="#"
-                aria-disabled={safePage >= pageCount - 1}
-                onClick={(event) => {
-                  event.preventDefault();
-                  setPage((current) => Math.min(pageCount - 1, current + 1));
-                }}
-              />
-            </PaginationItem>
-          </PaginationContent>
-        </Pagination>
-      )}
+      <RunStateTable rows={visible} />
+      {isPaginated && <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />}
     </StateBoundary>
   );
 }

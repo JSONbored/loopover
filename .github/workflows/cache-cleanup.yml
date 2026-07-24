@@ -9,48 +9,61 @@ name: Clean up closed-PR caches
 # waiting on GitHub's passive 7-day-unused eviction. Confirmed live before adding this workflow: repo
 # cache usage sat at ~10.7GB of the 10GB budget, with closed-PR-scoped node_modules caches alone
 # accounting for the large majority of that -- crowding out the much smaller, much more useful
-# Turborepo/tsbuildinfo caches for LRU survival. This deletes a PR's own cache entries the moment it
-# closes (merged or not) instead of waiting on eviction.
+# Turborepo/tsbuildinfo caches for LRU survival.
 #
-# pull_request_target, not pull_request: this job only ever calls the GitHub API using
-# github.event.pull_request.number -- a trusted value GitHub itself populates, never anything read
-# from the PR's own code or checked out from it -- so the classic pull_request_target risk (running
-# fork-controlled code with base-repo credentials) doesn't apply here. It has to be
-# pull_request_target specifically because a fork-triggered plain `pull_request` run is always capped
-# to a read-only token regardless of the permissions block below, and deleting a cache needs
-# actions: write.
+# BATCHED, not per-event (queue-pressure fix, 2026-07-24): the original pull_request_target:[closed]
+# trigger meant one queued runner per closed PR -- at this repo's one-shot-gate volume that was dozens
+# of runs a day competing with real CI for the org's concurrent-runner cap during exactly the bursts
+# when CI is most backed up. A cache entry lingering a few hours costs nothing (the 10GB budget has
+# ample headroom between sweeps; LRU only bites near the cap), so one 6-hourly sweep that deletes every
+# closed-PR-scoped entry replaces N per-close runs with 4/day flat, independent of PR volume.
 
 on:
-  pull_request_target:
-    types: [closed]
+  schedule:
+    - cron: "40 */6 * * *"
+  workflow_dispatch:
 
 permissions:
   actions: write
+  pull-requests: read
 
 concurrency:
-  group: cache-cleanup-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: cache-cleanup-sweep
+  cancel-in-progress: false
 
 jobs:
   cleanup:
-    name: Delete this PR's caches
+    name: Delete closed PRs' caches
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      # Scoped by ref, not by key prefix (e.g. "npm-fork-") -- ANY cache entry scoped to this PR's ref
-      # (node_modules, Turborepo, tsbuildinfo, trusted or fork) is equally unreachable dead weight the
-      # moment the PR closes, regardless of which of ci.yml's cache families wrote it.
-      - name: Delete caches scoped to this PR
+      # Scoped by ref, not by key prefix (e.g. "npm-fork-") -- ANY cache entry scoped to a closed PR's
+      # ref (node_modules, Turborepo, tsbuildinfo, trusted or fork) is equally unreachable dead weight,
+      # regardless of which of ci.yml's cache families wrote it. PR state is checked per unique PR
+      # number (never inferred from cache age) so an idle-but-open PR -- maintainer branches routinely
+      # sit for hours between pushes -- never loses a still-restorable cache.
+      - name: Sweep caches scoped to closed PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_REF: refs/pull/${{ github.event.pull_request.number }}/merge
         run: |
-          ids=$(gh api "repos/${{ github.repository }}/actions/caches?per_page=100" --paginate --jq ".actions_caches[] | select(.ref == \"$PR_REF\") | .id")
-          if [ -z "$ids" ]; then
-            echo "No caches found for $PR_REF"
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/actions/caches?per_page=100" --paginate \
+            --jq '.actions_caches[] | select(.ref // "" | test("^refs/pull/[0-9]+/merge$")) | "\(.id) \(.ref)"' > caches.txt || true
+          if [ ! -s caches.txt ]; then
+            echo "No PR-scoped caches found."
             exit 0
           fi
-          for id in $ids; do
-            echo "Deleting cache $id ($PR_REF)"
-            gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" || echo "::warning::Failed to delete cache $id (may already be gone)"
-          done
+          deleted=0
+          while read -r pr; do
+            state=$(gh api "repos/${{ github.repository }}/pulls/$pr" --jq .state 2>/dev/null || echo "unknown")
+            if [ "$state" != "closed" ]; then
+              continue
+            fi
+            while read -r id; do
+              echo "Deleting cache $id (refs/pull/$pr/merge)"
+              gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" \
+                || echo "::warning::Failed to delete cache $id (may already be gone)"
+              deleted=$((deleted + 1))
+            done < <(awk -v ref="refs/pull/$pr/merge" '$2 == ref {print $1}' caches.txt)
+          done < <(awk '{print $2}' caches.txt | sed -E 's#refs/pull/([0-9]+)/merge#\1#' | sort -un)
+          echo "Swept $deleted cache entr(ies) across closed PRs."

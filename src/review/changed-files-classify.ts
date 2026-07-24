@@ -1,6 +1,5 @@
 import { isConfigFile, isDocsFile, isGeneratedFile, isLockfile, isMinifiedFile, isVendoredFile } from "../signals/path-matchers";
 import { isTestFile } from "../signals/local-branch";
-import { isTestPath } from "../signals/test-evidence";
 
 // Deterministic changed-file classifier for the review changed-files summary (#2143, part of #1957). Maps a changed
 // file PATH to exactly one of five review-oriented buckets so the summary table (and future analytics) group
@@ -25,7 +24,7 @@ export type ReviewFileClass = "source" | "test" | "docs" | "config" | "generated
  */
 export function classifyChangedFile(path: string): ReviewFileClass {
   if (isGeneratedFile(path) || isVendoredFile(path) || isLockfile(path) || isMinifiedFile(path)) return "generated";
-  if (isTestFile(path) || isTestPath(path)) return "test";
+  if (isTestFile(path)) return "test";
   if (isDocsFile(path)) return "docs";
   if (isConfigFile(path)) return "config";
   return "source";

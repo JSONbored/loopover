@@ -12,10 +12,10 @@ const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
 
 async function seed(env: Env) {
   const db = getDb(env.DB);
-  // webhook_events are durable replay/idempotency records and must not be pruned.
+  // webhook_events: 90d window (#8381) — seed past-cutoff + recent rows.
   await db.insert(webhookEvents).values([
-    { deliveryId: "wh-old-1", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(40) },
-    { deliveryId: "wh-old-2", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(35) },
+    { deliveryId: "wh-old-1", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(100) },
+    { deliveryId: "wh-old-2", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(95) },
     { deliveryId: "wh-recent", eventName: "push", payloadHash: "h", status: "processed", receivedAt: daysAgo(1) },
   ]);
   // ai_usage_events window = 90d; one old + one recent.
@@ -48,7 +48,7 @@ describe("pruneExpiredRecords", () => {
     await seed(env);
     const results = await pruneExpiredRecords(env, { dryRun: true, nowMs: NOW });
     const ai = results.find((r) => r.table === "ai_usage_events");
-    expect(results.find((r) => r.table === "webhook_events")).toBeUndefined();
+    expect(results.find((r) => r.table === "webhook_events")?.deleted).toBe(2);
     expect(ai?.deleted).toBe(1);
     expect(await countWebhook(env)).toBe(3); // nothing actually deleted
   });
@@ -57,9 +57,9 @@ describe("pruneExpiredRecords", () => {
     const env = createTestEnv();
     await seed(env);
     const results = await pruneExpiredRecords(env, { nowMs: NOW });
-    expect(results.find((r) => r.table === "webhook_events")).toBeUndefined();
+    expect(results.find((r) => r.table === "webhook_events")?.deleted).toBe(2);
     expect(results.find((r) => r.table === "ai_usage_events")?.deleted).toBe(1);
-    expect(await countWebhook(env)).toBe(3);
+    expect(await countWebhook(env)).toBe(1);
     const aiCount = await env.DB.prepare("SELECT count(*) AS n FROM ai_usage_events").first<{ n: number }>();
     expect(aiCount?.n).toBe(1);
   });
@@ -123,9 +123,22 @@ describe("pruneExpiredRecords", () => {
 
   it("the policy only targets append-only/log/snapshot tables (no current-state tables)", () => {
     const tables = RETENTION_POLICY.map((r) => r.table);
-    for (const protectedTable of ["webhook_events", "repositories", "repository_settings", "pull_requests", "issues", "repository_ai_keys", "contributors"]) {
+    expect(tables).toContain("webhook_events");
+    for (const protectedTable of ["repositories", "repository_settings", "pull_requests", "issues", "repository_ai_keys", "contributors"]) {
       expect(tables).not.toContain(protectedTable);
     }
+  });
+
+  it("prunes webhook_events older than 90d and keeps recent deliveries (#8381)", async () => {
+    const env = createTestEnv();
+    await seed(env);
+    const results = await pruneExpiredRecords(env, {
+      nowMs: NOW,
+      policy: [{ table: "webhook_events", column: "received_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(2);
+    const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
+    expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
 });
 
@@ -281,7 +294,7 @@ describe("runRetentionPrune + processJob", () => {
     await insertSignalSnapshot(env, "s-1", "repo-culture-profile", "JSONbored/loopover", "2026-06-01T00:00:00.000Z");
     await insertSignalSnapshot(env, "s-2", "repo-culture-profile", "JSONbored/loopover", "2026-06-02T00:00:00.000Z");
     await processJob(env, { type: "prune-retention", requestedBy: "schedule" });
-    expect(await countWebhook(env)).toBe(3);
+    expect(await countWebhook(env)).toBe(1);
     expect(await countSignalSnapshots(env, "repo-culture-profile")).toBe(1);
     const audit = await env.DB.prepare("SELECT outcome, detail FROM audit_events WHERE event_type = ?").bind("retention.prune").first<{ outcome: string; detail: string }>();
     expect(audit?.outcome).toBe("success");
@@ -305,7 +318,7 @@ describe("retention preview route", () => {
       signalSnapshotDuplicates: Array<{ signalType: string; deleted: number }>;
     };
     expect(body.totalEligible).toBeGreaterThanOrEqual(1);
-    expect(body.eligible.find((r) => r.table === "webhook_events")).toBeUndefined();
+    expect(body.eligible.find((r) => r.table === "webhook_events")?.deleted).toBe(2);
     expect(body.totalSignalSnapshotDuplicates).toBe(1);
     expect(body.signalSnapshotDuplicates).toEqual([{ signalType: "repo-culture-profile", deleted: 1 }]);
     expect(await countWebhook(env)).toBe(3); // preview is read-only

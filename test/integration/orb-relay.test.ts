@@ -402,6 +402,62 @@ describe("retryFailedRelays", () => {
     expect(row ?? null).toBeNull(); // row removed on success
   });
 
+  it("does not throw when the finalize DELETE fails right after a successful forward (#8332 duplicate-redelivery guard)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9700);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    await storeRelayFailure(e, { deliveryId: "finalize-delete-fail", eventName: "pull_request", installationId: 9700, rawBody: "{}" });
+    const realPrepare = db(e).prepare.bind(db(e));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    e.DB = {
+      // Deliberately a non-Error throw here, to cover the `String(error)` fallback branch of the ternary
+      // (the DELETE-path regression test below covers the `error instanceof Error` branch instead).
+      prepare: (sql: string) =>
+        sql === "DELETE FROM orb_relay_failures WHERE delivery_id = ?"
+          ? { bind: () => ({ run: () => Promise.reject("a bare string rejection") }) }
+          : realPrepare(sql),
+    } as unknown as Env["DB"];
+    const fetchOk = (() => Promise.resolve(new Response("ok", { status: 200 }))) as typeof fetch;
+    await expect(retryFailedRelays(e, { fetchImpl: fetchOk })).resolves.toBeUndefined(); // "Never throws" contract holds
+    expect(
+      errorLog.mock.calls.some(
+        ([line]) =>
+          String(line).includes("orb_relay_failure_finalize_write_failed") &&
+          String(line).includes("finalize-delete-fail") &&
+          String(line).includes("forwarded") &&
+          String(line).includes('"error":"a bare string rejection"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not throw when the finalize UPDATE fails right after a non-terminal forward (#8332 duplicate-redelivery guard)", async () => {
+    const e = brokeredEnv();
+    const secret = await enroll(e, 9701);
+    await registerOrbRelay(e, secret, "https://c.example/v1/orb/relay");
+    await storeRelayFailure(e, { deliveryId: "finalize-update-fail", eventName: "pull_request", installationId: 9701, rawBody: "{}" });
+    const realPrepare = db(e).prepare.bind(db(e));
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    e.DB = {
+      // A real Error instance here, to cover the `error instanceof Error` (true) branch of the ternary
+      // (the DELETE-path test above covers the non-Error `String(error)` fallback branch instead).
+      prepare: (sql: string) =>
+        sql === "UPDATE orb_relay_failures SET attempts = attempts + 1, last_attempt_at = datetime('now') WHERE delivery_id = ?"
+          ? { bind: () => ({ run: async () => { throw new Error("simulated D1 write failure"); } }) }
+          : realPrepare(sql),
+    } as unknown as Env["DB"];
+    const fetchFail = (() => Promise.resolve(new Response("bad", { status: 503 }))) as typeof fetch;
+    await expect(retryFailedRelays(e, { fetchImpl: fetchFail })).resolves.toBeUndefined(); // "Never throws" contract holds
+    expect(
+      errorLog.mock.calls.some(
+        ([line]) =>
+          String(line).includes("orb_relay_failure_finalize_write_failed") &&
+          String(line).includes("finalize-update-fail") &&
+          String(line).includes("failed") &&
+          String(line).includes('"error":"simulated D1 write failure"'),
+      ),
+    ).toBe(true);
+  });
+
   it("INCREMENTS attempts when forwardOrbEvent still fails", async () => {
     const e = brokeredEnv();
     const secret = await enroll(e, 9101);

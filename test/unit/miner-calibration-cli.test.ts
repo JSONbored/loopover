@@ -2,7 +2,20 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runCalibrationCli, toAmsRealizedOutcomes } from "../../packages/loopover-miner/lib/calibration-cli.js";
+
+// Instrument the .ts sources under CI's scoped `--changed` run: after `build:miner`, literal `.js` imports
+// resolve to emitted artifacts and leave coverage.include's `.ts` entries at 0% patch (same as #7796).
+vi.mock("../../packages/loopover-miner/lib/calibration-run.js", async () => {
+  const mod = "../../packages/loopover-miner/lib/calibration-run.ts";
+  return import(mod);
+});
+
+const CALIBRATION_CLI_MODULE = "../../packages/loopover-miner/lib/calibration-cli.ts";
+const CALIBRATION_RUN_MODULE = "../../packages/loopover-miner/lib/calibration-run.ts";
+const calibrationRun = await import(CALIBRATION_RUN_MODULE);
+const { runCalibrationCli, toAmsRealizedOutcomes } = (await import(CALIBRATION_CLI_MODULE)) as typeof import("../../packages/loopover-miner/lib/calibration-cli.js");
+const { MINER_CALIBRATION_SNAPSHOT_EVENT } = calibrationRun;
+
 import { initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
 import {
   initPredictionLedger,
@@ -329,9 +342,6 @@ describe("calibration report sections (#8185/#8186)", () => {
 });
 
 // ── #8317: calibration snapshot wires the Phase 7 runner into a real CLI caller ─────────────────────────────
-
-import * as calibrationRun from "../../packages/loopover-miner/lib/calibration-run.js";
-import { MINER_CALIBRATION_SNAPSHOT_EVENT } from "../../packages/loopover-miner/lib/calibration-run.js";
 
 function seedPredictionFor(
   env: Record<string, string | undefined>,

@@ -33,16 +33,22 @@ export function rightLinesByPath(
 }
 
 /** Resolve the GitHub inline-comment anchor for a finding. Multi-line ONLY when every line in [start,end] is
- *  commentable on the RIGHT side; otherwise downgrade to the single start line (fail-safe, no 422). */
+ *  commentable on the RIGHT side; otherwise downgrade to the single start line (fail-safe, no 422).
+ *  `anchorable` is false when `start` ITSELF is not a commentable RIGHT-side line -- the fallback used to
+ *  return that start line anyway, presenting an un-postable anchor as a safe one and leaving the "no 422"
+ *  promise to an undocumented caller-side pre-filter. Callers must drop an `anchorable: false` finding. */
 export function resolveInlineCommentAnchor(
   finding: Pick<InlineFinding, "path" | "line" | "endLine">,
   rightLines: Map<string, Set<number>>,
-): { start: number; end: number; multiLine: boolean } {
+): { start: number; end: number; multiLine: boolean; anchorable: boolean } {
   const { start, end } = parseInlineLineRange(finding);
   const validLines = rightLines.get(finding.path);
-  if (!validLines || !everyLineInSet(start, end, validLines)) {
-    return { start, end: start, multiLine: false };
+  if (!validLines || !validLines.has(start)) {
+    return { start, end: start, multiLine: false, anchorable: false };
   }
-  if (end > start) return { start, end, multiLine: true };
-  return { start, end: start, multiLine: false };
+  if (!everyLineInSet(start, end, validLines)) {
+    return { start, end: start, multiLine: false, anchorable: true };
+  }
+  if (end > start) return { start, end, multiLine: true, anchorable: true };
+  return { start, end: start, multiLine: false, anchorable: true };
 }

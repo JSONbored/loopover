@@ -12,10 +12,16 @@ type ForwardedCall = { url: string; method: string; headers: Headers };
 /** Stub global fetch to return `response`, recording each forwarded request in a typed, inspectable list. */
 function stubUpstream(response: Response) {
   const calls: ForwardedCall[] = [];
-  const fetchMock = vi.fn(async (url: string | URL, init?: { method?: string; headers?: HeadersInit }) => {
-    calls.push({ url: String(url), method: init?.method ?? "GET", headers: new Headers(init?.headers) });
-    return response;
-  });
+  const fetchMock = vi.fn(
+    async (url: string | URL, init?: { method?: string; headers?: HeadersInit }) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        headers: new Headers(init?.headers),
+      });
+      return response;
+    },
+  );
   vi.stubGlobal("fetch", fetchMock);
   return { fetchMock, calls };
 }
@@ -31,9 +37,13 @@ afterEach(() => {
 
 describe("handleAnalyticsProxy", () => {
   it("forwards an allowed POST to the upstream collect endpoint, preserving the query and relaying the response", async () => {
-    const { fetchMock, calls } = stubUpstream(new Response("ok-body", { status: 202, statusText: "Accepted" }));
+    const { fetchMock, calls } = stubUpstream(
+      new Response("ok-body", { status: 202, statusText: "Accepted" }),
+    );
 
-    const response = await handleAnalyticsProxy(send({ query: "?v=2&cache=abc", body: "beacon-payload" }));
+    const response = await handleAnalyticsProxy(
+      send({ query: "?v=2&cache=abc", body: "beacon-payload" }),
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     // /stats prefix stripped, path + query preserved onto the real upstream host.
@@ -68,7 +78,9 @@ describe("handleAnalyticsProxy", () => {
   it("strips the visitor's first-party cookie before forwarding (cookieless guarantee, #597)", async () => {
     const { calls } = stubUpstream(new Response(null, { status: 200 }));
 
-    await handleAnalyticsProxy(send({ headers: { cookie: "session=secret; theme=dark", "x-keep": "yes" } }));
+    await handleAnalyticsProxy(
+      send({ headers: { cookie: "session=secret; theme=dark", "x-keep": "yes" } }),
+    );
 
     expect(calls[0]!.headers.get("cookie")).toBeNull();
     // Non-stripped headers still pass through, so this isn't just dropping everything.
@@ -96,7 +108,12 @@ describe("handleAnalyticsProxy", () => {
   });
 
   it("strips set-cookie from the upstream response before relaying it to the browser", async () => {
-    stubUpstream(new Response("ok", { status: 200, headers: { "set-cookie": "umami=1; Path=/", "x-app": "v1" } }));
+    stubUpstream(
+      new Response("ok", {
+        status: 200,
+        headers: { "set-cookie": "umami=1; Path=/", "x-app": "v1" },
+      }),
+    );
 
     const response = await handleAnalyticsProxy(send());
 

@@ -257,6 +257,17 @@ describe("source-upload safety", () => {
     ).not.toThrow();
   });
 
+  it("rejects a present-but-non-array changedFiles that would otherwise bypass the source scan (#8328)", () => {
+    // A plain object like { diff: "…source…" } or a bare string is not the documented array-of-entries shape;
+    // before #8328 the Array.isArray guard silently skipped the forbidden-key/oversize scan for these values,
+    // letting exactly the source content this validator refuses slip through unchecked.
+    expect(() => assertScenarioLocalBranchInputSafe({ changedFiles: { diff: "x".repeat(5000) } })).toThrow(/non-array changedFiles/i);
+    expect(() => assertScenarioLocalBranchInputSafe({ changedFiles: "not-an-array" })).toThrow(/non-array changedFiles/i);
+    // The existing valid shapes (a real array, an omitted changedFiles) must still be accepted unchanged.
+    expect(() => assertScenarioLocalBranchInputSafe({ changedFiles: [{ path: "ok.ts" }] })).not.toThrow();
+    expect(() => assertScenarioLocalBranchInputSafe({ login: "miner", repoFullName: "octo/demo" })).not.toThrow();
+  });
+
   it("rejects source-upload env flag and forbidden local branch keys", () => {
     const previous = process.env.LOOPOVER_UPLOAD_SOURCE;
     process.env.LOOPOVER_UPLOAD_SOURCE = "true";

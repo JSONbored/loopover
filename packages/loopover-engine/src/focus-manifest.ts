@@ -999,11 +999,12 @@ export const EMPTY_AUTO_REVIEW_CONFIG: AutoReviewConfig = {
   autoPauseAfterReviewedCommits: null,
 };
 
-/** Per-repo self-host reviewer model/effort overrides under `review.ai_model`. Each field independently overrides
- *  the matching global env var (CLAUDE_AI_MODEL / CLAUDE_AI_EFFORT / CODEX_AI_MODEL / CODEX_AI_EFFORT) for THIS
- *  repo only — it never widens what the operator's own env already permits, only narrows/redirects it, so a
- *  compromised repo config can change which model reviews it but not grant itself a new credential or provider.
- *  (#selfhost-ai-model-override) */
+/** Per-repo self-host reviewer model/effort/timeout overrides under `review.ai_model`. Each field independently
+ *  overrides the matching global env var (CLAUDE_AI_MODEL / CLAUDE_AI_EFFORT / CODEX_AI_MODEL / CODEX_AI_EFFORT /
+ *  CLAUDE_AI_TIMEOUT_MS / CODEX_AI_TIMEOUT_MS / CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS / CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS)
+ *  for THIS repo only — it never widens what the operator's own env already permits, only narrows/redirects it,
+ *  so a compromised repo config can change which model reviews it but not grant itself a new credential or
+ *  provider. (#selfhost-ai-model-override, #8364) */
 export type SelfHostAiModelConfig = {
   /** `review.ai_model.claude_model`: overrides CLAUDE_AI_MODEL for this repo's claude-code reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
   claudeModel: string | null;
@@ -1013,6 +1014,14 @@ export type SelfHostAiModelConfig = {
   codexModel: string | null;
   /** `review.ai_model.codex_effort`: overrides CODEX_AI_EFFORT for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then "medium". */
   codexEffort: string | null;
+  /** `review.ai_model.claude_timeout_ms` (#8364): overrides CLAUDE_AI_TIMEOUT_MS for this repo's claude-code reviewer. null (default) ⇒ the operator's global env var, then the effort-based ladder. */
+  claudeTimeoutMs: number | null;
+  /** `review.ai_model.codex_timeout_ms` (#8364): overrides CODEX_AI_TIMEOUT_MS for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then the effort-based ladder. */
+  codexTimeoutMs: number | null;
+  /** `review.ai_model.claude_first_output_timeout_ms` (#8364): overrides CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS for this repo's claude-code reviewer. null (default) ⇒ the operator's global env var, then the provider default. */
+  claudeFirstOutputTimeoutMs: number | null;
+  /** `review.ai_model.codex_first_output_timeout_ms` (#8364): overrides CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS for this repo's codex reviewer. null (default) ⇒ the operator's global env var, then the provider default. */
+  codexFirstOutputTimeoutMs: number | null;
   /** `review.ai_model.ollama_model` (#3902): overrides OLLAMA_AI_MODEL for this repo's ollama reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
   ollamaModel: string | null;
   /** `review.ai_model.openai_model` (#3902): overrides OPENAI_AI_MODEL for this repo's openai reviewer. null (default) ⇒ the operator's global env var, then the provider's own default. */
@@ -1028,6 +1037,10 @@ export const EMPTY_SELF_HOST_AI_MODEL_CONFIG: SelfHostAiModelConfig = {
   claudeEffort: null,
   codexModel: null,
   codexEffort: null,
+  claudeTimeoutMs: null,
+  codexTimeoutMs: null,
+  claudeFirstOutputTimeoutMs: null,
+  codexFirstOutputTimeoutMs: null,
   ollamaModel: null,
   openaiModel: null,
   openaiCompatibleModel: null,
@@ -3194,6 +3207,10 @@ function overlaySelfHostAiModelConfig(base: SelfHostAiModelConfig, override: Sel
     claudeEffort: pickOverlayNullable(override.claudeEffort, base.claudeEffort),
     codexModel: pickOverlayNullable(override.codexModel, base.codexModel),
     codexEffort: pickOverlayNullable(override.codexEffort, base.codexEffort),
+    claudeTimeoutMs: pickOverlayNullable(override.claudeTimeoutMs, base.claudeTimeoutMs),
+    codexTimeoutMs: pickOverlayNullable(override.codexTimeoutMs, base.codexTimeoutMs),
+    claudeFirstOutputTimeoutMs: pickOverlayNullable(override.claudeFirstOutputTimeoutMs, base.claudeFirstOutputTimeoutMs),
+    codexFirstOutputTimeoutMs: pickOverlayNullable(override.codexFirstOutputTimeoutMs, base.codexFirstOutputTimeoutMs),
     ollamaModel: pickOverlayNullable(override.ollamaModel, base.ollamaModel),
     openaiModel: pickOverlayNullable(override.openaiModel, base.openaiModel),
     openaiCompatibleModel: pickOverlayNullable(override.openaiCompatibleModel, base.openaiCompatibleModel),
@@ -3383,6 +3400,10 @@ function selfHostAiModelPresent(config: SelfHostAiModelConfig): boolean {
     config.claudeEffort !== null ||
     config.codexModel !== null ||
     config.codexEffort !== null ||
+    config.claudeTimeoutMs !== null ||
+    config.codexTimeoutMs !== null ||
+    config.claudeFirstOutputTimeoutMs !== null ||
+    config.codexFirstOutputTimeoutMs !== null ||
     config.ollamaModel !== null ||
     config.openaiModel !== null ||
     config.openaiCompatibleModel !== null ||
@@ -3390,11 +3411,11 @@ function selfHostAiModelPresent(config: SelfHostAiModelConfig): boolean {
   );
 }
 
-/** Parse `review.ai_model` — per-repo self-host reviewer model/effort overrides. Values are opaque, bounded,
- *  public-safe strings (like `review.tone`) — never validated against a fixed model/effort enum here, so this
- *  parser never drifts from the provider's own effort allowlist (`src/selfhost/ai.ts`); an invalid effort value
- *  degrades the SAME way an invalid env-sourced one already does (falls back to "medium" at resolve time).
- *  (#selfhost-ai-model-override) */
+/** Parse `review.ai_model` — per-repo self-host reviewer model/effort/timeout overrides. Model/effort values are
+ *  opaque, bounded, public-safe strings (like `review.tone`) — never validated against a fixed model/effort enum
+ *  here, so this parser never drifts from the provider's own effort allowlist (`src/selfhost/ai.ts`); an invalid
+ *  effort value degrades the SAME way an invalid env-sourced one already does (falls back to "medium" at resolve
+ *  time). Timeout fields are positive whole-number milliseconds (#8364). (#selfhost-ai-model-override) */
 function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: string[]): SelfHostAiModelConfig {
   if (value === undefined || value === null) return { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG };
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -3407,6 +3428,18 @@ function parseSelfHostAiModelConfig(value: JsonValue | undefined, warnings: stri
     claudeEffort: parsePublicSafeText(record.claude_effort, "review.ai_model.claude_effort", warnings),
     codexModel: parsePublicSafeText(record.codex_model, "review.ai_model.codex_model", warnings),
     codexEffort: parsePublicSafeText(record.codex_effort, "review.ai_model.codex_effort", warnings),
+    claudeTimeoutMs: normalizeOptionalPositiveInteger(record.claude_timeout_ms, "review.ai_model.claude_timeout_ms", warnings),
+    codexTimeoutMs: normalizeOptionalPositiveInteger(record.codex_timeout_ms, "review.ai_model.codex_timeout_ms", warnings),
+    claudeFirstOutputTimeoutMs: normalizeOptionalPositiveInteger(
+      record.claude_first_output_timeout_ms,
+      "review.ai_model.claude_first_output_timeout_ms",
+      warnings,
+    ),
+    codexFirstOutputTimeoutMs: normalizeOptionalPositiveInteger(
+      record.codex_first_output_timeout_ms,
+      "review.ai_model.codex_first_output_timeout_ms",
+      warnings,
+    ),
     ollamaModel: parsePublicSafeText(record.ollama_model, "review.ai_model.ollama_model", warnings),
     openaiModel: parsePublicSafeText(record.openai_model, "review.ai_model.openai_model", warnings),
     openaiCompatibleModel: parsePublicSafeText(record.openai_compatible_model, "review.ai_model.openai_compatible_model", warnings),
@@ -3916,6 +3949,14 @@ export function reviewConfigToJson(review: FocusManifestReviewConfig): JsonValue
     if (review.aiModel.claudeEffort !== null) aiModel.claude_effort = review.aiModel.claudeEffort;
     if (review.aiModel.codexModel !== null) aiModel.codex_model = review.aiModel.codexModel;
     if (review.aiModel.codexEffort !== null) aiModel.codex_effort = review.aiModel.codexEffort;
+    if (review.aiModel.claudeTimeoutMs !== null) aiModel.claude_timeout_ms = review.aiModel.claudeTimeoutMs;
+    if (review.aiModel.codexTimeoutMs !== null) aiModel.codex_timeout_ms = review.aiModel.codexTimeoutMs;
+    if (review.aiModel.claudeFirstOutputTimeoutMs !== null) {
+      aiModel.claude_first_output_timeout_ms = review.aiModel.claudeFirstOutputTimeoutMs;
+    }
+    if (review.aiModel.codexFirstOutputTimeoutMs !== null) {
+      aiModel.codex_first_output_timeout_ms = review.aiModel.codexFirstOutputTimeoutMs;
+    }
     if (review.aiModel.ollamaModel !== null) aiModel.ollama_model = review.aiModel.ollamaModel;
     if (review.aiModel.openaiModel !== null) aiModel.openai_model = review.aiModel.openaiModel;
     if (review.aiModel.openaiCompatibleModel !== null) aiModel.openai_compatible_model = review.aiModel.openaiCompatibleModel;

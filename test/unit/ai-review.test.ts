@@ -425,17 +425,43 @@ describe("review.profile shapes the reviewer system prompt (#review-profile)", (
       claudeEffort: "low",
       codexModel: "gpt-5.4-mini",
       codexEffort: "high",
+      claudeTimeoutMs: 240_000,
+      codexTimeoutMs: 180_000,
+      claudeFirstOutputTimeoutMs: 60_000,
+      codexFirstOutputTimeoutMs: 15_000,
     });
     expect(options).toMatchObject({
       claudeModel: "claude-haiku-4-5",
       claudeEffort: "low",
       codexModel: "gpt-5.4-mini",
       codexEffort: "high",
+      claudeTimeoutMs: 240_000,
+      codexTimeoutMs: 180_000,
+      claudeFirstOutputTimeoutMs: 60_000,
+      codexFirstOutputTimeoutMs: 15_000,
     });
     // Absent/null override fields are OMITTED, not present-as-undefined — byte-identical to before this knob existed.
-    const withNull = await runWithOverride({ claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null });
+    const withNull = await runWithOverride({
+      claudeModel: null,
+      claudeEffort: null,
+      codexModel: null,
+      codexEffort: null,
+      claudeTimeoutMs: null,
+      codexTimeoutMs: null,
+      claudeFirstOutputTimeoutMs: null,
+      codexFirstOutputTimeoutMs: null,
+    });
     const withAbsent = await runWithOverride({});
-    for (const key of ["claudeModel", "claudeEffort", "codexModel", "codexEffort"]) {
+    for (const key of [
+      "claudeModel",
+      "claudeEffort",
+      "codexModel",
+      "codexEffort",
+      "claudeTimeoutMs",
+      "codexTimeoutMs",
+      "claudeFirstOutputTimeoutMs",
+      "codexFirstOutputTimeoutMs",
+    ]) {
       expect(withNull).not.toHaveProperty(key);
       expect(withAbsent).not.toHaveProperty(key);
     }

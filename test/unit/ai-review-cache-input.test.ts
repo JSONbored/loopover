@@ -246,7 +246,7 @@ describe("aiReviewCacheInputFingerprint", () => {
     for (const key of ["ollamaModel", "openaiModel", "openaiCompatibleModel", "anthropicModel"] as const) {
       const changed = await aiReviewCacheInputFingerprint({
         ...baseInput(),
-        selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null, [key]: "repo-override-model" },
+        selfHostAiModelOverride: { claudeModel: null, claudeEffort: null, codexModel: null, codexEffort: null, claudeTimeoutMs: null, codexTimeoutMs: null, claudeFirstOutputTimeoutMs: null, codexFirstOutputTimeoutMs: null, ollamaModel: null, openaiModel: null, openaiCompatibleModel: null, anthropicModel: null, [key]: "repo-override-model" },
       });
       expect(changed, key).not.toBe(original);
     }

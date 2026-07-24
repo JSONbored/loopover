@@ -9,11 +9,12 @@ import { sha256Hex } from "../utils/crypto";
 // gained an `impactMap` member. Bumped v3→v4 (#3902): `selfHostAiModelOverride` gained ollamaModel/openaiModel/
 // openaiCompatibleModel/anthropicModel members. Bumped v4→v5: added a top-level `body` member (the PR
 // description is threaded into the reviewer prompt exactly like `title`, but was never fingerprinted -- an
-// edited-description webhook with an unchanged head SHA silently replayed the pre-edit review). Every prior
-// cached review's fingerprint was computed without that key, so bumping the version guarantees a clean cache
-// miss on the first review after upgrade rather than silently reusing a hash computed under a different payload
-// shape.
-export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v5";
+// edited-description webhook with an unchanged head SHA silently replayed the pre-edit review). Bumped v5→v6
+// (#8364): `selfHostAiModelOverride` gained claudeTimeoutMs/codexTimeoutMs/claudeFirstOutputTimeoutMs/
+// codexFirstOutputTimeoutMs members. Every prior cached review's fingerprint was computed without those keys,
+// so bumping the version guarantees a clean cache miss on the first review after upgrade rather than silently
+// reusing a hash computed under a different payload shape.
+export const AI_REVIEW_CACHE_INPUT_VERSION = "ai-review-input:v6";
 
 // #regate-churn (root cause, confirmed in production): this fingerprint USED to also hash the PR's live
 // `baseSha`, on the theory that a rebase/retarget can change the diff GitHub reports for an otherwise-unchanged
@@ -181,6 +182,10 @@ export async function aiReviewCacheInputFingerprint(input: AiReviewCacheInput): 
           claudeEffort: input.selfHostAiModelOverride.claudeEffort ?? null,
           codexModel: input.selfHostAiModelOverride.codexModel ?? null,
           codexEffort: input.selfHostAiModelOverride.codexEffort ?? null,
+          claudeTimeoutMs: input.selfHostAiModelOverride.claudeTimeoutMs ?? null,
+          codexTimeoutMs: input.selfHostAiModelOverride.codexTimeoutMs ?? null,
+          claudeFirstOutputTimeoutMs: input.selfHostAiModelOverride.claudeFirstOutputTimeoutMs ?? null,
+          codexFirstOutputTimeoutMs: input.selfHostAiModelOverride.codexFirstOutputTimeoutMs ?? null,
           ollamaModel: input.selfHostAiModelOverride.ollamaModel ?? null,
           openaiModel: input.selfHostAiModelOverride.openaiModel ?? null,
           openaiCompatibleModel: input.selfHostAiModelOverride.openaiCompatibleModel ?? null,

@@ -62,6 +62,18 @@ describe("provider-specific CLI timeouts (#selfhost — no shared timeout ambigu
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "1000" })).toBe(30_000);
     expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "9999999" })).toBe(1_800_000);
   });
+  it("prefers a per-repo timeout override over the env-var/effort default (#8364)", () => {
+    expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_TIMEOUT_MS: "300000", CLAUDE_AI_EFFORT: "low" }, 90_000)).toBe(90_000);
+    expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "300000", CODEX_AI_EFFORT: "low" }, 75_000)).toBe(75_000);
+    // Override still clamped to the same floor/ceiling as the env path.
+    expect(resolveClaudeCliTimeoutMs({}, 1_000)).toBe(30_000);
+    expect(resolveCodexCliTimeoutMs({}, 9_999_999)).toBe(1_800_000);
+    // Absent/null/non-positive override falls through to env/effort resolution.
+    expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_EFFORT: "high" }, null)).toBe(240_000);
+    expect(resolveCodexCliTimeoutMs({ CODEX_AI_EFFORT: "high" }, undefined)).toBe(240_000);
+    expect(resolveClaudeCliTimeoutMs({ CLAUDE_AI_TIMEOUT_MS: "120000" }, 0)).toBe(120_000);
+    expect(resolveCodexCliTimeoutMs({ CODEX_AI_TIMEOUT_MS: "120000" }, Number.NaN)).toBe(120_000);
+  });
   it("resolveCodexFirstOutputTimeoutMs defaults to 30s, is independent of effort, and honors + clamps CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS", () => {
     // absent → the 30s default (?? right side)
     expect(resolveCodexFirstOutputTimeoutMs({})).toBe(30_000);
@@ -77,6 +89,16 @@ describe("provider-specific CLI timeouts (#selfhost — no shared timeout ambigu
     expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "not-a-number" })).toBe(30_000);
     // zero/negative also falls back (raw > 0 false branch)
     expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "0" })).toBe(30_000);
+  });
+  it("prefers a per-repo first-output timeout override over the env-var default (#8364)", () => {
+    expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "15000" }, 8_000)).toBe(8_000);
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "15000" }, 9_000)).toBe(9_000);
+    expect(resolveCodexFirstOutputTimeoutMs({}, 500)).toBe(1_000); // floor
+    expect(resolveClaudeFirstOutputTimeoutMs({}, 9_999_999)).toBe(1_800_000); // ceiling
+    expect(resolveCodexFirstOutputTimeoutMs({ CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS: "15000" }, null)).toBe(15_000);
+    expect(resolveClaudeFirstOutputTimeoutMs({ CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS: "15000" }, undefined)).toBe(15_000);
+    expect(resolveCodexFirstOutputTimeoutMs({}, 0)).toBe(30_000);
+    expect(resolveClaudeFirstOutputTimeoutMs({}, Number.NaN)).toBe(1_800_000);
   });
   it("REGRESSION (#5053): resolveClaudeFirstOutputTimeoutMs defaults to a 30-minute ceiling (effectively 'no separate fast-fail window' -- the call site's own Math.min(this, timeoutMs - 1) makes it equal the REAL timeout), unlike Codex's genuinely-streaming 30s default", () => {
     // absent → the 1_800_000ms default -- `claude --output-format json` is a buffered "single result" (per

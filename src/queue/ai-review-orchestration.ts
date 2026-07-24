@@ -690,13 +690,17 @@ export async function runAiReviewForAdvisory(
       onMerge: args.settings.aiReviewOnMerge ?? undefined,
       reviewers: args.settings.aiReviewReviewers ?? undefined,
       securityFocus: args.reviewSecurityFocus === true,
-      // Self-host per-repo model/effort override (#selfhost-ai-model-override): absent/null fields fall through
-      // runLoopOverAiReview -> runWorkersOpinion -> the self-host provider's own global-env/hardcoded default,
-      // exactly as if review.ai_model had never been set.
+      // Self-host per-repo model/effort/timeout override (#selfhost-ai-model-override, #8364): absent/null
+      // fields fall through runLoopOverAiReview -> runWorkersOpinion -> the self-host provider's own
+      // global-env/hardcoded default, exactly as if review.ai_model had never been set.
       claudeModel: args.reviewSelfHostAiModel?.claudeModel ?? null,
       claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
       codexModel: args.reviewSelfHostAiModel?.codexModel ?? null,
       codexEffort: args.reviewSelfHostAiModel?.codexEffort ?? null,
+      claudeTimeoutMs: args.reviewSelfHostAiModel?.claudeTimeoutMs ?? null,
+      codexTimeoutMs: args.reviewSelfHostAiModel?.codexTimeoutMs ?? null,
+      claudeFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.claudeFirstOutputTimeoutMs ?? null,
+      codexFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.codexFirstOutputTimeoutMs ?? null,
       ollamaModel: args.reviewSelfHostAiModel?.ollamaModel ?? null,
       openaiModel: args.reviewSelfHostAiModel?.openaiModel ?? null,
       openaiCompatibleModel: args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,

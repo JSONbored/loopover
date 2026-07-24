@@ -497,6 +497,14 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
     expect(await resolveLinkedIssueHardRule(args({ config: config({ ownerAssignedClose: "block" }), body: null }))).toBeUndefined();
   });
 
+  // Both nullish arms of `args.body ?? ""` (#8354) must be hit for branch-counted patch coverage: null (above)
+  // and undefined (here). An empty string is the non-nullish "present but blank" arm of the same parse.
+  it("returns undefined for undefined body and for an empty-string body (fresh-parse emptiness, not a stale list)", async () => {
+    const cfg = config({ ownerAssignedClose: "block" });
+    expect(await resolveLinkedIssueHardRule(args({ config: cfg, body: undefined }))).toBeUndefined();
+    expect(await resolveLinkedIssueHardRule(args({ config: cfg, body: "" }))).toBeUndefined();
+  });
+
   it("treats a confirmed-nonexistent linked issue as a violation, not a silent pass (#2136)", async () => {
     // Every reference 404s with a GENUINE installation token (proven repo access) — CONFIRMED not-found, not a
     // transient error — a contributor citing a fabricated issue number must not silently satisfy the hard rule
@@ -597,6 +605,17 @@ describe("resolveLinkedIssueHardRule (#1144 — overflow + orchestration)", () =
       violated: true,
       reason: "Linked issue #99 is assigned to the maintainer (@owner) — that work is reserved for the maintainer, so this PR cannot be auto-accepted.",
     });
+    spy.mockRestore();
+  });
+
+  it("REGRESSION (#8354): a multi-issue body fans out to EVERY freshly-parsed number (overflow false, numbers non-empty)", async () => {
+    // Pins the non-overflow / non-empty arm of the shared parse: both #41 and #42 must be fetched from ONE body
+    // string, proving the fact-fetch loop reads `linked.numbers` (not a separately-supplied list).
+    const spy = vi.spyOn(backfillModule, "fetchLinkedIssueFacts").mockResolvedValue({ status: "fetch_error" });
+    await resolveLinkedIssueHardRule(
+      args({ config: config({ ownerAssignedClose: "block" }), ciToken: "tok", body: "Closes #41 and fixes #42" }),
+    );
+    expect(spy.mock.calls.map((call) => call[2]).sort((a, b) => Number(a) - Number(b))).toEqual([41, 42]);
     spy.mockRestore();
   });
 

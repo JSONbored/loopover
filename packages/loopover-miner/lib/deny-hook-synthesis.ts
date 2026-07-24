@@ -3,9 +3,8 @@
 // this module is now a thin wrapper that re-exports those pure helpers and keeps the local SQLite store for
 // refresh + maintainer review before any synthesized rule takes effect. Approved rules merge with
 // {@link DEFAULT_DENY_RULES}; unapproved proposals never block tool calls. No behavior change.
-import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   aggregateBlockerHistory,
@@ -23,6 +22,7 @@ import {
 } from "@loopover/engine";
 import type { DenyRuleProposal, SynthesisConfig } from "@loopover/engine";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
+import { openLocalStoreDb } from "./local-store.js";
 import type { DenyRule } from "./deny-hooks.js";
 import { DENY_HOOK_SYNTHESIS_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
@@ -162,10 +162,9 @@ function ensureDenyRuleProposalsForgeScope(db: DatabaseSync): void {
  */
 export function initDenyHookSynthesisStore(dbPath: string = resolveDenyHookSynthesisDbPath()): DenyHookSynthesisStore {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  // Delegate the crash-safe open (mkdir 0700 + chmod 0600 + busy_timeout + cleanup registration) to the shared
+  // helper (#8319) instead of hand-rolling it, matching plan-store.ts/attempt-log.ts.
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS deny_rule_proposals (
       repo_full_name TEXT NOT NULL,

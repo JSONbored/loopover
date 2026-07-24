@@ -19,6 +19,10 @@ import {
   sendAmsExportBatch,
 } from "../../packages/loopover-miner/lib/orb-export.js";
 import type { OrbExportOutcome, OrbExportRow } from "../../packages/loopover-miner/lib/orb-export.js";
+import {
+  cleanupResourceCount,
+  resetProcessLifecycleForTesting,
+} from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
 let dir: string;
 function storePath() {
@@ -67,6 +71,17 @@ describe("orb-export store (#4277)", () => {
     store.setCursor("2026-01-02T00:00:00Z");
     expect(store.getCursor()).toBe("2026-01-02T00:00:00Z");
     store.close();
+  });
+
+  it("registers the store for crash-safe cleanup and unregisters it on close (#8319)", () => {
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    const store = openOrbExportStore(storePath());
+    // openLocalStoreDb registered the handle so a SIGINT/SIGTERM mid-write closes it instead of leaving the file
+    // half-written; the normal close() path unregisters, so the happy path never leaks or double-closes at exit.
+    expect(cleanupResourceCount()).toBe(1);
+    store.close();
+    expect(cleanupResourceCount()).toBe(0);
   });
 });
 

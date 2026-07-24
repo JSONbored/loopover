@@ -1,8 +1,7 @@
-import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
 import { createHash, createHmac } from "node:crypto";
+import { openLocalStoreDb } from "./local-store.js";
 import { generateAnonSecret, hmacAnonymize as engineHmacAnonymize } from "@loopover/engine";
 import { readPrOutcomes } from "./pr-outcome.js";
 import type { NormalizedPrOutcomePayload, PrOutcomeLedgerReader } from "./pr-outcome.js";
@@ -125,10 +124,9 @@ export function buildAnonymizedOrbBatch(
  */
 export function openOrbExportStore(dbPath: string = resolveOrbExportDbPath()): OrbExportStore {
   const resolvedPath = normalizeDbPath(dbPath);
-  mkdirSync(dirname(resolvedPath), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(resolvedPath);
-  chmodSync(resolvedPath, 0o600);
-  db.exec("PRAGMA busy_timeout = 5000");
+  // Delegate the crash-safe open (mkdir 0700 + chmod 0600 + busy_timeout + cleanup registration) to the shared
+  // helper (#8319) instead of hand-rolling it, matching plan-store.ts/attempt-log.ts.
+  const db = openLocalStoreDb(resolvedPath);
   db.exec(`CREATE TABLE IF NOT EXISTS orb_export_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
 
   const getStatement = db.prepare("SELECT value FROM orb_export_meta WHERE key = ?");

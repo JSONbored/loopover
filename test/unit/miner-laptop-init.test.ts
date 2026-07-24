@@ -36,6 +36,10 @@ import {
   resolveLaptopStateDbPath,
   runInit,
 } from "../../packages/loopover-miner/lib/laptop-init.js";
+import {
+  cleanupResourceCount,
+  resetProcessLifecycleForTesting,
+} from "../../packages/loopover-miner/lib/process-lifecycle.js";
 
 const roots: string[] = [];
 
@@ -71,6 +75,17 @@ describe("loopover-miner laptop init (#2329)", () => {
     expect(existsSync(first.dbPath)).toBe(true);
     expect(existsSync(first.stateDir)).toBe(true);
     expect(checkLaptopStateSqlite(env).ok).toBe(true);
+  });
+
+  it("routes through the crash-safe openLocalStoreDb helper without leaking a cleanup registration (#8319)", () => {
+    const root = tempRoot();
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(root, "state") };
+    resetProcessLifecycleForTesting();
+    expect(cleanupResourceCount()).toBe(0);
+    initLaptopState(env);
+    // openLocalStoreDb registered the bootstrap handle for crash-safe cleanup and initLaptopState closed it,
+    // which unregisters -- so a completed init leaves no leaked/half-written handle behind.
+    expect(cleanupResourceCount()).toBe(0);
   });
 
   it("re-running init is idempotent and does not clobber existing metadata", () => {

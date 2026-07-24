@@ -41,6 +41,12 @@ have a root test under `test/unit/` (e.g. `test/unit/reviewer-consensus-calibrat
 `src/miner/loop-reentry-policy.ts` — #8347). The package-local `node:test` suite remains the package's
 own gate; the root mirror is what makes the same scenarios gradeable by Codecov.
 
+Miner path-resolution refactors that only touch `packages/loopover-miner/lib/**` (e.g. delegating
+`resolve*DbPath` to `resolveLocalStoreDbPath` — #8336) also keep this README line so CI's `engine`
+path filter trips and validate-tests runs the **unscoped** suite: scoped `--changed` +
+`--coverage.all=false` has uploaded empty patch coverage for those miner lib lines even when the
+matching `test/unit/miner-*.test.ts` files passed (#8496).
+
 ## `opportunity-ranker`
 
 The Phase-1 miner-discovery ranker. It composes five already-normalized `[0, 1]` signals into one ordinal score:

@@ -38,7 +38,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   },
   {
     name: "LOOPOVER_MINER_CONFIG_DIR",
-    firstReference: "lib/deny-hook-synthesis.ts",
+    firstReference: "lib/laptop-init.ts",
     defaultValue: "",
   },
   {
@@ -64,7 +64,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   {
     name: "LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB",
     firstReference: "lib/deny-hook-synthesis.ts",
-    defaultValue: "",
+    defaultValue: null,
   },
   {
     name: "LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL",
@@ -107,6 +107,11 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
     defaultValue: null,
   },
   {
+    name: "LOOPOVER_MINER_LAPTOP_STATE_DB",
+    firstReference: "lib/laptop-init.ts",
+    defaultValue: null,
+  },
+  {
     name: "LOOPOVER_MINER_LOG_LEVEL",
     firstReference: "lib/logger.ts",
     defaultValue: "",
@@ -134,7 +139,7 @@ export const AMS_ENV_REFERENCE_ROWS: MinerEnvReferenceRow[] = [
   {
     name: "LOOPOVER_MINER_ORB_EXPORT_DB",
     firstReference: "lib/orb-export.ts",
-    defaultValue: "",
+    defaultValue: null,
   },
   {
     name: "LOOPOVER_MINER_PLAN_STORE_DB",
@@ -241,12 +246,12 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_AMS_POLICY_PATH` | `lib/ams-policy.ts` | (none) |",
   "| `LOOPOVER_MINER_ATTEMPT_LOG_DB` | `lib/attempt-log.ts` | (none) |",
   "| `LOOPOVER_MINER_CLAIM_LEDGER_DB` | `lib/claim-ledger.ts` | (none) |",
-  '| `LOOPOVER_MINER_CONFIG_DIR` | `lib/deny-hook-synthesis.ts` | `""` |',
+  '| `LOOPOVER_MINER_CONFIG_DIR` | `lib/laptop-init.ts` | `""` |',
   "| `LOOPOVER_MINER_CONTRIBUTION_PROFILE_CACHE_DB` | `lib/contribution-profile-cache.ts` | (none) |",
   '| `LOOPOVER_MINER_CONTROL_PLANE` | `lib/tenant-client.ts` | `""` |',
   '| `LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN` | `lib/tenant-client.ts` | `""` |',
   '| `LOOPOVER_MINER_CONTROL_PLANE_URL` | `lib/tenant-client.ts` | `""` |',
-  '| `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` | `lib/deny-hook-synthesis.ts` | `""` |',
+  "| `LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB` | `lib/deny-hook-synthesis.ts` | (none) |",
   "| `LOOPOVER_MINER_DISABLE_EGRESS_FIREWALL` | `lib/generate-egress-firewall-config.ts` | (none) |",
   '| `LOOPOVER_MINER_DISCOVERY_INDEX_URL` | `lib/discovery-index-client.ts` | `""` |',
   '| `LOOPOVER_MINER_DISCOVERY_PLANE` | `lib/discovery-index-client.ts` | `""` |',
@@ -255,12 +260,13 @@ export const AMS_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_MINER_EVENT_LEDGER_DB` | `lib/event-ledger.ts` | (none) |",
   "| `LOOPOVER_MINER_GOVERNOR_LEDGER_DB` | `lib/governor-ledger.ts` | (none) |",
   "| `LOOPOVER_MINER_GOVERNOR_STATE_DB` | `lib/governor-state.ts` | (none) |",
+  "| `LOOPOVER_MINER_LAPTOP_STATE_DB` | `lib/laptop-init.ts` | (none) |",
   '| `LOOPOVER_MINER_LOG_LEVEL` | `lib/logger.ts` | `""` |',
   "| `LOOPOVER_MINER_NEON_API_KEY` | `lib/egress-allowlist.ts` | (none) |",
   "| `LOOPOVER_MINER_NEON_PARENT_BRANCH_ID` | `lib/egress-allowlist.ts` | (none) |",
   "| `LOOPOVER_MINER_NEON_PROJECT_ID` | `lib/egress-allowlist.ts` | (none) |",
   '| `LOOPOVER_MINER_NO_UPDATE_CHECK` | `lib/update-check.ts` | `""` |',
-  '| `LOOPOVER_MINER_ORB_EXPORT_DB` | `lib/orb-export.ts` | `""` |',
+  "| `LOOPOVER_MINER_ORB_EXPORT_DB` | `lib/orb-export.ts` | (none) |",
   "| `LOOPOVER_MINER_PLAN_STORE_DB` | `lib/plan-store.ts` | (none) |",
   "| `LOOPOVER_MINER_POLICY_DOC_CACHE_DB` | `lib/policy-doc-cache.ts` | (none) |",
   "| `LOOPOVER_MINER_POLICY_VERDICT_CACHE_DB` | `lib/policy-verdict-cache.ts` | (none) |",

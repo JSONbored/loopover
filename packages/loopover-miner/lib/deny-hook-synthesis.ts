@@ -4,8 +4,7 @@
 // refresh + maintainer review before any synthesized rule takes effect. Approved rules merge with
 // {@link DEFAULT_DENY_RULES}; unapproved proposals never block tool calls. No behavior change.
 import { chmodSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   aggregateBlockerHistory,
@@ -24,6 +23,7 @@ import {
 import type { DenyRuleProposal, SynthesisConfig } from "@loopover/engine";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import type { DenyRule } from "./deny-hooks.js";
+import { resolveLocalStoreDbPath } from "./local-store.js";
 import { DENY_HOOK_SYNTHESIS_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
 // Re-export the pure synthesis helpers from the engine so this module's public API is unchanged after #5667
@@ -86,20 +86,7 @@ function normalizeApiBaseUrl(apiBaseUrl?: string): string {
 }
 
 export function resolveDenyHookSynthesisDbPath(env: Record<string, string | undefined> = process.env): string {
-  const explicitPath = typeof env.LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB === "string"
-    ? env.LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB.trim()
-    : "";
-  if (explicitPath) return explicitPath;
-
-  const explicitConfigDir = typeof env.LOOPOVER_MINER_CONFIG_DIR === "string"
-    ? env.LOOPOVER_MINER_CONFIG_DIR.trim()
-    : "";
-  if (explicitConfigDir) return join(explicitConfigDir, defaultDbFileName);
-
-  const configHome = typeof env.XDG_CONFIG_HOME === "string" && env.XDG_CONFIG_HOME.trim()
-    ? env.XDG_CONFIG_HOME.trim()
-    : join(homedir(), ".config");
-  return join(configHome, "loopover-miner", defaultDbFileName);
+  return resolveLocalStoreDbPath(defaultDbFileName, "LOOPOVER_MINER_DENY_HOOK_SYNTHESIS_DB", env);
 }
 
 // `dbPath` is always a real string here: this function's only caller (initDenyHookSynthesisStore) already

@@ -113,6 +113,18 @@ const CHUNK_OVERLAP = 1500;
  *  recurring one per cron cycle (#4365's blob-SHA skip-cache). Self-host only: this is not a Cloudflare
  *  free-tier constraint on this deployment, but the name/comment history predates self-host. */
 export const MAX_CHUNKS_PER_REPO = 4000;
+// Test-only override (#test-hotspots): the cap tests exist to pin capping BEHAVIOR, not the number
+// 4000 — building 4,000 real chunk rows per cap test made rag-index.test.ts one of the suite's
+// slowest files (~7s per cap test). Same `...ForTest` hook convention as
+// clearInstallationTokenCacheForTest / clearGitHubResponseCacheForTest; production call sites read
+// maxChunksPerRepo() and never touch the override.
+let maxChunksPerRepoOverride: number | null = null;
+export function maxChunksPerRepo(): number {
+  return maxChunksPerRepoOverride ?? MAX_CHUNKS_PER_REPO;
+}
+export function setMaxChunksPerRepoForTest(value: number | null): void {
+  maxChunksPerRepoOverride = value;
+}
 const EMBED_BATCH = 96; // Workers AI caps embedding input at 100 items/call; kept as a conservative general
 // bound — other embed providers (Ollama/vLLM/etc via the self-host adapter) may not share this exact cap.
 const MAX_CONTEXT_CHARS = 14000; // bound the injected block (mirrors diff/knowledge budgets)

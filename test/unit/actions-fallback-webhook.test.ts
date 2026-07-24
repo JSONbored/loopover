@@ -14,19 +14,10 @@ import { fallbackShotR2Key, FALLBACK_ARTIFACT_NAME, isFallbackDispatchInFlight, 
 import { processJob } from "../../src/queue/processors";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // Mirrors test/unit/queue.test.ts's own generatePrivateKeyPem helper -- createInstallationToken mints a real
 // JWT, so the default createTestEnv placeholder key ("test-private-key") won't do for any test that reaches it.
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
-}
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((sum, p) => sum + p.length, 0);

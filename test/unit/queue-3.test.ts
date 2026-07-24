@@ -74,6 +74,7 @@ import {
 import { createTestEnv } from "../helpers/d1";
 import { ISSUE_WAKE_MAX_PRS, MERGE_WAKE_MAX_PRS, SWEEP_MAX_PRS } from "../../src/settings/agent-sweep";
 import { AGENT_LABEL_PENDING_CLOSURE, DEFAULT_LINKED_ISSUE_HARD_RULES } from "../../src/review/linked-issue-hard-rules";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/github/pr-freshness")>();
@@ -198,22 +199,6 @@ function withProductUsageInsertFailure(env: Env): Env {
       },
     } as unknown as D1Database,
   };
-}
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 describe("queue processors", () => {

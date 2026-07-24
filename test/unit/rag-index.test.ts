@@ -1,6 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { indexRepo, reindexChangedPaths } from "../../src/review/rag-index";
-import { MAX_CHUNKS_PER_REPO, MAX_FILE_BYTES, RAG_DIMENSIONS, ragNamespace } from "../../src/review/rag";
+import { MAX_FILE_BYTES, RAG_DIMENSIONS, maxChunksPerRepo, ragNamespace, setMaxChunksPerRepoForTest } from "../../src/review/rag";
+
+// #test-hotspots: the cap tests pin capping BEHAVIOR, not the production constant (4000) — building
+// 4,000 real chunk rows per cap test made this file one of the suite's slowest (~7s per cap test).
+// The whole file runs with a small cap via setMaxChunksPerRepoForTest: cap tests hit it at 24 rows,
+// and no other fixture in this file indexes anywhere near 24 files, so their semantics are unchanged.
+// Keeps the production constant's NAME so every existing test body reads exactly as before.
+const MAX_CHUNKS_PER_REPO = 24;
+beforeEach(() => setMaxChunksPerRepoForTest(MAX_CHUNKS_PER_REPO));
+afterEach(() => setMaxChunksPerRepoForTest(null));
 import { processJob, splitRepoForRag } from "../../src/queue/processors";
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
@@ -95,6 +104,13 @@ async function pathsFor(env: Env, project: string, repo: string): Promise<string
   const rows = await env.DB.prepare("SELECT path FROM repo_chunks WHERE project = ? AND repo = ? ORDER BY path").bind(project, repo).all<{ path: string }>();
   return [...new Set((rows.results ?? []).map((r) => r.path))];
 }
+
+describe("maxChunksPerRepo test override", () => {
+  it("falls back to the production cap (4000) when no override is armed", () => {
+    setMaxChunksPerRepoForTest(null);
+    expect(maxChunksPerRepo()).toBe(4000);
+  });
+});
 
 describe("rag-index migration: repo_chunks exists in the test D1", () => {
   it("the 0051 migration created repo_chunks (insert + read round-trips)", async () => {

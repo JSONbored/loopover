@@ -6,6 +6,7 @@ import {
   fetchLinkedIssueLabelsForPropagation,
   type LinkedIssuePropagationLabels,
 } from "../../src/review/linked-issue-label-propagation-fetch";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 // `getRepositoryCollaboratorPermission` mints its own installation token internally with no fallback to
 // the public token, so a maintainer-authored-issue test that reaches it (i.e. isn't already short-circuited
@@ -17,19 +18,6 @@ import {
 // markers are freshly generated per test run, not a real credential (src/review/safety.ts).
 const PEM_HEADER = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
 const PEM_FOOTER = ["-----END", "PRIVATE KEY-----"].join(" ");
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer)
-    .toString("base64")
-    .replace(/(.{64})/g, "$1\n");
-  return `${PEM_HEADER}\n${base64}\n${PEM_FOOTER}`;
-}
 
 // #regression-safe-propagation: `fetchLinkedIssueLabelsForPropagation` returns `{labels, inconclusive}`, not a
 // bare `string[]` -- `inconclusive` defaults false (a confirmed result) in every assertion below except the

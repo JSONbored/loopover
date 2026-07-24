@@ -46,6 +46,7 @@ import { persistRegistrySnapshot } from "../../src/registry/sync";
 import { recordOverrideAudit, writeLiveOverride, writeShadowOverride, type StorageEnv } from "../../src/review/auto-apply";
 import { asCloudEnv, createTestEnv } from "../helpers/d1";
 import type { JsonValue } from "../../src/types";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 vi.mock("../../src/github/app", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/app")>()),
@@ -7137,22 +7138,6 @@ function apiHeaders(env: Env): Record<string, string> {
     authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`,
     "content-type": "application/json",
   };
-}
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
 }
 
 function upstreamContractFetch() {

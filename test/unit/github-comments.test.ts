@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOrUpdatePrIntelligenceComment, createOrUpdateVisualFollowupComment, PR_INTELLIGENCE_COMMENT_MARKER, VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
 import { createTestEnv } from "../helpers/d1";
+import { generatePrivateKeyPem } from "../helpers/github-app-key";
 
 describe("GitHub PR intelligence comments", () => {
   afterEach(() => {
@@ -503,22 +504,6 @@ describe("GitHub PR intelligence comments", () => {
     );
   });
 });
-
-async function generatePrivateKeyPem(): Promise<string> {
-  const key = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const exported = await crypto.subtle.exportKey("pkcs8", key.privateKey);
-  const base64 = Buffer.from(exported as ArrayBuffer).toString("base64").replace(/(.{64})/g, "$1\n");
-  return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----`;
-}
 
 describe("createOrUpdateIssueCommentWithMarker repoFullName guard (#8311)", () => {
   // The existing segment-count guard now also rejects whitespace, matching pr-actions.ts/assignees.ts/

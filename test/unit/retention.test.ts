@@ -140,6 +140,74 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
     expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
+
+  // #8370: the same defensive-arm coverage dedupeSignalSnapshots already has below, for this function's
+  // identical `?? 0` guards against a D1 driver returning an unexpected row/meta shape.
+  it("dry-run falls back to 0 when the count query returns no row (defensive ?? 0 arm)", async () => {
+    const noRowEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => undefined }), // no row → `row?.n ?? 0` fires
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noRowEnv, {
+      dryRun: true,
+      nowMs: NOW,
+      policy: [{ table: "webhook_events", column: "received_at", days: 90 }],
+    });
+    expect(results).toEqual([{ table: "webhook_events", column: "received_at", cutoff: daysAgo(90), deleted: 0 }]);
+  });
+
+  it("dry-run falls back to 0 when the count row carries a null n (defensive ?? 0 arm, present-row side)", async () => {
+    const nullCountEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => ({ n: null }) }), // row present, n null → same fallback
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(nullCountEnv, {
+      dryRun: true,
+      nowMs: NOW,
+      policy: [{ table: "webhook_events", column: "received_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(0);
+    // Number(null) is 0, but Number(undefined) is NaN — the point of the guard is that neither shape yields NaN.
+    expect(Number.isNaN(results[0]?.deleted)).toBe(false);
+  });
+
+  it("falls back to 0 changes when a delete run() result lacks meta (defensive ?? 0 arm)", async () => {
+    const noMetaEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          // no meta → `result.meta?.changes ?? 0` fires, so changes = 0 < batchSize and the loop exits at once
+          bind: (..._binds: unknown[]) => ({ run: async () => ({}) }),
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noMetaEnv, {
+      nowMs: NOW,
+      policy: [{ table: "webhook_events", column: "received_at", days: 90 }],
+    });
+    expect(results).toEqual([{ table: "webhook_events", column: "received_at", cutoff: daysAgo(90), deleted: 0 }]);
+  });
+
+  it("falls back to 0 changes when meta is present but changes is null (defensive ?? 0 arm, present-meta side)", async () => {
+    const nullChangesEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ run: async () => ({ meta: { changes: null } }) }),
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(nullChangesEnv, {
+      nowMs: NOW,
+      policy: [{ table: "webhook_events", column: "received_at", days: 90 }],
+    });
+    expect(results[0]?.deleted).toBe(0);
+    expect(Number.isNaN(results[0]?.deleted)).toBe(false);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {

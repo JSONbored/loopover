@@ -13,8 +13,8 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-// Regression guard: draft PRs were consuming the exact same 11-job GitHub-hosted-runner fan-out as ready
-// PRs (validate-code, the 6-way validate-tests shard matrix, validate-tests-merge, security), which both
+// Regression guard: draft PRs were consuming the exact same heavy GitHub-hosted-runner fan-out as ready
+// PRs (validate-code, the full-suite validate-tests coverage run, security), which both
 // (a) let contributors farm bot labels/AI review/screenshots for free while sitting in draft, and (b)
 // materially worsened the account's shared-runner queue contention for every other PR in flight. The heavy
 // jobs now require the PR not be a draft; the cheap `changes` and `validate` (result-aggregation) jobs still
@@ -29,7 +29,7 @@ describe("ci.yml skips the heavy jobs for draft pull requests", () => {
     expect(pullRequest.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
   });
 
-  it.each(["validate-code", "validate-tests", "validate-tests-merge"])(
+  it.each(["validate-code", "validate-tests"])(
     "%s's if-condition requires github.event.pull_request.draft != true alongside the existing push/path-filter checks",
     (jobName) => {
       const job = record(jobs[jobName], `jobs.${jobName}`);
@@ -45,9 +45,9 @@ describe("ci.yml skips the heavy jobs for draft pull requests", () => {
     expect(String(job.if)).toBe("${{ github.event_name == 'pull_request' && github.event.pull_request.draft != true }}");
   });
 
-  it("validate still aggregates all four gated jobs and treats a skipped dependency as success", () => {
+  it("validate still aggregates all three gated jobs and treats a skipped dependency as success", () => {
     const job = record(jobs.validate, "jobs.validate");
-    expect(job.needs).toEqual(["changes", "validate-code", "validate-tests", "validate-tests-merge", "security"]);
+    expect(job.needs).toEqual(["changes", "validate-code", "validate-tests", "security"]);
     expect(String(job.if)).toBe("${{ always() }}");
   });
 });

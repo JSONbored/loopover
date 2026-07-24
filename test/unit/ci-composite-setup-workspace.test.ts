@@ -31,8 +31,8 @@ function jobSteps(workflow: Record<string, unknown>, jobName: string): Array<Rec
 
 const ACTION_PATH = ".github/actions/setup-workspace/action.yml";
 
-// .github/actions/setup-workspace holds logic that used to be hand-copied across validate-code,
-// validate-tests, and validate-tests-merge -- the same drift risk that caused a real cache-key
+// .github/actions/setup-workspace holds logic that used to be hand-copied across validate-code and
+// validate-tests -- the same drift risk that caused a real cache-key
 // mismatch bug this repo already hit once (two jobs' Turborepo cache pair silently diverged when one
 // was edited and the other wasn't). It does NOT check out the repo itself (a local `uses: ./path`
 // reference needs the repo already on disk to find its own action.yml), so every call site must run
@@ -90,7 +90,6 @@ describe("setup-workspace composite action", () => {
   it.each([
     { job: "validate-code", saveCache: undefined },
     { job: "validate-tests", saveCache: undefined },
-    { job: "validate-tests-merge", saveCache: "false" },
   ])("$job invokes the composite action (save-cache: $saveCache)", ({ job, saveCache }) => {
     const steps = jobSteps(readYaml(".github/workflows/ci.yml"), job);
 

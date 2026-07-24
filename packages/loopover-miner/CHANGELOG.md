@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.14.0](https://github.com/JSONbored/loopover/compare/miner-v3.13.0...miner-v3.14.0) (2026-07-24)
+
+
+### Features
+
+* **miner:** add calibration backtest-eligibility for ContributionProfile replay ([#8572](https://github.com/JSONbored/loopover/issues/8572)) ([346c183](https://github.com/JSONbored/loopover/commit/346c1839d89777af432ed5b6f9038593b944b8ef))
+* **miner:** capture bounded candidate context in eligibility-exclusion metadata ([#8561](https://github.com/JSONbored/loopover/issues/8561)) ([f79f827](https://github.com/JSONbored/loopover/commit/f79f827e5d64bf475c8001d50551debeff13fc43))
+* **miner:** record feasibility-verdict reasons as rule-fired signals on the infeasible path ([#8569](https://github.com/JSONbored/loopover/issues/8569)) ([1c7c3a7](https://github.com/JSONbored/loopover/commit/1c7c3a73f9966d98aaabe6fee49689131b1d6c01)), closes [#8543](https://github.com/JSONbored/loopover/issues/8543)
+
+
+### Fixes
+
+* **miner:** cover worktree-allocator's worktree_slots in purge-cli's right-to-be-forgotten sweep ([#8570](https://github.com/JSONbored/loopover/issues/8570)) ([6c22ccd](https://github.com/JSONbored/loopover/commit/6c22ccd1917f4ecc19fa9805915ddadca27b769f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/engine bumped from ^3.13.0 to ^3.14.0
+
 ## [3.13.0](https://github.com/JSONbored/loopover/compare/miner-v3.12.0...miner-v3.13.0) (2026-07-24)
 
 

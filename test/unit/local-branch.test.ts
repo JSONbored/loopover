@@ -2225,6 +2225,38 @@ describe("local MCP git metadata collection", () => {
     expect(analysis.scenarioSummary.eligibilityNotes.length).toBeGreaterThan(0);
   });
 
+  it("#8325: covers both operands of the metadataOnly condition, including the gittensor_root arm", () => {
+    // metadataOnly = scorer?.mode !== "gittensor_root" && scorer?.mode !== "external_command"
+    // (local-branch.ts:497). Every other mode was covered; "gittensor_root" had zero test cases, so the
+    // FIRST operand's false arm was never taken. These three cases exercise each operand independently.
+    const analyze = (localScorer?: { mode: string }) =>
+      buildLocalBranchAnalysis({
+        input: {
+          login: "oktofeesh1",
+          repoFullName: repo.fullName,
+          changedFiles: [{ path: "src/cache.ts", additions: 5, deletions: 0, status: "modified" }],
+          ...(localScorer ? { localScorer: localScorer as never } : {}),
+        },
+        repo,
+        issues: [],
+        pullRequests: [],
+        profile,
+        outcomeHistory,
+        scoringSnapshot,
+        scoringProfile,
+      });
+    const hasMetadataOnly = (analysis: ReturnType<typeof buildLocalBranchAnalysis>) =>
+      analysis.scorePreview.blockedBy.some((entry) => entry.code === "metadata_only");
+
+    // Operand 1 FALSE (short-circuits): a real gittensor_root scorer ran, so the preview is NOT metadata-only.
+    expect(hasMetadataOnly(analyze({ mode: "gittensor_root" }))).toBe(false);
+    // Operand 1 TRUE, operand 2 FALSE: external_command is the other real-scorer mode.
+    expect(hasMetadataOnly(analyze({ mode: "external_command" }))).toBe(false);
+    // BOTH TRUE: any other mode (or no scorer at all) leaves the preview metadata-only.
+    expect(hasMetadataOnly(analyze({ mode: "metadata_only" }))).toBe(true);
+    expect(hasMetadataOnly(analyze())).toBe(true);
+  });
+
   it("populates scenarioSummary.blockerNotes when the score preview has metadata-only signals", () => {
     const analysis = buildLocalBranchAnalysis({
       input: {

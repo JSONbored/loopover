@@ -20,7 +20,7 @@
 // follow-up; this PR only adds the standalone Slack delivery function.
 import { listPullRequests, recordAuditEvent } from "../db/repositories";
 import { computeGateEval } from "../review/parity";
-import { escapeSlackMrkdwnText, isValidSlackWebhook, resolveDiscordWebhook } from "./notify-discord";
+import { escapeSlackMrkdwnText, resolveDiscordWebhook, resolveSlackWebhook } from "./notify-discord";
 import type { ReviewRecap } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
@@ -200,24 +200,24 @@ export async function sendReviewRecapToDiscord(env: Env, recap: ReviewRecap): Pr
   }
 }
 
-/** Post the recap to `SLACK_WEBHOOK_URL` as a Block Kit mrkdwn section, reusing {@link isValidSlackWebhook} +
- *  {@link escapeSlackMrkdwnText} from notify-discord.ts — the SAME validation/escaping notifyActionToSlack's
- *  per-event notifier uses (#2246, sibling of {@link sendReviewRecapToDiscord}). Best-effort: a delivery
- *  failure is recorded to the audit ledger but never thrown, mirroring notifyActionToSlack's fail-safe
- *  contract. */
+/** Post the recap to the repo's configured Slack webhook, reusing {@link resolveSlackWebhook} — the SAME
+ *  per-repo resolution (SLACK_REPO_WEBHOOKS entry, else the global SLACK_WEBHOOK_URL fallback) notifyActionToSlack's
+ *  per-event notifier uses (#8371) — plus {@link escapeSlackMrkdwnText} for the Block Kit mrkdwn section (#2246,
+ *  sibling of {@link sendReviewRecapToDiscord}, which routes per-repo via resolveDiscordWebhook the same way).
+ *  Best-effort: a delivery failure is recorded to the audit ledger but never thrown, mirroring notifyActionToSlack's
+ *  fail-safe contract. */
 export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise<{ sent: boolean; reason?: string }> {
-  const webhookUrl = (env as unknown as Record<string, unknown>).SLACK_WEBHOOK_URL;
-  if (typeof webhookUrl !== "string" || !isValidSlackWebhook(webhookUrl)) {
-    const reason = typeof webhookUrl === "string" ? "invalid_webhook" : "missing_webhook";
+  const resolved = resolveSlackWebhook(env, recap.repoFullName);
+  if (resolved.status !== "configured") {
     await recordAuditEvent(env, {
       eventType: "review_recap_notification.slack",
       actor: "loopover",
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "denied",
-      detail: reason,
+      detail: resolved.reason,
       metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays },
     });
-    return { sent: false, reason };
+    return { sent: false, reason: resolved.reason };
   }
   const lines = [
     `*${escapeSlackMrkdwnText(recap.repoFullName)} · review recap (${recap.windowDays}d)*`,
@@ -228,7 +228,7 @@ export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise
     blocks: [{ type: "section", text: { type: "mrkdwn", text: lines.join("\n") } }],
   };
   try {
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(resolved.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -241,7 +241,7 @@ export async function deliverRecapToSlack(env: Env, recap: ReviewRecap): Promise
       targetKey: `review-recap:${recap.repoFullName}:${recap.windowDays}`,
       outcome: "completed",
       detail: "sent",
-      metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays },
+      metadata: { repoFullName: recap.repoFullName, windowDays: recap.windowDays, source: resolved.source },
     });
     return { sent: true };
   } catch (error) {

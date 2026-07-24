@@ -524,4 +524,175 @@ describe("lockfileTamperRiskFinding", () => {
     expect(finding).not.toBeNull();
     expect(finding?.detail).toContain("lodash");
   });
+
+  // #8351: git's ~3-line context often splits a single entry's version bump and its resolved/integrity
+  // change into SEPARATE hunks, each closing with a depth-0 `}`. Resetting the unattributed bucket on
+  // every such brace used to mint a fresh `#unattributed-N` per hunk, so the integrity-only bucket
+  // false-flagged even though the version hunk recorded a real bump for the same package.
+  it("REGRESSION (#8351): does NOT flag a legitimate version+integrity bump split across two header-less hunks for the same package", () => {
+    const lockPatch = [
+      "@@ -50,6 +50,6 @@",
+      '       "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '       "license": "MIT",',
+      '-      "version": "4.17.20",',
+      '+      "version": "4.17.21",',
+      "     }",
+      "@@ -60,7 +60,7 @@",
+      '       "version": "4.17.21",',
+      '       "license": "MIT",',
+      '-      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '-      "integrity": "sha512-oldoldold=="',
+      '+      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",',
+      '+      "integrity": "sha512-newnewnew=="',
+      "     }",
+    ].join("\n");
+    // No `"node_modules/lodash": {` header in either hunk — package identity comes from the registry
+    // resolved URL in context / changed lines, so both hunks share one unattributed bucket.
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
+
+  it("REGRESSION (#8351): still flags a genuine cross-hunk tamper (integrity changed, version NOT changed) for the same header-less package", () => {
+    const lockPatch = [
+      "@@ -50,6 +50,6 @@",
+      '       "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-oldoldold=="',
+      '+      "integrity": "sha512-tamperedtampered=="',
+      "     }",
+      "@@ -70,6 +70,6 @@",
+      '       "version": "4.17.20",',
+      '       "license": "MIT",',
+      '-      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '+      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20-mirror.tgz",',
+      "     }",
+    ].join("\n");
+    // Integrity in hunk 1 + resolved swap in hunk 2, neither hunk bumps version — correlation must
+    // still produce a single candidate with resolvedOrIntegrityChanged && !versionChanged.
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.code).toBe("lockfile_tamper_risk");
+    expect(finding?.title).toContain("unattributed lockfile entry");
+  });
+
+  it("REGRESSION (#8351): two different header-less packages in one patch never share an unattributed bucket", () => {
+    const lockPatch = [
+      "@@ -50,6 +50,6 @@",
+      '       "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old-lodash=="',
+      '+      "integrity": "sha512-tampered-lodash=="',
+      "     }",
+      "@@ -80,6 +80,6 @@",
+      '       "resolved": "https://registry.npmjs.org/express/-/express-4.18.0.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old-express=="',
+      '+      "integrity": "sha512-tampered-express=="',
+      "     }",
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    // Both packages are independently tampered; collapsing them into one bucket would still flag, but
+    // the title/detail must keep the anonymous unattributed label (not a merged bare name) and the
+    // finding must fire — pinning that distinct registry URLs mint distinct correlation keys.
+    expect(finding?.title).toContain("unattributed lockfile entry");
+    expect(finding?.detail).toContain("unattributed lockfile entry");
+  });
+
+  it("REGRESSION (#8351): upgrades a sequence-keyed unattributed bucket when a resolved URL appears later in the same header-less block", () => {
+    // No leading context resolved URL — version lines mint `#unattributed-N` first; the following
+    // resolved URL recovers the package name and must re-key so a PRIOR hunk's package-keyed integrity
+    // signal (and this block's version bump) still correlate into one candidate.
+    const lockPatch = [
+      "@@ -40,6 +40,6 @@",
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old=="',
+      '+      "integrity": "sha512-new=="',
+      "     }",
+      "@@ -55,8 +55,8 @@",
+      '-      "version": "1.0.0",',
+      '+      "version": "1.0.1",',
+      '-      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '+      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.1.tgz",',
+      '-      "integrity": "sha512-new=="',
+      '+      "integrity": "sha512-newer=="',
+      "     }",
+    ].join("\n");
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
+
+  it("REGRESSION (#8351): in-block sequence→package re-key works even with no prior package-keyed candidate", () => {
+    const lockPatch = [
+      "@@ -55,8 +55,8 @@",
+      '-      "version": "1.0.0",',
+      '+      "version": "1.0.1",',
+      '-      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '+      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.1.tgz",',
+      '-      "integrity": "sha512-old=="',
+      '+      "integrity": "sha512-new=="',
+      "     }",
+    ].join("\n");
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
+
+  it("REGRESSION (#8351): sequence→package upgrade merges an off-registry resolved URL onto the prior package-keyed candidate", () => {
+    const lockPatch = [
+      "@@ -10,5 +10,5 @@",
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "version": "1.0.0",',
+      '+      "version": "1.0.1",',
+      "     }",
+      "@@ -20,6 +20,6 @@",
+      '-      "resolved": "https://evil.example.com/foo-old.tgz",',
+      '+      "resolved": "https://evil.example.com/foo-new.tgz",',
+      // A second resolved line (invalid JSON, but the line scanner is not a JSON parser) supplies the
+      // registry URL that recovers the package name and triggers the sequence→package upgrade merge.
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      "     }",
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("outside registry.npmjs.org");
+  });
+
+  it("REGRESSION (#8351): merge keeps a prior off-registry URL when the sequence bucket has none", () => {
+    // Hunk 1 records an off-registry resolved under the package key. Hunk 2 starts with a version-only
+    // sequence bucket that later promotes and must NOT clear the prior off-registry URL (?? left arm).
+    const lockPatch = [
+      "@@ -10,6 +10,6 @@",
+      '       "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "resolved": "https://evil.example.com/foo-old.tgz",',
+      '+      "resolved": "https://evil.example.com/foo-new.tgz",',
+      "     }",
+      "@@ -30,6 +30,6 @@",
+      '-      "version": "1.0.0",',
+      '+      "version": "1.0.1",',
+      '-      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.0.tgz",',
+      '+      "resolved": "https://registry.npmjs.org/foo/-/foo-1.0.1.tgz",',
+      "     }",
+    ].join("\n");
+    const finding = lockfileTamperRiskFinding([lockfilePatch(lockPatch)]);
+    expect(finding).not.toBeNull();
+    expect(finding?.detail).toContain("outside registry.npmjs.org");
+  });
+
+  it("REGRESSION (#8351): correlates a scoped package across hunks via its registry resolved URL", () => {
+    const lockPatch = [
+      "@@ -50,6 +50,6 @@",
+      '       "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "version": "7.0.0",',
+      '+      "version": "7.0.1",',
+      "     }",
+      "@@ -60,6 +60,6 @@",
+      '       "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.0.0.tgz",',
+      '       "license": "MIT",',
+      '-      "integrity": "sha512-old=="',
+      '+      "integrity": "sha512-new=="',
+      "     }",
+    ].join("\n");
+    expect(lockfileTamperRiskFinding([lockfilePatch(lockPatch)])).toBeNull();
+  });
 });

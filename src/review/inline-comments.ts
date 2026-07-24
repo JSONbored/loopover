@@ -135,8 +135,16 @@ export function selectInlineComments(
   });
   const addedLines = addedLinesByPath(files);
   const rightLines = rightLinesByPath(files);
-  return selected.map((finding) => {
+  const comments: ReviewInlineComment[] = [];
+  for (const finding of selected) {
     const anchor = resolveInlineCommentAnchor(finding, rightLines);
+    // Defense in depth: honor the resolver's own verdict rather than relying on the caller-side
+    // precondition -- an un-anchorable finding would 422 the whole review request.
+    /* v8 ignore next -- selectAnchoredInlineFindings already drops findings whose line is not a
+       commentable RIGHT-side line, and parseInlineLineRange uses that same line as `start`, so this
+       guard is unreachable today; it exists so a future selection change cannot silently reintroduce
+       the 422 this resolver is meant to prevent. */
+    if (!anchor.anchorable) continue;
     const anchoredFinding: InlineFinding =
       anchor.multiLine ? finding : { ...finding, endLine: undefined };
     const comment: ReviewInlineComment = {
@@ -149,8 +157,9 @@ export function selectInlineComments(
       comment.start_line = anchor.start;
       comment.start_side = "RIGHT";
     }
-    return comment;
-  });
+    comments.push(comment);
+  }
+  return comments;
 }
 
 /** Post the model's inline findings as ONE quiet, non-blocking review (`event: COMMENT`) on the PR. Fully

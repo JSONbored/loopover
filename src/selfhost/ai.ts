@@ -50,16 +50,20 @@ interface AiRunOptions {
   // Callers with no retry loop of their own (a single ai.run() call) leave this unset, so their one attempt IS
   // final and stays loud, unchanged from before this field existed.
   finalAttempt?: boolean;
-  // `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override): per-repo override for the subscription
+  // `.loopover.yml` `review.ai_model` (#selfhost-ai-model-override, #8364): per-repo override for the subscription
   // CLI providers, resolved by the caller from the repo's manifest and forwarded here so this file makes no
   // manifest fetch of its own. Each field is read ONLY by its matching provider's `.run()` (claude-code reads
-  // the claude* pair, codex reads the codex* pair) and takes priority over that provider's global env var, which
+  // the claude* fields, codex reads the codex* fields) and takes priority over that provider's global env var, which
   // in turn still wins over this file's own hardcoded default. Absent ⇒ byte-identical to today (global env var,
   // then default, exactly as before this override existed).
   claudeModel?: string;
   claudeEffort?: string;
   codexModel?: string;
   codexEffort?: string;
+  claudeTimeoutMs?: number;
+  codexTimeoutMs?: number;
+  claudeFirstOutputTimeoutMs?: number;
+  codexFirstOutputTimeoutMs?: number;
   // Same override mechanism, extended to the HTTP-API providers (#3902) -- ollama/openai/openai-compatible/
   // anthropic previously had no way to see a per-repo override at all (their model was resolved ONCE from the
   // global env var at buildProvider() construction time, before any repo was known). Read per-call, same
@@ -207,12 +211,37 @@ function resolveCliTimeoutFrom(configured: string | undefined, effort: string, e
   return effortTimeoutMs[effort]!;
 }
 
-export function resolveClaudeCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)), CLAUDE_EFFORT_TIMEOUT_MS);
+/** Prefer a positive finite per-repo override (#8364) over the env-var string; absent/invalid ⇒ env path. */
+function configuredTimeoutMsString(
+  repoOverrideMs: number | null | undefined,
+  envValue: string | undefined,
+): string | undefined {
+  if (typeof repoOverrideMs === "number" && Number.isFinite(repoOverrideMs) && repoOverrideMs > 0) {
+    return String(repoOverrideMs);
+  }
+  return firstConfigured(envValue);
 }
 
-export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)), CODEX_EFFORT_TIMEOUT_MS);
+export function resolveClaudeCliTimeoutMs(
+  env: Record<string, string | undefined>,
+  repoOverrideMs?: number | null | undefined,
+): number {
+  return resolveCliTimeoutFrom(
+    configuredTimeoutMsString(repoOverrideMs, env.CLAUDE_AI_TIMEOUT_MS),
+    resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)),
+    CLAUDE_EFFORT_TIMEOUT_MS,
+  );
+}
+
+export function resolveCodexCliTimeoutMs(
+  env: Record<string, string | undefined>,
+  repoOverrideMs?: number | null | undefined,
+): number {
+  return resolveCliTimeoutFrom(
+    configuredTimeoutMsString(repoOverrideMs, env.CODEX_AI_TIMEOUT_MS),
+    resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)),
+    CODEX_EFFORT_TIMEOUT_MS,
+  );
 }
 
 // Fast-fail deadline for Codex's "Reading prompt from stdin..." hang (GITTENSORY-K/GITTENSORY-M): observed in prod
@@ -231,8 +260,11 @@ export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>
 // effort makes a COMPLETION take longer, it does not make the CLI slower to print its FIRST stdout byte, so this
 // must not scale with effort the way the full timeout does. Bounds mirror resolveCliTimeoutFrom's floor but cap
 // well under the shortest full timeout (120_000ms) so this can never itself become the effective timeout.
-export function resolveCodexFirstOutputTimeoutMs(env: Record<string, string | undefined>): number {
-  const raw = Number(firstConfigured(env.CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS));
+export function resolveCodexFirstOutputTimeoutMs(
+  env: Record<string, string | undefined>,
+  repoOverrideMs?: number | null | undefined,
+): number {
+  const raw = Number(configuredTimeoutMsString(repoOverrideMs, env.CODEX_AI_FIRST_OUTPUT_TIMEOUT_MS));
   if (Number.isFinite(raw) && raw > 0) return Math.min(120_000, Math.max(1_000, raw));
   return 30_000;
 }
@@ -251,8 +283,11 @@ export function resolveCodexFirstOutputTimeoutMs(env: Record<string, string | un
 // operator explicitly opts into a shorter, riskier window via CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS -- "stalled no
 // output" then only fires when nothing arrived for the ENTIRE configured budget, a genuine hang, exactly the
 // pre-#4994 behavior. Do NOT copy this default onto Codex's version above; its streaming premise still holds.
-export function resolveClaudeFirstOutputTimeoutMs(env: Record<string, string | undefined>): number {
-  const raw = Number(firstConfigured(env.CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS));
+export function resolveClaudeFirstOutputTimeoutMs(
+  env: Record<string, string | undefined>,
+  repoOverrideMs?: number | null | undefined,
+): number {
+  const raw = Number(configuredTimeoutMsString(repoOverrideMs, env.CLAUDE_AI_FIRST_OUTPUT_TIMEOUT_MS));
   if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(1_000, raw));
   return 1_800_000;
 }
@@ -930,11 +965,14 @@ export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>
       const token = parentEnv.CLAUDE_CODE_OAUTH_TOKEN;
       const claudeModel = resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
       const effort = resolveEffort(firstConfigured(options.claudeEffort, parentEnv.CLAUDE_AI_EFFORT));
-      const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv);
+      const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv, options.claudeTimeoutMs);
       // #4994: same clamp reasoning as createCodexAi's identical line — keeps the fast-fail deadline strictly
       // below the full timeout even if a low CLAUDE_AI_TIMEOUT_MS override (floor 30_000ms) would otherwise let
       // them collide, which would make the "outer" timeout unreachable and defeat having two distinct signals.
-      const firstOutputTimeoutMs = Math.min(resolveClaudeFirstOutputTimeoutMs(parentEnv), Math.max(1, timeoutMs - 1));
+      const firstOutputTimeoutMs = Math.min(
+        resolveClaudeFirstOutputTimeoutMs(parentEnv, options.claudeFirstOutputTimeoutMs),
+        Math.max(1, timeoutMs - 1),
+      );
       let attempted = false;
       let stdoutForMetrics = "";
       try {
@@ -1049,11 +1087,14 @@ export function createCodexAi(
       // configured: otherwise Codex selects the account default.
       const codexModel = resolveModel(configuredCodexModel(parentEnv, options.codexModel), model, "");
       const effort = resolveCodexEffort(firstConfigured(options.codexEffort, parentEnv.CODEX_AI_EFFORT));
-      const timeoutMs = resolveCodexCliTimeoutMs(parentEnv);
+      const timeoutMs = resolveCodexCliTimeoutMs(parentEnv, options.codexTimeoutMs);
       // Clamp below timeoutMs so a misconfigured/low CODEX_AI_TIMEOUT_MS (its own floor is 30_000ms, the same as
       // this deadline's default) can never make the fast-fail deadline equal or exceed the outer safety net —
       // that would make the "outer" timeout unreachable and defeat the point of having two distinct signals.
-      const firstOutputTimeoutMs = Math.min(resolveCodexFirstOutputTimeoutMs(parentEnv), Math.max(1, timeoutMs - 1));
+      const firstOutputTimeoutMs = Math.min(
+        resolveCodexFirstOutputTimeoutMs(parentEnv, options.codexFirstOutputTimeoutMs),
+        Math.max(1, timeoutMs - 1),
+      );
       let attempted = false;
       let stdoutForMetrics = "";
       try {

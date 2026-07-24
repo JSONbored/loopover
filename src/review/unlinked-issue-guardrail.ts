@@ -242,8 +242,10 @@ export async function resolveUnlinkedIssueMatchDisposition(env: Env, input: Reso
   if (authorLogin && (await isOverUnlinkedIssueVerifyRateCeiling(env, authorLogin))) return unlinkedIssueVerifyCapacityHold("rate");
   if (await isUnlinkedIssueVerifyBudgetExceeded(env, candidates.length)) return unlinkedIssueVerifyCapacityHold("budget");
   for (const candidate of candidates) {
-    if (authorLogin) await recordUnlinkedIssueVerifyAttempt(env, input.repoFullName, input.pullNumber, authorLogin);
+    // #8356: mirror the spend-budget gate below — missing/no-op AI bindings fail closed to NO_MATCH
+    // without burning the per-actor rate-ceiling counter as if a real verifier call were possible.
     const hadAiBinding = hasUnlinkedIssueVerifyAiBinding(env);
+    if (hadAiBinding && authorLogin) await recordUnlinkedIssueVerifyAttempt(env, input.repoFullName, input.pullNumber, authorLogin);
     const verdict = await verifyUnlinkedIssueMatch(env, {
       prTitle: input.prTitle,
       prBody: input.prBody,

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.2](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.1...ui-kit-v1.1.2) (2026-07-24)
+
+
+### Fixes
+
+* **ui-kit:** don't hijack Cmd/Ctrl+B Bold in text fields (SidebarProvider) ([#8305](https://github.com/JSONbored/loopover/issues/8305)) ([#8341](https://github.com/JSONbored/loopover/issues/8341)) ([2ae66d6](https://github.com/JSONbored/loopover/commit/2ae66d69602f0812a971c0e95ed57cb897f465ba))
+* **ui-kit:** give PaginationLink's aria-disabled a real visual/interaction effect ([#8359](https://github.com/JSONbored/loopover/issues/8359)) ([ee7eed6](https://github.com/JSONbored/loopover/commit/ee7eed649ce970a5545e9b68bca90f7a3446eb1b)), closes [#8307](https://github.com/JSONbored/loopover/issues/8307)
+* **ui-kit:** move focus ring to focus-visible on Select/Dialog/Sheet/NavigationMenu ([#8335](https://github.com/JSONbored/loopover/issues/8335)) ([3f081c4](https://github.com/JSONbored/loopover/commit/3f081c49abfece478fe937e714d508a8f2be8d51)), closes [#8304](https://github.com/JSONbored/loopover/issues/8304)
+* **ui-kit:** respect prefers-reduced-motion across animated ui-kit and miner-ui components ([#8360](https://github.com/JSONbored/loopover/issues/8360)) ([5558575](https://github.com/JSONbored/loopover/commit/55585750e085288a960a0830d0692e30baf8bd31)), closes [#8303](https://github.com/JSONbored/loopover/issues/8303)
+
 ## [1.1.1](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.0...ui-kit-v1.1.1) (2026-07-23)
 
 

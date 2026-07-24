@@ -83,17 +83,29 @@ const Carousel = React.forwardRef<
       api?.scrollNext();
     }, [api]);
 
+    // The single source of truth for orientation the CarouselContext already exposes -- reused here so the
+    // keyboard handler stays orientation-aware like every other part of the component (#8308), rather than a
+    // second independent check.
+    const resolvedOrientation =
+      orientation || (opts?.axis === "y" ? "vertical" : "horizontal");
+
     const handleKeyDown = React.useCallback(
       (event: React.KeyboardEvent<HTMLDivElement>) => {
-        if (event.key === "ArrowLeft") {
+        // A vertical carousel's prev/next buttons already point up/down, so bind ArrowUp/ArrowDown to match;
+        // horizontal (the default) keeps ArrowLeft/ArrowRight. ArrowUp/ArrowLeft -> scrollPrev, the other -> scrollNext.
+        const prevKey =
+          resolvedOrientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+        const nextKey =
+          resolvedOrientation === "vertical" ? "ArrowDown" : "ArrowRight";
+        if (event.key === prevKey) {
           event.preventDefault();
           scrollPrev();
-        } else if (event.key === "ArrowRight") {
+        } else if (event.key === nextKey) {
           event.preventDefault();
           scrollNext();
         }
       },
-      [scrollPrev, scrollNext],
+      [resolvedOrientation, scrollPrev, scrollNext],
     );
 
     React.useEffect(() => {
@@ -124,8 +136,7 @@ const Carousel = React.forwardRef<
           carouselRef,
           api: api,
           opts,
-          orientation:
-            orientation || (opts?.axis === "y" ? "vertical" : "horizontal"),
+          orientation: resolvedOrientation,
           scrollPrev,
           scrollNext,
           canScrollPrev,

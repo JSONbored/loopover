@@ -339,6 +339,43 @@ export function cachedLiveMergeState(
   return next;
 }
 
+// #merge-race (observed live: metagraphed#8037 and others -- an approved, gate-passing, fully-autonomous-merge
+// PR sat unmerged for ~6 minutes, its own merge window, long enough for an overlapping sibling PR to land first
+// and base-conflict it out from under it): fetchLivePullRequestMergeState's own doc comment already documents
+// that GitHub computes mergeable_state ASYNCHRONOUSLY and can return "unknown" (still computing) even on a
+// forced live re-fetch taken moments after posting the approving review -- previously the disposition simply
+// accepted that single read and deferred to the next scheduled regate sweep (several minutes later) to catch
+// the now-resolved state. Retry a short, bounded number of times SPECIFICALLY on "unknown" (the one transient
+// value -- "dirty"/"blocked"/"behind" are real, stable, non-computing states that must never be retried) before
+// falling through to the same defer-to-sweep behavior as before. Mirrors the identical "GitHub hasn't finished
+// computing X yet" pattern already used for the diff/files lag (backfill.ts's
+// fetchAndStorePullRequestFilesForReview / REVIEW_FILES_EMPTY_RETRY_DELAY_MS).
+const MERGE_STATE_UNKNOWN_MAX_RETRIES = 2;
+let mergeStateUnknownRetryDelayMsOverride: number | null = null;
+/** Test-only override (#test-hotspots convention) -- production default (2s) is untouched; a test that wants
+ *  to exercise the retry loop's own logic sets this near-zero via test/helpers/vitest-setup.ts. */
+export function setMergeStateUnknownRetryDelayMsForTest(value: number | null): void {
+  mergeStateUnknownRetryDelayMsOverride = value;
+}
+function mergeStateUnknownRetryDelayMs(): number {
+  return mergeStateUnknownRetryDelayMsOverride ?? 2_000;
+}
+const sleepForMergeStateRetry = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchLivePullRequestMergeStateWithUnknownRetry(
+  env: Env,
+  repoFullName: string,
+  prNumber: number,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | undefined> {
+  for (let attempt = 0; ; attempt += 1) {
+    const state = await fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey);
+    if (state !== "unknown" || attempt >= MERGE_STATE_UNKNOWN_MAX_RETRIES) return state;
+    await sleepForMergeStateRetry(mergeStateUnknownRetryDelayMs());
+  }
+}
+
 // #4220 contradiction: the stored pr.mergeableState lags GitHub's async recompute, so a base-conflicting PR could
 // read clean here (safe to merge) while the disposition reads the live dirty and auto-CLOSES it. This ALWAYS
 // force-refetches live from GitHub and MUST NEVER be routed through the durable pull_request_detail_sync_state
@@ -356,7 +393,7 @@ export function refreshLiveMergeState(
   const next = evictLiveFactOnReject(
     facts.mergeStates,
     key,
-    fetchLivePullRequestMergeState(env, repoFullName, prNumber, token, admissionKey),
+    fetchLivePullRequestMergeStateWithUnknownRetry(env, repoFullName, prNumber, token, admissionKey),
   );
   facts.mergeStates.set(key, next);
   facts.forcedMergeStateKeys.add(key);

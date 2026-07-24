@@ -179,4 +179,37 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     closeAllCleanupResources(); // what installCliSignalHandlers invokes on SIGINT/SIGTERM
     expect(cleanupResourceCount()).toBe(0);
   });
+
+  describe("purgeByRepo (#8320)", () => {
+    it("clears a free slot carrying a stale repo_full_name and counts it", () => {
+      const allocator = tempAllocator({ maxConcurrency: 2 });
+      // Normal release()/reclaimOrphanedAllocations() paths already blank repo_full_name on free, so seed a
+      // stale value directly (bypassing acquire/release) to exercise the defensive-backstop path.
+      const db = new DatabaseSync(allocator.dbPath);
+      db.prepare("UPDATE worktree_slots SET repo_full_name = ? WHERE slot_index = 0").run("acme/widgets");
+      db.close();
+
+      expect(allocator.purgeByRepo("acme/widgets")).toBe(1);
+      const slot = allocator.listSlots().find((entry) => entry.slotIndex === 0);
+      expect(slot?.repoFullName).toBeNull();
+      expect(slot?.status).toBe("free");
+    });
+
+    it("never touches an active slot for the target repo", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      const active = allocator.acquire("attempt-a", "acme/widgets");
+
+      expect(allocator.purgeByRepo("acme/widgets")).toBe(0);
+      const slot = allocator.listSlots().find((entry) => entry.slotIndex === active.slotIndex);
+      expect(slot?.status).toBe("active");
+      expect(slot?.repoFullName).toBe("acme/widgets");
+      expect(slot?.attemptId).toBe("attempt-a");
+    });
+
+    it("returns 0 when no slot matches the repo", () => {
+      const allocator = tempAllocator({ maxConcurrency: 1 });
+      allocator.acquire("attempt-a", "acme/widgets");
+      expect(allocator.purgeByRepo("acme/other")).toBe(0);
+    });
+  });
 });

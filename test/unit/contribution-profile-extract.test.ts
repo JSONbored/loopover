@@ -16,12 +16,34 @@ function stubFetch(
     labels?: Label[] | number;
     contributing?: string | null;
     contributingGithubDir?: string | null;
+    agentsMd?: string | null;
+    claudeMd?: string | null;
   } = {},
 ) {
   const emptyHeaders = { get: (_name: string) => null };
+  const contentsResponse = (body: string | null | undefined) => {
+    if (body == null)
+      return {
+        ok: false,
+        status: 404,
+        headers: emptyHeaders,
+        json: async () => ({}),
+      } as unknown as Response;
+    return {
+      ok: true,
+      status: 200,
+      headers: emptyHeaders,
+      json: async () => ({
+        encoding: "base64",
+        content: Buffer.from(String(body)).toString("base64"),
+      }),
+    } as unknown as Response;
+  };
   return asFetch(
     vi.fn(async (url: string) => {
       const u = String(url);
+      if (u.includes("/contents/AGENTS.md")) return contentsResponse(opts.agentsMd);
+      if (u.includes("/contents/CLAUDE.md")) return contentsResponse(opts.claudeMd);
       if (u.includes("/labels")) {
         if (typeof opts.labels === "number")
           return {
@@ -600,7 +622,7 @@ describe("extractContributionProfile (#6796)", () => {
           status: 200,
           json: async () => [],
         } as unknown as Response;
-      docCalls += 1;
+      if (u.includes("CONTRIBUTING.md")) docCalls += 1;
       return {
         ok: false,
         status: 500,
@@ -612,7 +634,8 @@ describe("extractContributionProfile (#6796)", () => {
       generatedAt: AT,
       sleepFn: async () => {},
     });
-    // Both the root and `.github/` probes are each retried to exhaustion (3 attempts × 2 paths).
+    // Both the root and `.github/` CONTRIBUTING probes are each retried to exhaustion (3 attempts × 2 paths).
+    // The #8316 agent-docs fallback then also 5xx-exhausts (AGENTS.md/CLAUDE.md), leaving prBody absent.
     expect(docCalls).toBe(6);
     expect(profile.prBody.confidence).toBe("absent");
   });
@@ -762,5 +785,109 @@ describe("extractContributionProfile (#6796)", () => {
     expect(profile.exclusionLabels.confidence).toBe("absent");
     expect(profile.prBody.confidence).toBe("explicit");
     expect(profile.completeness).toBe("absent");
+  });
+
+  // #8316: agent docs (AGENTS.md/CLAUDE.md) are a fallback linked-issue source used ONLY when no CONTRIBUTING.md
+  // exists. These cover the `prBody.confidence === "absent"` gate (both operands), the two agent-doc probe
+  // paths, and the signpost-size floor.
+  it("keeps CONTRIBUTING.md authoritative and never consults agent docs when a real CONTRIBUTING.md exists (#8316)", async () => {
+    const agentsSeen: string[] = [];
+    const fetchImpl = stubFetch({
+      labels: [],
+      contributing: bigContributing("No linked-issue rule here."),
+      // AGENTS.md carries a linked-issue term, but must be ignored while CONTRIBUTING.md is present.
+      agentsMd: bigContributing("Every PR must Closes #1 an issue."),
+    });
+    const wrapped = asFetch(
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.includes("/contents/AGENTS.md") || u.includes("/contents/CLAUDE.md"))
+          agentsSeen.push(u);
+        return (fetchImpl as unknown as (u: string, i?: RequestInit) => Promise<Response>)(
+          u,
+          init,
+        );
+      }),
+    );
+    const profile = await extractContributionProfile("acme/widgets", {
+      fetchImpl: wrapped,
+      generatedAt: AT,
+    });
+    expect(agentsSeen).toEqual([]);
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: false },
+      confidence: "explicit",
+      provenance: [{ source: "contributing_md", detail: "CONTRIBUTING.md" }],
+    });
+  });
+
+  it("falls back to AGENTS.md for the linked-issue rule when no CONTRIBUTING.md exists (#8316)", async () => {
+    const fetchImpl = stubFetch({
+      labels: [],
+      contributing: null,
+      agentsMd: bigContributing("Reference an issue with Closes #42 in every PR."),
+    });
+    const profile = await extractContributionProfile("acme/agentic", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: { requiresLinkedIssue: true },
+      confidence: "explicit",
+      provenance: [{ source: "agent_docs", detail: "AGENTS.md" }],
+    });
+  });
+
+  it("probes CLAUDE.md when AGENTS.md is also absent (#8316)", async () => {
+    const fetchImpl = stubFetch({
+      labels: [],
+      contributing: null,
+      agentsMd: null,
+      claudeMd: bigContributing("Please link the issue your PR fixes #7."),
+    });
+    const profile = await extractContributionProfile("acme/claudely", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody.confidence).toBe("explicit");
+    expect(profile.prBody.value).toEqual({ requiresLinkedIssue: true });
+    expect(profile.prBody.provenance).toEqual([
+      { source: "agent_docs", detail: "AGENTS.md" },
+    ]);
+  });
+
+  it("stays absent when neither CONTRIBUTING.md nor any agent doc exists (#8316)", async () => {
+    const fetchImpl = stubFetch({
+      labels: [],
+      contributing: null,
+      agentsMd: null,
+      claudeMd: null,
+    });
+    const profile = await extractContributionProfile("acme/bare", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: null,
+      confidence: "absent",
+      provenance: [],
+    });
+  });
+
+  it("treats a tiny agent doc as a signpost (unknown), not a real rule (#8316)", async () => {
+    const fetchImpl = stubFetch({
+      labels: [],
+      contributing: null,
+      agentsMd: "See AGENTS guide: https://example.org/agents",
+    });
+    const profile = await extractContributionProfile("acme/tiny", {
+      fetchImpl: asFetch(fetchImpl),
+      generatedAt: AT,
+    });
+    expect(profile.prBody).toEqual({
+      value: null,
+      confidence: "unknown",
+      provenance: [],
+    });
   });
 });

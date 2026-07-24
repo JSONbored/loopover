@@ -11,6 +11,7 @@ import type {
   ContributionSignalConfidence,
   ContributionSignalProvenance,
   ContributionSignalRule,
+  ContributionSignalSource,
 } from "./contribution-profile.js";
 import {
   CONTRIBUTION_PROFILE_SCHEMA_VERSION,
@@ -254,25 +255,51 @@ async function fetchContributing(
   return null;
 }
 
-/** Extract the PR-body linked-issue requirement from CONTRIBUTING.md. A very small file is a signpost, not the
- *  rules, so it yields `absent` rather than a false negative dressed as a real one. */
+/** Fetch an AI-agent doc, probing repo-root `AGENTS.md` then `CLAUDE.md` (#8316: a fallback source for the
+ *  linked-issue rule when the repo publishes no CONTRIBUTING.md). Root only — no `.github/` variants exist for
+ *  these. Mirrors `fetchContributing`'s shape: returns the first decoded body, or null. */
+async function fetchAgentDocs(
+  base: string,
+  target: { owner: string; repo: string },
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleepFn: ((ms: number) => Promise<unknown>) | undefined,
+): Promise<string | null> {
+  for (const path of ["AGENTS.md", "CLAUDE.md"]) {
+    const payload = await getJson(
+      `${base}/repos/${target.owner}/${target.repo}/contents/${path}`,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    const text = decodeContents(payload);
+    if (text !== null) return text;
+  }
+  return null;
+}
+
+/** Extract the PR-body linked-issue requirement from a contribution doc. A very small file is a signpost, not
+ *  the rules, so it yields `absent` rather than a false negative dressed as a real one. `source`/`detail` tag
+ *  the provenance so the same logic serves CONTRIBUTING.md (default) and the #8316 agent-docs fallback. */
 function extractPrBody(
-  contributing: string | null,
+  doc: string | null,
+  source: ContributionSignalSource = "contributing_md",
+  detail = "CONTRIBUTING.md",
 ): ContributionSignalRule<ContributionPrBodyRequirements> {
-  if (contributing === null)
+  if (doc === null)
     return { value: null, confidence: "absent", provenance: [] };
-  if (contributing.length < CONTRIBUTING_SIGNPOST_MAX_BYTES)
+  if (doc.length < CONTRIBUTING_SIGNPOST_MAX_BYTES)
     return { value: null, confidence: "unknown", provenance: [] };
-  const lower = contributing.toLowerCase();
+  const lower = doc.toLowerCase();
   const requiresLinkedIssue = LINKED_ISSUE_TERMS.some((term) =>
     lower.includes(term),
   );
-  // A real, sufficiently-sized CONTRIBUTING.md is an explicit source either way: present-with-keyword is an
-  // explicit requirement, present-without is an explicit "no such rule".
+  // A real, sufficiently-sized doc is an explicit source either way: present-with-keyword is an explicit
+  // requirement, present-without is an explicit "no such rule".
   return {
     value: { requiresLinkedIssue },
     confidence: "explicit",
-    provenance: [{ source: "contributing_md", detail: "CONTRIBUTING.md" }],
+    provenance: [{ source, detail }],
   };
 }
 
@@ -321,7 +348,19 @@ export async function extractContributionProfile(
     "explicit",
   );
   const exclusionLabels = classifyLabels(labels, EXCLUSION_TERMS, "inferred");
-  const prBody = extractPrBody(contributing);
+  let prBody = extractPrBody(contributing);
+  // #8316: agent docs are a fallback source, evaluated ONLY when there is no CONTRIBUTING.md at all (prBody
+  // absent). A real CONTRIBUTING.md — even one that yields "no linked-issue rule" — stays authoritative.
+  if (prBody.confidence === "absent") {
+    const agentDocs = await fetchAgentDocs(
+      base,
+      target,
+      headers,
+      fetchImpl,
+      sleepFn,
+    );
+    prBody = extractPrBody(agentDocs, "agent_docs", "AGENTS.md");
+  }
 
   return {
     repoFullName: `${target.owner}/${target.repo}`,

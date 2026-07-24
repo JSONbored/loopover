@@ -376,10 +376,11 @@ describe("check-engine-parity script", () => {
       }
     });
 
-    it("diffFilePriority markers cover the exact Cartfile.resolved regression (#4605 Finding 1)", () => {
-      // Reproduces the actual bug: the engine copy's regex previously matched `cartfile\.lock` (not a
-      // real Carthage filename) instead of `cartfile\.resolved`. A body missing the resolved-lockfile
-      // marker fails presence — exactly what the old, un-checked engine copy would have done.
+    it("diffFilePriority markers cover the Cartfile.resolved regression class at its root (#4605 Finding 1, #8357)", () => {
+      // Reproduces the actual bug's ROOT CAUSE: a copy that hand-rolls its own lockfile-name regex can
+      // silently drift (the engine copy once matched `cartfile\.lock`, not a real Carthage filename).
+      // Since #8357 every copy delegates to the canonical isLockfile, so a body that still owns a private
+      // name list fails presence — exactly what the old, un-checked engine copy would have done.
       const buggyEngineBody =
         "export function diffFilePriority(path: string): number {\n" +
         "  if (/cartfile\\.lock$/i.test(path)) return 4;\n" +
@@ -387,7 +388,7 @@ describe("check-engine-parity script", () => {
         "}\n";
       const fixedHostBody =
         "export function diffFilePriority(path: string): number {\n" +
-        "  if (/cartfile\\.resolved$/i.test(path)) return 4;\n" +
+        "  if (isLockfile(path)) return 4;\n" +
         "  return 0;\n" +
         "}\n";
       const result = checkGateDecisionTwinPresence({

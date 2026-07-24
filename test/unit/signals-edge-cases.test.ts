@@ -56,7 +56,12 @@ import type {
   ScoringModelSnapshotRecord,
 } from "../../src/types";
 
-describe("signal coverage edge cases", () => {
+// Deep edge-case and regression coverage across many src/signals/engine builders (label audit,
+// preflight, public panel rendering, duplicate-winner suppression, reward/risk scoring, ...) --
+// distinct from signals.test.ts's core builder suite and signals-v2.test.ts's newer-builder suite.
+// Not a Codecov bolt-on: every case here targets a specific real scenario/regression, verified
+// against the other two files with zero title or assertion overlap found (see #8576).
+describe("signals engine edge cases", () => {
   it("branches lane, label, config, and public comment publishing decisions", () => {
     const directRepo = repo("owner/direct", { issueDiscoveryShare: 0, labelMultipliers: { bug: 1.2 }, trustedLabelPipeline: true });
     const issueRepo = repo("owner/issues", { issueDiscoveryShare: 1 });

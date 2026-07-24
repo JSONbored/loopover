@@ -4520,7 +4520,7 @@ export function formatRiskValueQuadrant(
 /** Builds the optional "Improvement" row, or `null` when the caller has no improvement data to show. `null`
  *  here (rather than a placeholder row) is what keeps `allRows`/`buildPublicPrPanelSignalRows`'s `rows`
  *  byte-identical to today for every existing caller that doesn't pass `improvementSignal` -- see the
- *  `KEYS`/`toHaveLength(7)` assertions in signals-coverage.test.ts, which assume a fixed 7-row table. Defense
+ *  `KEYS`/`toHaveLength(7)` assertions in signals-edge-cases.test.ts, which assume a fixed 7-row table. Defense
  *  in depth (#4744 requirement, epic #4737): both the deterministic findings and the LLM rationale are
  *  re-checked against `containsPrivatePublicTerm` here even though `improvement.ts`'s findings are safe by
  *  construction (integers interpolated into a fixed template) and the LLM rationale already passed

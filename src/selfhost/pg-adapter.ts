@@ -39,7 +39,10 @@ class PgStatement implements SelfHostD1PreparedStatement {
     const { rows } = await this.exec();
     const row = rows[0];
     if (!row) return null;
-    return (colName ? row[colName] : row) as T;
+    // Coalesce to null so a SQL NULL (or an absent key) never leaks `undefined` through the documented
+    // Promise<T | null> contract -- matches d1-adapter.ts's first(), the reference implementation callers
+    // rely on when treating the two backends interchangeably (backend-contracts.ts).
+    return ((colName != null ? row[colName] : row) ?? null) as T | null;
   }
 
   async run(): Promise<{ success: true; meta: Record<string, unknown> }> {

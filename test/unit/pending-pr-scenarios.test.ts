@@ -461,4 +461,43 @@ describe("pending PR scenario detection", () => {
     expect(records.pullRequestChecks).toHaveLength(0);
     vi.restoreAllMocks();
   });
+
+  it("excludes PRs from ghost/deleted accounts (null or undefined authorLogin) via sameLogin's short-circuit (#8329)", async () => {
+    const env = {} as Env;
+    vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(80)]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      pr({ number: 80, authorLogin: null }),
+      pr({ number: 81, authorLogin: undefined }),
+    ]);
+    // Both records' authorLogin is falsy, so `value &&` short-circuits to false — neither PR matches, so no
+    // signals are loaded (rather than matching by accident or throwing on the null `.toLowerCase()`).
+    expect(records.pullRequestReviews).toHaveLength(0);
+    expect(records.pullRequestChecks).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  it("matches a PR whose repoFullName differs from the query only in letter case (#8329)", async () => {
+    const env = {} as Env;
+    vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(82)]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      pr({ number: 82, repoFullName: "Entrius/Allways-UI" }),
+    ]);
+    // sameRepoFullName lower-cases both sides, so the case-differing repo still matches and is included.
+    expect(records.pullRequestReviews).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  it("matches a PR whose authorLogin differs from the query login only in letter case (#8329)", async () => {
+    const env = {} as Env;
+    vi.spyOn(repositories, "listPullRequestReviews").mockResolvedValue([approvedReview(83)]);
+    vi.spyOn(repositories, "listCheckSummaries").mockResolvedValue([]);
+    const records = await loadContributorRepoOpenPrSignalRecords(env, "entrius/allways-ui", "miner-a", [
+      pr({ number: 83, authorLogin: "Miner-A" }),
+    ]);
+    // sameLogin lower-cases both sides, so the case-differing login still matches and is included.
+    expect(records.pullRequestReviews).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
 });

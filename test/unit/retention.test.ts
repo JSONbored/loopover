@@ -140,6 +140,39 @@ describe("pruneExpiredRecords", () => {
     const rows = await env.DB.prepare("SELECT delivery_id FROM webhook_events").all<{ delivery_id: string }>();
     expect(rows.results.map((row) => row.delivery_id)).toEqual(["wh-recent"]);
   });
+
+  it("dry-run falls back to 0 when the count query returns no row (defensive ?? 0 arm, #8370)", async () => {
+    // Mirrors dedupeSignalSnapshots's existing equivalent test: the count `first()` returns undefined, so
+    // `Number(row?.n ?? 0)` must fall back to 0 rather than producing NaN.
+    const noRowEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ first: async () => undefined }),
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noRowEnv, {
+      dryRun: true,
+      policy: [{ table: "audit_events", column: "created_at", days: 90 }],
+    });
+    expect(results).toEqual([{ table: "audit_events", column: "created_at", cutoff: expect.any(String), deleted: 0 }]);
+  });
+
+  it("delete loop falls back to 0 changes when a run() result lacks meta (defensive ?? 0 arm, #8370)", async () => {
+    // The delete `run()` returns an object with no `meta`, so `Number(result.meta?.changes ?? 0)` must fall back
+    // to 0 -- which is < batchSize, so the batch loop terminates immediately with deleted: 0 (no NaN, no spin).
+    const noMetaEnv = {
+      DB: {
+        prepare: (_sql: string) => ({
+          bind: (..._binds: unknown[]) => ({ run: async () => ({}) }),
+        }),
+      },
+    } as unknown as Env;
+    const results = await pruneExpiredRecords(noMetaEnv, {
+      policy: [{ table: "audit_events", column: "created_at", days: 90 }],
+    });
+    expect(results).toEqual([{ table: "audit_events", column: "created_at", cutoff: expect.any(String), deleted: 0 }]);
+  });
 });
 
 describe("dedupeSignalSnapshots", () => {

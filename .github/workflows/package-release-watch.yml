@@ -1,0 +1,81 @@
+name: Package Release Watch
+
+# Same "release due" tracking-issue safety net mcp-release-watch.yml already gives MCP, extended to
+# engine/miner/ui-kit (#8591): if release-please ever silently stops proposing a release PR for one of
+# these, nothing else would flag it. Deliberately ONE job iterating the three packages sequentially
+# (not a matrix) -- the shared Actions runner pool is org-wide, and #8574's investigation found extra
+# concurrent runners per scheduled run a direct contributor to queue saturation; this trades a few
+# extra seconds of wall-clock for zero additional concurrent runner load.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "35 16 * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: package-release-watch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
+
+      # Each package's check runs independently of the others' outcome (`!cancelled()`, not the
+      # default "skip on any earlier failure") -- one package's transient failure (e.g. a flaky
+      # `npm view` registry read) must never hide whether the other two are due for a release.
+      - name: Check engine release status
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/check-package-release-due.ts --package engine --json --output engine-release-due.json --upsert-issue
+
+      - name: Check miner release status
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/check-package-release-due.ts --package miner --json --output miner-release-due.json --upsert-issue
+
+      - name: Check ui-kit release status
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx tsx scripts/check-package-release-due.ts --package ui-kit --json --output ui-kit-release-due.json --upsert-issue
+
+      - name: Summarize package release status
+        if: ${{ !cancelled() }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const lines = ["## Package Release Watch"];
+          for (const [label, file] of [["Engine", "engine-release-due.json"], ["Miner", "miner-release-due.json"], ["ui-kit", "ui-kit-release-due.json"]]) {
+            if (!fs.existsSync(file)) {
+              lines.push("", `### ${label}`, "- Check did not complete (see the step above).");
+              continue;
+            }
+            const report = JSON.parse(fs.readFileSync(file, "utf8"));
+            lines.push(
+              "",
+              `### ${label}`,
+              `- Due: \`${report.due}\``,
+              `- Proposed version: \`${report.proposedVersion}\``,
+              `- Latest tag: \`${report.latestTag ?? "none"}\``,
+              `- npm latest: \`${report.publishedVersion ?? "unknown"}\``,
+              `- Related commits: \`${report.commits.length}\``,
+            );
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+          NODE

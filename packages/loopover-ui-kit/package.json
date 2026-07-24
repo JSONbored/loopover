@@ -39,7 +39,8 @@
   },
   "files": [
     "dist",
-    "src/theme.css"
+    "src/theme.css",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

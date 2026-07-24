@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,16 @@ const { runCalibrationCli, toAmsRealizedOutcomes } = (await import(CALIBRATION_C
 const { MINER_CALIBRATION_SNAPSHOT_EVENT } = calibrationRun;
 
 import { initEventLedger, resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger.js";
+import type { ContributionProfile } from "../../packages/loopover-miner/lib/contribution-profile.js";
+import {
+  initContributionProfileCache,
+  resolveContributionProfileCacheDbPath,
+} from "../../packages/loopover-miner/lib/contribution-profile-cache.js";
+import { ELIGIBILITY_EXCLUSION_REASONS } from "../../packages/loopover-miner/lib/contribution-profile-filter.js";
+import {
+  SIGNAL_HUMAN_OVERRIDE_EVENT,
+  SIGNAL_RULE_FIRED_EVENT,
+} from "../../packages/loopover-miner/lib/signal-tracking-store.js";
 import {
   initPredictionLedger,
   resolvePredictionLedgerDbPath,
@@ -202,6 +212,7 @@ describe("loopover-miner calibration CLI (#4849)", () => {
 
 import { resolveAmsPolicyConfigPath } from "../../packages/loopover-miner/lib/ams-policy.js";
 import {
+  MINER_AMS_ELIGIBILITY_BACKTEST_EVENT,
   MINER_AMS_THRESHOLD_BACKTEST_EVENT,
   readMinRankOverride,
 } from "../../packages/loopover-miner/lib/ams-calibration.js";
@@ -553,5 +564,225 @@ describe("calibration snapshot (#8317)", () => {
     expect(runCalibrationCli(["snapshot"], env)).toBe(0);
     const output = log.mock.calls.map((c) => String(c[0])).join("\n");
     expect(output).toContain("calibration snapshot acme/widgets: enabled=true combined=86% delta=0.156 sources=pr_outcome");
+  });
+});
+
+function eligibilityProfileJson(): string {
+  return JSON.stringify({
+    "acme/widgets": {
+      repoFullName: "acme/widgets",
+      schemaVersion: 1,
+      generatedAt: "2026-07-18T00:00:00.000Z",
+      eligibilityLabels: {
+        value: [
+          { field: "name", contains: "help wanted" },
+          { field: "name", contains: "good first issue" },
+        ],
+        confidence: "explicit",
+        provenance: [
+          { source: "labels", detail: "help wanted" },
+          { source: "labels", detail: "good first issue" },
+        ],
+      },
+      exclusionLabels: {
+        value: [{ field: "name", contains: "blocked" }],
+        confidence: "inferred",
+        provenance: [{ source: "labels", detail: "blocked" }],
+      },
+      prBody: { value: null, confidence: "absent", provenance: [] },
+      completeness: "inferred",
+    },
+  });
+}
+
+function seedEligibilityBacktestHistory(env: Record<string, string | undefined>): string {
+  const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+  for (let i = 1; i <= 40; i += 1) {
+    const ruleId =
+      i % 2 === 0 ? ELIGIBILITY_EXCLUSION_REASONS.EXCLUSION_LABEL : ELIGIBILITY_EXCLUSION_REASONS.MISSING_ELIGIBILITY_LABEL;
+    const labels = ruleId === ELIGIBILITY_EXCLUSION_REASONS.EXCLUSION_LABEL ? ["blocked"] : ["bug"];
+    const firedAt = `2026-07-${String((i % 28) + 1).padStart(2, "0")}T12:00:00.000Z`;
+    ledger.appendEvent({
+      type: SIGNAL_RULE_FIRED_EVENT,
+      repoFullName: "acme/widgets",
+      payload: {
+        ruleId,
+        targetKey: `acme/widgets#issue-${i}`,
+        outcome: "exclude",
+        occurredAt: firedAt,
+        metadata: { owner: "acme", labels },
+      },
+    });
+    ledger.appendEvent({
+      type: SIGNAL_HUMAN_OVERRIDE_EVENT,
+      repoFullName: "acme/widgets",
+      payload: {
+        ruleId,
+        targetKey: `acme/widgets#issue-${i}`,
+        verdict: i % 5 === 0 ? "reversed" : "confirmed",
+        occurredAt: firedAt.replace("T12:", "T13:"),
+      },
+    });
+  }
+  ledger.close();
+  const profilePath = join(env.LOOPOVER_MINER_CONFIG_DIR!, "candidate-profile.json");
+  writeFileSync(profilePath, eligibilityProfileJson());
+  const cache = initContributionProfileCache(resolveContributionProfileCacheDbPath(env));
+  cache.put({
+    repoFullName: "acme/widgets",
+    schemaVersion: 1,
+    generatedAt: "2026-07-18T00:00:00.000Z",
+    eligibilityLabels: {
+      value: [{ field: "name", contains: "help wanted" }],
+      confidence: "explicit",
+      provenance: [{ source: "labels", detail: "help wanted" }],
+    },
+    exclusionLabels: {
+      value: [{ field: "name", contains: "blocked" }],
+      confidence: "inferred",
+      provenance: [{ source: "labels", detail: "blocked" }],
+    },
+    prBody: { value: null, confidence: "absent", provenance: [] },
+    completeness: "inferred",
+  });
+  cache.close();
+  return profilePath;
+}
+
+describe("calibration backtest-eligibility (#8545)", () => {
+  it("replays, prints skippedNoContext + both split reports, persists the run event, exits 0", () => {
+    const env = envForTempStores();
+    const profilePath = seedEligibilityBacktestHistory(env);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], env, { readFileSync })).toBe(0);
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("skipped (no metadata context):");
+    expect(output).toContain("visible split");
+    expect(output).toContain("held-out split");
+    expect(output).toContain("advisory only");
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(ledger.readEvents().filter((event) => event.type === MINER_AMS_ELIGIBILITY_BACKTEST_EVENT)).toHaveLength(1);
+    ledger.close();
+  });
+
+  it("an under-floored corpus prints the explicit line, persists NOTHING, and still exits 0", () => {
+    const env = envForTempStores();
+    const profilePath = join(env.LOOPOVER_MINER_CONFIG_DIR!, "candidate-profile.json");
+    writeFileSync(profilePath, eligibilityProfileJson());
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], env, { readFileSync })).toBe(0);
+    expect(logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("not enough labeled eligibility-exclusion cases");
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath, "--json"], env, { readFileSync })).toBe(0);
+    const jsonLine = logSpy.mock.calls.map((call) => String(call[0])).find((line) => line.includes("insufficient_corpus"));
+    expect(jsonLine).toBeDefined();
+    const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+    expect(ledger.readEvents().filter((event) => event.type === MINER_AMS_ELIGIBILITY_BACKTEST_EVENT)).toHaveLength(0);
+    ledger.close();
+  });
+
+  it("JSON mode dumps the full result; a missing/invalid --profile is a usage error (exit 1)", () => {
+    const env = envForTempStores();
+    const profilePath = seedEligibilityBacktestHistory(env);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath, "--json"], env, { readFileSync })).toBe(0);
+    const parsed = JSON.parse(logSpy.mock.calls.map((call) => String(call[0])).find((line) => line.trimStart().startsWith("{"))!) as {
+      ran: boolean;
+      visible: { verdict: string };
+    };
+    expect(parsed.ran).toBe(true);
+    expect(parsed.visible.verdict).toBeDefined();
+    expect(runCalibrationCli(["backtest-eligibility"], env, { readFileSync })).toBe(1);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", "   "], env, { readFileSync })).toBe(1);
+    writeFileSync(join(env.LOOPOVER_MINER_CONFIG_DIR!, "bad.json"), "[]");
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", join(env.LOOPOVER_MINER_CONFIG_DIR!, "bad.json")], env, { readFileSync })).toBe(1);
+  });
+
+  it("fails operationally when readFileSync is unavailable or the ledger store cannot open", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = envForTempStores();
+    const profilePath = join(env.LOOPOVER_MINER_CONFIG_DIR!, "candidate-profile.json");
+    writeFileSync(profilePath, eligibilityProfileJson());
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], env, {})).toBe(2);
+    const brokenEnv = { LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" };
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], brokenEnv, { readFileSync: (() => eligibilityProfileJson()) as never })).toBe(2);
+  });
+
+  it("rejects invalid JSON syntax and profile entries whose repoFullName does not match the map key", () => {
+    const env = envForTempStores();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const badSyntax = join(env.LOOPOVER_MINER_CONFIG_DIR!, "bad-syntax.json");
+    writeFileSync(badSyntax, "{not-json");
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", badSyntax], env, { readFileSync })).toBe(1);
+    const mismatched = join(env.LOOPOVER_MINER_CONFIG_DIR!, "mismatch.json");
+    writeFileSync(
+      mismatched,
+      JSON.stringify({
+        "acme/widgets": {
+          ...(JSON.parse(eligibilityProfileJson()) as Record<string, ContributionProfile>)["acme/widgets"],
+          repoFullName: "other/repo",
+        },
+      }),
+    );
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", mismatched], env, { readFileSync })).toBe(1);
+    const mixed = join(env.LOOPOVER_MINER_CONFIG_DIR!, "mixed.json");
+    writeFileSync(
+      mixed,
+      JSON.stringify({
+        "acme/widgets": JSON.parse(eligibilityProfileJson())["acme/widgets"],
+        "other/repo": { repoFullName: "wrong/repo" },
+        "skip/null": null,
+        "skip/string": "not-a-profile",
+      }),
+    );
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", mixed], env, { readFileSync })).toBe(0);
+  });
+
+  it("includes eligibility backtest runs in the main calibration report track record", () => {
+    const env = envForTempStores();
+    const profilePath = seedEligibilityBacktestHistory(env);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], env, { readFileSync })).toBe(0);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli([], env)).toBe(0);
+    expect(log.mock.calls.map((call) => String(call[0])).join("\n")).toContain("backtest track record:");
+  });
+
+  it("includes eligibility backtest runs in calibration snapshot track record attachment", () => {
+    const env = envForTempStores();
+    seedPrediction(env, 42, "merge");
+    seedOutcomeEvent(env, { prNumber: 42, decision: "merged" });
+    const profilePath = seedEligibilityBacktestHistory(env);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runCalibrationCli(["backtest-eligibility", "--profile", profilePath], env, { readFileSync })).toBe(0);
+    vi.spyOn(calibrationRun, "runHistoricalReplayCalibrationCycle").mockReturnValue({
+      result: {} as never,
+      snapshot: {
+        enabled: false,
+        combinedAccuracy: null,
+        baselineAccuracy: null,
+        deltaFromBaseline: null,
+        autonomyIncreasePermitted: false,
+        replayHarnessHold: false,
+        replayHarnessStatus: "healthy",
+        replayRunDue: false,
+        holdReasons: [],
+        contributingSources: [],
+        replayRunId: null,
+        observedAt: null,
+        replaySampleSize: 0,
+        backtestTrackRecord: null,
+      },
+      recorded: null,
+      historicalReplay: null,
+      compositeScore: null,
+      sampleSize: 0,
+      scores: [],
+    });
+    expect(runCalibrationCli(["snapshot"], env)).toBe(0);
+    expect(calibrationRun.runHistoricalReplayCalibrationCycle).toHaveBeenCalledWith(
+      expect.objectContaining({ backtestTrackRecord: expect.objectContaining({ totalRuns: 2 }) }),
+      expect.any(Object),
+    );
   });
 });

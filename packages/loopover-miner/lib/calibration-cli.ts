@@ -12,12 +12,17 @@ import {
   backtestMinRankCandidate,
   buildAmsBacktestProposals,
   computeAmsBacktestTrackRecord,
+  readAmsEligibilityBacktestRuns,
   readAmsThresholdBacktestRuns,
   readMinRankAutotuneEnabled,
   readMinRankOverride,
+  recordAmsEligibilityBacktestRun,
   recordAmsThresholdBacktestRun,
   revertMinRankOverride,
 } from "./ams-calibration.js";
+import { backtestEligibilityCandidate, repoFullNamesInEligibilityEvents } from "./ams-eligibility-backtest.js";
+import { initContributionProfileCache, resolveContributionProfileCacheDbPath } from "./contribution-profile-cache.js";
+import type { ContributionProfile } from "./contribution-profile.js";
 import { buildCalibrationReport } from "./calibration.js";
 import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
 import type { LedgerEntry } from "./event-ledger.js";
@@ -29,7 +34,7 @@ import { reportCliFailure, describeCliError } from "./cli-error.js";
 import { runHistoricalReplayCalibrationCycle, type CalibrationSnapshotPayload } from "./calibration-run.js";
 
 const CALIBRATION_USAGE =
-  "Usage: loopover-miner calibration [--json] | calibration snapshot [--json] | calibration backtest-threshold --candidate <x> [--json] | calibration apply-min-rank --candidate <x> --approve [--json] | calibration revert-min-rank --approve [--json]";
+  "Usage: loopover-miner calibration [--json] | calibration snapshot [--json] | calibration backtest-threshold --candidate <x> [--json] | calibration backtest-eligibility --profile <path> [--json] | calibration apply-min-rank --candidate <x> --approve [--json] | calibration revert-min-rank --approve [--json]";
 
 export type CalibrationCliDeps = {
   readFileSync?: typeof readFileSync;
@@ -42,6 +47,49 @@ function parseCandidate(args: string[]): number | null {
   if (index === -1 || index + 1 >= args.length) return null;
   const value = Number(args[index + 1]);
   return Number.isFinite(value) ? value : null;
+}
+
+function parseProfilePath(args: string[]): string | null {
+  const index = args.indexOf("--profile");
+  if (index === -1 || index + 1 >= args.length) return null;
+  const value = args[index + 1];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function loadCandidateProfiles(
+  profilePath: string,
+  deps: CalibrationCliDeps,
+): Map<string, ContributionProfile> {
+  const readFileSync = deps.readFileSync;
+  if (!readFileSync) throw new Error("readFileSync_unavailable");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(String(readFileSync(profilePath, "utf8"))) as unknown;
+  } catch {
+    throw new Error("invalid_profile_file");
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("invalid_profile_file");
+  const profiles = new Map<string, ContributionProfile>();
+  for (const [repoFullName, profile] of Object.entries(raw as Record<string, unknown>)) {
+    if (!profile || typeof profile !== "object") continue;
+    const typed = profile as ContributionProfile;
+    if (typeof typed.repoFullName !== "string" || typed.repoFullName !== repoFullName) continue;
+    profiles.set(repoFullName, typed);
+  }
+  if (profiles.size === 0) throw new Error("invalid_profile_file");
+  return profiles;
+}
+
+function readCurrentContributionProfiles(
+  cache: ReturnType<typeof initContributionProfileCache>,
+  repoFullNames: Iterable<string>,
+): Map<string, ContributionProfile> {
+  const profiles = new Map<string, ContributionProfile>();
+  for (const repoFullName of repoFullNames) {
+    const cached = cache.get(repoFullName);
+    if (cached?.profile) profiles.set(repoFullName, cached.profile);
+  }
+  return profiles;
 }
 
 /** Map prediction-ledger rows to predicted-verdict records: the target id becomes a string key and the recorded
@@ -165,7 +213,10 @@ function runCalibrationSnapshot(args: string[], env: Record<string, string | und
     const predictionRows = predictionStore.readPredictions();
     const events = eventLedger.readEvents();
     const report = buildCalibrationReport(toPredictionRecords(predictionRows), toOutcomeRecords(events));
-    const trackRecord = computeAmsBacktestTrackRecord(readAmsThresholdBacktestRuns(eventLedger));
+    const trackRecord = computeAmsBacktestTrackRecord(
+      readAmsThresholdBacktestRuns(eventLedger),
+      readAmsEligibilityBacktestRuns(eventLedger),
+    );
     // #8317: only attach a real history; an empty track record stays null so consumers can tell "no runs yet"
     // from "runs exist with zero REGRESSED" without inventing a fabricated zero-run object at the CLI boundary.
     const backtestTrackRecord = trackRecord.totalRuns > 0 ? trackRecord : null;
@@ -253,6 +304,56 @@ function runBacktestThreshold(args: string[], env: Record<string, string | undef
   }
 }
 
+/** `calibration backtest-eligibility --profile <path>` (#8545): advisory replay of a candidate
+ *  ContributionProfile against the captured eligibility-exclusion corpus. Exit is nonzero ONLY on operational
+ *  error — never on verdict (the #8138 advisory guarantee). */
+function runBacktestEligibility(args: string[], env: Record<string, string | undefined>, deps: CalibrationCliDeps): number {
+  const json = args.includes("--json");
+  const profilePath = parseProfilePath(args);
+  if (profilePath === null) return reportCliFailure(json, `Missing or invalid --profile. ${CALIBRATION_USAGE}`, 1);
+
+  let eventLedger;
+  let profileCache;
+  try {
+    eventLedger = initEventLedger(resolveEventLedgerDbPath(env));
+    profileCache = initContributionProfileCache(resolveContributionProfileCacheDbPath(env));
+    const events = eventLedger.readEvents();
+    const candidateProfiles = loadCandidateProfiles(profilePath, deps);
+    const currentProfiles = readCurrentContributionProfiles(profileCache, [
+      ...repoFullNamesInEligibilityEvents(events),
+      ...candidateProfiles.keys(),
+    ]);
+    const result = backtestEligibilityCandidate(events, currentProfiles, candidateProfiles);
+    if (!result) {
+      const message =
+        "backtest-eligibility: not enough labeled eligibility-exclusion cases yet (both splits must clear their sample floors); no verdict, nothing persisted.";
+      console.log(json ? JSON.stringify({ ran: false, reason: "insufficient_corpus" }) : message);
+      return 0;
+    }
+    recordAmsEligibilityBacktestRun(result, { eventLedger });
+    if (json) {
+      console.log(JSON.stringify({ ran: true, ...result }, null, 2));
+    } else {
+      console.log("eligibility profile backtest: current cache -> candidate profile file");
+      console.log(`skipped (no metadata context): ${result.skippedNoContext}`);
+      console.log(`visible split (${result.visibleCases} case(s)):`);
+      console.log(renderBacktestComparison(result.visible));
+      console.log(`held-out split (${result.heldOutCases} case(s)):`);
+      console.log(renderBacktestComparison(result.heldOut));
+      console.log("advisory only: no profile changed; the run event was persisted for the track record.");
+    }
+    return 0;
+  } catch (error) {
+    if (error instanceof Error && error.message === "invalid_profile_file") {
+      return reportCliFailure(json, `Invalid --profile file. ${CALIBRATION_USAGE}`, 1);
+    }
+    return reportCliFailure(json, describeCliError(error));
+  } finally {
+    eventLedger?.close();
+    profileCache?.close();
+  }
+}
+
 /** `calibration apply-min-rank --candidate <x> --approve` / `calibration revert-min-rank --approve`
  *  (#8187): the double-gated apply and its one-command revert. Exit 1 when the command did NOT move the
  *  knob (refusal or usage error) so scripts can tell; 0 only on a real apply/revert. */
@@ -302,6 +403,7 @@ function runMinRankMutation(kind: "apply" | "revert", args: string[], env: Recor
 export function runCalibrationCli(args: string[] = [], env: Record<string, string | undefined> = process.env, deps: CalibrationCliDeps = {}): number {
   if (args[0] === "snapshot") return runCalibrationSnapshot(args.slice(1), env, deps);
   if (args[0] === "backtest-threshold") return runBacktestThreshold(args.slice(1), env, deps);
+  if (args[0] === "backtest-eligibility") return runBacktestEligibility(args.slice(1), env, deps);
   if (args[0] === "apply-min-rank") return runMinRankMutation("apply", args.slice(1), env, deps);
   if (args[0] === "revert-min-rank") return runMinRankMutation("revert", args.slice(1), env, deps);
   const json = args.includes("--json");
@@ -326,7 +428,7 @@ export function runCalibrationCli(args: string[] = [], env: Record<string, strin
     const corpusStats = computeAmsCorpusStats(buildAmsPredictionCorpus(toAmsPredictionRecords(predictionRows), toAmsRealizedOutcomes(events)));
     // #8185/#8186: the advisory backtests' own earned-authority view over the persisted run events.
     const runs = readAmsThresholdBacktestRuns(eventLedger);
-    const trackRecord = computeAmsBacktestTrackRecord(runs);
+    const trackRecord = computeAmsBacktestTrackRecord(runs, readAmsEligibilityBacktestRuns(eventLedger));
     const proposals = buildAmsBacktestProposals(runs, deps.nowMs ?? Date.now());
     if (json) {
       console.log(

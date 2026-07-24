@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.13.0](https://github.com/JSONbored/loopover/compare/engine-v3.12.0...engine-v3.13.0) (2026-07-24)
+
+
+### Features
+
+* **engine:** add the attestation-evidence envelope seam ([#8551](https://github.com/JSONbored/loopover/issues/8551)) ([12aa3e6](https://github.com/JSONbored/loopover/commit/12aa3e6a4fcf39c59376d2cddc798c9854842d8a)), closes [#8541](https://github.com/JSONbored/loopover/issues/8541)
+
+
+### Fixes
+
+* **miner:** delegate three resolve*DbPath helpers to resolveLocalStoreDbPath ([#8336](https://github.com/JSONbored/loopover/issues/8336)) ([#8524](https://github.com/JSONbored/loopover/issues/8524)) ([ee4fa21](https://github.com/JSONbored/loopover/commit/ee4fa218bec750d5a6dbf0bed2111f5a7fbbffb5))
+
+
+### Performance
+
+* **imports:** break the github/client &lt;-&gt; db/repositories cycle taxing every test import ([#8548](https://github.com/JSONbored/loopover/issues/8548)) ([ec6f6e6](https://github.com/JSONbored/loopover/commit/ec6f6e6fdbc26b764d4f1da354a6efba46fc26c3))
+
 ## [3.12.0](https://github.com/JSONbored/loopover/compare/engine-v3.11.0...engine-v3.12.0) (2026-07-24)
 
 
